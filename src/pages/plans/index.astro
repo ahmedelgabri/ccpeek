@@ -1,0 +1,25 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { getIndexData } from "../../lib/data";
+import { formatBytes } from "../../lib/format";
+
+const { plans } = getIndexData();
+---
+
+<Layout title="Plans">
+  <h1 class="text-2xl font-bold mb-6">Plans</h1>
+
+  <div class="space-y-2">
+    {plans.map((plan) => (
+      <a
+        href={`/plans/${plan.fileName.replace(".md", "")}/`}
+        class="flex items-baseline justify-between gap-4 p-3 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors"
+      >
+        <span class="text-zinc-200 truncate">{plan.title}</span>
+        <span class="text-zinc-500 text-xs shrink-0">
+          {formatBytes(plan.sizeBytes)}
+        </span>
+      </a>
+    ))}
+  </div>
+</Layout>

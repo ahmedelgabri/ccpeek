@@ -1,0 +1,23 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import BackLink from "../../components/BackLink.astro";
+import MarkdownRenderer from "../../components/MarkdownRenderer";
+import { getIndexData, readDataFile } from "../../lib/data";
+
+export function getStaticPaths() {
+  const { plans } = getIndexData();
+  return plans.map((plan) => ({
+    params: { fileName: plan.fileName.replace(".md", "") },
+    props: { plan },
+  }));
+}
+
+const { plan } = Astro.props;
+const content = readDataFile(`plans/${plan.fileName}`);
+---
+
+<Layout title={plan.title}>
+  <BackLink href="/plans/" label="Plans" />
+  <h1 class="text-2xl font-bold mb-6">{plan.title}</h1>
+  <MarkdownRenderer client:load content={content} />
+</Layout>
