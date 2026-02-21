@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ahmed/claude-history/internal/model"
-	"github.com/ahmed/claude-history/internal/web"
+	"github.com/ahmedelgabri/claude-history/internal/model"
+	"github.com/ahmedelgabri/claude-history/internal/web"
 )
 
 // DataStore holds the loaded index data and the path to detail files.

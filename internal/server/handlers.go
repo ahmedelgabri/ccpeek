@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ahmed/claude-history/internal/model"
+	"github.com/ahmedelgabri/claude-history/internal/model"
 )
 
 const pageSize = 50

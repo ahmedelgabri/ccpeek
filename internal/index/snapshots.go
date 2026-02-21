@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ahmed/claude-history/internal/model"
+	"github.com/ahmedelgabri/claude-history/internal/model"
 )
 
 var snapshotTimestampRe = regexp.MustCompile(`snapshot-\w+-(\d+)-`)

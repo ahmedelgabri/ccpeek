@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/ahmed/claude-history/internal/model"
+	"github.com/ahmedelgabri/claude-history/internal/model"
 )
 
 var fileVersionRe = regexp.MustCompile(`^(.+)@v(\d+)$`)

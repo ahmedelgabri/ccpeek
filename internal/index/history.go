@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/ahmed/claude-history/internal/model"
+	"github.com/ahmedelgabri/claude-history/internal/model"
 )
 
 func indexHistory(claudeDir string) ([]model.HistoryEntry, error) {

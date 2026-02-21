@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/ahmed/claude-history/internal/index"
-	"github.com/ahmed/claude-history/internal/server"
+	"github.com/ahmedelgabri/claude-history/internal/index"
+	"github.com/ahmedelgabri/claude-history/internal/server"
 )
 
 func main() {

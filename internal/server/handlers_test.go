@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ahmed/claude-history/internal/index"
+	"github.com/ahmedelgabri/claude-history/internal/index"
 )
 
 func setupTestServer(t *testing.T) http.Handler {

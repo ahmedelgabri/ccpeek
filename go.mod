@@ -1,4 +1,4 @@
-module github.com/ahmed/claude-history
+module github.com/ahmedelgabri/claude-history
 
 go 1.25.0
 
