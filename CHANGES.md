@@ -5,6 +5,7 @@ Static Astro app for browsing `~/.claude` contents.
 ## What was built
 
 ### Pre-indexer (`scripts/build-index.ts`)
+
 - Reads `~/.claude` and outputs structured data to `src/data/` (gitignored)
 - Parses JSONL conversation files into JSON, filtering to user/assistant/system messages only
 - Copies plans (Markdown), shell snapshots (.sh), and todos (JSON)
@@ -12,6 +13,7 @@ Static Astro app for browsing `~/.claude` contents.
 - Generates `index.json` with metadata and counts for all types
 
 ### Pages
+
 - **Dashboard** (`/`): Type cards with counts, recent conversation history
 - **Projects** (`/projects/`): Searchable project list, per-project session list with search, full conversation viewer with pagination
 - **Plans** (`/plans/`): Searchable list, rendered markdown via react-markdown
@@ -20,6 +22,7 @@ Static Astro app for browsing `~/.claude` contents.
 - **File History** (`/file-history/`): Conversation list, expandable versioned file viewer
 
 ### React Islands
+
 - `ConversationViewer`: Paginated message display with collapsible tool calls
 - `JsonViewer`: Recursive collapsible JSON tree
 - `MarkdownRenderer`: react-markdown with GFM
@@ -27,6 +30,7 @@ Static Astro app for browsing `~/.claude` contents.
 - `TodoList`: Status-badged task items
 
 ### Tech Stack
+
 - Astro 5 (static output), React 19, Tailwind CSS v4, Shiki, pnpm
 - Vitest (24 unit tests), Playwright (12 e2e tests)
 
@@ -42,6 +46,7 @@ pnpm run test:e2e     # e2e tests (needs build first)
 ```
 
 ## Stats
+
 - 946 static pages generated
 - Build time: ~5 seconds
 - Index time: ~1 second
