@@ -1,5 +1,6 @@
 ---
 import Layout from "../../layouts/Layout.astro";
+import ProjectsList from "../../components/ProjectsList";
 import { getIndexData } from "../../lib/data";
 
 const { projects } = getIndexData();
@@ -7,18 +8,5 @@ const { projects } = getIndexData();
 
 <Layout title="Projects">
   <h1 class="text-2xl font-bold mb-6">Projects</h1>
-
-  <div class="space-y-2">
-    {projects.map((project) => (
-      <a
-        href={`/projects/${project.dirName}/`}
-        class="flex items-baseline justify-between gap-4 p-3 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors"
-      >
-        <span class="text-zinc-200 text-sm truncate">{project.displayName}</span>
-        <span class="text-zinc-500 text-xs shrink-0">
-          {project.sessionCount} sessions
-        </span>
-      </a>
-    ))}
-  </div>
+  <ProjectsList client:load projects={projects} />
 </Layout>

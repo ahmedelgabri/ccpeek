@@ -1,8 +1,8 @@
 ---
 import Layout from "../../../layouts/Layout.astro";
 import BackLink from "../../../components/BackLink.astro";
+import SessionsList from "../../../components/SessionsList";
 import { getIndexData } from "../../../lib/data";
-import { formatDate, truncate } from "../../../lib/format";
 
 export function getStaticPaths() {
   const { projects } = getIndexData();
@@ -19,30 +19,5 @@ const { project } = Astro.props;
   <BackLink href="/projects/" label="Projects" />
   <h1 class="text-2xl font-bold mb-2">{project.displayName}</h1>
   <p class="text-zinc-500 text-sm mb-6">{project.sessionCount} sessions</p>
-
-  <div class="space-y-2">
-    {project.sessions.map((session) => (
-      <a
-        href={`/projects/${project.dirName}/${session.sessionId}/`}
-        class="block p-3 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors"
-      >
-        <div class="flex items-baseline justify-between gap-4 mb-1">
-          <span class="text-zinc-200 text-sm truncate">
-            {session.firstPrompt
-              ? truncate(session.firstPrompt, 120)
-              : session.sessionId}
-          </span>
-          <span class="text-zinc-500 text-xs shrink-0">
-            {session.messageCount} msgs
-          </span>
-        </div>
-        <div class="flex gap-4 text-xs text-zinc-500">
-          {session.created && <span>{formatDate(session.created)}</span>}
-          {session.gitBranch && (
-            <span class="font-mono">{session.gitBranch}</span>
-          )}
-        </div>
-      </a>
-    ))}
-  </div>
+  <SessionsList client:load sessions={project.sessions} dirName={project.dirName} />
 </Layout>
