@@ -1,0 +1,19 @@
+---
+interface Props {
+  label: string;
+  variant?: "default" | "success" | "warning" | "muted";
+}
+
+const { label, variant = "default" } = Astro.props;
+
+const colors = {
+  default: "bg-zinc-800 text-zinc-300",
+  success: "bg-emerald-900/50 text-emerald-300",
+  warning: "bg-amber-900/50 text-amber-300",
+  muted: "bg-zinc-800/50 text-zinc-500",
+};
+---
+
+<span class:list={["px-2 py-0.5 rounded text-xs font-medium", colors[variant]]}>
+  {label}
+</span>

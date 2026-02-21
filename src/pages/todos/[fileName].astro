@@ -1,0 +1,26 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import BackLink from "../../components/BackLink.astro";
+import TodoList from "../../components/TodoList";
+import { getIndexData, readDataFile } from "../../lib/data";
+import type { TodoItem } from "../../lib/types";
+
+export function getStaticPaths() {
+  const { todos } = getIndexData();
+  return todos.map((todo) => ({
+    params: { fileName: todo.fileName.replace(".json", "") },
+    props: { todo },
+  }));
+}
+
+const { todo } = Astro.props;
+const items: TodoItem[] = JSON.parse(readDataFile(`todos/${todo.fileName}`));
+---
+
+<Layout title="Todo List">
+  <BackLink href="/todos/" label="Todos" />
+  <h1 class="text-xl font-bold font-mono mb-6">
+    {todo.fileName.replace(".json", "")}
+  </h1>
+  <TodoList client:load items={items} />
+</Layout>

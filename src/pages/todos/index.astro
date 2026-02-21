@@ -1,0 +1,40 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import Badge from "../../components/Badge.astro";
+import { getIndexData } from "../../lib/data";
+
+const { todos } = getIndexData();
+---
+
+<Layout title="Todos">
+  <h1 class="text-2xl font-bold mb-6">Todos</h1>
+
+  <div class="space-y-2">
+    {todos.map((todo) => {
+      const id = todo.fileName.replace(".json", "");
+      return (
+        <a
+          href={`/todos/${id}/`}
+          class="flex items-center justify-between gap-4 p-3 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors"
+        >
+          <span class="text-zinc-200 text-sm font-mono truncate">{id}</span>
+          <div class="flex gap-2 shrink-0">
+            {Object.entries(todo.statuses).map(([status, count]) => (
+              <Badge
+                label={`${status}: ${count}`}
+                variant={
+                  status === "completed"
+                    ? "success"
+                    : status === "in_progress"
+                      ? "warning"
+                      : "muted"
+                }
+              />
+            ))}
+            <Badge label={`${todo.itemCount} items`} />
+          </div>
+        </a>
+      );
+    })}
+  </div>
+</Layout>
