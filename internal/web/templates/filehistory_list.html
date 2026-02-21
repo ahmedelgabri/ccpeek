@@ -5,7 +5,10 @@
   {{range .Entries}}
   <a href="/file-history/{{.ConversationID}}/" class="list-item">
     <span class="item-title mono">{{.ConversationID}}</span>
-    <span class="item-meta">{{.FileCount}} files</span>
+    <div class="item-meta-group">
+      <span class="item-meta">{{.FileCount}} files</span>
+      {{if .ProjectName}}<span class="item-meta">{{.ProjectName}}</span>{{end}}
+    </div>
   </a>
   {{end}}
 </div>

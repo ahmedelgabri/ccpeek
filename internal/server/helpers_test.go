@@ -20,6 +20,24 @@ func TestDecodeProjectDir(t *testing.T) {
 	}
 }
 
+func TestEncodeProjectDir(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/Users/ahmed/.dotfiles", "-Users-ahmed--dotfiles"},
+		{"/Users/ahmed/code/personal/dev", "-Users-ahmed-code-personal-dev"},
+		{"local/project", "local-project"},
+	}
+
+	for _, tt := range tests {
+		got := encodeProjectDir(tt.input)
+		if got != tt.want {
+			t.Errorf("encodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestFormatBytes(t *testing.T) {
 	tests := []struct {
 		input int64

@@ -2,43 +2,41 @@
 <h1>Dashboard</h1>
 
 <div class="card-grid">
-  <a href="/projects/" class="type-card">
-    <div class="card-count">{{len .Index.Projects}}</div>
-    <div class="card-label">Projects</div>
-    <div class="card-desc">{{.TotalSessions}} sessions across all projects</div>
-  </a>
-  <a href="/plans/" class="type-card">
-    <div class="card-count">{{len .Index.Plans}}</div>
-    <div class="card-label">Plans</div>
-    <div class="card-desc">Markdown plan files</div>
-  </a>
-  <a href="/shell-snapshots/" class="type-card">
-    <div class="card-count">{{len .Index.ShellSnapshots}}</div>
-    <div class="card-label">Shell Snapshots</div>
-    <div class="card-desc">Shell environment captures</div>
-  </a>
-  <a href="/todos/" class="type-card">
-    <div class="card-count">{{len .Index.Todos}}</div>
-    <div class="card-label">Todos</div>
-    <div class="card-desc">Non-empty task lists</div>
-  </a>
-  <a href="/file-history/" class="type-card">
-    <div class="card-count">{{len .Index.FileHistory}}</div>
-    <div class="card-label">File History</div>
-    <div class="card-desc">Conversations with file backups</div>
-  </a>
+	<a href="/projects/" class="type-card">
+		<div class="card-count">{{len .Index.Projects}}</div>
+		<div class="card-label">Projects</div>
+		<div class="card-desc">{{.TotalSessions}} sessions across all projects</div>
+	</a>
+	<a href="/plans/" class="type-card">
+		<div class="card-count">{{len .Index.Plans}}</div>
+		<div class="card-label">Plans</div>
+		<div class="card-desc">Markdown plan files</div>
+	</a>
+	<a href="/shell-snapshots/" class="type-card">
+		<div class="card-count">{{len .Index.ShellSnapshots}}</div>
+		<div class="card-label">Shell Snapshots</div>
+		<div class="card-desc">Shell environment captures</div>
+	</a>
+	<a href="/todos/" class="type-card">
+		<div class="card-count">{{len .Index.Todos}}</div>
+		<div class="card-label">Todos</div>
+		<div class="card-desc">Non-empty task lists</div>
+	</a>
+	<a href="/file-history/" class="type-card">
+		<div class="card-count">{{len .Index.FileHistory}}</div>
+		<div class="card-label">File History</div>
+		<div class="card-desc">Conversations with file backups</div>
+	</a>
 </div>
 
 <h2>Recent Conversations</h2>
 <div class="history-list">
-  {{range .RecentHistory}}
-  <div class="history-item">
-    <span class="history-date">{{formatShortDate .Timestamp}}</span>
-    <span class="history-display">{{truncate .Display 120}}</span>
-    <span class="history-project">{{.Project}}</span>
-  </div>
-  {{end}}
+	{{range .RecentHistory}}
+	<a href="/projects/{{encodeProjectDir .Project}}/" class="history-item">
+		<span class="history-date">{{formatShortDate .Timestamp}}</span>
+		<span class="history-display">{{truncate .Display 120}}</span>
+		<span class="history-project">{{.Project}}</span>
+	</a>
+	{{end}}
 </div>
-{{end}}
-
-{{template "layout.html" .}}
+{{end}} {{template "layout.html" .}}

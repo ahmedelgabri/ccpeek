@@ -4,12 +4,15 @@
 <div class="item-list">
   {{range .Todos}}
   <a href="/todos/{{.FileName | trimSuffix ".json"}}/" class="list-item">
-    <span class="item-title mono">{{.FileName | trimSuffix ".json"}}</span>
-    <div class="item-meta-group">
-      <span class="item-meta">{{.ItemCount}} items</span>
-      {{range $status, $count := .Statuses}}
-      <span class="badge {{statusColor $status}}">{{$status}}: {{$count}}</span>
-      {{end}}
+    <div class="item-main">
+      <span class="item-title mono">{{.FileName | trimSuffix ".json"}}</span>
+      <div class="item-meta-group">
+        <span class="item-meta">{{.ItemCount}} items</span>
+        {{if .ProjectName}}<span class="item-meta">{{.ProjectName}}</span>{{end}}
+        {{range $status, $count := .Statuses}}
+        <span class="badge {{statusColor $status}}">{{$status}}: {{$count}}</span>
+        {{end}}
+      </div>
     </div>
   </a>
   {{end}}

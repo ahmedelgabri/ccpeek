@@ -1,5 +1,6 @@
 {{define "content"}}
 <a href="/file-history/" class="back-link">File History</a>
+{{if .Entry.ProjectDir}}<a href="/projects/{{.Entry.ProjectDir}}/{{.ConversationID}}/" class="back-link">Session</a>{{end}}
 <h1 class="mono">{{.ConversationID}}</h1>
 <p class="subtitle">{{.TotalFiles}} file versions</p>
 

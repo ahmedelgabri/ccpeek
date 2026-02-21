@@ -45,6 +45,13 @@ func TestDashboard(t *testing.T) {
 			t.Errorf("dashboard missing %q", s)
 		}
 	}
+	// All history entries should be clickable links via encodeProjectDir
+	if !strings.Contains(body, `href="/projects/test-project/"`) {
+		t.Error("dashboard missing clickable project link in history")
+	}
+	if !strings.Contains(body, `href="/projects/-Users-test-project2/"`) {
+		t.Error("dashboard missing encoded project link for /Users/test/project2")
+	}
 }
 
 func TestPlansList(t *testing.T) {
@@ -141,17 +148,20 @@ func TestTodosList(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, "test-todo") {
-		t.Error("todos list missing test todo")
+	if !strings.Contains(body, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-agent-") {
+		t.Error("todos list missing todo filename")
 	}
 	if !strings.Contains(body, "3 items") {
 		t.Error("todos list missing item count")
+	}
+	if !strings.Contains(body, "test/project") {
+		t.Error("todos list missing project name context")
 	}
 }
 
 func TestTodoDetail(t *testing.T) {
 	handler := setupTestServer(t)
-	req := httptest.NewRequest("GET", "/todos/test-todo/", nil)
+	req := httptest.NewRequest("GET", "/todos/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-agent-11111111-2222-3333-4444-555555555555/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -165,6 +175,10 @@ func TestTodoDetail(t *testing.T) {
 	}
 	if !strings.Contains(body, "completed") {
 		t.Error("todo detail missing status")
+	}
+	// Session back-link
+	if !strings.Contains(body, "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/") {
+		t.Error("todo detail missing session back-link")
 	}
 }
 
@@ -198,11 +212,18 @@ func TestSessionsList(t *testing.T) {
 	if !strings.Contains(body, "session") {
 		t.Error("sessions list missing session info")
 	}
+	// Badges for linked entities
+	if !strings.Contains(body, ">todo</span>") {
+		t.Error("sessions list missing todo badge")
+	}
+	if !strings.Contains(body, ">files</span>") {
+		t.Error("sessions list missing files badge")
+	}
 }
 
 func TestConversation(t *testing.T) {
 	handler := setupTestServer(t)
-	req := httptest.NewRequest("GET", "/projects/test-project/session-1/", nil)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -223,6 +244,16 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "message-assistant") {
 		t.Error("conversation missing assistant messages")
 	}
+	// Cross-links
+	if !strings.Contains(body, "conversation-links") {
+		t.Error("conversation missing cross-links section")
+	}
+	if !strings.Contains(body, "Todo List") {
+		t.Error("conversation missing todo link")
+	}
+	if !strings.Contains(body, "File History") {
+		t.Error("conversation missing file history link")
+	}
 }
 
 func TestFileHistoryList(t *testing.T) {
@@ -236,14 +267,17 @@ func TestFileHistoryList(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, "conv-123") {
+	if !strings.Contains(body, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
 		t.Error("file history list missing conversation ID")
+	}
+	if !strings.Contains(body, "test/project") {
+		t.Error("file history list missing project name context")
 	}
 }
 
 func TestFileHistoryDetail(t *testing.T) {
 	handler := setupTestServer(t)
-	req := httptest.NewRequest("GET", "/file-history/conv-123/", nil)
+	req := httptest.NewRequest("GET", "/file-history/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -257,6 +291,10 @@ func TestFileHistoryDetail(t *testing.T) {
 	}
 	if !strings.Contains(body, "2 file versions") {
 		t.Error("file history detail missing version count")
+	}
+	// Session back-link
+	if !strings.Contains(body, "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/") {
+		t.Error("file history detail missing session back-link")
 	}
 }
 

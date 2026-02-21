@@ -1,5 +1,6 @@
 {{define "content"}}
 <a href="/todos/" class="back-link">Todos</a>
+{{if .Todo.ProjectDir}}<a href="/projects/{{.Todo.ProjectDir}}/{{.Todo.SessionID}}/" class="back-link">Session</a>{{end}}
 <h1 class="mono">{{.Todo.FileName | trimSuffix ".json"}}</h1>
 
 <ul class="todo-list">

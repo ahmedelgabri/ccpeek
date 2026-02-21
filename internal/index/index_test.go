@@ -77,7 +77,7 @@ func TestRun(t *testing.T) {
 		}
 
 		// Verify session JSON was written
-		sessData, err := os.ReadFile(filepath.Join(outDir, "projects", "test-project", "session-1.json"))
+		sessData, err := os.ReadFile(filepath.Join(outDir, "projects", "test-project", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json"))
 		if err != nil {
 			t.Fatal("reading session JSON:", err)
 		}
@@ -88,14 +88,38 @@ func TestRun(t *testing.T) {
 		if len(msgs) != 3 {
 			t.Errorf("expected 3 messages in JSON, got %d", len(msgs))
 		}
+
+		// Verify relationship: session has linked todo and file history
+		sess := p.Sessions[0]
+		if sess.TodoFileName == "" {
+			t.Error("expected session to have a linked TodoFileName")
+		}
+		if !sess.HasFileHistory {
+			t.Error("expected session to have HasFileHistory=true")
+		}
 	}
 
 	// File history
 	if len(idx.FileHistory) != 1 {
 		t.Errorf("expected 1 file history entry, got %d", len(idx.FileHistory))
 	} else {
-		if idx.FileHistory[0].FileCount != 2 {
-			t.Errorf("expected 2 files, got %d", idx.FileHistory[0].FileCount)
+		fh := idx.FileHistory[0]
+		if fh.FileCount != 2 {
+			t.Errorf("expected 2 files, got %d", fh.FileCount)
+		}
+		if fh.ProjectDir != "test-project" {
+			t.Errorf("expected file history ProjectDir %q, got %q", "test-project", fh.ProjectDir)
+		}
+	}
+
+	// Todos -- verify relationship fields
+	if len(idx.Todos) == 1 {
+		todo := idx.Todos[0]
+		if todo.SessionID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+			t.Errorf("expected todo SessionID to be UUID, got %q", todo.SessionID)
+		}
+		if todo.ProjectDir != "test-project" {
+			t.Errorf("expected todo ProjectDir %q, got %q", "test-project", todo.ProjectDir)
 		}
 	}
 

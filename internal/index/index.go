@@ -71,6 +71,8 @@ func Run(claudeDir, dataDir string) error {
 		History:        history,
 	}
 
+	resolveRelationships(&idx)
+
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling index: %w", err)

@@ -14,6 +14,8 @@
       <div class="item-meta-group">
         {{if .GitBranch}}<span class="item-meta mono">{{.GitBranch}}</span>{{end}}
         <span class="item-meta">{{.MessageCount}} msgs</span>
+        {{if .TodoFileName}}<span class="badge status-default">todo</span>{{end}}
+        {{if .HasFileHistory}}<span class="badge status-default">files</span>{{end}}
       </div>
     </div>
     {{if .Modified}}<span class="item-meta">{{formatDate .Modified}}</span>{{end}}

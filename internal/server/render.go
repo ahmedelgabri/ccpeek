@@ -68,6 +68,7 @@ var funcMap = template.FuncMap{
 	"formatShortDate":  formatShortDate,
 	"truncate":         truncate,
 	"decodeProjectDir": decodeProjectDir,
+	"encodeProjectDir": encodeProjectDir,
 	"renderMarkdown":   renderMarkdown,
 	"highlightCode":    highlightCode,
 	"toJSON":           toJSON,

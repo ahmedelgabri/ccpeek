@@ -19,6 +19,13 @@ func decodeProjectDir(dirName string) string {
 	return path
 }
 
+// encodeProjectDir converts a path to the encoded directory name format.
+func encodeProjectDir(path string) string {
+	result := strings.ReplaceAll(path, "/.", "--")
+	result = strings.ReplaceAll(result, "/", "-")
+	return result
+}
+
 // formatBytes formats a file size to a human-readable string.
 func formatBytes(bytes int64) string {
 	if bytes == 0 {

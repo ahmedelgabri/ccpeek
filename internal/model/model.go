@@ -28,9 +28,12 @@ type ShellSnapshotEntry struct {
 }
 
 type TodoEntry struct {
-	FileName  string         `json:"fileName"`
-	ItemCount int            `json:"itemCount"`
-	Statuses  map[string]int `json:"statuses"`
+	FileName    string         `json:"fileName"`
+	ItemCount   int            `json:"itemCount"`
+	Statuses    map[string]int `json:"statuses"`
+	SessionID   string         `json:"sessionId,omitempty"`
+	ProjectDir  string         `json:"projectDir,omitempty"`
+	ProjectName string         `json:"projectName,omitempty"`
 }
 
 type ProjectEntry struct {
@@ -48,11 +51,15 @@ type SessionEntry struct {
 	Modified     string `json:"modified"`
 	GitBranch    string `json:"gitBranch,omitempty"`
 	ProjectPath  string `json:"projectPath,omitempty"`
+	TodoFileName string `json:"todoFileName,omitempty"`
+	HasFileHistory bool `json:"hasFileHistory,omitempty"`
 }
 
 type FileHistoryEntry struct {
 	ConversationID string `json:"conversationId"`
 	FileCount      int    `json:"fileCount"`
+	ProjectDir     string `json:"projectDir,omitempty"`
+	ProjectName    string `json:"projectName,omitempty"`
 }
 
 type HistoryEntry struct {

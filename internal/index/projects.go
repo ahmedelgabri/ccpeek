@@ -182,3 +182,11 @@ func decodeProjectDir(dirName string) string {
 	path = strings.ReplaceAll(path, "-", "/")
 	return path
 }
+
+// encodeProjectDir converts a path to the encoded directory name format.
+// e.g. "/Users/ahmed/.dotfiles" -> "-Users-ahmed--dotfiles"
+func encodeProjectDir(path string) string {
+	result := strings.ReplaceAll(path, "/.", "--")
+	result = strings.ReplaceAll(result, "/", "-")
+	return result
+}

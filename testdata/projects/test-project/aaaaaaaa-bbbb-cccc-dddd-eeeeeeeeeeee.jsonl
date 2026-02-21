@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2024-01-15T10:00:00Z","uuid":"u1","message":{"role":"user","content":"hello world"},"sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","cwd":"/tmp","gitBranch":"main"}
+{"type":"assistant","timestamp":"2024-01-15T10:00:01Z","uuid":"u2","message":{"role":"assistant","content":[{"type":"text","text":"Hi there."}]},"sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+{"type":"progress","message":"thinking..."}
+{"type":"user","timestamp":"2024-01-15T10:00:02Z","uuid":"u3","message":{"role":"user","content":"thanks"},"sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}

@@ -8,6 +8,12 @@
     {{if .Session.GitBranch}}<span class="mono">{{.Session.GitBranch}}</span>{{end}}
     <span>{{.TotalMsgs}} messages</span>
   </div>
+  {{if or .Session.TodoFileName .Session.HasFileHistory}}
+  <div class="conversation-links">
+    {{if .Session.TodoFileName}}<a href="/todos/{{trimSuffix ".json" .Session.TodoFileName}}/">Todo List</a>{{end}}
+    {{if .Session.HasFileHistory}}<a href="/file-history/{{.Session.SessionID}}/">File History</a>{{end}}
+  </div>
+  {{end}}
 </div>
 
 {{template "pagination" .}}

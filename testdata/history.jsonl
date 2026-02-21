@@ -1,3 +1,3 @@
-{"display":"first conversation","timestamp":1700000000000,"project":"/Users/test/project1"}
+{"display":"first conversation","timestamp":1700000000000,"project":"test/project"}
 {"display":"second conversation","timestamp":1700001000000,"project":"/Users/test/project2"}
-{"display":"third conversation","timestamp":1700002000000,"project":"/Users/test/project1"}
+{"display":"third conversation","timestamp":1700002000000,"project":"test/project"}
