@@ -3,5 +3,5 @@
 	"useTabs": true,
 	"semi": false,
 	"singleQuote": true,
-	"ignorePatterns": []
+	"ignorePatterns": ["*.md"]
 }
