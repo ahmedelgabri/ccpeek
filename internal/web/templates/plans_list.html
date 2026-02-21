@@ -1,0 +1,17 @@
+{{define "content"}}
+<h1>Plans</h1>
+
+<input type="text" class="search-input" placeholder="Filter plans..." data-search-target="searchable-list">
+<div class="search-count"></div>
+
+<div class="item-list searchable-list">
+  {{range .Plans}}
+  <a href="/plans/{{.FileName | trimSuffix ".md"}}/" class="list-item" data-search-keys="{{.Title}} {{.FileName}}">
+    <span class="item-title">{{.Title}}</span>
+    <span class="item-meta">{{formatBytes .SizeBytes}}</span>
+  </a>
+  {{end}}
+</div>
+{{end}}
+
+{{template "layout.html" .}}

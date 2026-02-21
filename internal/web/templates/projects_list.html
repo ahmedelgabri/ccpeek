@@ -1,0 +1,17 @@
+{{define "content"}}
+<h1>Projects</h1>
+
+<input type="text" class="search-input" placeholder="Filter projects..." data-search-target="searchable-list">
+<div class="search-count"></div>
+
+<div class="item-list searchable-list">
+  {{range .Projects}}
+  <a href="/projects/{{.DirName}}/" class="list-item" data-search-keys="{{.DisplayName}} {{.DirName}}">
+    <span class="item-title">{{.DisplayName}}</span>
+    <span class="item-meta">{{.SessionCount}} sessions</span>
+  </a>
+  {{end}}
+</div>
+{{end}}
+
+{{template "layout.html" .}}

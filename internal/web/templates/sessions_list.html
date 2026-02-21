@@ -1,0 +1,25 @@
+{{define "content"}}
+<a href="/projects/" class="back-link">Projects</a>
+<h1>{{.Project.DisplayName}}</h1>
+<p class="subtitle">{{.Project.SessionCount}} sessions</p>
+
+<input type="text" class="search-input" placeholder="Filter sessions..." data-search-target="searchable-list">
+<div class="search-count"></div>
+
+<div class="item-list searchable-list">
+  {{range .Project.Sessions}}
+  <a href="/projects/{{$.Project.DirName}}/{{.SessionID}}/" class="list-item" data-search-keys="{{.FirstPrompt}} {{.SessionID}} {{.GitBranch}}">
+    <div class="item-main">
+      <span class="item-title">{{if .FirstPrompt}}{{truncate .FirstPrompt 100}}{{else}}{{.SessionID}}{{end}}</span>
+      <div class="item-meta-group">
+        {{if .GitBranch}}<span class="item-meta mono">{{.GitBranch}}</span>{{end}}
+        <span class="item-meta">{{.MessageCount}} msgs</span>
+      </div>
+    </div>
+    {{if .Modified}}<span class="item-meta">{{formatDate .Modified}}</span>{{end}}
+  </a>
+  {{end}}
+</div>
+{{end}}
+
+{{template "layout.html" .}}

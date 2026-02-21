@@ -1,0 +1,9 @@
+{{define "pagination"}}
+{{if gt .TotalPages 1}}
+<div class="pagination">
+  {{if .HasPrev}}<a href="?page={{.PrevPage}}" class="btn">Prev</a>{{else}}<span class="btn disabled">Prev</span>{{end}}
+  <span class="page-info">Page {{.Page}} of {{.TotalPages}} ({{.TotalMsgs}} messages)</span>
+  {{if .HasNext}}<a href="?page={{.NextPage}}" class="btn">Next</a>{{else}}<span class="btn disabled">Next</span>{{end}}
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,24 @@
+{{define "content"}}
+<a href="/file-history/" class="back-link">File History</a>
+<h1 class="mono">{{.ConversationID}}</h1>
+<p class="subtitle">{{.TotalFiles}} file versions</p>
+
+<div class="file-groups">
+  {{range .Groups}}
+  <div class="file-group">
+    <div class="file-group-header">
+      {{.Hash}}
+      <span class="file-group-count">({{len .Versions}} version{{if gt (len .Versions) 1}}s{{end}})</span>
+    </div>
+    {{range .Versions}}
+    <details class="file-version">
+      <summary>v{{.Version}}</summary>
+      <pre class="file-content">{{.Content}}</pre>
+    </details>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{template "layout.html" .}}

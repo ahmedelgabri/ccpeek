@@ -1,0 +1,17 @@
+{{define "content"}}
+<h1>Shell Snapshots</h1>
+
+<div class="item-list">
+  {{range .Snapshots}}
+  <a href="/shell-snapshots/{{.FileName | trimSuffix ".sh"}}/" class="list-item">
+    <span class="item-title mono">{{.FileName}}</span>
+    <div class="item-meta-group">
+      <span class="item-meta">{{formatTimestamp .Timestamp}}</span>
+      <span class="item-meta">{{formatBytes .SizeBytes}}</span>
+    </div>
+  </a>
+  {{end}}
+</div>
+{{end}}
+
+{{template "layout.html" .}}

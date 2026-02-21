@@ -1,0 +1,7 @@
+{{define "content"}}
+<a href="/shell-snapshots/" class="back-link">Shell Snapshots</a>
+<h1 class="mono">{{.Snapshot.FileName}}</h1>
+<div class="code-block">{{.Content}}</div>
+{{end}}
+
+{{template "layout.html" .}}

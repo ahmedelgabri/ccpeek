@@ -1,0 +1,16 @@
+{{define "content"}}
+<a href="/todos/" class="back-link">Todos</a>
+<h1 class="mono">{{.Todo.FileName | trimSuffix ".json"}}</h1>
+
+<ul class="todo-list">
+  {{range .Items}}
+  <li class="todo-item {{statusColor .Status}}">
+    <span class="todo-status">{{.Status}}</span>
+    <span class="todo-content">{{.Content}}</span>
+    {{if .ActiveForm}}<span class="todo-active-form">{{.ActiveForm}}</span>{{end}}
+  </li>
+  {{end}}
+</ul>
+{{end}}
+
+{{template "layout.html" .}}

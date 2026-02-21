@@ -1,0 +1,32 @@
+{{define "message"}}
+<div class="message message-{{.Type}}">
+  <div class="message-header">
+    <span class="message-role">{{if eq .Type "user"}}User{{else if eq .Type "assistant"}}Assistant{{else}}System{{end}}</span>
+    {{if .Timestamp}}<span class="message-time">{{formatDate .Timestamp}}</span>{{end}}
+  </div>
+  <div class="message-body">
+    {{if .Message.IsString}}
+      <div class="prose">{{renderMarkdown (.Message.ContentText)}}</div>
+    {{else}}
+      {{range .Message.ContentBlocks}}
+        {{if eq .Type "text"}}
+          <div class="prose">{{renderMarkdown .Text}}</div>
+        {{else if eq .Type "tool_use"}}
+          <details class="tool-call">
+            <summary><span class="tool-name">{{.Name}}</span></summary>
+            <pre class="tool-input">{{toJSON .Input}}</pre>
+          </details>
+        {{else if eq .Type "tool_result"}}
+          {{$text := .ToolResultText}}
+          {{if $text}}
+          <details class="tool-result">
+            <summary><span class="tool-result-label">tool result</span> <span class="tool-result-preview">{{truncate $text 80}}</span></summary>
+            <pre class="tool-output">{{$text}}</pre>
+          </details>
+          {{end}}
+        {{end}}
+      {{end}}
+    {{end}}
+  </div>
+</div>
+{{end}}

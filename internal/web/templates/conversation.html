@@ -1,0 +1,24 @@
+{{define "content"}}
+<a href="/projects/{{.Project.DirName}}/" class="back-link">{{.Project.DisplayName}}</a>
+
+<div class="conversation-header">
+  <h1>{{if .Session.FirstPrompt}}{{.Session.FirstPrompt}}{{else}}{{.Session.SessionID}}{{end}}</h1>
+  <div class="conversation-meta">
+    {{if .Session.Created}}<span>{{formatDate .Session.Created}}</span>{{end}}
+    {{if .Session.GitBranch}}<span class="mono">{{.Session.GitBranch}}</span>{{end}}
+    <span>{{.TotalMsgs}} messages</span>
+  </div>
+</div>
+
+{{template "pagination" .}}
+
+<div class="messages">
+  {{range .Messages}}
+  {{template "message" .}}
+  {{end}}
+</div>
+
+{{template "pagination" .}}
+{{end}}
+
+{{template "layout.html" .}}

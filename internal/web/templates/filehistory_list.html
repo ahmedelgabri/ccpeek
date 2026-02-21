@@ -1,0 +1,14 @@
+{{define "content"}}
+<h1>File History</h1>
+
+<div class="item-list">
+  {{range .Entries}}
+  <a href="/file-history/{{.ConversationID}}/" class="list-item">
+    <span class="item-title mono">{{.ConversationID}}</span>
+    <span class="item-meta">{{.FileCount}} files</span>
+  </a>
+  {{end}}
+</div>
+{{end}}
+
+{{template "layout.html" .}}

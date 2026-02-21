@@ -1,0 +1,13 @@
+{{define "nav.html"}}
+<nav>
+  <a href="/" class="nav-title">Claude History</a>
+  <ul>
+    <li><a href="/" {{if eq .CurrentPath "/"}}class="active"{{end}}>Dashboard</a></li>
+    <li><a href="/projects/" {{if eq .CurrentPath "/projects/"}}class="active"{{end}}>Projects</a></li>
+    <li><a href="/plans/" {{if eq .CurrentPath "/plans/"}}class="active"{{end}}>Plans</a></li>
+    <li><a href="/shell-snapshots/" {{if eq .CurrentPath "/shell-snapshots/"}}class="active"{{end}}>Shell Snapshots</a></li>
+    <li><a href="/todos/" {{if eq .CurrentPath "/todos/"}}class="active"{{end}}>Todos</a></li>
+    <li><a href="/file-history/" {{if eq .CurrentPath "/file-history/"}}class="active"{{end}}>File History</a></li>
+  </ul>
+</nav>
+{{end}}

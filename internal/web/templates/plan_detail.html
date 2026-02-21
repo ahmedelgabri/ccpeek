@@ -1,0 +1,7 @@
+{{define "content"}}
+<a href="/plans/" class="back-link">Plans</a>
+<h1>{{.Plan.Title}}</h1>
+<div class="prose">{{.Content}}</div>
+{{end}}
+
+{{template "layout.html" .}}
