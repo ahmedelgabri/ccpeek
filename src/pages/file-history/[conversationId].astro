@@ -1,0 +1,56 @@
+---
+import { Code } from "astro:components";
+import Layout from "../../layouts/Layout.astro";
+import BackLink from "../../components/BackLink.astro";
+import { getIndexData, readDataFile } from "../../lib/data";
+import type { FileHistoryDetail } from "../../lib/types";
+
+export function getStaticPaths() {
+  const { fileHistory } = getIndexData();
+  return fileHistory.map((entry) => ({
+    params: { conversationId: entry.conversationId },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const detail: FileHistoryDetail = JSON.parse(
+  readDataFile(`file-history/${entry.conversationId}.json`),
+);
+
+// Group files by hash to show versions together
+const byHash = new Map<string, typeof detail.files>();
+for (const file of detail.files) {
+  if (!byHash.has(file.hash)) byHash.set(file.hash, []);
+  byHash.get(file.hash)!.push(file);
+}
+---
+
+<Layout title={`File History: ${entry.conversationId}`}>
+  <BackLink href="/file-history/" label="File History" />
+  <h1 class="text-xl font-bold font-mono mb-6">{entry.conversationId}</h1>
+  <p class="text-zinc-500 text-sm mb-6">{detail.files.length} file versions</p>
+
+  <div class="space-y-6">
+    {[...byHash.entries()].map(([hash, versions]) => (
+      <div class="border border-zinc-800 rounded overflow-hidden">
+        <div class="bg-zinc-900 px-4 py-2 text-sm font-mono text-zinc-300">
+          {hash}
+          <span class="text-zinc-500 ml-2">
+            ({versions.length} version{versions.length > 1 ? "s" : ""})
+          </span>
+        </div>
+        {versions.map((file) => (
+          <details class="border-t border-zinc-800">
+            <summary class="px-4 py-2 text-sm text-zinc-400 cursor-pointer hover:bg-zinc-900/50">
+              v{file.version}
+            </summary>
+            <div class="overflow-x-auto">
+              <Code code={file.content} lang="text" theme="github-dark" />
+            </div>
+          </details>
+        ))}
+      </div>
+    ))}
+  </div>
+</Layout>

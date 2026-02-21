@@ -1,0 +1,26 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { getIndexData } from "../../lib/data";
+
+const { fileHistory } = getIndexData();
+---
+
+<Layout title="File History">
+  <h1 class="text-2xl font-bold mb-6">File History</h1>
+
+  <div class="space-y-2">
+    {fileHistory.map((entry) => (
+      <a
+        href={`/file-history/${entry.conversationId}/`}
+        class="flex items-baseline justify-between gap-4 p-3 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors"
+      >
+        <span class="text-zinc-200 text-sm font-mono truncate">
+          {entry.conversationId}
+        </span>
+        <span class="text-zinc-500 text-xs shrink-0">
+          {entry.fileCount} files
+        </span>
+      </a>
+    ))}
+  </div>
+</Layout>
