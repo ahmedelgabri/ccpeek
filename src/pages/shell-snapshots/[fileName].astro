@@ -1,0 +1,29 @@
+---
+import { Code } from "astro:components";
+import Layout from "../../layouts/Layout.astro";
+import BackLink from "../../components/BackLink.astro";
+import { getIndexData, readDataFile } from "../../lib/data";
+import { formatTimestamp } from "../../lib/format";
+
+export function getStaticPaths() {
+  const { shellSnapshots } = getIndexData();
+  return shellSnapshots.map((snap) => ({
+    params: { fileName: snap.fileName.replace(".sh", "") },
+    props: { snap },
+  }));
+}
+
+const { snap } = Astro.props;
+const content = readDataFile(`shell-snapshots/${snap.fileName}`);
+---
+
+<Layout title={snap.fileName}>
+  <BackLink href="/shell-snapshots/" label="Shell Snapshots" />
+  <div class="flex items-baseline gap-4 mb-6">
+    <h1 class="text-xl font-bold font-mono">{snap.fileName}</h1>
+    <span class="text-zinc-500 text-sm">{formatTimestamp(snap.timestamp)}</span>
+  </div>
+  <div class="overflow-x-auto">
+    <Code code={content} lang="bash" theme="github-dark" />
+  </div>
+</Layout>
