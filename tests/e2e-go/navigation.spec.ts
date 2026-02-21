@@ -34,6 +34,6 @@ test.describe('navigation', () => {
 
 	test('dashboard shows recent conversations', async ({ page }) => {
 		await page.goto('/')
-		await expect(page.getByText('Recent Conversations')).toBeVisible()
+		await expect(page.getByRole('heading', { name: 'Recent Conversations' })).toBeVisible()
 	})
 })
