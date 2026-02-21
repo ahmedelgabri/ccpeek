@@ -61,26 +61,43 @@ func highlightCode(code, lang string) template.HTML {
 	return template.HTML(buf.String())
 }
 
-func loadTemplates(fsys fs.FS) (*template.Template, error) {
-	funcMap := template.FuncMap{
-		"formatBytes":     formatBytes,
-		"formatTimestamp": formatTimestamp,
-		"formatDate":      formatDate,
-		"formatShortDate": formatShortDate,
-		"truncate":        truncate,
-		"decodeProjectDir": decodeProjectDir,
-		"renderMarkdown":  renderMarkdown,
-		"highlightCode":   highlightCode,
-		"toJSON":          toJSON,
-		"safeHTML":        func(s string) template.HTML { return template.HTML(s) },
-		"statusColor":     statusColor,
-		"trimSuffix":      strings.TrimSuffix,
-		"sub": func(a, b int) int { return a - b },
-		"add": func(a, b int) int { return a + b },
+var funcMap = template.FuncMap{
+	"formatBytes":      formatBytes,
+	"formatTimestamp":  formatTimestamp,
+	"formatDate":       formatDate,
+	"formatShortDate":  formatShortDate,
+	"truncate":         truncate,
+	"decodeProjectDir": decodeProjectDir,
+	"renderMarkdown":   renderMarkdown,
+	"highlightCode":    highlightCode,
+	"toJSON":           toJSON,
+	"safeHTML":         func(s string) template.HTML { return template.HTML(s) },
+	"statusColor":      statusColor,
+	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },
+	"sub":              func(a, b int) int { return a - b },
+	"add":              func(a, b int) int { return a + b },
+}
+
+// templates holds a pre-parsed template for each page name.
+type templates struct {
+	pages map[string]*template.Template
+}
+
+func loadTemplates(fsys fs.FS) (*templates, error) {
+	// Parse the shared base templates (layout + partials).
+	base, err := template.New("").Funcs(funcMap).ParseFS(fsys,
+		"templates/layout.html",
+		"templates/partials/nav.html",
+		"templates/partials/pagination.html",
+		"templates/partials/message.html",
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	return template.New("").Funcs(funcMap).ParseFS(fsys,
-		"templates/layout.html",
+	// Each page template defines "content" and invokes "layout.html".
+	// Clone the base for each page so "content" definitions don't collide.
+	pageFiles := []string{
 		"templates/dashboard.html",
 		"templates/plans_list.html",
 		"templates/plan_detail.html",
@@ -93,15 +110,38 @@ func loadTemplates(fsys fs.FS) (*template.Template, error) {
 		"templates/conversation.html",
 		"templates/filehistory_list.html",
 		"templates/filehistory_detail.html",
-		"templates/partials/nav.html",
-		"templates/partials/pagination.html",
-		"templates/partials/message.html",
-	)
+	}
+
+	pages := make(map[string]*template.Template, len(pageFiles))
+	for _, pf := range pageFiles {
+		clone, err := base.Clone()
+		if err != nil {
+			return nil, err
+		}
+		t, err := clone.ParseFS(fsys, pf)
+		if err != nil {
+			return nil, err
+		}
+		// Key is the filename without directory prefix (e.g. "dashboard.html")
+		parts := strings.Split(pf, "/")
+		name := parts[len(parts)-1]
+		pages[name] = t
+	}
+
+	return &templates{pages: pages}, nil
 }
 
-func renderTemplate(w http.ResponseWriter, tmpl *template.Template, name string, data any) {
+func renderTemplate(w http.ResponseWriter, t *templates, name string, data any) {
+	page, ok := t.pages[name]
+	if !ok {
+		http.Error(w, "template not found: "+name, http.StatusInternalServerError)
+		return
+	}
+
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+	// Each page template invokes layout.html at the bottom, so we execute the
+	// page file itself (which triggers layout.html → content).
+	if err := page.ExecuteTemplate(&buf, name, data); err != nil {
 		http.Error(w, "template error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

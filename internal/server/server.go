@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"net/http"
 	"os"
@@ -110,5 +109,5 @@ func loadDataStore(dataDir string) (*DataStore, error) {
 
 type handlers struct {
 	store *DataStore
-	tmpl  *template.Template
+	tmpl  *templates
 }
