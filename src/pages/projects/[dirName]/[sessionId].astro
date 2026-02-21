@@ -1,0 +1,46 @@
+---
+import Layout from "../../../layouts/Layout.astro";
+import BackLink from "../../../components/BackLink.astro";
+import ConversationViewer from "../../../components/ConversationViewer";
+import { getIndexData, readDataFile } from "../../../lib/data";
+import { formatDate } from "../../../lib/format";
+import type { ConversationMessage } from "../../../lib/types";
+
+export function getStaticPaths() {
+  const { projects } = getIndexData();
+  const paths = [];
+  for (const project of projects) {
+    for (const session of project.sessions) {
+      paths.push({
+        params: { dirName: project.dirName, sessionId: session.sessionId },
+        props: { project, session },
+      });
+    }
+  }
+  return paths;
+}
+
+const { project, session } = Astro.props;
+const messages: ConversationMessage[] = JSON.parse(
+  readDataFile(`projects/${project.dirName}/${session.sessionId}.json`),
+);
+---
+
+<Layout title={session.firstPrompt || session.sessionId}>
+  <BackLink href={`/projects/${project.dirName}/`} label={project.displayName} />
+
+  <div class="mb-6">
+    <h1 class="text-xl font-bold mb-2">
+      {session.firstPrompt || session.sessionId}
+    </h1>
+    <div class="flex gap-4 text-sm text-zinc-500">
+      {session.created && <span>{formatDate(session.created)}</span>}
+      {session.gitBranch && (
+        <span class="font-mono">{session.gitBranch}</span>
+      )}
+      <span>{messages.length} messages</span>
+    </div>
+  </div>
+
+  <ConversationViewer client:load messages={messages} />
+</Layout>
