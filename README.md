@@ -1,5 +1,7 @@
 # CCExplore
 
+![](./docs/logo.png)
+
 Explore your Claude Code history. A local web app that indexes and browses your
 Claude Code conversations, plans, todos, shell snapshots, and file history.
 
@@ -33,14 +35,14 @@ The server reads Claude Code data from `~/.claude` and writes an index to
 
 ### CLI flags
 
-| Flag           | Default              | Description                       |
-| -------------- | -------------------- | --------------------------------- |
-| `--port`       | `3000`               | Server port                       |
-| `--claude-dir` | `~/.claude`          | Source directory (Claude data)    |
-| `--data-dir`   | `$TMPDIR/.ccexplore` | Indexed data output directory     |
-| `--skip-index` | `false`              | Skip indexing, serve existing data|
-| `--index-only` | `false`              | Index and exit                    |
-| `--open`       | `false`              | Open browser after starting       |
+| Flag           | Default              | Description                        |
+| -------------- | -------------------- | ---------------------------------- |
+| `--port`       | `3000`               | Server port                        |
+| `--claude-dir` | `~/.claude`          | Source directory (Claude data)     |
+| `--data-dir`   | `$TMPDIR/.ccexplore` | Indexed data output directory      |
+| `--skip-index` | `false`              | Skip indexing, serve existing data |
+| `--index-only` | `false`              | Index and exit                     |
+| `--open`       | `false`              | Open browser after starting        |
 
 ## Development
 
