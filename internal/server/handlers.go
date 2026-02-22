@@ -23,7 +23,7 @@ type heatmapDay struct {
 }
 
 func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
-	idx := h.store.Index
+	idx := h.store.Load().Index
 
 	totalSessions := 0
 	for _, p := range idx.Projects {
@@ -91,19 +91,19 @@ func (h *handlers) plansList(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, h.tmpl, "plans_list.html", map[string]any{
 		"Title":       "Plans",
 		"CurrentPath": "/plans/",
-		"Plans":       h.store.Index.Plans,
+		"Plans":       h.store.Load().Index.Plans,
 	})
 }
 
 func (h *handlers) planDetail(w http.ResponseWriter, r *http.Request) {
 	fileName := r.PathValue("fileName")
+	store := h.store.Load()
 
-	// Find the plan entry
 	var entry *model.PlanEntry
-	for i := range h.store.Index.Plans {
-		name := strings.TrimSuffix(h.store.Index.Plans[i].FileName, ".md")
+	for i := range store.Index.Plans {
+		name := strings.TrimSuffix(store.Index.Plans[i].FileName, ".md")
 		if name == fileName {
-			entry = &h.store.Index.Plans[i]
+			entry = &store.Index.Plans[i]
 			break
 		}
 	}
@@ -112,7 +112,7 @@ func (h *handlers) planDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(filepath.Join(h.store.DataDir, "plans", entry.FileName))
+	content, err := os.ReadFile(filepath.Join(store.DataDir, "plans", entry.FileName))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -130,18 +130,19 @@ func (h *handlers) snapshotsList(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, h.tmpl, "snapshots_list.html", map[string]any{
 		"Title":       "Shell Snapshots",
 		"CurrentPath": "/shell-snapshots/",
-		"Snapshots":   h.store.Index.ShellSnapshots,
+		"Snapshots":   h.store.Load().Index.ShellSnapshots,
 	})
 }
 
 func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
 	fileName := r.PathValue("fileName")
+	store := h.store.Load()
 
 	var entry *model.ShellSnapshotEntry
-	for i := range h.store.Index.ShellSnapshots {
-		name := strings.TrimSuffix(h.store.Index.ShellSnapshots[i].FileName, ".sh")
+	for i := range store.Index.ShellSnapshots {
+		name := strings.TrimSuffix(store.Index.ShellSnapshots[i].FileName, ".sh")
 		if name == fileName {
-			entry = &h.store.Index.ShellSnapshots[i]
+			entry = &store.Index.ShellSnapshots[i]
 			break
 		}
 	}
@@ -150,7 +151,7 @@ func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(filepath.Join(h.store.DataDir, "shell-snapshots", entry.FileName))
+	content, err := os.ReadFile(filepath.Join(store.DataDir, "shell-snapshots", entry.FileName))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -168,18 +169,19 @@ func (h *handlers) todosList(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, h.tmpl, "todos_list.html", map[string]any{
 		"Title":       "Todos",
 		"CurrentPath": "/todos/",
-		"Todos":       h.store.Index.Todos,
+		"Todos":       h.store.Load().Index.Todos,
 	})
 }
 
 func (h *handlers) todoDetail(w http.ResponseWriter, r *http.Request) {
 	fileName := r.PathValue("fileName")
+	store := h.store.Load()
 
 	var entry *model.TodoEntry
-	for i := range h.store.Index.Todos {
-		name := strings.TrimSuffix(h.store.Index.Todos[i].FileName, ".json")
+	for i := range store.Index.Todos {
+		name := strings.TrimSuffix(store.Index.Todos[i].FileName, ".json")
 		if name == fileName {
-			entry = &h.store.Index.Todos[i]
+			entry = &store.Index.Todos[i]
 			break
 		}
 	}
@@ -188,7 +190,7 @@ func (h *handlers) todoDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "todos", entry.FileName))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "todos", entry.FileName))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -212,17 +214,18 @@ func (h *handlers) projectsList(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, h.tmpl, "projects_list.html", map[string]any{
 		"Title":       "Projects",
 		"CurrentPath": "/projects/",
-		"Projects":    h.store.Index.Projects,
+		"Projects":    h.store.Load().Index.Projects,
 	})
 }
 
 func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 	dirName := r.PathValue("dirName")
+	store := h.store.Load()
 
 	var project *model.ProjectEntry
-	for i := range h.store.Index.Projects {
-		if h.store.Index.Projects[i].DirName == dirName {
-			project = &h.store.Index.Projects[i]
+	for i := range store.Index.Projects {
+		if store.Index.Projects[i].DirName == dirName {
+			project = &store.Index.Projects[i]
 			break
 		}
 	}
@@ -239,21 +242,24 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // lookupSession finds a project and session from the URL path values.
+// Returns the DataStore snapshot alongside the project/session so callers
+// can reuse it without additional atomic loads.
 // Returns false and writes a 404 if either is not found.
-func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*model.ProjectEntry, *model.SessionEntry, bool) {
+func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*DataStore, *model.ProjectEntry, *model.SessionEntry, bool) {
 	dirName := r.PathValue("dirName")
 	sessionID := r.PathValue("sessionId")
 
+	store := h.store.Load()
 	var project *model.ProjectEntry
-	for i := range h.store.Index.Projects {
-		if h.store.Index.Projects[i].DirName == dirName {
-			project = &h.store.Index.Projects[i]
+	for i := range store.Index.Projects {
+		if store.Index.Projects[i].DirName == dirName {
+			project = &store.Index.Projects[i]
 			break
 		}
 	}
 	if project == nil {
 		http.NotFound(w, r)
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 
 	var session *model.SessionEntry
@@ -265,19 +271,19 @@ func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*model
 	}
 	if session == nil {
 		http.NotFound(w, r)
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 
-	return project, session, true
+	return store, project, session, true
 }
 
 func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
-	project, session, ok := h.lookupSession(w, r)
+	store, project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -336,7 +342,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
-	project, session, ok := h.lookupSession(w, r)
+	store, project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
@@ -346,7 +352,7 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "todos", session.TodoFileName))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "todos", session.TodoFileName))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -374,7 +380,7 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Request) {
-	project, session, ok := h.lookupSession(w, r)
+	store, project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
@@ -384,7 +390,7 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "file-history", session.SessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "file-history", session.SessionID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -444,7 +450,7 @@ type bashCommand struct {
 }
 
 func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) {
-	project, session, ok := h.lookupSession(w, r)
+	store, project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
@@ -454,7 +460,7 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -514,7 +520,7 @@ type toolStat struct {
 }
 
 func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
-	project, session, ok := h.lookupSession(w, r)
+	store, project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
@@ -524,7 +530,7 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -586,12 +592,12 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
-	project, session, ok := h.lookupSession(w, r)
+	store, project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -717,17 +723,18 @@ func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, h.tmpl, "filehistory_list.html", map[string]any{
 		"Title":       "File History",
 		"CurrentPath": "/file-history/",
-		"Entries":     h.store.Index.FileHistory,
+		"Entries":     h.store.Load().Index.FileHistory,
 	})
 }
 
 func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 	conversationID := r.PathValue("conversationId")
+	store := h.store.Load()
 
 	var entry *model.FileHistoryEntry
-	for i := range h.store.Index.FileHistory {
-		if h.store.Index.FileHistory[i].ConversationID == conversationID {
-			entry = &h.store.Index.FileHistory[i]
+	for i := range store.Index.FileHistory {
+		if store.Index.FileHistory[i].ConversationID == conversationID {
+			entry = &store.Index.FileHistory[i]
 			break
 		}
 	}
@@ -736,7 +743,7 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "file-history", conversationID+".json"))
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "file-history", conversationID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -799,13 +806,14 @@ type searchResult struct {
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	store := h.store.Load()
 
 	var results []searchResult
 	if query != "" {
 		queryLower := strings.ToLower(query)
-		for _, project := range h.store.Index.Projects {
+		for _, project := range store.Index.Projects {
 			for _, session := range project.Sessions {
-				data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+				data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
 				if err != nil {
 					continue
 				}

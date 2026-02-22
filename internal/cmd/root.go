@@ -35,6 +35,7 @@ func init() {
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().Bool("open", false, "Open browser after starting server")
+	rootCmd.Flags().Bool("watch", false, "Re-index periodically while serving")
 }
 
 func Execute() {
@@ -51,6 +52,7 @@ func run(cmd *cobra.Command, args []string) error {
 	skipIndex, _ := cmd.Flags().GetBool("skip-index")
 	indexOnly, _ := cmd.Flags().GetBool("index-only")
 	openBrowser, _ := cmd.Flags().GetBool("open")
+	watch, _ := cmd.Flags().GetBool("watch")
 
 	if !skipIndex {
 		fmt.Println("Indexing", claudeDir, "->", dataDir)
@@ -68,11 +70,15 @@ func run(cmd *cobra.Command, args []string) error {
 	url := fmt.Sprintf("http://localhost:%d", port)
 	fmt.Println("Serving on", url)
 
+	if watch {
+		fmt.Println("Watch mode enabled, re-indexing every 30s")
+	}
+
 	if openBrowser {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(addr, dataDir)
+	return server.ListenAndServe(addr, dataDir, claudeDir, watch)
 }
 
 func openURL(url string) {

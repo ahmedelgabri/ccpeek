@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
+	"github.com/ahmedelgabri/ccexplore/internal/index"
 	"github.com/ahmedelgabri/ccexplore/internal/model"
 	"github.com/ahmedelgabri/ccexplore/internal/web"
 )
@@ -21,7 +23,7 @@ type DataStore struct {
 }
 
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(addr, dataDir string) error {
+func ListenAndServe(addr, dataDir, claudeDir string, watch bool) error {
 	store, err := loadDataStore(dataDir)
 	if err != nil {
 		return fmt.Errorf("loading data: %w", err)
@@ -37,30 +39,14 @@ func ListenAndServe(addr, dataDir string) error {
 		return fmt.Errorf("static fs: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	h := &handlers{store: store, tmpl: tmpl}
+	h := &handlers{tmpl: tmpl}
+	h.store.Store(store)
 
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("GET /{$}", h.dashboard)
-	mux.HandleFunc("GET /plans/{$}", h.plansList)
-	mux.HandleFunc("GET /plans/{fileName}/{$}", h.planDetail)
-	mux.HandleFunc("GET /shell-snapshots/{$}", h.snapshotsList)
-	mux.HandleFunc("GET /shell-snapshots/{fileName}/{$}", h.snapshotDetail)
-	mux.HandleFunc("GET /todos/{$}", h.todosList)
-	mux.HandleFunc("GET /todos/{fileName}/{$}", h.todoDetail)
-	mux.HandleFunc("GET /projects/{$}", h.projectsList)
-	mux.HandleFunc("GET /projects/{dirName}/{$}", h.sessionsList)
-	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/{$}", h.conversation)
-	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/todos/{$}", h.conversationTodos)
-	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/file-history/{$}", h.conversationFileHistory)
-	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/commands/{$}", h.conversationCommands)
-	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/tools/{$}", h.conversationTools)
-	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/export.md", h.conversationExport)
-	mux.HandleFunc("GET /search/{$}", h.search)
-	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
-	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
+	if watch {
+		go watchAndReindex(claudeDir, dataDir, &h.store)
+	}
 
-	return http.ListenAndServe(addr, requestLogger(mux))
+	return http.ListenAndServe(addr, requestLogger(registerRoutes(h, staticFS)))
 }
 
 // NewHandler creates the HTTP handler without starting a listener.
@@ -81,9 +67,14 @@ func NewHandler(dataDir string) (http.Handler, error) {
 		return nil, fmt.Errorf("static fs: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	h := &handlers{store: store, tmpl: tmpl}
+	h := &handlers{tmpl: tmpl}
+	h.store.Store(store)
 
+	return registerRoutes(h, staticFS), nil
+}
+
+func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
+	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /{$}", h.dashboard)
 	mux.HandleFunc("GET /plans/{$}", h.plansList)
@@ -103,8 +94,7 @@ func NewHandler(dataDir string) (http.Handler, error) {
 	mux.HandleFunc("GET /search/{$}", h.search)
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
-
-	return mux, nil
+	return mux
 }
 
 func loadDataStore(dataDir string) (*DataStore, error) {
@@ -122,8 +112,29 @@ func loadDataStore(dataDir string) (*DataStore, error) {
 }
 
 type handlers struct {
-	store *DataStore
+	store atomic.Pointer[DataStore]
 	tmpl  *templates
+}
+
+const watchInterval = 30 * time.Second
+
+func watchAndReindex(claudeDir, dataDir string, store *atomic.Pointer[DataStore]) {
+	ticker := time.NewTicker(watchInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		log.Println("Re-indexing...")
+		if err := index.Run(claudeDir, dataDir); err != nil {
+			log.Printf("Re-index failed: %v", err)
+			continue
+		}
+		newStore, err := loadDataStore(dataDir)
+		if err != nil {
+			log.Printf("Failed to load re-indexed data: %v", err)
+			continue
+		}
+		store.Store(newStore)
+		log.Println("Re-index complete, data reloaded.")
+	}
 }
 
 type statusRecorder struct {
