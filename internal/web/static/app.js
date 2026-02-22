@@ -53,7 +53,9 @@ document.addEventListener("click", (e) => {
   if (!btn || !list) return;
   const dir = list.getAttribute("data-project-dir");
 
-  list.addEventListener("change", () => {
+  const allChecks = list.querySelectorAll(".compare-check");
+
+  const updateCompare = () => {
     const checked = list.querySelectorAll(".compare-check:checked");
     if (checked.length === 2) {
       const a = checked[0].getAttribute("data-session-id");
@@ -63,6 +65,13 @@ document.addEventListener("click", (e) => {
     } else {
       btn.classList.add("hidden");
     }
+    allChecks.forEach((cb) => {
+      if (!cb.checked) cb.disabled = checked.length >= 2;
+    });
+  };
+
+  list.addEventListener("change", (e) => {
+    if (e.target.classList.contains("compare-check")) updateCompare();
   });
 })();
 
@@ -99,6 +108,202 @@ document.addEventListener("click", (e) => {
       );
     }
   });
+})();
+
+// Session filters + sort: badge filters (AND logic) combined with text search, sort by date.
+(() => {
+  const filtersEl = document.getElementById("session-filters");
+  const list = document.querySelector(".searchable-list");
+  if (!filtersEl || !list) return;
+
+  const searchInput = document.querySelector(".search-input");
+  const countEl = document.querySelector(".search-count");
+  const sortBtn = document.getElementById("sort-toggle");
+  const rows = Array.from(list.querySelectorAll(".list-row"));
+  const activeFilters = new Set();
+
+  const passesSearch = (row) => {
+    if (!searchInput) return true;
+    const query = searchInput.value.toLowerCase().trim();
+    if (!query) return true;
+    const terms = query.split(/\s+/);
+    const keys = (row.getAttribute("data-search-keys") || "").toLowerCase();
+    return terms.every((t) => keys.includes(t));
+  };
+
+  const passesFilter = (row) => {
+    for (const f of activeFilters) {
+      if (f === "todo" && !row.getAttribute("data-has-todo")) return false;
+      if (f === "files" && !row.getAttribute("data-has-files")) return false;
+      if (f === "commands" && !row.getAttribute("data-has-commands"))
+        return false;
+      if (
+        f === "tokens" &&
+        parseInt(row.getAttribute("data-tokens") || "0", 10) < 10000
+      )
+        return false;
+    }
+    return true;
+  };
+
+  const applyFilters = () => {
+    let shown = 0;
+    rows.forEach((row) => {
+      const visible = passesSearch(row) && passesFilter(row);
+      row.hidden = !visible;
+      if (visible) shown++;
+    });
+
+    if (countEl) {
+      const query = searchInput ? searchInput.value.trim() : "";
+      const hasActive = query || activeFilters.size > 0;
+      countEl.textContent = hasActive
+        ? shown + " of " + rows.length + " items"
+        : rows.length + " items";
+    }
+
+    // Uncheck hidden compare checkboxes so they don't count toward the limit
+    rows.forEach((row) => {
+      if (row.hidden) {
+        const cb = row.querySelector(".compare-check");
+        if (cb && cb.checked) {
+          cb.checked = false;
+          cb.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+    });
+  };
+
+  filtersEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-filter]");
+    if (!btn) return;
+    const name = btn.getAttribute("data-filter");
+
+    if (activeFilters.has(name)) {
+      activeFilters.delete(name);
+      btn.classList.remove("border-violet-400");
+    } else {
+      activeFilters.add(name);
+      btn.classList.add("border-violet-400");
+    }
+    applyFilters();
+  });
+
+  // Re-apply filters when search text changes
+  if (searchInput) {
+    searchInput.addEventListener("input", applyFilters);
+  }
+
+  if (sortBtn) {
+    sortBtn.addEventListener("click", () => {
+      const current = sortBtn.getAttribute("data-sort");
+      const next = current === "desc" ? "asc" : "desc";
+      sortBtn.setAttribute("data-sort", next);
+      sortBtn.querySelector("span").textContent =
+        next === "desc" ? "Newest" : "Oldest";
+      sortBtn.querySelector("svg").style.transform =
+        next === "asc" ? "rotate(180deg)" : "";
+
+      const sorted = [...rows].sort((a, b) => {
+        const ma = a.getAttribute("data-modified") || "";
+        const mb = b.getAttribute("data-modified") || "";
+        return next === "desc" ? mb.localeCompare(ma) : ma.localeCompare(mb);
+      });
+      sorted.forEach((row) => list.appendChild(row));
+    });
+  }
+})();
+
+// Heatmap tooltip: show date and count on hover.
+(() => {
+  const wrapper = document.getElementById("heatmap-wrapper");
+  const container = document.getElementById("heatmap-container");
+  const tooltip = document.getElementById("heatmap-tooltip");
+  if (!wrapper || !container || !tooltip) return;
+
+  const days = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+
+  const formatDate = (dateStr) => {
+    const parts = dateStr.split("-");
+    const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+    return (
+      days[d.getDay()] +
+      ", " +
+      months[d.getMonth()] +
+      " " +
+      d.getDate() +
+      ", " +
+      d.getFullYear()
+    );
+  };
+
+  container.addEventListener(
+    "mouseenter",
+    (e) => {
+      const cell = e.target.closest(".heatmap-cell");
+      if (!cell) return;
+      const date = cell.getAttribute("data-date");
+      const count = parseInt(cell.getAttribute("data-count"), 10);
+      const countLabel =
+        count === 0
+          ? "No sessions"
+          : count === 1
+            ? "1 session"
+            : count + " sessions";
+      tooltip.innerHTML =
+        "<strong>" + countLabel + "</strong><br>" + formatDate(date);
+      tooltip.classList.remove("hidden");
+    },
+    true,
+  );
+
+  container.addEventListener("mousemove", (e) => {
+    if (tooltip.classList.contains("hidden")) return;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const tipRect = tooltip.getBoundingClientRect();
+    let left = e.clientX - wrapperRect.left + 12;
+    if (e.clientX + tipRect.width + 16 > window.innerWidth) {
+      left = e.clientX - wrapperRect.left - tipRect.width - 12;
+    }
+    let top = e.clientY - wrapperRect.top - tipRect.height - 8;
+    if (top < 0) {
+      top = e.clientY - wrapperRect.top + 16;
+    }
+    tooltip.style.left = left + "px";
+    tooltip.style.top = top + "px";
+  });
+
+  container.addEventListener(
+    "mouseleave",
+    (e) => {
+      const cell = e.target.closest(".heatmap-cell");
+      if (!cell) return;
+      tooltip.classList.add("hidden");
+    },
+    true,
+  );
 })();
 
 // Keyboard navigation: j/k to move between list rows, Enter to open, / to search, Escape to blur.
