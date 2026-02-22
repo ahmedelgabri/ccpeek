@@ -96,6 +96,9 @@
                 "*.yaml"
                 "*.json"
                 "*.svg"
+                "*.js"
+                "*.ts"
+                "*.html"
               ];
             };
             alejandra.enable = true;

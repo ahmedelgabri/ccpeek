@@ -16,14 +16,14 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Install npm dependencies
+        run: nix develop --command pnpm install
       - name: Check formatting
         run: nix fmt -- --fail-on-change
       - name: Go vet
         run: nix develop --command go vet ./...
       - name: Lint JS
         run: nix develop --command just lint
-      - name: Format check JS
-        run: nix develop --command just format-check
 
   test:
     name: Test

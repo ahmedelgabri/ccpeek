@@ -1,9 +1,9 @@
 {
-	"$schema": "./node_modules/oxlint/configuration_schema.json",
-	"categories": {
-		"correctness": "error",
-		"suspicious": "warn"
-	},
-	"rules": {},
-	"ignorePatterns": ["dist"]
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {},
+  "ignorePatterns": ["dist"]
 }
