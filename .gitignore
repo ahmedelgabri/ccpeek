@@ -1,4 +1,4 @@
 node_modules/
 test-results/
 cmd/ccexplore/ccexplore
-ccexplore
+/ccexplore
