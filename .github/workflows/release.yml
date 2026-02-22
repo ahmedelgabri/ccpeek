@@ -125,6 +125,12 @@ jobs:
             nix run github:${{ github.repository }}
             ```
 
+            ### Using Homebrew
+
+            ```bash
+            brew install ahmedelgabri/ccexplore/ccexplore
+            ```
+
             ### Manual Download
 
             Download the archive for your platform, extract it, and place the binary in your `$PATH`:
@@ -142,3 +148,78 @@ jobs:
           files: |
             dist/ccexplore-*.tar.gz
             dist/ccexplore-*-checksums.txt
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - uses: actions/checkout@v4
+        with:
+          repository: ahmedelgabri/homebrew-ccexplore
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-ccexplore
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          SHA_DARWIN_ARM64=$(grep "darwin-arm64" dist/ccexplore-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_DARWIN_AMD64=$(grep "darwin-amd64" dist/ccexplore-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_LINUX_ARM64=$(grep "linux-arm64" dist/ccexplore-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_LINUX_AMD64=$(grep "linux-amd64" dist/ccexplore-${VERSION}-checksums.txt | awk '{print $1}')
+
+          cat > homebrew-ccexplore/Formula/ccexplore.rb << EOF
+          class Ccexplore < Formula
+            desc "Explore your Claude Code history"
+            homepage "https://github.com/ahmedelgabri/ccexplore"
+            version "${VERSION}"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/ahmedelgabri/ccexplore/releases/download/v#{version}/ccexplore-#{version}-darwin-arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/ahmedelgabri/ccexplore/releases/download/v#{version}/ccexplore-#{version}-darwin-amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/ahmedelgabri/ccexplore/releases/download/v#{version}/ccexplore-#{version}-linux-arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/ahmedelgabri/ccexplore/releases/download/v#{version}/ccexplore-#{version}-linux-amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "ccexplore"
+              bash_completion.install "completions/ccexplore.bash" => "ccexplore"
+              zsh_completion.install "completions/_ccexplore"
+              fish_completion.install "completions/ccexplore.fish"
+              man1.install Dir["man/*.1"]
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/ccexplore --version")
+            end
+          end
+          EOF
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          cd homebrew-ccexplore
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ccexplore.rb
+          git diff --staged --quiet || git commit -m "ccexplore ${VERSION}"
+          git push
