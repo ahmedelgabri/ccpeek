@@ -63,6 +63,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/partials/nav.html",
 		"templates/partials/pagination.html",
 		"templates/partials/message.html",
+		"templates/partials/session_tabs.html",
 	)
 	if err != nil {
 		return nil, err
@@ -81,6 +82,8 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/projects_list.html",
 		"templates/sessions_list.html",
 		"templates/conversation.html",
+		"templates/conversation_todos.html",
+		"templates/conversation_filehistory.html",
 		"templates/filehistory_list.html",
 		"templates/filehistory_detail.html",
 	}

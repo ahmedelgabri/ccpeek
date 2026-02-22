@@ -244,15 +244,81 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "message-assistant") {
 		t.Error("conversation missing assistant messages")
 	}
-	// Cross-links
-	if !strings.Contains(body, "conversation-links") {
-		t.Error("conversation missing cross-links section")
+	// Tab bar with links to todos and file history
+	if !strings.Contains(body, "/todos/") {
+		t.Error("conversation missing todos tab link")
 	}
-	if !strings.Contains(body, "Todo List") {
-		t.Error("conversation missing todo link")
+	if !strings.Contains(body, "/file-history/") {
+		t.Error("conversation missing file history tab link")
 	}
+}
+
+func TestConversationTodos(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/todos/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Fix the bug") {
+		t.Error("conversation todos missing item content")
+	}
+	if !strings.Contains(body, "completed") {
+		t.Error("conversation todos missing status")
+	}
+	// Tab bar should show active todos tab
+	if !strings.Contains(body, "Todos") {
+		t.Error("conversation todos missing tabs")
+	}
+}
+
+func TestConversationTodosNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	// Session that doesn't have a todo file
+	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/todos/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestConversationFileHistory(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/file-history/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "abc123") {
+		t.Error("conversation file history missing hash")
+	}
+	if !strings.Contains(body, "2 file versions") {
+		t.Error("conversation file history missing version count")
+	}
+	// Tab bar should show active file history tab
 	if !strings.Contains(body, "File History") {
-		t.Error("conversation missing file history link")
+		t.Error("conversation file history missing tabs")
+	}
+}
+
+func TestConversationFileHistoryNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/file-history/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 

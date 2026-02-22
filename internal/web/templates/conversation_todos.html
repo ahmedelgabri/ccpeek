@@ -37,22 +37,30 @@
           >{{ .Session.GitBranch }}</span
         >
       {{ end }}
-      <span>{{ .TotalMsgs }} messages</span>
     </div>
   </div>
 
   {{ template "session_tabs" . }}
 
-  {{ template "pagination" . }}
 
-
-  <div class="space-y-3 my-6">
-    {{ range .Messages }}
-      {{ template "message" . }}
+  <ul class="space-y-1.5">
+    {{ range .Items }}
+      <li
+        class="todo-item flex items-baseline gap-3 px-4 py-3 rounded-lg {{ statusColor .Status }}"
+      >
+        <span
+          class="todo-status text-[10px] font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap uppercase tracking-wide"
+          >{{ .Status }}</span
+        >
+        <span class="text-sm text-slate-300">{{ .Content }}</span>
+        {{ if .ActiveForm }}
+          <span class="text-xs text-slate-600 italic ml-auto"
+            >{{ .ActiveForm }}</span
+          >
+        {{ end }}
+      </li>
     {{ end }}
-  </div>
-
-  {{ template "pagination" . }}
+  </ul>
 {{ end }}
 
 {{ template "layout.html" . }}

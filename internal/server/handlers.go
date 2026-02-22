@@ -186,7 +186,9 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
+// lookupSession finds a project and session from the URL path values.
+// Returns false and writes a 404 if either is not found.
+func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*model.ProjectEntry, *model.SessionEntry, bool) {
 	dirName := r.PathValue("dirName")
 	sessionID := r.PathValue("sessionId")
 
@@ -199,7 +201,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 	if project == nil {
 		http.NotFound(w, r)
-		return
+		return nil, nil, false
 	}
 
 	var session *model.SessionEntry
@@ -211,10 +213,19 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 	if session == nil {
 		http.NotFound(w, r)
+		return nil, nil, false
+	}
+
+	return project, session, true
+}
+
+func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
+	project, session, ok := h.lookupSession(w, r)
+	if !ok {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", dirName, sessionID+".json"))
+	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -260,6 +271,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		"CurrentPath": "/projects/",
 		"Project":     project,
 		"Session":     session,
+		"ActiveTab":   "conversation",
 		"Messages":    pageMessages,
 		"TotalMsgs":   len(messages),
 		"Page":        page,
@@ -268,6 +280,102 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		"HasNext":     page < totalPages,
 		"PrevPage":    page - 1,
 		"NextPage":    page + 1,
+	})
+}
+
+func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
+	project, session, ok := h.lookupSession(w, r)
+	if !ok {
+		return
+	}
+
+	if session.TodoFileName == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "todos", session.TodoFileName))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var items []model.TodoItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		http.Error(w, "invalid todo data", http.StatusInternalServerError)
+		return
+	}
+
+	title := session.FirstPrompt
+	if title == "" {
+		title = session.SessionID
+	}
+
+	renderTemplate(w, h.tmpl, "conversation_todos.html", map[string]any{
+		"Title":       title + " - Todos",
+		"CurrentPath": "/projects/",
+		"Project":     project,
+		"Session":     session,
+		"ActiveTab":   "todos",
+		"Items":       items,
+	})
+}
+
+func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Request) {
+	project, session, ok := h.lookupSession(w, r)
+	if !ok {
+		return
+	}
+
+	if !session.HasFileHistory {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "file-history", session.SessionID+".json"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var detail model.FileHistoryDetail
+	if err := json.Unmarshal(data, &detail); err != nil {
+		http.Error(w, "invalid file history data", http.StatusInternalServerError)
+		return
+	}
+
+	type HashGroup struct {
+		Hash     string
+		Versions []model.FileVersionInfo
+	}
+	var groups []HashGroup
+	groupMap := make(map[string]int)
+
+	for _, f := range detail.Files {
+		if idx, ok := groupMap[f.Hash]; ok {
+			groups[idx].Versions = append(groups[idx].Versions, f)
+		} else {
+			groupMap[f.Hash] = len(groups)
+			groups = append(groups, HashGroup{
+				Hash:     f.Hash,
+				Versions: []model.FileVersionInfo{f},
+			})
+		}
+	}
+
+	title := session.FirstPrompt
+	if title == "" {
+		title = session.SessionID
+	}
+
+	renderTemplate(w, h.tmpl, "conversation_filehistory.html", map[string]any{
+		"Title":       title + " - File History",
+		"CurrentPath": "/projects/",
+		"Project":     project,
+		"Session":     session,
+		"ActiveTab":   "file-history",
+		"Groups":      groups,
+		"TotalFiles":  len(detail.Files),
 	})
 }
 
