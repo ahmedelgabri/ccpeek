@@ -47,17 +47,18 @@ Refresh Token (30 day TTL)
 ### Database Changes
 
 New tables:
+
 - `refresh_tokens` (id, user_id, family, generation, expires_at)
 - `mfa_secrets` (user_id, secret, verified_at)
 - `oauth_connections` (user_id, provider, provider_id, access_token)
 
 ### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /auth/login | Email/password login |
-| POST | /auth/mfa/verify | Verify TOTP code |
-| POST | /auth/refresh | Rotate refresh token |
-| POST | /auth/logout | Revoke token family |
-| GET | /auth/oauth/:provider | OAuth2 redirect |
-| GET | /auth/oauth/:provider/callback | OAuth2 callback |
+| Method | Path                           | Description          |
+| ------ | ------------------------------ | -------------------- |
+| POST   | /auth/login                    | Email/password login |
+| POST   | /auth/mfa/verify               | Verify TOTP code     |
+| POST   | /auth/refresh                  | Rotate refresh token |
+| POST   | /auth/logout                   | Revoke token family  |
+| GET    | /auth/oauth/:provider          | OAuth2 redirect      |
+| GET    | /auth/oauth/:provider/callback | OAuth2 callback      |

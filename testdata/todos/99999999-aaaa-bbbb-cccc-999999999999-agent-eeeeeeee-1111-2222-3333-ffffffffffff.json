@@ -1,7 +1,10 @@
 [
   { "content": "Build text cleaning pipeline", "status": "completed" },
   { "content": "Implement stopword removal", "status": "completed" },
-  { "content": "Add train/test split with stratification", "status": "completed" },
+  {
+    "content": "Add train/test split with stratification",
+    "status": "completed"
+  },
   { "content": "Create TF-IDF vectorizer", "status": "completed" },
   { "content": "Save vectorizer for inference reuse", "status": "completed" }
 ]

@@ -1,5 +1,8 @@
 [
-  { "content": "Scaffold Vite React TypeScript project", "status": "completed" },
+  {
+    "content": "Scaffold Vite React TypeScript project",
+    "status": "completed"
+  },
   { "content": "Install and configure Tailwind CSS v4", "status": "completed" },
   { "content": "Create main App layout with sidebar", "status": "completed" },
   { "content": "Build StatCard component", "status": "completed" },

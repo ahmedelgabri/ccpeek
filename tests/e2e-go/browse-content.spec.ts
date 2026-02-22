@@ -93,18 +93,11 @@ test.describe("browse file history", () => {
 
 test.describe("browse conversations", () => {
   test("can navigate conversation tabs", async ({ page }) => {
-    await page.goto("/projects/");
+    // Navigate directly to a session known to have commands, todos, file history, and code
+    await page.goto(
+      "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/",
+    );
     const main = page.locator("main");
-
-    // Navigate to first project
-    await main.locator("a.list-row").first().click();
-
-    // Click on a session
-    const sessionRow = main
-      .locator(".list-row")
-      .filter({ hasText: "msgs" })
-      .first();
-    await sessionRow.locator("a").click();
 
     // Should be on conversation page
     await expect(main.getByText(/\d+ messages/).first()).toBeVisible();
