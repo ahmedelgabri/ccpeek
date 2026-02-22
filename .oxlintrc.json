@@ -4,6 +4,8 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "rules": {},
+  "rules": {
+    "unicorn/require-module-specifiers": "off"
+  },
   "ignorePatterns": ["dist"]
 }

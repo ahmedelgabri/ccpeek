@@ -67,11 +67,11 @@ test.describe("browse projects", () => {
     await main.locator("a.list-row").first().click();
 
     // Click on a session link (contains "msgs" text)
-    const sessionLink = main
-      .locator("a.list-row")
+    const sessionRow = main
+      .locator(".list-row")
       .filter({ hasText: "msgs" })
       .first();
-    await sessionLink.click();
+    await sessionRow.locator("a").click();
 
     // Verify conversation page loaded with message count
     await expect(main.getByText(/\d+ messages/).first()).toBeVisible();

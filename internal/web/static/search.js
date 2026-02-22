@@ -32,3 +32,5 @@ document.querySelectorAll(".search-input").forEach((input) => {
   input.addEventListener("input", update);
   update();
 });
+
+export {};

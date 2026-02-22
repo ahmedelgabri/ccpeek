@@ -25,3 +25,5 @@ if (compareBtn && sessionList) {
     if (e.target.classList.contains("compare-check")) updateCompare();
   });
 }
+
+export {};

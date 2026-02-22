@@ -44,3 +44,5 @@ document.addEventListener("keydown", (e) => {
     rows[focusIndex].click();
   }
 });
+
+export {};

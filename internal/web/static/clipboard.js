@@ -10,3 +10,5 @@ document.addEventListener("click", (e) => {
     }, 1500);
   });
 });
+
+export {};
