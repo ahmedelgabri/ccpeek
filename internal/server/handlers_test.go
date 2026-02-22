@@ -365,6 +365,47 @@ func TestConversationCommandsNotFound(t *testing.T) {
 	}
 }
 
+func TestSearch(t *testing.T) {
+	handler := setupTestServer(t)
+
+	// Empty query shows search page
+	req := httptest.NewRequest("GET", "/search/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Search") {
+		t.Error("search page missing title")
+	}
+
+	// Query with results
+	req = httptest.NewRequest("GET", "/search/?q=hello", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "hello") {
+		t.Error("search results missing matching content")
+	}
+	if !strings.Contains(body, `for "hello"`) {
+		t.Error("search results missing query echo")
+	}
+
+	// Query with no results
+	req = httptest.NewRequest("GET", "/search/?q=zzzznonexistent", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `for "zzzznonexistent"`) {
+		t.Error("search should echo non-matching query")
+	}
+}
+
 func TestFileHistoryList(t *testing.T) {
 	handler := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/file-history/", nil)

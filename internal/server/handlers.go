@@ -507,3 +507,96 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 		"TotalFiles":     len(detail.Files),
 	})
 }
+
+const maxSearchResults = 100
+
+type searchResult struct {
+	ProjectDirName  string
+	ProjectDisplay  string
+	SessionID       string
+	SessionPrompt   string
+	Role            string
+	Timestamp       string
+	Snippet         string
+}
+
+func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	var results []searchResult
+	if query != "" {
+		queryLower := strings.ToLower(query)
+		for _, project := range h.store.Index.Projects {
+			for _, session := range project.Sessions {
+				data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+				if err != nil {
+					continue
+				}
+				var messages []model.ConversationMessage
+				if json.Unmarshal(data, &messages) != nil {
+					continue
+				}
+				for _, m := range messages {
+					text := m.Message.ContentText()
+					if text == "" {
+						continue
+					}
+					idx := strings.Index(strings.ToLower(text), queryLower)
+					if idx < 0 {
+						continue
+					}
+					snippet := extractSnippet(text, idx, len(query), 120)
+					prompt := session.FirstPrompt
+					if prompt == "" {
+						prompt = session.SessionID
+					}
+					results = append(results, searchResult{
+						ProjectDirName: project.DirName,
+						ProjectDisplay: project.DisplayName,
+						SessionID:      session.SessionID,
+						SessionPrompt:  prompt,
+						Role:           m.Message.Role,
+						Timestamp:      m.Timestamp,
+						Snippet:        snippet,
+					})
+					if len(results) >= maxSearchResults {
+						break
+					}
+				}
+				if len(results) >= maxSearchResults {
+					break
+				}
+			}
+			if len(results) >= maxSearchResults {
+				break
+			}
+		}
+	}
+
+	renderTemplate(w, h.tmpl, "search.html", map[string]any{
+		"Title":       "Search",
+		"CurrentPath": "/search/",
+		"Query":       query,
+		"Results":     results,
+		"ResultCount": len(results),
+		"Capped":      len(results) >= maxSearchResults,
+	})
+}
+
+// extractSnippet returns a substring of text centered around the match at pos.
+func extractSnippet(text string, pos, matchLen, contextLen int) string {
+	start := max(pos-contextLen, 0)
+	end := min(pos+matchLen+contextLen, len(text))
+	snippet := text[start:end]
+	// Clean up whitespace
+	snippet = strings.Join(strings.Fields(snippet), " ")
+	prefix := ""
+	suffix := ""
+	if start > 0 {
+		prefix = "..."
+	}
+	if end < len(text) {
+		suffix = "..."
+	}
+	return prefix + snippet + suffix
+}

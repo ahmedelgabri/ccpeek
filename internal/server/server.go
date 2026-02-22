@@ -54,6 +54,7 @@ func ListenAndServe(addr, dataDir string) error {
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/todos/{$}", h.conversationTodos)
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/file-history/{$}", h.conversationFileHistory)
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/commands/{$}", h.conversationCommands)
+	mux.HandleFunc("GET /search/{$}", h.search)
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
 
@@ -95,6 +96,7 @@ func NewHandler(dataDir string) (http.Handler, error) {
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/todos/{$}", h.conversationTodos)
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/file-history/{$}", h.conversationFileHistory)
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/commands/{$}", h.conversationCommands)
+	mux.HandleFunc("GET /search/{$}", h.search)
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
 

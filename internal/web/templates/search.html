@@ -1,0 +1,58 @@
+{{ define "content" }}
+  <h1 class="text-2xl font-bold text-slate-50 mb-6">Search</h1>
+
+  <form action="/search/" method="get" class="mb-6">
+    <input
+      type="text"
+      name="q"
+      value="{{ .Query }}"
+      placeholder="Search across all conversations..."
+      autofocus
+      class="w-full px-4 py-2.5 bg-surface-card border border-surface-border rounded-lg text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
+    />
+  </form>
+
+  {{ if .Query }}
+    <div class="text-sm text-slate-500 mb-4">
+      {{ .ResultCount }}
+      result{{ if ne .ResultCount 1 }}s{{ end }}{{ if .Capped }}
+        (showing first {{ .ResultCount }})
+      {{ end }}
+      for "{{ .Query }}"
+    </div>
+
+    <div class="space-y-2">
+      {{ range .Results }}
+        <a
+          href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/"
+          class="block px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
+        >
+          <div class="flex items-baseline gap-3 mb-1">
+            <span class="text-sm text-slate-200 truncate"
+              >{{ .SessionPrompt }}</span
+            >
+            <span
+              class="text-[10px] font-medium px-2 py-0.5 rounded-full {{ if eq .Role "user" }}
+                bg-sky-500/10 text-sky-400
+              {{ else }}
+                bg-violet-500/10 text-violet-400
+              {{ end }}"
+              >{{ .Role }}</span
+            >
+          </div>
+          <div class="text-sm text-slate-400 leading-relaxed">
+            {{ .Snippet }}
+          </div>
+          <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-600">
+            <span class="font-mono">{{ .ProjectDisplay }}</span>
+            {{ if .Timestamp }}
+              <span>{{ formatDate .Timestamp }}</span>
+            {{ end }}
+          </div>
+        </a>
+      {{ end }}
+    </div>
+  {{ end }}
+{{ end }}
+
+{{ template "layout.html" . }}
