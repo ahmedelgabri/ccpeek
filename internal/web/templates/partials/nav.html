@@ -1,54 +1,203 @@
-{{define "nav.html"}}
-<nav class="fixed top-0 left-0 w-60 h-screen bg-surface-card/80 backdrop-blur-xl border-r border-surface-border overflow-y-auto flex flex-col">
-  <a href="/" class="block px-5 pt-6 pb-4">
-    <span class="text-lg font-bold bg-gradient-to-r from-violet-400 to-sky-400 bg-clip-text text-transparent">CCExplore</span>
-    <span class="block text-xs text-slate-500 mt-0.5">Explore your Claude Code history</span>
-  </a>
+{{ define "nav.html" }}
+  <nav
+    class="fixed top-0 left-0 w-60 h-screen bg-surface-card/80 backdrop-blur-xl border-r border-surface-border overflow-y-auto flex flex-col"
+  >
+    <a href="/" class="block px-5 pt-6 pb-4">
+      <span
+        class="text-lg font-bold bg-gradient-to-r from-violet-400 to-sky-400 bg-clip-text text-transparent"
+        >CCExplore</span
+      >
+      <span class="block text-xs text-slate-500 mt-0.5"
+        >Explore your Claude Code history</span
+      >
+    </a>
 
-  <div class="px-3 flex-1">
-    <div class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 px-3 mb-2">Browse</div>
-    <ul class="space-y-0.5">
-      <li>
-        <a href="/" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{if eq .CurrentPath "/"}}bg-white/[0.06] text-slate-100{{else}}text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]{{end}}">
-          <svg class="w-4 h-4 shrink-0 {{if eq .CurrentPath "/"}}text-violet-400{{else}}text-slate-500{{end}}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>
-          Dashboard
-        </a>
-      </li>
-      <li>
-        <a href="/projects/" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{if eq .CurrentPath "/projects/"}}bg-white/[0.06] text-slate-100{{else}}text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]{{end}}">
-          <svg class="w-4 h-4 shrink-0 {{if eq .CurrentPath "/projects/"}}text-sky-400{{else}}text-slate-500{{end}}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
-          Projects
-        </a>
-      </li>
-      <li>
-        <a href="/plans/" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{if eq .CurrentPath "/plans/"}}bg-white/[0.06] text-slate-100{{else}}text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]{{end}}">
-          <svg class="w-4 h-4 shrink-0 {{if eq .CurrentPath "/plans/"}}text-emerald-400{{else}}text-slate-500{{end}}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
-          Plans
-        </a>
-      </li>
-      <li>
-        <a href="/shell-snapshots/" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{if eq .CurrentPath "/shell-snapshots/"}}bg-white/[0.06] text-slate-100{{else}}text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]{{end}}">
-          <svg class="w-4 h-4 shrink-0 {{if eq .CurrentPath "/shell-snapshots/"}}text-amber-400{{else}}text-slate-500{{end}}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"/></svg>
-          Shell Snapshots
-        </a>
-      </li>
-      <li>
-        <a href="/todos/" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{if eq .CurrentPath "/todos/"}}bg-white/[0.06] text-slate-100{{else}}text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]{{end}}">
-          <svg class="w-4 h-4 shrink-0 {{if eq .CurrentPath "/todos/"}}text-rose-400{{else}}text-slate-500{{end}}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          Todos
-        </a>
-      </li>
-      <li>
-        <a href="/file-history/" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{if eq .CurrentPath "/file-history/"}}bg-white/[0.06] text-slate-100{{else}}text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]{{end}}">
-          <svg class="w-4 h-4 shrink-0 {{if eq .CurrentPath "/file-history/"}}text-teal-400{{else}}text-slate-500{{end}}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          File History
-        </a>
-      </li>
-    </ul>
-  </div>
+    <div class="px-3 flex-1">
+      <div
+        class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 px-3 mb-2"
+      >
+        Browse
+      </div>
+      <ul class="space-y-0.5">
+        <li>
+          <a
+            href="/"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{ if eq .CurrentPath "/" }}
+              bg-white/[0.06] text-slate-100
+            {{ else }}
+              text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]
+            {{ end }}"
+          >
+            <svg
+              class="w-4 h-4 shrink-0 {{ if eq .CurrentPath "/" }}
+                text-violet-400
+              {{ else }}
+                text-slate-500
+              {{ end }}"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"
+              />
+            </svg>
+            Dashboard
+          </a>
+        </li>
+        <li>
+          <a
+            href="/projects/"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{ if eq .CurrentPath "/projects/" }}
+              bg-white/[0.06] text-slate-100
+            {{ else }}
+              text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]
+            {{ end }}"
+          >
+            <svg
+              class="w-4 h-4 shrink-0 {{ if eq .CurrentPath "/projects/" }}
+                text-sky-400
+              {{ else }}
+                text-slate-500
+              {{ end }}"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"
+              />
+            </svg>
+            Projects
+          </a>
+        </li>
+        <li>
+          <a
+            href="/plans/"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{ if eq .CurrentPath "/plans/" }}
+              bg-white/[0.06] text-slate-100
+            {{ else }}
+              text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]
+            {{ end }}"
+          >
+            <svg
+              class="w-4 h-4 shrink-0 {{ if eq .CurrentPath "/plans/" }}
+                text-emerald-400
+              {{ else }}
+                text-slate-500
+              {{ end }}"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+              />
+            </svg>
+            Plans
+          </a>
+        </li>
+        <li>
+          <a
+            href="/shell-snapshots/"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{ if eq .CurrentPath "/shell-snapshots/" }}
+              bg-white/[0.06] text-slate-100
+            {{ else }}
+              text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]
+            {{ end }}"
+          >
+            <svg
+              class="w-4 h-4 shrink-0 {{ if eq .CurrentPath "/shell-snapshots/" }}
+                text-amber-400
+              {{ else }}
+                text-slate-500
+              {{ end }}"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"
+              />
+            </svg>
+            Shell Snapshots
+          </a>
+        </li>
+        <li>
+          <a
+            href="/todos/"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{ if eq .CurrentPath "/todos/" }}
+              bg-white/[0.06] text-slate-100
+            {{ else }}
+              text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]
+            {{ end }}"
+          >
+            <svg
+              class="w-4 h-4 shrink-0 {{ if eq .CurrentPath "/todos/" }}
+                text-rose-400
+              {{ else }}
+                text-slate-500
+              {{ end }}"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            Todos
+          </a>
+        </li>
+        <li>
+          <a
+            href="/file-history/"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 {{ if eq .CurrentPath "/file-history/" }}
+              bg-white/[0.06] text-slate-100
+            {{ else }}
+              text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]
+            {{ end }}"
+          >
+            <svg
+              class="w-4 h-4 shrink-0 {{ if eq .CurrentPath "/file-history/" }}
+                text-teal-400
+              {{ else }}
+                text-slate-500
+              {{ end }}"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            File History
+          </a>
+        </li>
+      </ul>
+    </div>
 
-  <div class="px-5 py-4 border-t border-surface-border">
-    <div class="text-xs text-slate-600">Local browser</div>
-  </div>
-</nav>
-{{end}}
+    <div class="px-5 py-4 border-t border-surface-border">
+      <div class="text-xs text-slate-600">Local browser</div>
+    </div>
+  </nav>
+{{ end }}

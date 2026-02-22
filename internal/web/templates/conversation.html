@@ -1,33 +1,71 @@
-{{define "content"}}
-<a href="/projects/{{.Project.DirName}}/" class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors">
-  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>
-  {{.Project.DisplayName}}
-</a>
+{{ define "content" }}
+  <a
+    href="/projects/{{ .Project.DirName }}/"
+    class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors"
+  >
+    <svg
+      class="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      stroke-width="2"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+      />
+    </svg>
+    {{ .Project.DisplayName }}
+  </a>
 
-<div class="mb-8">
-  <h1 class="text-2xl font-bold text-slate-50 mb-2">{{if .Session.FirstPrompt}}{{.Session.FirstPrompt}}{{else}}{{.Session.SessionID}}{{end}}</h1>
-  <div class="flex items-center gap-4 text-sm text-slate-500">
-    {{if .Session.Created}}<span>{{formatDate .Session.Created}}</span>{{end}}
-    {{if .Session.GitBranch}}<span class="font-mono text-slate-500">{{.Session.GitBranch}}</span>{{end}}
-    <span>{{.TotalMsgs}} messages</span>
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-slate-50 mb-2">
+      {{ if .Session.FirstPrompt }}
+        {{ .Session.FirstPrompt }}
+      {{ else }}
+        {{ .Session.SessionID }}
+      {{ end }}
+    </h1>
+    <div class="flex items-center gap-4 text-sm text-slate-500">
+      {{ if .Session.Created }}
+        <span>{{ formatDate .Session.Created }}</span>
+      {{ end }}
+      {{ if .Session.GitBranch }}
+        <span class="font-mono text-slate-500">{{ .Session.GitBranch }}</span>
+      {{ end }}
+      <span>{{ .TotalMsgs }} messages</span>
+    </div>
+    {{ if or .Session.TodoFileName .Session.HasFileHistory }}
+      <div class="conversation-links flex items-center gap-4 mt-2">
+        {{ if .Session.TodoFileName }}
+          <a
+            href="/todos/{{ trimSuffix ".json" .Session.TodoFileName }}/"
+            class="text-sm text-sky-400 no-underline hover:text-sky-300 transition-colors"
+            >Todo List</a
+          >
+        {{ end }}
+        {{ if .Session.HasFileHistory }}
+          <a
+            href="/file-history/{{ .Session.SessionID }}/"
+            class="text-sm text-sky-400 no-underline hover:text-sky-300 transition-colors"
+            >File History</a
+          >
+        {{ end }}
+      </div>
+    {{ end }}
   </div>
-  {{if or .Session.TodoFileName .Session.HasFileHistory}}
-  <div class="conversation-links flex items-center gap-4 mt-2">
-    {{if .Session.TodoFileName}}<a href="/todos/{{trimSuffix ".json" .Session.TodoFileName}}/" class="text-sm text-sky-400 no-underline hover:text-sky-300 transition-colors">Todo List</a>{{end}}
-    {{if .Session.HasFileHistory}}<a href="/file-history/{{.Session.SessionID}}/" class="text-sm text-sky-400 no-underline hover:text-sky-300 transition-colors">File History</a>{{end}}
+
+  {{ template "pagination" . }}
+
+
+  <div class="space-y-3 my-6">
+    {{ range .Messages }}
+      {{ template "message" . }}
+    {{ end }}
   </div>
-  {{end}}
-</div>
 
-{{template "pagination" .}}
+  {{ template "pagination" . }}
+{{ end }}
 
-<div class="space-y-3 my-6">
-  {{range .Messages}}
-  {{template "message" .}}
-  {{end}}
-</div>
-
-{{template "pagination" .}}
-{{end}}
-
-{{template "layout.html" .}}
+{{ template "layout.html" . }}

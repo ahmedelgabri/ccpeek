@@ -10,12 +10,13 @@ Claude Code conversations, plans, todos, shell snapshots, and file history.
 - [Go](https://go.dev/) 1.25+
 - [Node.js](https://nodejs.org/) (for Tailwind CSS build)
 - [pnpm](https://pnpm.io/)
-- [mise](https://mise.jdx.dev/) (task runner)
+- [just](https://github.com/casey/just) (task runner)
+
+Or use [Nix](https://nixos.org/) with `nix develop` for a complete dev environment.
 
 ## Setup
 
 ```sh
-mise install
 pnpm install
 ```
 
@@ -23,10 +24,10 @@ pnpm install
 
 ```sh
 # Index and start the server
-mise run dev
+just dev
 
 # Or build the binary
-mise run build
+just build
 ./cmd/ccexplore/ccexplore --open
 ```
 
@@ -48,25 +49,25 @@ The server reads Claude Code data from `~/.claude` and writes an index to
 
 ```sh
 # Watch CSS changes
-mise run css:watch
+just css-watch
 
 # Run dev server
-mise run dev
+just dev
 
 # Run all tests
-mise run test
+just test
 
 # Run unit tests only
-mise run test:unit
+just test-unit
 
 # Run e2e tests only
-mise run test:e2e
+just test-e2e
 
 # Lint
-mise run lint
+just lint
 
 # Format
-mise run format
+just format
 ```
 
 ## What it indexes

@@ -1,0 +1,9 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: lint
+      run: just lint
+    - name: format-check
+      run: just format-check
+    - name: unit-tests
+      run: just test-unit

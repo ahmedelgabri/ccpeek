@@ -213,10 +213,10 @@ func TestSessionsList(t *testing.T) {
 		t.Error("sessions list missing session info")
 	}
 	// Badges for linked entities
-	if !strings.Contains(body, ">todo</span>") {
+	if !strings.Contains(body, ">todo</span") {
 		t.Error("sessions list missing todo badge")
 	}
-	if !strings.Contains(body, ">files</span>") {
+	if !strings.Contains(body, ">files</span") {
 		t.Error("sessions list missing files badge")
 	}
 }

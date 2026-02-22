@@ -1,0 +1,66 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Check formatting
+        run: nix fmt -- --fail-on-change
+      - name: Go vet
+        run: nix develop --command go vet ./...
+      - name: Lint JS
+        run: nix develop --command just lint
+      - name: Format check JS
+        run: nix develop --command just format-check
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - name: Build CSS
+        run: pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
+      - name: Unit tests
+        run: go test ./...
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: E2E tests
+        run: npx playwright test --config=playwright-go.config.ts
+
+  build:
+    name: Build (Nix)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Check flake
+        run: nix flake check
+      - name: Build package
+        run: nix build
+      - name: Test executable runs
+        run: ./result/bin/ccexplore --help

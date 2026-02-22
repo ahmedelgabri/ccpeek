@@ -7,11 +7,8 @@
 		"tailwindcss": "^4.1.0"
 	},
 	"devDependencies": {
-		"@playwright/test": "^1.52.0",
-		"oxfmt": "^0.34.0",
-		"oxlint": "^1.49.0",
-		"oxlint-tsgolint": "^0.14.2",
-		"tsx": "^4.19.0",
-		"typescript": "^5.8.0"
+		"@playwright/test": "^1.58.2",
+		"@types/node": "^25.3.0",
+		"prettier-plugin-go-template": "^0.0.15"
 	}
 }

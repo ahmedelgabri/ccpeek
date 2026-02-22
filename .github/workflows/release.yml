@@ -1,0 +1,144 @@
+name: Release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Get version from flake.nix
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' flake.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
+          echo "version=$VERSION" >>$GITHUB_OUTPUT
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: actions/setup-go@v5
+        if: steps.check_tag.outputs.exists == 'false'
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+        if: steps.check_tag.outputs.exists == 'false'
+      - uses: actions/setup-node@v4
+        if: steps.check_tag.outputs.exists == 'false'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build CSS and native binary
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pnpm install
+          pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
+          go build -ldflags="-s -w -X github.com/ahmedelgabri/ccexplore/internal/cmd.Version=$VERSION" -o ccexplore-native ./cmd/ccexplore/
+          mkdir -p dist/completions dist/man
+          ./ccexplore-native completion bash > dist/completions/ccexplore.bash
+          ./ccexplore-native completion zsh > dist/completions/_ccexplore
+          ./ccexplore-native completion fish > dist/completions/ccexplore.fish
+          ./ccexplore-native man dist/man
+          rm ccexplore-native
+      - name: Cross-compile and package
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          LDFLAGS="-s -w -X github.com/ahmedelgabri/ccexplore/internal/cmd.Version=$VERSION"
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            OS="${target%/*}"
+            ARCH="${target#*/}"
+            DIR="ccexplore-${VERSION}-${OS}-${ARCH}"
+            mkdir -p "dist/${DIR}"
+            GOOS="$OS" GOARCH="$ARCH" go build -ldflags="$LDFLAGS" -o "dist/${DIR}/ccexplore" ./cmd/ccexplore/
+            cp -r dist/completions "dist/${DIR}/"
+            cp -r dist/man "dist/${DIR}/"
+            tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"
+          done
+      - name: Generate checksums
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd dist
+          sha256sum ccexplore-${VERSION}-*.tar.gz > "ccexplore-${VERSION}-checksums.txt"
+      - uses: actions/upload-artifact@v4
+        if: steps.check_tag.outputs.exists == 'false'
+        with:
+          name: release-assets
+          path: |
+            dist/ccexplore-*.tar.gz
+            dist/ccexplore-*-checksums.txt
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_exists: ${{ steps.check_tag.outputs.exists }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: needs.build.outputs.tag_exists == 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          CHANGELOG=$(git log "$PREV_TAG"..HEAD --pretty=format:"- %s" --no-merges | head -50)
+          echo "changelog<<EOF" >>$GITHUB_OUTPUT
+          echo "$CHANGELOG" >>$GITHUB_OUTPUT
+          echo "EOF" >>$GITHUB_OUTPUT
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          name: v${{ needs.build.outputs.version }}
+          body: |
+            ## Changes
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## Installation
+
+            ### Using Nix Flakes
+
+            ```bash
+            nix run github:${{ github.repository }}
+            ```
+
+            ### Manual Download
+
+            Download the archive for your platform, extract it, and place the binary in your `$PATH`:
+
+            ```bash
+            tar xzf ccexplore-${{ needs.build.outputs.version }}-<OS>-<ARCH>.tar.gz
+            cp ccexplore-${{ needs.build.outputs.version }}-<OS>-<ARCH>/ccexplore ~/.local/bin/
+            ```
+
+            Completions and man pages are included under `completions/` and `man/`.
+
+            **Checksums:** See `ccexplore-${{ needs.build.outputs.version }}-checksums.txt`
+          draft: false
+          prerelease: false
+          files: |
+            dist/ccexplore-*.tar.gz
+            dist/ccexplore-*-checksums.txt

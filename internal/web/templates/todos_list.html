@@ -1,22 +1,33 @@
-{{define "content"}}
-<h1 class="text-2xl font-bold text-slate-50 mb-6">Todos</h1>
+{{ define "content" }}
+  <h1 class="text-2xl font-bold text-slate-50 mb-6">Todos</h1>
 
-<div class="item-list space-y-2">
-  {{range .Todos}}
-  <a href="/todos/{{.FileName | trimSuffix ".json"}}/" class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover">
-    <div class="min-w-0 flex-1">
-      <span class="text-sm text-slate-200 font-mono truncate block group-hover:text-slate-50">{{.FileName | trimSuffix ".json"}}</span>
-      <div class="flex items-center gap-3 mt-1">
-        <span class="text-xs text-slate-600">{{.ItemCount}} items</span>
-        {{if .ProjectName}}<span class="text-xs text-slate-500">{{.ProjectName}}</span>{{end}}
-        {{range $status, $count := .Statuses}}
-        <span class="badge text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap {{statusColor $status}}">{{$status}}: {{$count}}</span>
-        {{end}}
-      </div>
-    </div>
-  </a>
-  {{end}}
-</div>
-{{end}}
+  <div class="item-list space-y-2">
+    {{ range .Todos }}
+      <a
+        href="/todos/{{ .FileName | trimSuffix ".json" }}/"
+        class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
+      >
+        <div class="min-w-0 flex-1">
+          <span
+            class="text-sm text-slate-200 font-mono truncate block group-hover:text-slate-50"
+            >{{ .FileName | trimSuffix ".json" }}</span
+          >
+          <div class="flex items-center gap-3 mt-1">
+            <span class="text-xs text-slate-600">{{ .ItemCount }} items</span>
+            {{ if .ProjectName }}
+              <span class="text-xs text-slate-500">{{ .ProjectName }}</span>
+            {{ end }}
+            {{ range $status, $count := .Statuses }}
+              <span
+                class="badge text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap {{ statusColor $status }}"
+                >{{ $status }}: {{ $count }}</span
+              >
+            {{ end }}
+          </div>
+        </div>
+      </a>
+    {{ end }}
+  </div>
+{{ end }}
 
-{{template "layout.html" .}}
+{{ template "layout.html" . }}

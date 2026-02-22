@@ -1,37 +1,82 @@
-{{define "message"}}
-<div class="message message-{{.Type}} rounded-lg py-3 px-4 border-l-2 {{if eq .Type "user"}}border-l-sky-500 bg-sky-500/[0.03]{{else if eq .Type "assistant"}}border-l-emerald-500 bg-emerald-500/[0.03]{{else}}border-l-slate-600 bg-white/[0.02]{{end}}">
-  <div class="flex items-baseline gap-2 mb-2">
-    <span class="text-xs font-medium {{if eq .Type "user"}}text-sky-400{{else if eq .Type "assistant"}}text-emerald-400{{else}}text-slate-500{{end}}">{{if eq .Type "user"}}User{{else if eq .Type "assistant"}}Assistant{{else}}System{{end}}</span>
-    {{if .Timestamp}}<span class="text-xs text-slate-600">{{formatDate .Timestamp}}</span>{{end}}
+{{ define "message" }}
+  <div
+    class="message message-{{ .Type }} rounded-lg py-3 px-4 border-l-2 {{ if eq .Type "user" }}
+      border-l-sky-500 bg-sky-500/[0.03]
+    {{ else if eq .Type "assistant" }}
+      border-l-emerald-500 bg-emerald-500/[0.03]
+    {{ else }}
+      border-l-slate-600 bg-white/[0.02]
+    {{ end }}"
+  >
+    <div class="flex items-baseline gap-2 mb-2">
+      <span
+        class="text-xs font-medium {{ if eq .Type "user" }}
+          text-sky-400
+        {{ else if eq .Type "assistant" }}
+          text-emerald-400
+        {{ else }}
+          text-slate-500
+        {{ end }}"
+        >{{ if eq .Type "user" }}
+          User
+        {{ else if eq .Type "assistant" }}
+          Assistant
+        {{ else }}
+          System
+        {{ end }}</span
+      >
+      {{ if .Timestamp }}
+        <span class="text-xs text-slate-600">{{ formatDate .Timestamp }}</span>
+      {{ end }}
+    </div>
+    <div>
+      {{ if .Message.IsString }}
+        <div class="prose">{{ renderMarkdown (.Message.ContentText) }}</div>
+      {{ else }}
+        {{ range .Message.ContentBlocks }}
+          {{ if eq .Type "text" }}
+            <div class="prose">{{ renderMarkdown .Text }}</div>
+          {{ else if eq .Type "tool_use" }}
+            <details
+              class="my-2 rounded-lg border border-surface-border overflow-hidden"
+            >
+              <summary
+                class="px-4 py-2.5 bg-surface-card cursor-pointer text-sm flex items-center gap-2 hover:bg-surface-hover transition-colors"
+              >
+                <span class="font-mono text-xs text-amber-400"
+                  >{{ .Name }}</span
+                >
+              </summary>
+              <pre
+                class="px-4 py-3 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0"
+              >
+{{ toJSON .Input }}</pre
+              >
+            </details>
+          {{ else if eq .Type "tool_result" }}
+            {{ $text := .ToolResultText }}
+            {{ if $text }}
+              <details
+                class="my-2 rounded-lg border border-surface-border overflow-hidden"
+              >
+                <summary
+                  class="px-4 py-2.5 bg-surface-card cursor-pointer text-sm flex items-center gap-2 hover:bg-surface-hover transition-colors"
+                >
+                  <span class="text-xs text-slate-500">tool result</span>
+                  <span class="text-xs text-slate-600 truncate"
+                    >{{ truncate $text 80 }}</span
+                  >
+                </summary>
+                <pre
+                  class="px-4 py-3 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0"
+                >
+{{ $text }}</pre
+                >
+              </details>
+            {{ end }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+    </div>
   </div>
-  <div>
-    {{if .Message.IsString}}
-      <div class="prose">{{renderMarkdown (.Message.ContentText)}}</div>
-    {{else}}
-      {{range .Message.ContentBlocks}}
-        {{if eq .Type "text"}}
-          <div class="prose">{{renderMarkdown .Text}}</div>
-        {{else if eq .Type "tool_use"}}
-          <details class="my-2 rounded-lg border border-surface-border overflow-hidden">
-            <summary class="px-4 py-2.5 bg-surface-card cursor-pointer text-sm flex items-center gap-2 hover:bg-surface-hover transition-colors">
-              <span class="font-mono text-xs text-amber-400">{{.Name}}</span>
-            </summary>
-            <pre class="px-4 py-3 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0">{{toJSON .Input}}</pre>
-          </details>
-        {{else if eq .Type "tool_result"}}
-          {{$text := .ToolResultText}}
-          {{if $text}}
-          <details class="my-2 rounded-lg border border-surface-border overflow-hidden">
-            <summary class="px-4 py-2.5 bg-surface-card cursor-pointer text-sm flex items-center gap-2 hover:bg-surface-hover transition-colors">
-              <span class="text-xs text-slate-500">tool result</span>
-              <span class="text-xs text-slate-600 truncate">{{truncate $text 80}}</span>
-            </summary>
-            <pre class="px-4 py-3 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0">{{$text}}</pre>
-          </details>
-          {{end}}
-        {{end}}
-      {{end}}
-    {{end}}
-  </div>
-</div>
-{{end}}
+{{ end }}

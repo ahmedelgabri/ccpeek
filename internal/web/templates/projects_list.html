@@ -1,24 +1,29 @@
-{{define "content"}}
-<h1 class="text-2xl font-bold text-slate-50 mb-6">Projects</h1>
+{{ define "content" }}
+  <h1 class="text-2xl font-bold text-slate-50 mb-6">Projects</h1>
 
-<input
-	type="text"
-	class="search-input w-full px-4 py-2.5 mb-2 bg-surface-card border border-surface-border rounded-lg text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
-	placeholder="Filter projects..."
-	data-search-target="searchable-list"
-/>
-<div class="search-count text-xs text-slate-600 mb-4"></div>
+  <input
+    type="text"
+    class="search-input w-full px-4 py-2.5 mb-2 bg-surface-card border border-surface-border rounded-lg text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
+    placeholder="Filter projects..."
+    data-search-target="searchable-list"
+  />
+  <div class="search-count text-xs text-slate-600 mb-4"></div>
 
-<div class="item-list searchable-list space-y-2">
-	{{range .Projects}}
-	<a
-		href="/projects/{{.DirName}}/"
-		class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
-		data-search-keys="{{.DisplayName}} {{.DirName}}"
-	>
-		<span class="text-sm text-slate-200 truncate group-hover:text-slate-50">{{.DisplayName}}</span>
-		<span class="text-xs text-slate-500 whitespace-nowrap">{{.SessionCount}} sessions</span>
-	</a>
-	{{end}}
-</div>
-{{end}} {{template "layout.html" .}}
+  <div class="item-list searchable-list space-y-2">
+    {{ range .Projects }}
+      <a
+        href="/projects/{{ .DirName }}/"
+        class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
+        data-search-keys="{{ .DisplayName }} {{ .DirName }}"
+      >
+        <span class="text-sm text-slate-200 truncate group-hover:text-slate-50"
+          >{{ .DisplayName }}</span
+        >
+        <span class="text-xs text-slate-500 whitespace-nowrap"
+          >{{ .SessionCount }} sessions</span
+        >
+      </a>
+    {{ end }}
+  </div>
+{{ end }}
+{{ template "layout.html" . }}

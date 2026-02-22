@@ -8,27 +8,30 @@ CCExplore is a Go CLI that indexes Claude Code data from `~/.claude` and serves 
 
 ## Commands
 
-All tasks are managed via [mise](https://mise.jdx.dev/). Install tools with `mise install && pnpm install`.
+All tasks are managed via [just](https://github.com/casey/just). Install tools with `pnpm install`.
 
 | Command | Purpose |
 |---|---|
-| `mise run dev` | Build CSS then run server with `--open` |
-| `mise run build` | Build CSS then compile Go binary to `cmd/ccexplore/ccexplore` |
-| `mise run css:build` | Compile Tailwind CSS (input: `internal/web/src/app.css` -> output: `internal/web/static/style.css`) |
-| `mise run css:watch` | Watch mode for CSS |
-| `mise run test` | Run all tests (unit + e2e) |
-| `mise run test:unit` | `go test ./...` |
-| `mise run test:e2e` | Playwright e2e tests (builds CSS first, starts Go server on port 4322) |
-| `mise run lint` | oxlint with type checking |
-| `mise run format` | oxfmt |
+| `just dev` | Build CSS then run server with `--open` |
+| `just build` | Build CSS then compile Go binary to `cmd/ccexplore/ccexplore` |
+| `just css` | Compile Tailwind CSS (input: `internal/web/src/app.css` -> output: `internal/web/static/style.css`) |
+| `just css-watch` | Watch mode for CSS |
+| `just test` | Run all tests (unit + e2e) |
+| `just test-unit` | `go test ./...` |
+| `just test-e2e` | Playwright e2e tests (builds CSS first, starts Go server on port 4322) |
+| `just lint` | oxlint with type checking |
+| `just format` | prettier for JS/TS/HTML |
 
 Run a single Go test: `go test ./internal/server/ -run TestDashboard`
 
 ## Architecture
 
 ```
-cmd/ccexplore/main.go       Entry point: CLI flags, runs indexer then server
+cmd/ccexplore/main.go       Entry point: delegates to internal/cmd
 internal/
+  cmd/
+    root.go                 Cobra root command with flags and server logic
+    man.go                  Hidden subcommand for man page generation
   index/                    Reads ~/.claude, writes $TMPDIR/.ccexplore/index.json
     index.go                Orchestrator: Run() calls each sub-indexer
     projects.go             Indexes projects + sessions from JSONL conversation files
@@ -65,6 +68,6 @@ testdata/                   Fixture data mimicking ~/.claude structure for unit 
 - **Embedded assets**: All templates and static files are embedded via `//go:embed` in `web/embed.go`. Changes to templates take effect on rebuild, not at runtime.
 - **Indexing pipeline**: `index.Run()` reads source data, each sub-indexer handles one entity type, then `resolveRelationships()` cross-links entities using UUID extraction from filenames.
 - **Testing**: Handler tests use `httptest` with `NewHandler()` against real testdata fixtures. E2e tests use Playwright against a live Go server with `--skip-index`.
-- **CSS**: Tailwind v4 with `@import 'tailwindcss'` and `@source "../templates"` directive. Custom theme colors (`surface`, `surface-card`, etc.) defined in `@theme` block. The compiled `static/style.css` is gitignored; run `mise run css:build` to generate it.
+- **CSS**: Tailwind v4 with `@import 'tailwindcss'` and `@source "../templates"` directive. Custom theme colors (`surface`, `surface-card`, etc.) defined in `@theme` block. The compiled `static/style.css` is gitignored; run `just css` to generate it.
 - **List items**: Use class `list-row` (not `list-item`, which collides with Tailwind's `display: list-item` utility).
 - **Route pattern**: Go 1.22+ enhanced ServeMux with `GET /path/{param}/{$}` syntax. Trailing `{$}` enforces exact match.
