@@ -535,6 +535,88 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
+	project, session, ok := h.lookupSession(w, r)
+	if !ok {
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var messages []model.ConversationMessage
+	if err := json.Unmarshal(data, &messages); err != nil {
+		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
+		return
+	}
+
+	var buf strings.Builder
+	title := session.FirstPrompt
+	if title == "" {
+		title = session.SessionID
+	}
+	buf.WriteString("# " + title + "\n\n")
+	if session.Created != "" {
+		buf.WriteString("**Date:** " + session.Created + "\n")
+	}
+	if session.GitBranch != "" {
+		buf.WriteString("**Branch:** " + session.GitBranch + "\n")
+	}
+	buf.WriteString("**Project:** " + project.DisplayName + "\n\n---\n\n")
+
+	for _, m := range messages {
+		role := m.Message.Role
+		if role == "" {
+			role = m.Type
+		}
+		buf.WriteString("## " + strings.ToUpper(role[:1]) + role[1:] + "\n\n")
+
+		blocks := m.Message.ContentBlocks()
+		if blocks == nil {
+			text := m.Message.ContentText()
+			if text != "" {
+				buf.WriteString(text + "\n\n")
+			}
+			continue
+		}
+
+		for _, b := range blocks {
+			switch b.Type {
+			case "text":
+				buf.WriteString(b.Text + "\n\n")
+			case "tool_use":
+				buf.WriteString("**Tool:** " + b.Name + "\n\n")
+				if b.Input != nil {
+					var input map[string]any
+					if json.Unmarshal(b.Input, &input) == nil {
+						if cmd, ok := input["command"].(string); ok {
+							buf.WriteString("```bash\n" + cmd + "\n```\n\n")
+						} else if fp, ok := input["file_path"].(string); ok {
+							buf.WriteString("`" + fp + "`\n\n")
+						}
+					}
+				}
+			case "tool_result":
+				text := b.ToolResultText()
+				if text != "" {
+					if len(text) > 500 {
+						text = text[:500] + "..."
+					}
+					buf.WriteString("```\n" + text + "\n```\n\n")
+				}
+			}
+		}
+	}
+
+	filename := session.SessionID + ".md"
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Write([]byte(buf.String()))
+}
+
 // extractToolDetail returns a short summary of what a tool call did.
 func extractToolDetail(b model.ContentBlock) string {
 	var input map[string]any

@@ -38,6 +38,11 @@
         >
       {{ end }}
       <span>{{ .TotalMsgs }} messages</span>
+      <a
+        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/export.md"
+        class="text-xs text-slate-500 hover:text-slate-300 no-underline transition-colors"
+        >Export .md</a
+      >
     </div>
   </div>
 

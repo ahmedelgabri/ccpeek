@@ -379,6 +379,38 @@ func TestConversationTools(t *testing.T) {
 	}
 }
 
+func TestConversationExport(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/export.md", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/markdown") {
+		t.Errorf("expected text/markdown content type, got %q", ct)
+	}
+
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") {
+		t.Errorf("expected attachment disposition, got %q", cd)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "hello world") {
+		t.Error("export missing first prompt")
+	}
+	if !strings.Contains(body, "## User") {
+		t.Error("export missing User heading")
+	}
+	if !strings.Contains(body, "## Assistant") {
+		t.Error("export missing Assistant heading")
+	}
+}
+
 func TestConversationCommandsNotFound(t *testing.T) {
 	handler := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/commands/", nil)
