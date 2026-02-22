@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ahmedelgabri/claude-history/internal/model"
-	"github.com/ahmedelgabri/claude-history/internal/web"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
+	"github.com/ahmedelgabri/ccexplore/internal/web"
 )
 
 // DataStore holds the loaded index data and the path to detail files.

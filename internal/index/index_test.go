@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ahmedelgabri/claude-history/internal/model"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 func TestRun(t *testing.T) {

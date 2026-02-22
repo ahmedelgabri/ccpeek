@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ahmedelgabri/claude-history/internal/model"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 // Run performs the full indexing of claudeDir into dataDir.

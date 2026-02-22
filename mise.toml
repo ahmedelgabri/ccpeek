@@ -14,12 +14,12 @@ run = "pnpm exec tailwindcss --input internal/web/src/app.css --output internal/
 [tasks.build]
 description = "Build the Go binary"
 depends = ["css:build"]
-run = "go build -o cmd/claude-history/claude-history ./cmd/claude-history/"
+run = "go build -o cmd/ccexplore/ccexplore ./cmd/ccexplore/"
 
 [tasks.dev]
 description = "Run dev server with auto-rebuild"
 depends = ["css:build"]
-run = "go run ./cmd/claude-history --open"
+run = "go run ./cmd/ccexplore --open"
 
 [tasks.lint]
 description = "Run linter"

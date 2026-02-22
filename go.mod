@@ -1,4 +1,4 @@
-module github.com/ahmedelgabri/claude-history
+module github.com/ahmedelgabri/ccexplore
 
 go 1.25.0
 

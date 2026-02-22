@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ahmedelgabri/claude-history/internal/model"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 var headingRe = regexp.MustCompile(`(?m)^#\s+(.+)`)

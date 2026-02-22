@@ -3,7 +3,7 @@ package index
 import (
 	"testing"
 
-	"github.com/ahmedelgabri/claude-history/internal/model"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 func TestTodoSessionRegex(t *testing.T) {

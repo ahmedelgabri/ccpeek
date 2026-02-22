@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ahmedelgabri/claude-history/internal/model"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {

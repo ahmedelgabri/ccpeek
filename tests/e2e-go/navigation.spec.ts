@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('navigation', () => {
 	test('dashboard loads with correct title', async ({ page }) => {
 		await page.goto('/')
-		await expect(page).toHaveTitle(/Dashboard - Claude History/)
+		await expect(page).toHaveTitle(/Dashboard - ccexplore/)
 	})
 
 	test('sidebar navigation links work', async ({ page }) => {
