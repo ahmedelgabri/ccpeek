@@ -325,20 +325,20 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, h.tmpl, "conversation.html", map[string]any{
-		"Title":       title,
-		"CurrentPath": "/projects/",
-		"Project":     project,
-		"Session":     session,
-		"ActiveTab":      "conversation",
+		"Title":         title,
+		"CurrentPath":   "/projects/",
+		"Project":       project,
+		"Session":       session,
+		"ActiveTab":     "conversation",
 		"HasCodeBlocks": hasCodeBlocks(session),
-		"Messages":    pageMessages,
-		"TotalMsgs":   len(messages),
-		"Page":        page,
-		"TotalPages":  totalPages,
-		"HasPrev":     page > 1,
-		"HasNext":     page < totalPages,
-		"PrevPage":    page - 1,
-		"NextPage":    page + 1,
+		"Messages":      pageMessages,
+		"TotalMsgs":     len(messages),
+		"Page":          page,
+		"TotalPages":    totalPages,
+		"HasPrev":       page > 1,
+		"HasNext":       page < totalPages,
+		"PrevPage":      page - 1,
+		"NextPage":      page + 1,
 	})
 }
 
@@ -371,13 +371,13 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, h.tmpl, "conversation_todos.html", map[string]any{
-		"Title":       title + " - Todos",
-		"CurrentPath": "/projects/",
-		"Project":     project,
-		"Session":     session,
-		"ActiveTab":      "todos",
+		"Title":         title + " - Todos",
+		"CurrentPath":   "/projects/",
+		"Project":       project,
+		"Session":       session,
+		"ActiveTab":     "todos",
 		"HasCodeBlocks": hasCodeBlocks(session),
-		"Items":       items,
+		"Items":         items,
 	})
 }
 
@@ -436,14 +436,14 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 	}
 
 	renderTemplate(w, h.tmpl, "conversation_filehistory.html", map[string]any{
-		"Title":       title + " - File History",
-		"CurrentPath": "/projects/",
-		"Project":     project,
-		"Session":     session,
-		"ActiveTab":      "file-history",
+		"Title":         title + " - File History",
+		"CurrentPath":   "/projects/",
+		"Project":       project,
+		"Session":       session,
+		"ActiveTab":     "file-history",
 		"HasCodeBlocks": hasCodeBlocks(session),
-		"Groups":      groups,
-		"TotalFiles":  len(detail.Files),
+		"Groups":        groups,
+		"TotalFiles":    len(detail.Files),
 	})
 }
 
@@ -502,13 +502,13 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 	}
 
 	renderTemplate(w, h.tmpl, "conversation_commands.html", map[string]any{
-		"Title":       title + " - Commands",
-		"CurrentPath": "/projects/",
-		"Project":     project,
-		"Session":     session,
-		"ActiveTab":      "commands",
+		"Title":         title + " - Commands",
+		"CurrentPath":   "/projects/",
+		"Project":       project,
+		"Session":       session,
+		"ActiveTab":     "commands",
 		"HasCodeBlocks": hasCodeBlocks(session),
-		"Commands":    commands,
+		"Commands":      commands,
 	})
 }
 
@@ -584,15 +584,15 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, h.tmpl, "conversation_tools.html", map[string]any{
-		"Title":       title + " - Tools",
-		"CurrentPath": "/projects/",
-		"Project":     project,
-		"Session":     session,
-		"ActiveTab":      "tools",
+		"Title":         title + " - Tools",
+		"CurrentPath":   "/projects/",
+		"Project":       project,
+		"Session":       session,
+		"ActiveTab":     "tools",
 		"HasCodeBlocks": hasCodeBlocks(session),
-		"Stats":       stats,
-		"Calls":       calls,
-		"TotalCalls":  totalCalls,
+		"Stats":         stats,
+		"Calls":         calls,
+		"TotalCalls":    totalCalls,
 	})
 }
 
@@ -886,13 +886,13 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 const maxSearchResults = 100
 
 type searchResult struct {
-	ProjectDirName  string
-	ProjectDisplay  string
-	SessionID       string
-	SessionPrompt   string
-	Role            string
-	Timestamp       string
-	Snippet         string
+	ProjectDirName string
+	ProjectDisplay string
+	SessionID      string
+	SessionPrompt  string
+	Role           string
+	Timestamp      string
+	Snippet        string
 }
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {

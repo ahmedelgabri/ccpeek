@@ -35,7 +35,7 @@
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-SuTYeR6a4KOhyrSZEcKPWc4Wu+gRdWkR0dF9fwbE1TM=";
+            vendorHash = "sha256-/jfshB1eK0bU4e4q5ax1L1HZ6Mf+gC9S0yqMJpL5GZU=";
 
             ldflags = [
               "-s"
@@ -97,7 +97,6 @@
                 "*.yml"
                 "*.yaml"
                 "*.json"
-                "*.svg"
                 "*.js"
                 "*.ts"
                 "*.html"

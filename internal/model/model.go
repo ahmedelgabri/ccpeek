@@ -44,14 +44,14 @@ type ProjectEntry struct {
 }
 
 type SessionEntry struct {
-	SessionID      string `json:"sessionId"`
-	FirstPrompt    string `json:"firstPrompt"`
-	MessageCount   int    `json:"messageCount"`
-	Created        string `json:"created"`
-	Modified       string `json:"modified"`
-	GitBranch      string `json:"gitBranch,omitempty"`
-	ProjectPath    string `json:"projectPath,omitempty"`
-	TodoFileName   string `json:"todoFileName,omitempty"`
+	SessionID        string         `json:"sessionId"`
+	FirstPrompt      string         `json:"firstPrompt"`
+	MessageCount     int            `json:"messageCount"`
+	Created          string         `json:"created"`
+	Modified         string         `json:"modified"`
+	GitBranch        string         `json:"gitBranch,omitempty"`
+	ProjectPath      string         `json:"projectPath,omitempty"`
+	TodoFileName     string         `json:"todoFileName,omitempty"`
 	HasFileHistory   bool           `json:"hasFileHistory,omitempty"`
 	BashCommandCount int            `json:"bashCommandCount,omitempty"`
 	ToolUseCounts    map[string]int `json:"toolUseCounts,omitempty"`
