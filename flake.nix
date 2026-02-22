@@ -31,7 +31,7 @@
           default = self'.packages.ccpeak;
           ccpeak = pkgs.buildGoModule {
             pname = "ccpeak";
-            version = "0.2.0";
+            version = "0.3.0";
 
             src = lib.cleanSource ./.;
 
