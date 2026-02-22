@@ -505,6 +505,44 @@ func TestFileHistoryDetail(t *testing.T) {
 	}
 }
 
+func TestSessionCompare(t *testing.T) {
+	handler := setupTestServer(t)
+
+	// Missing params returns 400
+	req := httptest.NewRequest("GET", "/projects/test-project/compare", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Errorf("expected 400 for missing params, got %d", w.Code)
+	}
+
+	// Same session for both (valid, just a degenerate case)
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	req = httptest.NewRequest("GET", "/projects/test-project/compare?a="+sessionID+"&b="+sessionID, nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Compare Sessions") {
+		t.Error("compare page missing title")
+	}
+	if !strings.Contains(body, "Messages") {
+		t.Error("compare page missing metadata")
+	}
+}
+
+func TestSessionCompareNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/compare?a=nonexistent&b=nonexistent2", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
 func TestStaticFiles(t *testing.T) {
 	handler := setupTestServer(t)
 

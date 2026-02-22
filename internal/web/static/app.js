@@ -46,6 +46,26 @@ document.addEventListener("click", (e) => {
   });
 });
 
+// Session compare: show Compare button when exactly 2 checkboxes are checked.
+(() => {
+  const btn = document.getElementById("compare-btn");
+  const list = document.querySelector("[data-project-dir]");
+  if (!btn || !list) return;
+  const dir = list.getAttribute("data-project-dir");
+
+  list.addEventListener("change", () => {
+    const checked = list.querySelectorAll(".compare-check:checked");
+    if (checked.length === 2) {
+      const a = checked[0].getAttribute("data-session-id");
+      const b = checked[1].getAttribute("data-session-id");
+      btn.href = "/projects/" + dir + "/compare?a=" + a + "&b=" + b;
+      btn.classList.remove("hidden");
+    } else {
+      btn.classList.add("hidden");
+    }
+  });
+})();
+
 // Keyboard navigation: j/k to move between list rows, Enter to open, / to search, Escape to blur.
 (() => {
   let focusIndex = -1;

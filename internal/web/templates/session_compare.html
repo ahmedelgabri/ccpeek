@@ -1,0 +1,145 @@
+{{ define "content" }}
+  <a
+    href="/projects/{{ .Project.DirName }}/"
+    class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors"
+  >
+    <svg
+      class="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      stroke-width="2"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+      />
+    </svg>
+    {{ .Project.DisplayName }}
+  </a>
+
+  <h1 class="text-2xl font-bold text-slate-50 mb-6">Compare Sessions</h1>
+
+  <div class="grid grid-cols-2 gap-6">
+    <div class="space-y-4">
+      <h2 class="text-lg font-semibold text-slate-200">
+        <a
+          href="/projects/{{ .Project.DirName }}/{{ .SessionA.SessionID }}/"
+          class="text-violet-400 no-underline hover:text-violet-300"
+        >
+          {{ if .SessionA.FirstPrompt }}
+            {{ truncate .SessionA.FirstPrompt 80 }}
+          {{ else }}
+            {{ .SessionA.SessionID }}
+          {{ end }}
+        </a>
+      </h2>
+      <dl class="space-y-2 text-sm">
+        {{ if .SessionA.Created }}
+          <div class="flex justify-between">
+            <dt class="text-slate-500">Created</dt>
+            <dd class="text-slate-300">{{ formatDate .SessionA.Created }}</dd>
+          </div>
+        {{ end }}
+        {{ if .SessionA.GitBranch }}
+          <div class="flex justify-between">
+            <dt class="text-slate-500">Branch</dt>
+            <dd class="font-mono text-slate-300">{{ .SessionA.GitBranch }}</dd>
+          </div>
+        {{ end }}
+        <div class="flex justify-between">
+          <dt class="text-slate-500">Messages</dt>
+          <dd class="text-slate-300">{{ .SessionA.MessageCount }}</dd>
+        </div>
+        {{ if .SessionA.EstimatedTokens }}
+          <div class="flex justify-between">
+            <dt class="text-slate-500">Tokens</dt>
+            <dd class="text-slate-300">
+              ~{{ formatTokens .SessionA.EstimatedTokens }}
+            </dd>
+          </div>
+        {{ end }}
+        <div class="flex justify-between">
+          <dt class="text-slate-500">Commands</dt>
+          <dd class="text-slate-300">{{ .SessionA.BashCommandCount }}</dd>
+        </div>
+      </dl>
+    </div>
+
+    <div class="space-y-4">
+      <h2 class="text-lg font-semibold text-slate-200">
+        <a
+          href="/projects/{{ .Project.DirName }}/{{ .SessionB.SessionID }}/"
+          class="text-sky-400 no-underline hover:text-sky-300"
+        >
+          {{ if .SessionB.FirstPrompt }}
+            {{ truncate .SessionB.FirstPrompt 80 }}
+          {{ else }}
+            {{ .SessionB.SessionID }}
+          {{ end }}
+        </a>
+      </h2>
+      <dl class="space-y-2 text-sm">
+        {{ if .SessionB.Created }}
+          <div class="flex justify-between">
+            <dt class="text-slate-500">Created</dt>
+            <dd class="text-slate-300">{{ formatDate .SessionB.Created }}</dd>
+          </div>
+        {{ end }}
+        {{ if .SessionB.GitBranch }}
+          <div class="flex justify-between">
+            <dt class="text-slate-500">Branch</dt>
+            <dd class="font-mono text-slate-300">{{ .SessionB.GitBranch }}</dd>
+          </div>
+        {{ end }}
+        <div class="flex justify-between">
+          <dt class="text-slate-500">Messages</dt>
+          <dd class="text-slate-300">{{ .SessionB.MessageCount }}</dd>
+        </div>
+        {{ if .SessionB.EstimatedTokens }}
+          <div class="flex justify-between">
+            <dt class="text-slate-500">Tokens</dt>
+            <dd class="text-slate-300">
+              ~{{ formatTokens .SessionB.EstimatedTokens }}
+            </dd>
+          </div>
+        {{ end }}
+        <div class="flex justify-between">
+          <dt class="text-slate-500">Commands</dt>
+          <dd class="text-slate-300">{{ .SessionB.BashCommandCount }}</dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+
+  {{ if .Tools }}
+    <h2 class="text-lg font-semibold text-slate-200 mt-8 mb-4">
+      Tool Usage Comparison
+    </h2>
+    <div
+      class="bg-surface-card border border-surface-border rounded-xl overflow-hidden"
+    >
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-surface-border text-slate-500">
+            <th class="text-left px-4 py-2 font-medium">Tool</th>
+            <th class="text-right px-4 py-2 font-medium text-violet-400">A</th>
+            <th class="text-right px-4 py-2 font-medium text-sky-400">B</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .Tools }}
+            <tr class="border-b border-surface-border last:border-0">
+              <td class="px-4 py-2 text-slate-300 font-mono">{{ .Name }}</td>
+              <td class="text-right px-4 py-2 text-slate-400">{{ .CountA }}</td>
+              <td class="text-right px-4 py-2 text-slate-400">{{ .CountB }}</td>
+            </tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+  {{ end }}
+{{ end }}
+
+{{ template "layout.html" . }}

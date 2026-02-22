@@ -94,6 +94,7 @@ func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /search/{$}", h.search)
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
+	mux.HandleFunc("GET /projects/{dirName}/compare", h.sessionCompare)
 	return mux
 }
 

@@ -885,3 +885,76 @@ func extractSnippet(text string, pos, matchLen, contextLen int) string {
 	}
 	return prefix + snippet + suffix
 }
+
+func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
+	dirName := r.PathValue("dirName")
+	store := h.store.Load()
+
+	var project *model.ProjectEntry
+	for i := range store.Index.Projects {
+		if store.Index.Projects[i].DirName == dirName {
+			project = &store.Index.Projects[i]
+			break
+		}
+	}
+	if project == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	aID := r.URL.Query().Get("a")
+	bID := r.URL.Query().Get("b")
+	if aID == "" || bID == "" {
+		http.Error(w, "both ?a and ?b session IDs are required", http.StatusBadRequest)
+		return
+	}
+
+	var sessionA, sessionB *model.SessionEntry
+	for i := range project.Sessions {
+		sid := project.Sessions[i].SessionID
+		if sid == aID {
+			sessionA = &project.Sessions[i]
+		}
+		if sid == bID {
+			sessionB = &project.Sessions[i]
+		}
+	}
+	if sessionA == nil || sessionB == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Merge tool names from both sessions for comparison
+	toolNames := make(map[string]bool)
+	for name := range sessionA.ToolUseCounts {
+		toolNames[name] = true
+	}
+	for name := range sessionB.ToolUseCounts {
+		toolNames[name] = true
+	}
+	type toolCompare struct {
+		Name   string
+		CountA int
+		CountB int
+	}
+	var tools []toolCompare
+	for name := range toolNames {
+		tools = append(tools, toolCompare{
+			Name:   name,
+			CountA: sessionA.ToolUseCounts[name],
+			CountB: sessionB.ToolUseCounts[name],
+		})
+	}
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].CountA+tools[i].CountB > tools[j].CountA+tools[j].CountB
+	})
+
+	renderTemplate(w, h.tmpl, "session_compare.html", map[string]any{
+		"Title":       "Compare Sessions",
+		"CurrentPath": "/projects/",
+		"Project":     project,
+		"SessionA":    sessionA,
+		"SessionB":    sessionB,
+		"Tools":       tools,
+	})
+}

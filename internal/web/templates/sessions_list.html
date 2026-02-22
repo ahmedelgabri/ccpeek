@@ -31,16 +31,34 @@
     placeholder="Filter sessions..."
     data-search-target="searchable-list"
   />
-  <div class="search-count text-xs text-slate-600 mb-4"></div>
+  <div class="flex items-center justify-between mb-4">
+    <div class="search-count text-xs text-slate-600"></div>
+    <a
+      id="compare-btn"
+      class="hidden text-xs px-3 py-1.5 rounded-lg bg-violet-500/20 text-violet-300 no-underline hover:bg-violet-500/30 transition-colors"
+      href="#"
+      >Compare selected</a
+    >
+  </div>
 
-  <div class="item-list searchable-list space-y-2">
+  <div
+    class="item-list searchable-list space-y-2"
+    data-project-dir="{{ .Project.DirName }}"
+  >
     {{ range .Project.Sessions }}
-      <a
-        href="/projects/{{ $.Project.DirName }}/{{ .SessionID }}/"
-        class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
+      <div
+        class="list-row group flex items-center gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
         data-search-keys="{{ .FirstPrompt }} {{ .SessionID }} {{ .GitBranch }}"
       >
-        <div class="min-w-0 flex-1">
+        <input
+          type="checkbox"
+          class="compare-check shrink-0 accent-violet-500"
+          data-session-id="{{ .SessionID }}"
+        />
+        <a
+          href="/projects/{{ $.Project.DirName }}/{{ .SessionID }}/"
+          class="min-w-0 flex-1 no-underline"
+        >
           <div
             class="text-sm text-slate-200 truncate group-hover:text-slate-50"
           >
@@ -81,13 +99,13 @@
               >
             {{ end }}
           </div>
-        </div>
+        </a>
         {{ if .Modified }}
           <span class="text-xs text-slate-600 whitespace-nowrap"
             >{{ formatDate .Modified }}</span
           >
         {{ end }}
-      </a>
+      </div>
     {{ end }}
   </div>
 {{ end }}
