@@ -1,4 +1,4 @@
-module github.com/ahmedelgabri/ccexplore
+module github.com/ahmedelgabri/ccpeak
 
 go 1.25.0
 

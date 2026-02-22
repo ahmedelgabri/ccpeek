@@ -1,5 +1,5 @@
 {
-  description = "ccexplore - Explore your Claude Code history";
+  description = "ccpeak - Explore your Claude Code history";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -28,9 +28,9 @@
         ...
       }: {
         packages = {
-          default = self'.packages.ccexplore;
-          ccexplore = pkgs.buildGoModule {
-            pname = "ccexplore";
+          default = self'.packages.ccpeak;
+          ccpeak = pkgs.buildGoModule {
+            pname = "ccpeak";
             version = "0.2.0";
 
             src = lib.cleanSource ./.;
@@ -40,7 +40,7 @@
             ldflags = [
               "-s"
               "-w"
-              "-X github.com/ahmedelgabri/ccexplore/internal/cmd.Version=${self'.packages.ccexplore.version}"
+              "-X github.com/ahmedelgabri/ccpeak/internal/cmd.Version=${self'.packages.ccpeak.version}"
             ];
 
             nativeBuildInputs = with pkgs; [
@@ -49,7 +49,7 @@
               tailwindcss_4
             ];
 
-            subPackages = ["cmd/ccexplore"];
+            subPackages = ["cmd/ccpeak"];
 
             preBuild = ''
               tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
@@ -57,25 +57,25 @@
 
             postInstall = ''
               # Generate shell completions before wrapping
-              $out/bin/ccexplore completion bash > ccexplore.bash
-              $out/bin/ccexplore completion zsh > _ccexplore
-              $out/bin/ccexplore completion fish > ccexplore.fish
-              installShellCompletion --bash ccexplore.bash
-              installShellCompletion --zsh _ccexplore
-              installShellCompletion --fish ccexplore.fish
+              $out/bin/ccpeak completion bash > ccpeak.bash
+              $out/bin/ccpeak completion zsh > _ccpeak
+              $out/bin/ccpeak completion fish > ccpeak.fish
+              installShellCompletion --bash ccpeak.bash
+              installShellCompletion --zsh _ccpeak
+              installShellCompletion --fish ccpeak.fish
 
               # Generate and install man pages
               mkdir -p $TMPDIR/man
-              $out/bin/ccexplore man $TMPDIR/man
+              $out/bin/ccpeak man $TMPDIR/man
               installManPage $TMPDIR/man/*.1
 
-              wrapProgram $out/bin/ccexplore \
+              wrapProgram $out/bin/ccpeak \
                 --prefix PATH : ${pkgs.lib.makeBinPath [pkgs.git]}
             '';
 
             meta = {
-              mainProgram = "ccexplore";
-              homepage = "https://github.com/ahmedelgabri/ccexplore";
+              mainProgram = "ccpeak";
+              homepage = "https://github.com/ahmedelgabri/ccpeak";
               description = "Explore your Claude Code history";
               license = lib.licenses.mit;
               platforms = lib.platforms.unix;

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ahmedelgabri/ccexplore/internal/model"
+	"github.com/ahmedelgabri/ccpeak/internal/model"
 )
 
 func TestRun(t *testing.T) {

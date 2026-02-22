@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/ahmedelgabri/ccexplore/internal/index"
-	"github.com/ahmedelgabri/ccexplore/internal/server"
+	"github.com/ahmedelgabri/ccpeak/internal/index"
+	"github.com/ahmedelgabri/ccpeak/internal/server"
 	"github.com/spf13/cobra"
 )
 
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:           "ccexplore",
+	Use:           "ccpeak",
 	Short:         "Explore your Claude Code history",
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -31,7 +31,7 @@ func init() {
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
 	rootCmd.Flags().String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
-	rootCmd.Flags().String("data-dir", filepath.Join(os.TempDir(), ".ccexplore"), "Data output/read directory")
+	rootCmd.Flags().String("data-dir", filepath.Join(os.TempDir(), ".ccpeak"), "Data output/read directory")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().Bool("open", false, "Open browser after starting server")

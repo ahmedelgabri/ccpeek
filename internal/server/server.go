@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ahmedelgabri/ccexplore/internal/index"
-	"github.com/ahmedelgabri/ccexplore/internal/model"
-	"github.com/ahmedelgabri/ccexplore/internal/web"
+	"github.com/ahmedelgabri/ccpeak/internal/index"
+	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeak/internal/web"
 )
 
 // DataStore holds the loaded index data and the path to detail files.

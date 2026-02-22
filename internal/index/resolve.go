@@ -3,7 +3,7 @@ package index
 import (
 	"regexp"
 
-	"github.com/ahmedelgabri/ccexplore/internal/model"
+	"github.com/ahmedelgabri/ccpeak/internal/model"
 )
 
 // todoSessionRe extracts the session UUID from a todo filename like

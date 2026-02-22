@@ -7,7 +7,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   webServer: {
-    command: "go run ./cmd/ccexplore --claude-dir testdata --port 4322",
+    command: "go run ./cmd/ccpeak --claude-dir testdata --port 4322",
     port: 4322,
     reuseExistingServer: !process.env.CI,
   },

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/ahmedelgabri/ccexplore/internal/model"
+	"github.com/ahmedelgabri/ccpeak/internal/model"
 )
 
 var fileVersionRe = regexp.MustCompile(`^(.+)@v(\d+)$`)
