@@ -85,6 +85,8 @@
 
         treefmt = {
           projectRootFile = "flake.nix";
+          # prettier-plugin-go-template is an npm dep, not available in nix sandbox
+          flakeCheck = false;
 
           programs = {
             gofumpt.enable = true;
