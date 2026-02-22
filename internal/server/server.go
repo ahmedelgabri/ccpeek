@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ahmedelgabri/claude-history/internal/model"
 	"github.com/ahmedelgabri/claude-history/internal/web"
@@ -52,7 +54,7 @@ func ListenAndServe(addr, dataDir string) error {
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
 
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, requestLogger(mux))
 }
 
 // NewHandler creates the HTTP handler without starting a listener.
@@ -110,4 +112,23 @@ func loadDataStore(dataDir string) (*DataStore, error) {
 type handlers struct {
 	store *DataStore
 	tmpl  *templates
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rec, r)
+		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Microsecond))
+	})
 }
