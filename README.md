@@ -7,6 +7,12 @@ Claude Code conversations, plans, todos, shell snapshots, and file history.
 
 ## Installation
 
+### Homebrew
+
+```sh
+brew install ahmedelgabri/ccexplore/ccexplore
+```
+
 ### Nix Flakes
 
 ```sh
@@ -81,7 +87,7 @@ ccexplore completion zsh > "${fpath[1]}/_ccexplore"
 ccexplore completion fish > ~/.config/fish/completions/ccexplore.fish
 ```
 
-Nix installations include completions and man pages automatically.
+Homebrew and Nix installations include completions and man pages automatically.
 
 ## What it indexes
 
