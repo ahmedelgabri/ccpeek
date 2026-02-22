@@ -124,11 +124,26 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+func statusColorCode(code int) string {
+	switch {
+	case code >= 500:
+		return "\033[31m" // red
+	case code >= 400:
+		return "\033[33m" // yellow
+	case code >= 300:
+		return "\033[36m" // cyan
+	default:
+		return "\033[32m" // green
+	}
+}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Microsecond))
+		elapsed := time.Since(start).Round(time.Microsecond)
+		log.Printf("\033[35m%s\033[0m %s %s%d\033[0m \033[2m%s\033[0m",
+			r.Method, r.URL.Path, statusColorCode(rec.status), rec.status, elapsed)
 	})
 }
