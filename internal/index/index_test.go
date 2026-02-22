@@ -69,8 +69,8 @@ func TestRun(t *testing.T) {
 		if p.SessionCount != 1 {
 			t.Errorf("expected 1 session, got %d", p.SessionCount)
 		}
-		if p.Sessions[0].MessageCount != 4 {
-			t.Errorf("expected 4 messages (progress filtered), got %d", p.Sessions[0].MessageCount)
+		if p.Sessions[0].MessageCount != 5 {
+			t.Errorf("expected 5 messages (progress filtered), got %d", p.Sessions[0].MessageCount)
 		}
 		if p.Sessions[0].FirstPrompt != "hello world" {
 			t.Errorf("expected first prompt 'hello world', got %q", p.Sessions[0].FirstPrompt)
@@ -85,8 +85,8 @@ func TestRun(t *testing.T) {
 		if err := json.Unmarshal(sessData, &msgs); err != nil {
 			t.Fatal("parsing session JSON:", err)
 		}
-		if len(msgs) != 4 {
-			t.Errorf("expected 4 messages in JSON, got %d", len(msgs))
+		if len(msgs) != 5 {
+			t.Errorf("expected 5 messages in JSON, got %d", len(msgs))
 		}
 
 		// Verify relationship: session has linked todo and file history
@@ -102,8 +102,13 @@ func TestRun(t *testing.T) {
 		}
 		if len(sess.ToolUseCounts) == 0 {
 			t.Error("expected ToolUseCounts to be populated")
-		} else if sess.ToolUseCounts["Bash"] != 1 {
-			t.Errorf("expected ToolUseCounts[Bash]=1, got %d", sess.ToolUseCounts["Bash"])
+		} else {
+			if sess.ToolUseCounts["Bash"] != 1 {
+				t.Errorf("expected ToolUseCounts[Bash]=1, got %d", sess.ToolUseCounts["Bash"])
+			}
+			if sess.ToolUseCounts["Write"] != 1 {
+				t.Errorf("expected ToolUseCounts[Write]=1, got %d", sess.ToolUseCounts["Write"])
+			}
 		}
 	}
 

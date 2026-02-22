@@ -238,7 +238,7 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "hello world") {
 		t.Error("conversation missing first prompt")
 	}
-	if !strings.Contains(body, "4 messages") {
+	if !strings.Contains(body, "5 messages") {
 		t.Error("conversation missing message count")
 	}
 	if !strings.Contains(body, "message-user") {
@@ -259,6 +259,9 @@ func TestConversation(t *testing.T) {
 	}
 	if !strings.Contains(body, "/tools/") {
 		t.Error("conversation missing tools tab link")
+	}
+	if !strings.Contains(body, "/code/") {
+		t.Error("conversation missing code tab link")
 	}
 }
 
@@ -376,6 +379,48 @@ func TestConversationTools(t *testing.T) {
 	}
 	if !strings.Contains(body, "Tools") {
 		t.Error("tools page missing tab")
+	}
+}
+
+func TestConversationCode(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/code/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Write") {
+		t.Error("code page missing Write tool label")
+	}
+	if !strings.Contains(body, "/tmp/test.go") {
+		t.Error("code page missing file path")
+	}
+	if !strings.Contains(body, "package main") {
+		t.Error("code page missing file content")
+	}
+	if !strings.Contains(body, "data-copy") {
+		t.Error("code page missing copy button")
+	}
+	if !strings.Contains(body, "1 code operations") {
+		t.Error("code page missing block count")
+	}
+	if !strings.Contains(body, "Code") {
+		t.Error("code page missing tab")
+	}
+}
+
+func TestConversationCodeNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/code/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 

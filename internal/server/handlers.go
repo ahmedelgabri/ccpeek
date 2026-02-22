@@ -329,7 +329,8 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		"CurrentPath": "/projects/",
 		"Project":     project,
 		"Session":     session,
-		"ActiveTab":   "conversation",
+		"ActiveTab":      "conversation",
+		"HasCodeBlocks": hasCodeBlocks(session),
 		"Messages":    pageMessages,
 		"TotalMsgs":   len(messages),
 		"Page":        page,
@@ -374,7 +375,8 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 		"CurrentPath": "/projects/",
 		"Project":     project,
 		"Session":     session,
-		"ActiveTab":   "todos",
+		"ActiveTab":      "todos",
+		"HasCodeBlocks": hasCodeBlocks(session),
 		"Items":       items,
 	})
 }
@@ -438,7 +440,8 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		"CurrentPath": "/projects/",
 		"Project":     project,
 		"Session":     session,
-		"ActiveTab":   "file-history",
+		"ActiveTab":      "file-history",
+		"HasCodeBlocks": hasCodeBlocks(session),
 		"Groups":      groups,
 		"TotalFiles":  len(detail.Files),
 	})
@@ -503,7 +506,8 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 		"CurrentPath": "/projects/",
 		"Project":     project,
 		"Session":     session,
-		"ActiveTab":   "commands",
+		"ActiveTab":      "commands",
+		"HasCodeBlocks": hasCodeBlocks(session),
 		"Commands":    commands,
 	})
 }
@@ -584,7 +588,8 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		"CurrentPath": "/projects/",
 		"Project":     project,
 		"Session":     session,
-		"ActiveTab":   "tools",
+		"ActiveTab":      "tools",
+		"HasCodeBlocks": hasCodeBlocks(session),
 		"Stats":       stats,
 		"Calls":       calls,
 		"TotalCalls":  totalCalls,
@@ -671,6 +676,92 @@ func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	w.Write([]byte(buf.String()))
+}
+
+type codeBlock struct {
+	Tool      string // "Write" or "Edit"
+	FilePath  string
+	Content   string // Full content for Write, new_string for Edit
+	OldString string // Only for Edit
+	Timestamp string
+}
+
+func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
+	store, project, session, ok := h.lookupSession(w, r)
+	if !ok {
+		return
+	}
+
+	if !hasCodeBlocks(session) {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var messages []model.ConversationMessage
+	if err := json.Unmarshal(data, &messages); err != nil {
+		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
+		return
+	}
+
+	var blocks []codeBlock
+	for _, m := range messages {
+		if m.Message.Role != "assistant" {
+			continue
+		}
+		for _, b := range m.Message.ContentBlocks() {
+			if b.Type != "tool_use" || (b.Name != "Write" && b.Name != "Edit") {
+				continue
+			}
+			var input struct {
+				FilePath  string `json:"file_path"`
+				Content   string `json:"content"`
+				OldString string `json:"old_string"`
+				NewString string `json:"new_string"`
+			}
+			if json.Unmarshal(b.Input, &input) != nil || input.FilePath == "" {
+				continue
+			}
+			cb := codeBlock{
+				Tool:      b.Name,
+				FilePath:  input.FilePath,
+				Timestamp: m.Timestamp,
+			}
+			if b.Name == "Write" {
+				cb.Content = input.Content
+			} else {
+				cb.Content = input.NewString
+				cb.OldString = input.OldString
+			}
+			blocks = append(blocks, cb)
+		}
+	}
+
+	title := session.FirstPrompt
+	if title == "" {
+		title = session.SessionID
+	}
+
+	renderTemplate(w, h.tmpl, "conversation_code.html", map[string]any{
+		"Title":         title + " - Code",
+		"CurrentPath":   "/projects/",
+		"Project":       project,
+		"Session":       session,
+		"ActiveTab":     "code",
+		"HasCodeBlocks": true,
+		"Blocks":        blocks,
+		"TotalBlocks":   len(blocks),
+	})
+}
+
+// hasCodeBlocks returns whether a session has Write or Edit tool calls.
+func hasCodeBlocks(s *model.SessionEntry) bool {
+	return s.ToolUseCounts["Write"]+s.ToolUseCounts["Edit"] > 0
 }
 
 // extractToolDetail returns a short summary of what a tool call did.

@@ -126,6 +126,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/conversation_filehistory.html",
 		"templates/conversation_commands.html",
 		"templates/conversation_tools.html",
+		"templates/conversation_code.html",
 		"templates/search.html",
 		"templates/session_compare.html",
 		"templates/filehistory_list.html",
