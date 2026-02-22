@@ -83,6 +83,7 @@ var funcMap = template.FuncMap{
 	"wrapCode":         wrapCode,
 	"toJSON":           toJSON,
 	"renderDiff":       renderDiff,
+	"formatTokens":     formatTokens,
 	"safeHTML":         func(s string) template.HTML { return template.HTML(s) },
 	"statusColor":      statusColor,
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },

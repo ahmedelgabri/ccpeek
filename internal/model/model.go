@@ -55,6 +55,7 @@ type SessionEntry struct {
 	HasFileHistory   bool           `json:"hasFileHistory,omitempty"`
 	BashCommandCount int            `json:"bashCommandCount,omitempty"`
 	ToolUseCounts    map[string]int `json:"toolUseCounts,omitempty"`
+	EstimatedTokens  int            `json:"estimatedTokens,omitempty"`
 }
 
 type FileHistoryEntry struct {

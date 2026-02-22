@@ -125,6 +125,7 @@ func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
 	toolCounts := countToolUses(messages)
 	bashCount := toolCounts["Bash"]
+	tokens := estimateTokens(messages)
 
 	// Check sessions-index for metadata
 	for _, ie := range indexEntries {
@@ -139,6 +140,7 @@ func buildSessionEntry(sessionID string, messages []model.ConversationMessage, i
 				ProjectPath:      ie.ProjectPath,
 				BashCommandCount: bashCount,
 				ToolUseCounts:    toolCounts,
+				EstimatedTokens:  tokens,
 			}
 			if entry.MessageCount == 0 {
 				entry.MessageCount = len(messages)
@@ -175,7 +177,18 @@ func buildSessionEntry(sessionID string, messages []model.ConversationMessage, i
 		GitBranch:        gitBranch,
 		BashCommandCount: bashCount,
 		ToolUseCounts:    toolCounts,
+		EstimatedTokens:  tokens,
 	}
+}
+
+// estimateTokens gives a rough token count based on character length.
+// Uses ~4 characters per token as a rough heuristic for English text.
+func estimateTokens(messages []model.ConversationMessage) int {
+	totalChars := 0
+	for _, m := range messages {
+		totalChars += len(m.Message.ContentText())
+	}
+	return totalChars / 4
 }
 
 func countToolUses(messages []model.ConversationMessage) map[string]int {

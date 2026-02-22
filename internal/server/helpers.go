@@ -76,6 +76,18 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// formatTokens formats a token count with K/M suffixes.
+func formatTokens(tokens int) string {
+	switch {
+	case tokens >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
+	case tokens >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(tokens)/1_000)
+	default:
+		return fmt.Sprintf("%d", tokens)
+	}
+}
+
 // toJSON marshals a value to indented JSON string.
 func toJSON(v any) string {
 	data, err := json.MarshalIndent(v, "", "  ")
