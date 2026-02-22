@@ -3,6 +3,8 @@
 Explore your Claude Code history. A local web app that indexes and browses your
 Claude Code conversations, plans, todos, shell snapshots, and file history.
 
+https://github.com/user-attachments/assets/014c53b6-e93f-433d-a7c2-16b95086b764
+
 ## Installation
 
 ### Homebrew
