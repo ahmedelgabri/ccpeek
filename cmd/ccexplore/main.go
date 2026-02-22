@@ -23,7 +23,7 @@ func main() {
 	skipIndex := flag.Bool("skip-index", false, "Skip indexing, serve existing data")
 	port := flag.Int("port", 3000, "Server port")
 	claudeDir := flag.String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
-	dataDir := flag.String("data-dir", filepath.Join(home, ".claude-history"), "Data output/read directory")
+	dataDir := flag.String("data-dir", filepath.Join(os.TempDir(), ".ccexplore"), "Data output/read directory")
 	openBrowser := flag.Bool("open", false, "Open browser after starting server")
 	flag.Parse()
 

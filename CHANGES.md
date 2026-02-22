@@ -1,11 +1,11 @@
-# Claude History Browser
+# CCExplore
 
 Go CLI that indexes `~/.claude` and serves a web UI for browsing conversations, plans, todos, file history, and shell snapshots.
 
 ## Architecture
 
-- `cmd/claude-history/` -- CLI entry point (flags: `--port`, `--skip-index`, `--index-only`, `--open`, `--claude-dir`, `--data-dir`)
-- `internal/index/` -- reads `~/.claude`, writes structured data to `~/.claude-history`
+- `cmd/ccexplore/` -- CLI entry point (flags: `--port`, `--skip-index`, `--index-only`, `--open`, `--claude-dir`, `--data-dir`)
+- `internal/index/` -- reads `~/.claude`, writes structured data to `$TMPDIR/.ccexplore`
 - `internal/model/` -- shared data types
 - `internal/server/` -- HTTP server and routing
 - `internal/web/` -- HTML templates and static assets
@@ -13,10 +13,10 @@ Go CLI that indexes `~/.claude` and serves a web UI for browsing conversations, 
 ## Usage
 
 ```bash
-go run ./cmd/claude-history              # index + serve on :3000
-go run ./cmd/claude-history --open       # same, opens browser
-go run ./cmd/claude-history --index-only # index and exit
-go run ./cmd/claude-history --skip-index # serve existing data
+go run ./cmd/ccexplore              # index + serve on :3000
+go run ./cmd/ccexplore --open       # same, opens browser
+go run ./cmd/ccexplore --index-only # index and exit
+go run ./cmd/ccexplore --skip-index # serve existing data
 ```
 
 ## Tests

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CCExplore is a Go CLI that indexes Claude Code data from `~/.claude` and serves a local web UI for browsing conversations, plans, todos, shell snapshots, and file history. Indexed data is written to `~/.claude-history/index.json`.
+CCExplore is a Go CLI that indexes Claude Code data from `~/.claude` and serves a local web UI for browsing conversations, plans, todos, shell snapshots, and file history. Indexed data is written to `$TMPDIR/.ccexplore/index.json`.
 
 ## Commands
 
@@ -29,7 +29,7 @@ Run a single Go test: `go test ./internal/server/ -run TestDashboard`
 ```
 cmd/ccexplore/main.go       Entry point: CLI flags, runs indexer then server
 internal/
-  index/                    Reads ~/.claude, writes ~/.claude-history/index.json
+  index/                    Reads ~/.claude, writes $TMPDIR/.ccexplore/index.json
     index.go                Orchestrator: Run() calls each sub-indexer
     projects.go             Indexes projects + sessions from JSONL conversation files
     plans.go, todos.go,     Each indexes one entity type
