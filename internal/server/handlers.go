@@ -9,11 +9,18 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 const pageSize = 50
+
+type heatmapDay struct {
+	Date  string
+	Count int
+	Level int // 0-4 intensity
+}
 
 func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 	idx := h.store.Index
@@ -28,13 +35,56 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 		history = history[:50]
 	}
 
+	heatmap := buildHeatmap(idx.History)
+
 	renderTemplate(w, h.tmpl, "dashboard.html", map[string]any{
 		"Title":         "Dashboard",
 		"CurrentPath":   "/",
 		"Index":         idx,
 		"TotalSessions": totalSessions,
 		"RecentHistory": history,
+		"Heatmap":       heatmap,
 	})
+}
+
+func buildHeatmap(history []model.HistoryEntry) []heatmapDay {
+	// Count conversations per day from history timestamps
+	dayCounts := make(map[string]int)
+	for _, entry := range history {
+		t := time.UnixMilli(entry.Timestamp)
+		day := t.Format("2006-01-02")
+		dayCounts[day]++
+	}
+
+	// Build 52 weeks (364 days) of data ending today
+	now := time.Now()
+	days := make([]heatmapDay, 364)
+	maxCount := 0
+	for i := range days {
+		t := now.AddDate(0, 0, -(363 - i))
+		day := t.Format("2006-01-02")
+		count := dayCounts[day]
+		if count > maxCount {
+			maxCount = count
+		}
+		days[i] = heatmapDay{
+			Date:  day,
+			Count: count,
+		}
+	}
+
+	// Assign intensity levels
+	for i := range days {
+		if days[i].Count == 0 {
+			days[i].Level = 0
+		} else if maxCount <= 4 {
+			days[i].Level = days[i].Count
+		} else {
+			days[i].Level = min(4, 1+(days[i].Count*3)/maxCount)
+		}
+	}
+
+	return days
 }
 
 func (h *handlers) plansList(w http.ResponseWriter, r *http.Request) {

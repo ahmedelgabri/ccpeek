@@ -176,6 +176,53 @@
     </a>
   </div>
 
+  {{ if .Heatmap }}
+    <div class="mb-12">
+      <h2
+        class="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2"
+      >
+        Activity
+      </h2>
+      <div class="overflow-x-auto">
+        <div
+          class="inline-grid gap-[3px]"
+          style="
+            grid-template-rows: repeat(7, 12px);
+            grid-auto-flow: column;
+            grid-auto-columns: 12px;
+          "
+        >
+          {{ range .Heatmap }}
+            <div
+              class="rounded-sm {{ if eq .Level 0 }}
+                bg-slate-800/50
+              {{ else if eq .Level 1 }}
+                bg-emerald-900/60
+              {{ else if eq .Level 2 }}
+                bg-emerald-700/60
+              {{ else if eq .Level 3 }}
+                bg-emerald-500/60
+              {{ else }}
+                bg-emerald-400/70
+              {{ end }}"
+              title="{{ .Date }}: {{ .Count }} conversations"
+            ></div>
+          {{ end }}
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5 mt-2 text-xs text-slate-600">
+        <span>Less</span>
+        <div class="w-3 h-3 rounded-sm bg-slate-800/50"></div>
+        <div class="w-3 h-3 rounded-sm bg-emerald-900/60"></div>
+        <div class="w-3 h-3 rounded-sm bg-emerald-700/60"></div>
+        <div class="w-3 h-3 rounded-sm bg-emerald-500/60"></div>
+        <div class="w-3 h-3 rounded-sm bg-emerald-400/70"></div>
+        <span>More</span>
+      </div>
+    </div>
+  {{ end }}
+
+
   <div>
     <h2
       class="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2"
