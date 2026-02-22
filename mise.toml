@@ -1,6 +1,7 @@
 [tools]
 go = "latest"
 node = "latest"
+pnpm = "latest"
 
 [tasks."css:build"]
 description = "Build CSS with Tailwind"

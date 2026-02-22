@@ -1,131 +1,129 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @source "../templates";
 
 @theme {
-  --color-surface: #0c0e16;
-  --color-surface-card: #141622;
-  --color-surface-hover: #1c1f2e;
-  --color-surface-border: rgba(148, 163, 184, 0.08);
-  --color-surface-border-hover: rgba(148, 163, 184, 0.16);
+	--color-surface: #0c0e16;
+	--color-surface-card: #141622;
+	--color-surface-hover: #1c1f2e;
+	--color-surface-border: rgba(148, 163, 184, 0.08);
+	--color-surface-border-hover: rgba(148, 163, 184, 0.16);
 
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono',
-    Menlo, monospace;
+	--font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 }
 
 /* Status badge colors (applied via Go statusColor template func) */
 .status-done {
-  background: rgba(52, 211, 153, 0.12);
-  color: #34d399;
+	background: rgba(52, 211, 153, 0.12);
+	color: #34d399;
 }
 .status-progress {
-  background: rgba(56, 189, 248, 0.12);
-  color: #38bdf8;
+	background: rgba(56, 189, 248, 0.12);
+	color: #38bdf8;
 }
 .status-pending {
-  background: rgba(251, 191, 36, 0.12);
-  color: #fbbf24;
+	background: rgba(251, 191, 36, 0.12);
+	color: #fbbf24;
 }
 .status-default {
-  background: rgba(148, 163, 184, 0.1);
-  color: #94a3b8;
+	background: rgba(148, 163, 184, 0.1);
+	color: #94a3b8;
 }
 
 /* Prose (rendered markdown) */
 .prose {
-  font-size: 0.875rem;
-  line-height: 1.75;
-  max-width: none;
-  color: #94a3b8;
+	font-size: 0.875rem;
+	line-height: 1.75;
+	max-width: none;
+	color: #94a3b8;
 }
 .prose h1,
 .prose h2,
 .prose h3,
 .prose h4 {
-  color: #f1f5f9;
-  margin: 1.25em 0 0.5em;
-  font-weight: 600;
+	color: #f1f5f9;
+	margin: 1.25em 0 0.5em;
+	font-weight: 600;
 }
 .prose h1 {
-  font-size: 1.25rem;
+	font-size: 1.25rem;
 }
 .prose h2 {
-  font-size: 1.125rem;
+	font-size: 1.125rem;
 }
 .prose h3 {
-  font-size: 1rem;
+	font-size: 1rem;
 }
 .prose p {
-  margin: 0.75em 0;
+	margin: 0.75em 0;
 }
 .prose a {
-  color: #38bdf8;
-  text-decoration: underline;
+	color: #38bdf8;
+	text-decoration: underline;
 }
 .prose code {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.8em;
-  background: rgba(148, 163, 184, 0.08);
-  padding: 0.125em 0.375em;
-  border-radius: 0.25rem;
+	font-family: 'JetBrains Mono', ui-monospace, monospace;
+	font-size: 0.8em;
+	background: rgba(148, 163, 184, 0.08);
+	padding: 0.125em 0.375em;
+	border-radius: 0.25rem;
 }
 .prose pre {
-  background: #0c0e16;
-  border: 1px solid rgba(148, 163, 184, 0.08);
-  border-radius: 0.75rem;
-  padding: 0.75rem;
-  margin: 0.75em 0;
-  overflow-x: auto;
+	background: #0c0e16;
+	border: 1px solid rgba(148, 163, 184, 0.08);
+	border-radius: 0.75rem;
+	padding: 0.75rem;
+	margin: 0.75em 0;
+	overflow-x: auto;
 }
 .prose pre code {
-  background: none;
-  padding: 0;
+	background: none;
+	padding: 0;
 }
 .prose ul,
 .prose ol {
-  margin: 0.75em 0;
-  padding-left: 1.5em;
+	margin: 0.75em 0;
+	padding-left: 1.5em;
 }
 .prose li {
-  margin: 0.25em 0;
+	margin: 0.25em 0;
 }
 .prose blockquote {
-  border-left: 3px solid rgba(148, 163, 184, 0.15);
-  padding-left: 1rem;
-  color: #64748b;
-  margin: 0.75em 0;
+	border-left: 3px solid rgba(148, 163, 184, 0.15);
+	padding-left: 1rem;
+	color: #64748b;
+	margin: 0.75em 0;
 }
 .prose table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0.75em 0;
-  font-size: 0.8rem;
+	width: 100%;
+	border-collapse: collapse;
+	margin: 0.75em 0;
+	font-size: 0.8rem;
 }
 .prose th,
 .prose td {
-  padding: 0.375rem 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.08);
-  text-align: left;
+	padding: 0.375rem 0.75rem;
+	border: 1px solid rgba(148, 163, 184, 0.08);
+	text-align: left;
 }
 .prose th {
-  background: #141622;
+	background: #141622;
 }
 .prose img {
-  max-width: 100%;
-  border-radius: 0.75rem;
+	max-width: 100%;
+	border-radius: 0.75rem;
 }
 .prose hr {
-  border: none;
-  border-top: 1px solid rgba(148, 163, 184, 0.08);
-  margin: 1.5em 0;
+	border: none;
+	border-top: 1px solid rgba(148, 163, 184, 0.08);
+	margin: 1.5em 0;
 }
 
 /* Chroma code highlighting */
 .code-block {
-  overflow-x: auto;
-  border-radius: 0.75rem;
+	overflow-x: auto;
+	border-radius: 0.75rem;
 }
 .code-block pre {
-  margin: 0;
+	margin: 0;
 }
