@@ -177,6 +177,7 @@ jobs:
             desc "Explore your Claude Code history"
             homepage "https://github.com/ahmedelgabri/ccexplore"
             version "${VERSION}"
+            license "MIT"
 
             on_macos do
               on_arm do
