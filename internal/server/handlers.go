@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -345,21 +346,28 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	type VersionEntry struct {
+		model.FileVersionInfo
+		DiffHTML template.HTML
+	}
 	type HashGroup struct {
 		Hash     string
-		Versions []model.FileVersionInfo
+		Versions []VersionEntry
 	}
 	var groups []HashGroup
 	groupMap := make(map[string]int)
 
 	for _, f := range detail.Files {
+		ve := VersionEntry{FileVersionInfo: f}
 		if idx, ok := groupMap[f.Hash]; ok {
-			groups[idx].Versions = append(groups[idx].Versions, f)
+			prev := groups[idx].Versions[len(groups[idx].Versions)-1]
+			ve.DiffHTML = renderDiff(prev.Content, f.Content)
+			groups[idx].Versions = append(groups[idx].Versions, ve)
 		} else {
 			groupMap[f.Hash] = len(groups)
 			groups = append(groups, HashGroup{
 				Hash:     f.Hash,
-				Versions: []model.FileVersionInfo{f},
+				Versions: []VersionEntry{ve},
 			})
 		}
 	}
@@ -608,22 +616,29 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Group files by hash
+	// Group files by hash (reuse same VersionEntry/HashGroup as conversationFileHistory)
+	type VersionEntry struct {
+		model.FileVersionInfo
+		DiffHTML template.HTML
+	}
 	type HashGroup struct {
 		Hash     string
-		Versions []model.FileVersionInfo
+		Versions []VersionEntry
 	}
 	var groups []HashGroup
 	groupMap := make(map[string]int)
 
 	for _, f := range detail.Files {
+		ve := VersionEntry{FileVersionInfo: f}
 		if idx, ok := groupMap[f.Hash]; ok {
-			groups[idx].Versions = append(groups[idx].Versions, f)
+			prev := groups[idx].Versions[len(groups[idx].Versions)-1]
+			ve.DiffHTML = renderDiff(prev.Content, f.Content)
+			groups[idx].Versions = append(groups[idx].Versions, ve)
 		} else {
 			groupMap[f.Hash] = len(groups)
 			groups = append(groups, HashGroup{
 				Hash:     f.Hash,
-				Versions: []model.FileVersionInfo{f},
+				Versions: []VersionEntry{ve},
 			})
 		}
 	}

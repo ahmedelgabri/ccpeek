@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/renderer/html"
@@ -33,6 +34,43 @@ func wrapCode(code, lang string) template.HTML {
 	return template.HTML(`<pre><code class="language-` + lang + `">` + template.HTMLEscapeString(code) + `</code></pre>`)
 }
 
+func renderDiff(a, b string) template.HTML {
+	diff := difflib.UnifiedDiff{
+		A:        difflib.SplitLines(a),
+		B:        difflib.SplitLines(b),
+		FromFile: "previous",
+		ToFile:   "current",
+		Context:  3,
+	}
+	text, err := difflib.GetUnifiedDiffString(diff)
+	if err != nil || text == "" {
+		return template.HTML(`<span class="text-slate-600 italic">No changes</span>`)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(`<pre class="text-xs leading-relaxed m-0 overflow-x-auto">`)
+	for _, line := range strings.Split(text, "\n") {
+		if line == "" {
+			continue
+		}
+		escaped := template.HTMLEscapeString(line)
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			buf.WriteString(`<span class="text-slate-500">` + escaped + "</span>\n")
+		case strings.HasPrefix(line, "@@"):
+			buf.WriteString(`<span class="text-cyan-400">` + escaped + "</span>\n")
+		case strings.HasPrefix(line, "+"):
+			buf.WriteString(`<span class="text-emerald-400">` + escaped + "</span>\n")
+		case strings.HasPrefix(line, "-"):
+			buf.WriteString(`<span class="text-rose-400">` + escaped + "</span>\n")
+		default:
+			buf.WriteString(`<span class="text-slate-400">` + escaped + "</span>\n")
+		}
+	}
+	buf.WriteString("</pre>")
+	return template.HTML(buf.String())
+}
+
 var funcMap = template.FuncMap{
 	"formatBytes":      formatBytes,
 	"formatTimestamp":  formatTimestamp,
@@ -44,6 +82,7 @@ var funcMap = template.FuncMap{
 	"renderMarkdown":   renderMarkdown,
 	"wrapCode":         wrapCode,
 	"toJSON":           toJSON,
+	"renderDiff":       renderDiff,
 	"safeHTML":         func(s string) template.HTML { return template.HTML(s) },
 	"statusColor":      statusColor,
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },

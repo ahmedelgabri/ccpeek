@@ -63,11 +63,19 @@
             >
               v{{ .Version }}
             </summary>
-            <pre
-              class="file-content px-5 py-4 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0 border-t border-surface-border"
-            >
+            {{ if .DiffHTML }}
+              <div
+                class="px-5 py-4 overflow-x-auto max-h-96 overflow-y-auto bg-surface border-t border-surface-border"
+              >
+                {{ .DiffHTML }}
+              </div>
+            {{ else }}
+              <pre
+                class="file-content px-5 py-4 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0 border-t border-surface-border"
+              >
 {{ .Content }}</pre
-            >
+              >
+            {{ end }}
           </details>
         {{ end }}
       </div>
