@@ -44,21 +44,23 @@
   {{ template "session_tabs" . }}
 
 
-  <div class="flex flex-wrap gap-2 mb-6">
+  <div class="flex flex-wrap gap-2 mb-6" id="tool-filters">
     {{ range .Stats }}
-      <div
-        class="px-3 py-1.5 rounded-lg bg-surface-card border border-surface-border text-sm"
+      <button
+        class="px-3 py-1.5 rounded-lg bg-surface-card border border-surface-border text-sm cursor-pointer transition-colors hover:border-violet-400/50"
+        data-tool-filter="{{ .Name }}"
       >
         <span class="text-slate-400">{{ .Name }}</span>
         <span class="text-slate-200 font-medium ml-1">{{ .Count }}</span>
-      </div>
+      </button>
     {{ end }}
   </div>
 
-  <div class="space-y-1">
+  <div class="space-y-1" id="tool-calls">
     {{ range .Calls }}
       <div
         class="flex items-baseline gap-3 px-4 py-2.5 rounded-lg bg-surface-card border border-surface-border"
+        data-tool-name="{{ .Name }}"
       >
         <span
           class="text-xs font-medium px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 whitespace-nowrap"

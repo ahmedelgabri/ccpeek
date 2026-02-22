@@ -66,6 +66,41 @@ document.addEventListener("click", (e) => {
   });
 })();
 
+// Tool filter: clicking a tool stat badge filters the call list to that tool.
+(() => {
+  const filters = document.getElementById("tool-filters");
+  const list = document.getElementById("tool-calls");
+  if (!filters || !list) return;
+
+  let active = null;
+  const rows = list.querySelectorAll("[data-tool-name]");
+
+  filters.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-tool-filter]");
+    if (!btn) return;
+    const name = btn.getAttribute("data-tool-filter");
+
+    if (active === name) {
+      active = null;
+      filters
+        .querySelectorAll("[data-tool-filter]")
+        .forEach((b) => b.classList.remove("border-violet-400"));
+      rows.forEach((r) => (r.hidden = false));
+    } else {
+      active = name;
+      filters.querySelectorAll("[data-tool-filter]").forEach((b) => {
+        b.classList.toggle(
+          "border-violet-400",
+          b.getAttribute("data-tool-filter") === name,
+        );
+      });
+      rows.forEach(
+        (r) => (r.hidden = r.getAttribute("data-tool-name") !== name),
+      );
+    }
+  });
+})();
+
 // Keyboard navigation: j/k to move between list rows, Enter to open, / to search, Escape to blur.
 (() => {
   let focusIndex = -1;
