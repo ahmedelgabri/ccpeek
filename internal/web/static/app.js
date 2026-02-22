@@ -46,6 +46,26 @@ document.addEventListener("click", (e) => {
   });
 });
 
+// Bookmark toggle: POST to /bookmarks/toggle and swap the star icon.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".bookmark-btn");
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const key = btn.getAttribute("data-bookmark-key");
+  void fetch("/bookmarks/toggle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  })
+    .then((r) => r.json())
+    .then((data) => {
+      btn.textContent = data.bookmarked ? "\u2605" : "\u2606";
+      btn.classList.toggle("text-amber-400", data.bookmarked);
+      btn.classList.toggle("text-slate-700", !data.bookmarked);
+    });
+});
+
 // Keyboard navigation: j/k to move between list rows, Enter to open, / to search, Escape to blur.
 (() => {
   let focusIndex = -1;
@@ -96,7 +116,8 @@ document.addEventListener("click", (e) => {
       focusIndex < rows.length
     ) {
       e.preventDefault();
-      rows[focusIndex].click();
+      const link = rows[focusIndex].querySelector("a") || rows[focusIndex];
+      link.click();
     }
   });
 })();

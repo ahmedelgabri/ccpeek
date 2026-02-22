@@ -39,7 +39,8 @@ func ListenAndServe(addr, dataDir, claudeDir string, watch bool) error {
 		return fmt.Errorf("static fs: %w", err)
 	}
 
-	h := &handlers{tmpl: tmpl}
+	bookmarksFile := filepath.Join(filepath.Dir(dataDir), "ccexplore-bookmarks.json")
+	h := &handlers{tmpl: tmpl, bookmarks: newBookmarkStore(bookmarksFile)}
 	h.store.Store(store)
 
 	if watch {
@@ -67,7 +68,8 @@ func NewHandler(dataDir string) (http.Handler, error) {
 		return nil, fmt.Errorf("static fs: %w", err)
 	}
 
-	h := &handlers{tmpl: tmpl}
+	bookmarksFile := filepath.Join(filepath.Dir(dataDir), filepath.Base(dataDir)+"-bookmarks.json")
+	h := &handlers{tmpl: tmpl, bookmarks: newBookmarkStore(bookmarksFile)}
 	h.store.Store(store)
 
 	return registerRoutes(h, staticFS), nil
@@ -94,6 +96,7 @@ func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /search/{$}", h.search)
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)
+	mux.HandleFunc("POST /bookmarks/toggle", h.bookmarkToggle)
 	return mux
 }
 
@@ -112,8 +115,9 @@ func loadDataStore(dataDir string) (*DataStore, error) {
 }
 
 type handlers struct {
-	store atomic.Pointer[DataStore]
-	tmpl  *templates
+	store     atomic.Pointer[DataStore]
+	tmpl      *templates
+	bookmarks *BookmarkStore
 }
 
 const watchInterval = 30 * time.Second
