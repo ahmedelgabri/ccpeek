@@ -1,24 +1,27 @@
 {{define "content"}}
-<a href="/projects/" class="back-link">Projects</a>
-<h1>{{.Project.DisplayName}}</h1>
-<p class="subtitle">{{.Project.SessionCount}} sessions</p>
+<a href="/projects/" class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors">
+  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>
+  Projects
+</a>
+<h1 class="text-2xl font-bold text-slate-50 mb-1">{{.Project.DisplayName}}</h1>
+<p class="text-sm text-slate-500 mb-6">{{.Project.SessionCount}} sessions</p>
 
-<input type="text" class="search-input" placeholder="Filter sessions..." data-search-target="searchable-list">
-<div class="search-count"></div>
+<input type="text" class="search-input w-full px-4 py-2.5 mb-2 bg-surface-card border border-surface-border rounded-lg text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors" placeholder="Filter sessions..." data-search-target="searchable-list">
+<div class="search-count text-xs text-slate-600 mb-4"></div>
 
-<div class="item-list searchable-list">
+<div class="item-list searchable-list space-y-2">
   {{range .Project.Sessions}}
-  <a href="/projects/{{$.Project.DirName}}/{{.SessionID}}/" class="list-item" data-search-keys="{{.FirstPrompt}} {{.SessionID}} {{.GitBranch}}">
-    <div class="item-main">
-      <span class="item-title">{{if .FirstPrompt}}{{truncate .FirstPrompt 100}}{{else}}{{.SessionID}}{{end}}</span>
-      <div class="item-meta-group">
-        {{if .GitBranch}}<span class="item-meta mono">{{.GitBranch}}</span>{{end}}
-        <span class="item-meta">{{.MessageCount}} msgs</span>
-        {{if .TodoFileName}}<span class="badge status-default">todo</span>{{end}}
-        {{if .HasFileHistory}}<span class="badge status-default">files</span>{{end}}
+  <a href="/projects/{{$.Project.DirName}}/{{.SessionID}}/" class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover" data-search-keys="{{.FirstPrompt}} {{.SessionID}} {{.GitBranch}}">
+    <div class="min-w-0 flex-1">
+      <div class="text-sm text-slate-200 truncate group-hover:text-slate-50">{{if .FirstPrompt}}{{truncate .FirstPrompt 100}}{{else}}{{.SessionID}}{{end}}</div>
+      <div class="flex items-center gap-3 mt-1">
+        {{if .GitBranch}}<span class="text-xs text-slate-500 font-mono">{{.GitBranch}}</span>{{end}}
+        <span class="text-xs text-slate-600">{{.MessageCount}} msgs</span>
+        {{if .TodoFileName}}<span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400">todo</span>{{end}}
+        {{if .HasFileHistory}}<span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-400">files</span>{{end}}
       </div>
     </div>
-    {{if .Modified}}<span class="item-meta">{{formatDate .Modified}}</span>{{end}}
+    {{if .Modified}}<span class="text-xs text-slate-600 whitespace-nowrap">{{formatDate .Modified}}</span>{{end}}
   </a>
   {{end}}
 </div>

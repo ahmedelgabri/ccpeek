@@ -1,9 +1,9 @@
 {{define "pagination"}}
 {{if gt .TotalPages 1}}
-<div class="pagination">
-  {{if .HasPrev}}<a href="?page={{.PrevPage}}" class="btn">Prev</a>{{else}}<span class="btn disabled">Prev</span>{{end}}
-  <span class="page-info">Page {{.Page}} of {{.TotalPages}} ({{.TotalMsgs}} messages)</span>
-  {{if .HasNext}}<a href="?page={{.NextPage}}" class="btn">Next</a>{{else}}<span class="btn disabled">Next</span>{{end}}
+<div class="flex items-center gap-3 my-4">
+  {{if .HasPrev}}<a href="?page={{.PrevPage}}" class="px-3 py-1.5 text-sm rounded-lg bg-surface-hover text-slate-400 no-underline hover:bg-surface-border-hover hover:text-slate-200 transition-colors">Prev</a>{{else}}<span class="px-3 py-1.5 text-sm rounded-lg bg-surface-hover text-slate-600 opacity-50">Prev</span>{{end}}
+  <span class="text-sm text-slate-500">Page {{.Page}} of {{.TotalPages}} ({{.TotalMsgs}} messages)</span>
+  {{if .HasNext}}<a href="?page={{.NextPage}}" class="px-3 py-1.5 text-sm rounded-lg bg-surface-hover text-slate-400 no-underline hover:bg-surface-border-hover hover:text-slate-200 transition-colors">Next</a>{{else}}<span class="px-3 py-1.5 text-sm rounded-lg bg-surface-hover text-slate-600 opacity-50">Next</span>{{end}}
 </div>
 {{end}}
 {{end}}

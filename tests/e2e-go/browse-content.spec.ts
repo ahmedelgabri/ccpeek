@@ -7,7 +7,7 @@ test.describe('browse plans', () => {
 		await expect(main.getByRole('heading', { name: 'Plans' })).toBeVisible()
 
 		// Click on first plan link (scoped to main to avoid nav links)
-		const firstLink = main.locator('a.list-item').first()
+		const firstLink = main.locator('a.list-row').first()
 		await firstLink.click()
 
 		// Verify we're on a plan detail page with rendered markdown
@@ -21,7 +21,7 @@ test.describe('browse shell snapshots', () => {
 		const main = page.locator('main')
 		await expect(main.getByRole('heading', { name: 'Shell Snapshots' })).toBeVisible()
 
-		const firstLink = main.locator('a.list-item').first()
+		const firstLink = main.locator('a.list-row').first()
 		await firstLink.click()
 
 		// Chroma renders code blocks
@@ -35,7 +35,7 @@ test.describe('browse todos', () => {
 		const main = page.locator('main')
 		await expect(main.getByRole('heading', { name: 'Todos' })).toBeVisible()
 
-		const firstLink = main.locator('a.list-item').first()
+		const firstLink = main.locator('a.list-row').first()
 		await firstLink.click()
 
 		// Verify todo items render
@@ -50,7 +50,7 @@ test.describe('browse projects', () => {
 		await expect(main.getByRole('heading', { name: 'Projects' })).toBeVisible()
 
 		// Click on first project
-		const firstProject = main.locator('a.list-item').first()
+		const firstProject = main.locator('a.list-row').first()
 		await firstProject.click()
 
 		// Verify sessions heading
@@ -62,10 +62,10 @@ test.describe('browse projects', () => {
 		const main = page.locator('main')
 
 		// Navigate to first project
-		await main.locator('a.list-item').first().click()
+		await main.locator('a.list-row').first().click()
 
 		// Click on a session link (contains "msgs" text)
-		const sessionLink = main.locator('a.list-item').filter({ hasText: 'msgs' }).first()
+		const sessionLink = main.locator('a.list-row').filter({ hasText: 'msgs' }).first()
 		await sessionLink.click()
 
 		// Verify conversation page loaded with message count
@@ -79,7 +79,7 @@ test.describe('browse file history', () => {
 		const main = page.locator('main')
 		await expect(main.getByRole('heading', { name: 'File History' })).toBeVisible()
 
-		const firstLink = main.locator('a.list-item').first()
+		const firstLink = main.locator('a.list-row').first()
 		await expect(firstLink).toBeVisible()
 	})
 })

@@ -5,5 +5,5 @@
 		"suspicious": "warn"
 	},
 	"rules": {},
-	"ignorePatterns": ["dist", ".astro"]
+	"ignorePatterns": ["dist"]
 }

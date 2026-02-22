@@ -2,40 +2,16 @@
 	"name": "claude-history",
 	"version": "0.0.1",
 	"type": "module",
-	"scripts": {
-		"dev": "astro dev",
-		"build": "astro build",
-		"preview": "astro preview",
-		"index": "tsx scripts/build-index.ts",
-		"index:build": "pnpm run index && pnpm run build",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"test:e2e": "playwright test",
-		"lint": "oxlint --type-aware --type-check",
-		"format": "oxfmt --write",
-		"format:check": "oxfmt --check"
-	},
 	"dependencies": {
-		"@astrojs/react": "^4.2.0",
-		"@tailwindcss/typography": "^0.5.16",
-		"@types/react": "^19.1.0",
-		"@types/react-dom": "^19.1.0",
-		"astro": "^5.7.0",
-		"react": "^19.1.0",
-		"react-dom": "^19.1.0",
-		"react-markdown": "^10.1.0",
-		"remark-gfm": "^4.0.1",
+		"@tailwindcss/cli": "^4.1.0",
 		"tailwindcss": "^4.1.0"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.52.0",
-		"@tailwindcss/vite": "^4.1.0",
-		"@types/node": "^25.3.0",
 		"oxfmt": "^0.34.0",
 		"oxlint": "^1.49.0",
 		"oxlint-tsgolint": "^0.14.2",
 		"tsx": "^4.19.0",
-		"typescript": "^5.8.0",
-		"vitest": "^4.0.18"
+		"typescript": "^5.8.0"
 	}
 }

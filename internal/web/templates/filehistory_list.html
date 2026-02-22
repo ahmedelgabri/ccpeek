@@ -1,13 +1,13 @@
 {{define "content"}}
-<h1>File History</h1>
+<h1 class="text-2xl font-bold text-slate-50 mb-6">File History</h1>
 
-<div class="item-list">
+<div class="item-list space-y-2">
   {{range .Entries}}
-  <a href="/file-history/{{.ConversationID}}/" class="list-item">
-    <span class="item-title mono">{{.ConversationID}}</span>
-    <div class="item-meta-group">
-      <span class="item-meta">{{.FileCount}} files</span>
-      {{if .ProjectName}}<span class="item-meta">{{.ProjectName}}</span>{{end}}
+  <a href="/file-history/{{.ConversationID}}/" class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover">
+    <span class="text-sm text-slate-200 font-mono truncate group-hover:text-slate-50">{{.ConversationID}}</span>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-slate-600">{{.FileCount}} files</span>
+      {{if .ProjectName}}<span class="text-xs text-slate-500">{{.ProjectName}}</span>{{end}}
     </div>
   </a>
   {{end}}

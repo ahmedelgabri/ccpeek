@@ -1,20 +1,30 @@
 {{define "content"}}
-<a href="/file-history/" class="back-link">File History</a>
-{{if .Entry.ProjectDir}}<a href="/projects/{{.Entry.ProjectDir}}/{{.ConversationID}}/" class="back-link">Session</a>{{end}}
-<h1 class="mono">{{.ConversationID}}</h1>
-<p class="subtitle">{{.TotalFiles}} file versions</p>
+<div class="flex items-center gap-4 mb-4">
+  <a href="/file-history/" class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 transition-colors">
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>
+    File History
+  </a>
+  {{if .Entry.ProjectDir}}
+  <a href="/projects/{{.Entry.ProjectDir}}/{{.ConversationID}}/" class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 transition-colors">
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+    Session
+  </a>
+  {{end}}
+</div>
+<h1 class="text-2xl font-bold text-slate-50 font-mono mb-1">{{.ConversationID}}</h1>
+<p class="text-sm text-slate-500 mb-6">{{.TotalFiles}} file versions</p>
 
-<div class="file-groups">
+<div class="space-y-4">
   {{range .Groups}}
-  <div class="file-group">
-    <div class="file-group-header">
-      {{.Hash}}
-      <span class="file-group-count">({{len .Versions}} version{{if gt (len .Versions) 1}}s{{end}})</span>
+  <div class="rounded-xl border border-surface-border overflow-hidden">
+    <div class="bg-surface-card px-5 py-3 text-sm font-mono text-slate-400 flex items-center justify-between">
+      <span>{{.Hash}}</span>
+      <span class="text-xs text-slate-600">({{len .Versions}} version{{if gt (len .Versions) 1}}s{{end}})</span>
     </div>
     {{range .Versions}}
-    <details class="file-version">
-      <summary>v{{.Version}}</summary>
-      <pre class="file-content">{{.Content}}</pre>
+    <details class="file-version border-t border-surface-border">
+      <summary class="px-5 py-2.5 text-sm text-slate-400 cursor-pointer hover:bg-surface-hover transition-colors">v{{.Version}}</summary>
+      <pre class="file-content px-5 py-4 text-xs text-slate-400 overflow-x-auto max-h-96 overflow-y-auto bg-surface m-0 border-t border-surface-border">{{.Content}}</pre>
     </details>
     {{end}}
   </div>
