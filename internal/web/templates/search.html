@@ -21,11 +21,13 @@
       for "{{ .Query }}"
     </div>
 
-    <div class="space-y-2">
+    <div
+      class="rounded-xl border border-surface-border overflow-hidden divide-y divide-surface-border"
+    >
       {{ range .Results }}
         <a
           href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/"
-          class="block px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
+          class="block px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
         >
           <div class="flex items-baseline gap-3 mb-1">
             <span class="text-sm text-slate-200 truncate"
