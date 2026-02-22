@@ -2,3 +2,4 @@ node_modules/
 test-results/
 cmd/ccexplore/ccexplore
 /ccexplore
+internal/web/static/style.css

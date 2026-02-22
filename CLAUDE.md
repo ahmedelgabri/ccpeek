@@ -47,7 +47,7 @@ internal/
   web/
     embed.go                //go:embed for templates/ and static/
     src/app.css             Tailwind v4 source CSS with custom dark theme
-    static/style.css        Compiled CSS output (committed, rebuilt by css:build)
+    static/style.css        Compiled CSS output (gitignored, rebuilt by css:build)
     static/app.js           Client-side search/filter for list pages
     templates/              Go html/template files
       layout.html           Base layout (sidebar + main content area)
@@ -65,6 +65,6 @@ testdata/                   Fixture data mimicking ~/.claude structure for unit 
 - **Embedded assets**: All templates and static files are embedded via `//go:embed` in `web/embed.go`. Changes to templates take effect on rebuild, not at runtime.
 - **Indexing pipeline**: `index.Run()` reads source data, each sub-indexer handles one entity type, then `resolveRelationships()` cross-links entities using UUID extraction from filenames.
 - **Testing**: Handler tests use `httptest` with `NewHandler()` against real testdata fixtures. E2e tests use Playwright against a live Go server with `--skip-index`.
-- **CSS**: Tailwind v4 with `@import 'tailwindcss'` and `@source "../templates"` directive. Custom theme colors (`surface`, `surface-card`, etc.) defined in `@theme` block. The compiled `static/style.css` is committed.
+- **CSS**: Tailwind v4 with `@import 'tailwindcss'` and `@source "../templates"` directive. Custom theme colors (`surface`, `surface-card`, etc.) defined in `@theme` block. The compiled `static/style.css` is gitignored; run `mise run css:build` to generate it.
 - **List items**: Use class `list-row` (not `list-item`, which collides with Tailwind's `display: list-item` utility).
 - **Route pattern**: Go 1.22+ enhanced ServeMux with `GET /path/{param}/{$}` syntax. Trailing `{$}` enforces exact match.
