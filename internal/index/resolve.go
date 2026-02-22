@@ -65,5 +65,4 @@ func resolveRelationships(idx *model.IndexData) {
 
 		idx.Projects[ref.projectIdx].Sessions[ref.sessionIdx].HasFileHistory = true
 	}
-
 }

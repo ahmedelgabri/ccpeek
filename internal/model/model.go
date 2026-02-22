@@ -44,15 +44,15 @@ type ProjectEntry struct {
 }
 
 type SessionEntry struct {
-	SessionID    string `json:"sessionId"`
-	FirstPrompt  string `json:"firstPrompt"`
-	MessageCount int    `json:"messageCount"`
-	Created      string `json:"created"`
-	Modified     string `json:"modified"`
-	GitBranch    string `json:"gitBranch,omitempty"`
-	ProjectPath  string `json:"projectPath,omitempty"`
-	TodoFileName string `json:"todoFileName,omitempty"`
-	HasFileHistory bool `json:"hasFileHistory,omitempty"`
+	SessionID      string `json:"sessionId"`
+	FirstPrompt    string `json:"firstPrompt"`
+	MessageCount   int    `json:"messageCount"`
+	Created        string `json:"created"`
+	Modified       string `json:"modified"`
+	GitBranch      string `json:"gitBranch,omitempty"`
+	ProjectPath    string `json:"projectPath,omitempty"`
+	TodoFileName   string `json:"todoFileName,omitempty"`
+	HasFileHistory bool   `json:"hasFileHistory,omitempty"`
 }
 
 type FileHistoryEntry struct {
@@ -70,13 +70,13 @@ type HistoryEntry struct {
 
 // ConversationMessage represents a single message in a session JSONL.
 type ConversationMessage struct {
-	Type      string          `json:"type"`
-	Timestamp string          `json:"timestamp"`
-	UUID      string          `json:"uuid"`
-	Message   MessagePayload  `json:"message"`
-	SessionID string          `json:"sessionId,omitempty"`
-	Cwd       string          `json:"cwd,omitempty"`
-	GitBranch string          `json:"gitBranch,omitempty"`
+	Type      string         `json:"type"`
+	Timestamp string         `json:"timestamp"`
+	UUID      string         `json:"uuid"`
+	Message   MessagePayload `json:"message"`
+	SessionID string         `json:"sessionId,omitempty"`
+	Cwd       string         `json:"cwd,omitempty"`
+	GitBranch string         `json:"gitBranch,omitempty"`
 }
 
 // MessagePayload holds the role and content of a message.

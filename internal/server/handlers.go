@@ -256,18 +256,18 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, h.tmpl, "conversation.html", map[string]any{
-		"Title":        title,
-		"CurrentPath":  "/projects/",
-		"Project":      project,
-		"Session":      session,
-		"Messages":     pageMessages,
-		"TotalMsgs":    len(messages),
-		"Page":         page,
-		"TotalPages":   totalPages,
-		"HasPrev":      page > 1,
-		"HasNext":      page < totalPages,
-		"PrevPage":     page - 1,
-		"NextPage":     page + 1,
+		"Title":       title,
+		"CurrentPath": "/projects/",
+		"Project":     project,
+		"Session":     session,
+		"Messages":    pageMessages,
+		"TotalMsgs":   len(messages),
+		"Page":        page,
+		"TotalPages":  totalPages,
+		"HasPrev":     page > 1,
+		"HasNext":     page < totalPages,
+		"PrevPage":    page - 1,
+		"NextPage":    page + 1,
 	})
 }
 

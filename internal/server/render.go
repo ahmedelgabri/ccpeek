@@ -16,9 +16,7 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 )
 
-var (
-	md goldmark.Markdown
-)
+var md goldmark.Markdown
 
 func init() {
 	md = goldmark.New(

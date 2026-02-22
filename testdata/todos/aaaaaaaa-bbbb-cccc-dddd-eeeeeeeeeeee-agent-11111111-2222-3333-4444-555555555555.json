@@ -1,5 +1,5 @@
 [
-	{ "content": "Fix the bug", "status": "completed" },
-	{ "content": "Write tests", "status": "in_progress" },
-	{ "content": "Deploy", "status": "pending" }
+  { "content": "Fix the bug", "status": "completed" },
+  { "content": "Write tests", "status": "in_progress" },
+  { "content": "Deploy", "status": "pending" }
 ]
