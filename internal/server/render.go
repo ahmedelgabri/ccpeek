@@ -7,10 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/alecthomas/chroma/v2"
-	chromaHTML "github.com/alecthomas/chroma/v2/formatters/html"
-	"github.com/alecthomas/chroma/v2/lexers"
-	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/renderer/html"
@@ -33,30 +29,8 @@ func renderMarkdown(source string) template.HTML {
 	return template.HTML(buf.String())
 }
 
-func highlightCode(code, lang string) template.HTML {
-	lexer := lexers.Get(lang)
-	if lexer == nil {
-		lexer = lexers.Fallback
-	}
-	lexer = chroma.Coalesce(lexer)
-
-	style := styles.Get("dracula")
-	formatter := chromaHTML.New(
-		chromaHTML.WithClasses(false),
-		chromaHTML.WithLineNumbers(true),
-	)
-
-	iterator, err := lexer.Tokenise(nil, code)
-	if err != nil {
-		return template.HTML("<pre>" + template.HTMLEscapeString(code) + "</pre>")
-	}
-
-	var buf bytes.Buffer
-	if err := formatter.Format(&buf, style, iterator); err != nil {
-		return template.HTML("<pre>" + template.HTMLEscapeString(code) + "</pre>")
-	}
-
-	return template.HTML(buf.String())
+func wrapCode(code, lang string) template.HTML {
+	return template.HTML(`<pre><code class="language-` + lang + `">` + template.HTMLEscapeString(code) + `</code></pre>`)
 }
 
 var funcMap = template.FuncMap{
@@ -68,7 +42,7 @@ var funcMap = template.FuncMap{
 	"decodeProjectDir": decodeProjectDir,
 	"encodeProjectDir": encodeProjectDir,
 	"renderMarkdown":   renderMarkdown,
-	"highlightCode":    highlightCode,
+	"wrapCode":         wrapCode,
 	"toJSON":           toJSON,
 	"safeHTML":         func(s string) template.HTML { return template.HTML(s) },
 	"statusColor":      statusColor,

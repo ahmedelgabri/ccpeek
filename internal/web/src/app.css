@@ -119,11 +119,14 @@
 	margin: 1.5em 0;
 }
 
-/* Chroma code highlighting */
-.code-block {
-	overflow-x: auto;
-	border-radius: 0.75rem;
-}
-.code-block pre {
+/* Shiki code highlighting */
+.code-block pre,
+.prose pre:has(> code .shiki) {
 	margin: 0;
+}
+
+pre.shiki {
+	border-radius: 0.75rem;
+	padding: 0.75rem;
+	overflow-x: auto;
 }

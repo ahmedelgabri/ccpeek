@@ -108,7 +108,7 @@ func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
 		"Title":       entry.FileName,
 		"CurrentPath": "/shell-snapshots/",
 		"Snapshot":    entry,
-		"Content":     highlightCode(string(content), "bash"),
+		"Content":     wrapCode(string(content), "bash"),
 	})
 }
 
