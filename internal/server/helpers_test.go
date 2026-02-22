@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestDecodeProjectDir(t *testing.T) {
 	tests := []struct {
@@ -103,6 +106,59 @@ func TestTruncate(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
 		}
+	}
+}
+
+func TestFormatTokens(t *testing.T) {
+	tests := []struct {
+		input int
+		want  string
+	}{
+		{0, "0"},
+		{500, "500"},
+		{999, "999"},
+		{1000, "1.0K"},
+		{1500, "1.5K"},
+		{25000, "25.0K"},
+		{999999, "1000.0K"},
+		{1000000, "1.0M"},
+		{2500000, "2.5M"},
+	}
+
+	for _, tt := range tests {
+		got := formatTokens(tt.input)
+		if got != tt.want {
+			t.Errorf("formatTokens(%d) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFormatShortDate(t *testing.T) {
+	// 1700000000000ms = Nov 14, 2023 UTC
+	got := formatShortDate(1700000000000)
+	if got == "" {
+		t.Error("formatShortDate returned empty string")
+	}
+	// Should be short format like "Nov 14"
+	if len(got) > 10 {
+		t.Errorf("formatShortDate returned unexpectedly long string: %q", got)
+	}
+}
+
+func TestToJSON(t *testing.T) {
+	input := map[string]string{"key": "value"}
+	got := toJSON(input)
+
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("toJSON output is not valid JSON: %v", err)
+	}
+	if parsed["key"] != "value" {
+		t.Errorf("toJSON round-trip failed: got %v", parsed)
+	}
+	// Should be indented
+	if got != "{\n  \"key\": \"value\"\n}" {
+		t.Errorf("toJSON not properly indented: %q", got)
 	}
 }
 

@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccexplore/internal/index"
+	"github.com/ahmedelgabri/ccexplore/internal/model"
 )
 
 func setupTestServer(t *testing.T) http.Handler {
@@ -585,6 +587,167 @@ func TestSessionCompareNotFound(t *testing.T) {
 	handler.ServeHTTP(w, req)
 	if w.Code != 404 {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestSnapshotNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/shell-snapshots/nonexistent/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTodoNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/todos/nonexistent/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestConversationToolsNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/tools/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestExtractSnippet(t *testing.T) {
+	text := "The quick brown fox jumps over the lazy dog"
+
+	// Match at the start
+	snippet := extractSnippet(text, 0, 3, 10)
+	if snippet == "" {
+		t.Error("extractSnippet returned empty for match at start")
+	}
+	if strings.HasPrefix(snippet, "...") {
+		t.Error("snippet at start should not have leading ellipsis")
+	}
+	if !strings.HasSuffix(snippet, "...") {
+		t.Error("snippet at start should have trailing ellipsis")
+	}
+
+	// Match in the middle
+	snippet = extractSnippet(text, 20, 5, 5)
+	if !strings.HasPrefix(snippet, "...") {
+		t.Error("snippet in middle should have leading ellipsis")
+	}
+	if !strings.HasSuffix(snippet, "...") {
+		t.Error("snippet in middle should have trailing ellipsis")
+	}
+
+	// Match near the end
+	snippet = extractSnippet(text, len(text)-3, 3, 10)
+	if !strings.HasPrefix(snippet, "...") {
+		t.Error("snippet at end should have leading ellipsis")
+	}
+	if strings.HasSuffix(snippet, "...") {
+		t.Error("snippet at end should not have trailing ellipsis")
+	}
+}
+
+func TestBuildHeatmap(t *testing.T) {
+	// Empty history
+	days := buildHeatmap(nil)
+	if len(days) != 364 {
+		t.Errorf("expected 364 days, got %d", len(days))
+	}
+	for _, d := range days {
+		if d.Level != 0 {
+			t.Errorf("empty history should have level 0, got %d for %s", d.Level, d.Date)
+		}
+	}
+
+	// History with entries
+	now := time.Now()
+	today := now.UnixMilli()
+	history := []model.HistoryEntry{
+		{Timestamp: today, Display: "a", Project: "test"},
+		{Timestamp: today, Display: "b", Project: "test"},
+		{Timestamp: today, Display: "c", Project: "test"},
+	}
+	days = buildHeatmap(history)
+	if len(days) != 364 {
+		t.Errorf("expected 364 days, got %d", len(days))
+	}
+	// Last day should have a non-zero level
+	lastDay := days[363]
+	if lastDay.Count != 3 {
+		t.Errorf("expected count 3 for today, got %d", lastDay.Count)
+	}
+	if lastDay.Level == 0 {
+		t.Error("expected non-zero level for day with entries")
+	}
+}
+
+func TestConversationPagination(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/?page=1", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	// Page 1 should contain message count info
+	if !strings.Contains(body, "5 messages") {
+		t.Error("pagination page missing message count")
+	}
+}
+
+func TestSidebarSearchForm(t *testing.T) {
+	handler := setupTestServer(t)
+
+	pages := []string{
+		"/",
+		"/plans/",
+		"/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/",
+	}
+
+	for _, path := range pages {
+		req := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Errorf("GET %s: expected 200, got %d", path, w.Code)
+			continue
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "global-search-input") {
+			t.Errorf("GET %s: missing global-search-input in sidebar", path)
+		}
+	}
+}
+
+func TestSearchPreservesQuery(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=hello", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	// The sidebar search input should have the query value
+	if !strings.Contains(body, `value="hello"`) {
+		t.Error("search page sidebar input missing query value")
 	}
 }
 

@@ -40,4 +40,20 @@ test.describe("navigation", () => {
       page.getByRole("heading", { name: "Recent Conversations" }),
     ).toBeVisible();
   });
+
+  test("sidebar search form is visible", async ({ page }) => {
+    await page.goto("/");
+    const nav = page.locator("nav");
+    await expect(nav.locator(".global-search-input")).toBeVisible();
+  });
+
+  test("sidebar search submits to search page", async ({ page }) => {
+    await page.goto("/");
+    const nav = page.locator("nav");
+    const searchInput = nav.locator(".global-search-input");
+    await searchInput.fill("hello");
+    await searchInput.press("Enter");
+    await expect(page).toHaveURL(/\/search\/\?q=hello/);
+    await expect(page.locator("main").getByText('for "hello"')).toBeVisible();
+  });
 });

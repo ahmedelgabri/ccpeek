@@ -91,6 +91,53 @@ test.describe("browse file history", () => {
   });
 });
 
+test.describe("browse conversations", () => {
+  test("can navigate conversation tabs", async ({ page }) => {
+    await page.goto("/projects/");
+    const main = page.locator("main");
+
+    // Navigate to first project
+    await main.locator("a.list-row").first().click();
+
+    // Click on a session
+    const sessionRow = main
+      .locator(".list-row")
+      .filter({ hasText: "msgs" })
+      .first();
+    await sessionRow.locator("a").click();
+
+    // Should be on conversation page
+    await expect(main.getByText(/\d+ messages/).first()).toBeVisible();
+
+    // Click Commands tab
+    const commandsTab = main.getByRole("link", { name: "Commands" });
+    await commandsTab.click();
+    await expect(page).toHaveURL(/\/commands\/$/);
+    await expect(main.getByText(/\d+ commands/).first()).toBeVisible();
+
+    // Click Conversation tab to go back
+    const conversationTab = main.getByRole("link", { name: "Conversation" });
+    await conversationTab.click();
+    await expect(main.getByText(/\d+ messages/).first()).toBeVisible();
+  });
+});
+
+test.describe("browse file history detail", () => {
+  test("can view a file history detail", async ({ page }) => {
+    await page.goto("/file-history/");
+    const main = page.locator("main");
+    await expect(
+      main.getByRole("heading", { name: "File History" }),
+    ).toBeVisible();
+
+    const firstLink = main.locator("a.list-row").first();
+    await firstLink.click();
+
+    // Verify detail page has file version info
+    await expect(main.getByText(/\d+ file versions/)).toBeVisible();
+  });
+});
+
 test.describe("search", () => {
   test("plans search filters results", async ({ page }) => {
     await page.goto("/plans/");
