@@ -1,0 +1,82 @@
+{{ define "content" }}
+  <a
+    href="/projects/{{ .Project.DirName }}/"
+    class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors"
+  >
+    <svg
+      class="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      stroke-width="2"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+      />
+    </svg>
+    {{ .Project.DisplayName }}
+  </a>
+
+  <div class="mb-4">
+    <h1 class="text-2xl font-bold text-slate-50 mb-2">
+      {{ if .Session.FirstPrompt }}
+        {{ .Session.FirstPrompt }}
+      {{ else }}
+        {{ .Session.SessionID }}
+      {{ end }}
+    </h1>
+    <div class="flex flex-wrap items-center gap-3 text-sm text-slate-400 mt-1">
+      {{ if .Session.Created }}
+        <span>{{ formatDate .Session.Created }}</span>
+      {{ end }}
+      {{ if .Session.GitBranch }}
+        <span
+          class="inline-flex items-center rounded-md bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300"
+          >{{ .Session.GitBranch }}</span
+        >
+      {{ end }}
+      <span>{{ .TotalCalls }} tool calls</span>
+    </div>
+  </div>
+
+  {{ template "session_tabs" . }}
+
+
+  <div class="flex flex-wrap gap-2 mb-6">
+    {{ range .Stats }}
+      <div
+        class="px-3 py-1.5 rounded-lg bg-surface-card border border-surface-border text-sm"
+      >
+        <span class="text-slate-400">{{ .Name }}</span>
+        <span class="text-slate-200 font-medium ml-1">{{ .Count }}</span>
+      </div>
+    {{ end }}
+  </div>
+
+  <div class="space-y-1">
+    {{ range .Calls }}
+      <div
+        class="flex items-baseline gap-3 px-4 py-2.5 rounded-lg bg-surface-card border border-surface-border"
+      >
+        <span
+          class="text-xs font-medium px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 whitespace-nowrap"
+          >{{ .Name }}</span
+        >
+        {{ if .Detail }}
+          <span class="text-sm text-slate-400 truncate font-mono min-w-0"
+            >{{ .Detail }}</span
+          >
+        {{ end }}
+        {{ if .Timestamp }}
+          <span class="text-xs text-slate-600 whitespace-nowrap ml-auto"
+            >{{ formatDate .Timestamp }}</span
+          >
+        {{ end }}
+      </div>
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ template "layout.html" . }}

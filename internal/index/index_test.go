@@ -100,6 +100,11 @@ func TestRun(t *testing.T) {
 		if sess.BashCommandCount != 1 {
 			t.Errorf("expected BashCommandCount=1, got %d", sess.BashCommandCount)
 		}
+		if len(sess.ToolUseCounts) == 0 {
+			t.Error("expected ToolUseCounts to be populated")
+		} else if sess.ToolUseCounts["Bash"] != 1 {
+			t.Errorf("expected ToolUseCounts[Bash]=1, got %d", sess.ToolUseCounts["Bash"])
+		}
 	}
 
 	// File history

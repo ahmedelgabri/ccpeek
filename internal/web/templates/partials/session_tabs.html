@@ -46,5 +46,17 @@
         Commands
       </a>
     {{ end }}
+    {{ if .Session.ToolUseCounts }}
+      <a
+        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/tools/"
+        class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "tools" }}
+          text-slate-100 border-b-2 border-violet-400
+        {{ else }}
+          text-slate-500 hover:text-slate-300
+        {{ end }}"
+      >
+        Tools
+      </a>
+    {{ end }}
   </div>
 {{ end }}

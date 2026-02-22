@@ -123,7 +123,8 @@ func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
-	bashCount := countBashCommands(messages)
+	toolCounts := countToolUses(messages)
+	bashCount := toolCounts["Bash"]
 
 	// Check sessions-index for metadata
 	for _, ie := range indexEntries {
@@ -137,6 +138,7 @@ func buildSessionEntry(sessionID string, messages []model.ConversationMessage, i
 				GitBranch:        ie.GitBranch,
 				ProjectPath:      ie.ProjectPath,
 				BashCommandCount: bashCount,
+				ToolUseCounts:    toolCounts,
 			}
 			if entry.MessageCount == 0 {
 				entry.MessageCount = len(messages)
@@ -172,22 +174,23 @@ func buildSessionEntry(sessionID string, messages []model.ConversationMessage, i
 		Modified:         modified,
 		GitBranch:        gitBranch,
 		BashCommandCount: bashCount,
+		ToolUseCounts:    toolCounts,
 	}
 }
 
-func countBashCommands(messages []model.ConversationMessage) int {
-	count := 0
+func countToolUses(messages []model.ConversationMessage) map[string]int {
+	counts := make(map[string]int)
 	for _, m := range messages {
 		if m.Message.Role != "assistant" {
 			continue
 		}
 		for _, b := range m.Message.ContentBlocks() {
-			if b.Type == "tool_use" && b.Name == "Bash" {
-				count++
+			if b.Type == "tool_use" && b.Name != "" {
+				counts[b.Name]++
 			}
 		}
 	}
-	return count
+	return counts
 }
 
 // decodeProjectDir converts an encoded directory name back to a path.

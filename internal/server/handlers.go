@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -441,6 +442,135 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 		"ActiveTab":   "commands",
 		"Commands":    commands,
 	})
+}
+
+type toolCall struct {
+	Name      string
+	Detail    string
+	Timestamp string
+}
+
+type toolStat struct {
+	Name  string
+	Count int
+}
+
+func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
+	project, session, ok := h.lookupSession(w, r)
+	if !ok {
+		return
+	}
+
+	if len(session.ToolUseCounts) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var messages []model.ConversationMessage
+	if err := json.Unmarshal(data, &messages); err != nil {
+		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
+		return
+	}
+
+	var calls []toolCall
+	for _, m := range messages {
+		if m.Message.Role != "assistant" {
+			continue
+		}
+		for _, b := range m.Message.ContentBlocks() {
+			if b.Type != "tool_use" || b.Name == "" {
+				continue
+			}
+			detail := extractToolDetail(b)
+			calls = append(calls, toolCall{
+				Name:      b.Name,
+				Detail:    detail,
+				Timestamp: m.Timestamp,
+			})
+		}
+	}
+
+	// Build sorted stats
+	var stats []toolStat
+	for name, count := range session.ToolUseCounts {
+		stats = append(stats, toolStat{Name: name, Count: count})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].Count > stats[j].Count
+	})
+
+	totalCalls := 0
+	for _, s := range stats {
+		totalCalls += s.Count
+	}
+
+	title := session.FirstPrompt
+	if title == "" {
+		title = session.SessionID
+	}
+
+	renderTemplate(w, h.tmpl, "conversation_tools.html", map[string]any{
+		"Title":       title + " - Tools",
+		"CurrentPath": "/projects/",
+		"Project":     project,
+		"Session":     session,
+		"ActiveTab":   "tools",
+		"Stats":       stats,
+		"Calls":       calls,
+		"TotalCalls":  totalCalls,
+	})
+}
+
+// extractToolDetail returns a short summary of what a tool call did.
+func extractToolDetail(b model.ContentBlock) string {
+	var input map[string]any
+	if json.Unmarshal(b.Input, &input) != nil {
+		return ""
+	}
+	switch b.Name {
+	case "Bash":
+		if cmd, ok := input["command"].(string); ok {
+			return truncate(cmd, 120)
+		}
+	case "Read":
+		if fp, ok := input["file_path"].(string); ok {
+			return fp
+		}
+	case "Write":
+		if fp, ok := input["file_path"].(string); ok {
+			return fp
+		}
+	case "Edit":
+		if fp, ok := input["file_path"].(string); ok {
+			return fp
+		}
+	case "Glob":
+		if pat, ok := input["pattern"].(string); ok {
+			return pat
+		}
+	case "Grep":
+		if pat, ok := input["pattern"].(string); ok {
+			return pat
+		}
+	case "Task":
+		if desc, ok := input["description"].(string); ok {
+			return desc
+		}
+	default:
+		// Generic: try common field names
+		for _, key := range []string{"query", "url", "command", "file_path", "path", "description"} {
+			if v, ok := input[key].(string); ok {
+				return truncate(v, 120)
+			}
+		}
+	}
+	return ""
 }
 
 func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {

@@ -257,6 +257,9 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "/commands/") {
 		t.Error("conversation missing commands tab link")
 	}
+	if !strings.Contains(body, "/tools/") {
+		t.Error("conversation missing tools tab link")
+	}
 }
 
 func TestConversationTodos(t *testing.T) {
@@ -351,6 +354,28 @@ func TestConversationCommands(t *testing.T) {
 	// Tab bar should show active commands tab
 	if !strings.Contains(body, "Commands") {
 		t.Error("commands page missing tabs")
+	}
+}
+
+func TestConversationTools(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/tools/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Bash") {
+		t.Error("tools page missing Bash tool name")
+	}
+	if !strings.Contains(body, "ls -la") {
+		t.Error("tools page missing tool detail")
+	}
+	if !strings.Contains(body, "Tools") {
+		t.Error("tools page missing tab")
 	}
 }
 
