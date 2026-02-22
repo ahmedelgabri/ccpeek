@@ -379,6 +379,70 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+type bashCommand struct {
+	Command   string
+	Timestamp string
+}
+
+func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) {
+	project, session, ok := h.lookupSession(w, r)
+	if !ok {
+		return
+	}
+
+	if session.BashCommandCount == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(h.store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var messages []model.ConversationMessage
+	if err := json.Unmarshal(data, &messages); err != nil {
+		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
+		return
+	}
+
+	var commands []bashCommand
+	for _, m := range messages {
+		if m.Message.Role != "assistant" {
+			continue
+		}
+		for _, b := range m.Message.ContentBlocks() {
+			if b.Type != "tool_use" || b.Name != "Bash" {
+				continue
+			}
+			var input struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal(b.Input, &input) == nil && input.Command != "" {
+				commands = append(commands, bashCommand{
+					Command:   input.Command,
+					Timestamp: m.Timestamp,
+				})
+			}
+		}
+	}
+
+	title := session.FirstPrompt
+	if title == "" {
+		title = session.SessionID
+	}
+
+	renderTemplate(w, h.tmpl, "conversation_commands.html", map[string]any{
+		"Title":       title + " - Commands",
+		"CurrentPath": "/projects/",
+		"Project":     project,
+		"Session":     session,
+		"ActiveTab":   "commands",
+		"Commands":    commands,
+	})
+}
+
 func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, h.tmpl, "filehistory_list.html", map[string]any{
 		"Title":       "File History",

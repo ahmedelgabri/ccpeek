@@ -69,8 +69,8 @@ func TestRun(t *testing.T) {
 		if p.SessionCount != 1 {
 			t.Errorf("expected 1 session, got %d", p.SessionCount)
 		}
-		if p.Sessions[0].MessageCount != 3 {
-			t.Errorf("expected 3 messages (progress filtered), got %d", p.Sessions[0].MessageCount)
+		if p.Sessions[0].MessageCount != 4 {
+			t.Errorf("expected 4 messages (progress filtered), got %d", p.Sessions[0].MessageCount)
 		}
 		if p.Sessions[0].FirstPrompt != "hello world" {
 			t.Errorf("expected first prompt 'hello world', got %q", p.Sessions[0].FirstPrompt)
@@ -85,8 +85,8 @@ func TestRun(t *testing.T) {
 		if err := json.Unmarshal(sessData, &msgs); err != nil {
 			t.Fatal("parsing session JSON:", err)
 		}
-		if len(msgs) != 3 {
-			t.Errorf("expected 3 messages in JSON, got %d", len(msgs))
+		if len(msgs) != 4 {
+			t.Errorf("expected 4 messages in JSON, got %d", len(msgs))
 		}
 
 		// Verify relationship: session has linked todo and file history
@@ -96,6 +96,9 @@ func TestRun(t *testing.T) {
 		}
 		if !sess.HasFileHistory {
 			t.Error("expected session to have HasFileHistory=true")
+		}
+		if sess.BashCommandCount != 1 {
+			t.Errorf("expected BashCommandCount=1, got %d", sess.BashCommandCount)
 		}
 	}
 

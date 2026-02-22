@@ -123,17 +123,20 @@ func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
+	bashCount := countBashCommands(messages)
+
 	// Check sessions-index for metadata
 	for _, ie := range indexEntries {
 		if ie.SessionID == sessionID {
 			entry := model.SessionEntry{
-				SessionID:    sessionID,
-				FirstPrompt:  ie.FirstPrompt,
-				MessageCount: ie.MessageCount,
-				Created:      ie.Created,
-				Modified:     ie.Modified,
-				GitBranch:    ie.GitBranch,
-				ProjectPath:  ie.ProjectPath,
+				SessionID:        sessionID,
+				FirstPrompt:      ie.FirstPrompt,
+				MessageCount:     ie.MessageCount,
+				Created:          ie.Created,
+				Modified:         ie.Modified,
+				GitBranch:        ie.GitBranch,
+				ProjectPath:      ie.ProjectPath,
+				BashCommandCount: bashCount,
 			}
 			if entry.MessageCount == 0 {
 				entry.MessageCount = len(messages)
@@ -162,13 +165,29 @@ func buildSessionEntry(sessionID string, messages []model.ConversationMessage, i
 	}
 
 	return model.SessionEntry{
-		SessionID:    sessionID,
-		FirstPrompt:  firstPrompt,
-		MessageCount: len(messages),
-		Created:      created,
-		Modified:     modified,
-		GitBranch:    gitBranch,
+		SessionID:        sessionID,
+		FirstPrompt:      firstPrompt,
+		MessageCount:     len(messages),
+		Created:          created,
+		Modified:         modified,
+		GitBranch:        gitBranch,
+		BashCommandCount: bashCount,
 	}
+}
+
+func countBashCommands(messages []model.ConversationMessage) int {
+	count := 0
+	for _, m := range messages {
+		if m.Message.Role != "assistant" {
+			continue
+		}
+		for _, b := range m.Message.ContentBlocks() {
+			if b.Type == "tool_use" && b.Name == "Bash" {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 // decodeProjectDir converts an encoded directory name back to a path.

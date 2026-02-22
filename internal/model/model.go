@@ -52,7 +52,8 @@ type SessionEntry struct {
 	GitBranch      string `json:"gitBranch,omitempty"`
 	ProjectPath    string `json:"projectPath,omitempty"`
 	TodoFileName   string `json:"todoFileName,omitempty"`
-	HasFileHistory bool   `json:"hasFileHistory,omitempty"`
+	HasFileHistory   bool   `json:"hasFileHistory,omitempty"`
+	BashCommandCount int    `json:"bashCommandCount,omitempty"`
 }
 
 type FileHistoryEntry struct {

@@ -219,6 +219,9 @@ func TestSessionsList(t *testing.T) {
 	if !strings.Contains(body, ">files</span") {
 		t.Error("sessions list missing files badge")
 	}
+	if !strings.Contains(body, ">commands</span") {
+		t.Error("sessions list missing commands badge")
+	}
 }
 
 func TestConversation(t *testing.T) {
@@ -235,7 +238,7 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "hello world") {
 		t.Error("conversation missing first prompt")
 	}
-	if !strings.Contains(body, "3 messages") {
+	if !strings.Contains(body, "4 messages") {
 		t.Error("conversation missing message count")
 	}
 	if !strings.Contains(body, "message-user") {
@@ -244,12 +247,15 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "message-assistant") {
 		t.Error("conversation missing assistant messages")
 	}
-	// Tab bar with links to todos and file history
+	// Tab bar with links to todos, file history, and commands
 	if !strings.Contains(body, "/todos/") {
 		t.Error("conversation missing todos tab link")
 	}
 	if !strings.Contains(body, "/file-history/") {
 		t.Error("conversation missing file history tab link")
+	}
+	if !strings.Contains(body, "/commands/") {
+		t.Error("conversation missing commands tab link")
 	}
 }
 
@@ -314,6 +320,43 @@ func TestConversationFileHistory(t *testing.T) {
 func TestConversationFileHistoryNotFound(t *testing.T) {
 	handler := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/file-history/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestConversationCommands(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/commands/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "ls -la") {
+		t.Error("commands page missing bash command")
+	}
+	if !strings.Contains(body, "data-copy") {
+		t.Error("commands page missing copy button")
+	}
+	if !strings.Contains(body, "1 commands") {
+		t.Error("commands page missing command count")
+	}
+	// Tab bar should show active commands tab
+	if !strings.Contains(body, "Commands") {
+		t.Error("commands page missing tabs")
+	}
+}
+
+func TestConversationCommandsNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/commands/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
