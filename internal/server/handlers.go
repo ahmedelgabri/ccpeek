@@ -234,19 +234,10 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bookmarked := make(map[string]bool)
-	for _, s := range project.Sessions {
-		key := project.DirName + "/" + s.SessionID
-		if h.bookmarks.Has(key) {
-			bookmarked[s.SessionID] = true
-		}
-	}
-
 	renderTemplate(w, h.tmpl, "sessions_list.html", map[string]any{
 		"Title":       project.DisplayName,
 		"CurrentPath": "/projects/",
 		"Project":     project,
-		"Bookmarked":  bookmarked,
 	})
 }
 
@@ -893,17 +884,4 @@ func extractSnippet(text string, pos, matchLen, contextLen int) string {
 		suffix = "..."
 	}
 	return prefix + snippet + suffix
-}
-
-func (h *handlers) bookmarkToggle(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Key string `json:"key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	bookmarked := h.bookmarks.Toggle(req.Key)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"bookmarked": bookmarked})
 }

@@ -505,67 +505,6 @@ func TestFileHistoryDetail(t *testing.T) {
 	}
 }
 
-func TestBookmarkToggle(t *testing.T) {
-	handler := setupTestServer(t)
-
-	body := `{"key":"test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`
-	req := httptest.NewRequest("POST", "/bookmarks/toggle", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), `"bookmarked":true`) {
-		t.Error("first toggle should bookmark")
-	}
-
-	// Toggle again to unbookmark
-	req = httptest.NewRequest("POST", "/bookmarks/toggle", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-	if !strings.Contains(w.Body.String(), `"bookmarked":false`) {
-		t.Error("second toggle should unbookmark")
-	}
-}
-
-func TestBookmarkToggleBadRequest(t *testing.T) {
-	handler := setupTestServer(t)
-	req := httptest.NewRequest("POST", "/bookmarks/toggle", strings.NewReader("{}"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != 400 {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestSessionsListBookmarks(t *testing.T) {
-	handler := setupTestServer(t)
-
-	// Bookmark a session first
-	body := `{"key":"test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`
-	req := httptest.NewRequest("POST", "/bookmarks/toggle", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	// Check the sessions list has a filled star
-	req = httptest.NewRequest("GET", "/projects/test-project/", nil)
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "&#9733;") {
-		t.Error("sessions list missing filled star for bookmarked session")
-	}
-}
-
 func TestStaticFiles(t *testing.T) {
 	handler := setupTestServer(t)
 

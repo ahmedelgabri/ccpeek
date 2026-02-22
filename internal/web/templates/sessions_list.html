@@ -35,29 +35,12 @@
 
   <div class="item-list searchable-list space-y-2">
     {{ range .Project.Sessions }}
-      <div
-        class="list-row group flex items-center gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
+      <a
+        href="/projects/{{ $.Project.DirName }}/{{ .SessionID }}/"
+        class="list-row group flex items-baseline justify-between gap-4 px-5 py-3.5 rounded-xl bg-surface-card border border-surface-border no-underline transition-all duration-200 hover:border-surface-border-hover hover:bg-surface-hover"
         data-search-keys="{{ .FirstPrompt }} {{ .SessionID }} {{ .GitBranch }}"
       >
-        <button
-          class="bookmark-btn shrink-0 text-lg leading-none transition-colors {{ if index $.Bookmarked .SessionID }}
-            text-amber-400
-          {{ else }}
-            text-slate-700 hover:text-slate-500
-          {{ end }}"
-          data-bookmark-key="{{ $.Project.DirName }}/{{ .SessionID }}"
-          title="Toggle bookmark"
-        >
-          {{ if index $.Bookmarked .SessionID }}
-            &#9733;
-          {{ else }}
-            &#9734;
-          {{ end }}
-        </button>
-        <a
-          href="/projects/{{ $.Project.DirName }}/{{ .SessionID }}/"
-          class="min-w-0 flex-1 no-underline"
-        >
+        <div class="min-w-0 flex-1">
           <div
             class="text-sm text-slate-200 truncate group-hover:text-slate-50"
           >
@@ -98,13 +81,13 @@
               >
             {{ end }}
           </div>
-        </a>
+        </div>
         {{ if .Modified }}
           <span class="text-xs text-slate-600 whitespace-nowrap"
             >{{ formatDate .Modified }}</span
           >
         {{ end }}
-      </div>
+      </a>
     {{ end }}
   </div>
 {{ end }}
