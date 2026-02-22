@@ -1,0 +1,27 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"api-server/internal/store"
+)
+
+type UserHandler struct {
+	store *store.UserStore
+}
+
+func NewUserHandler(s *store.UserStore) *UserHandler {
+	return &UserHandler{store: s}
+}
+
+func (h *UserHandler) Routes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.List)
+	r.Post("/", h.Create)
+	r.Get("/{id}", h.Get)
+	r.Put("/{id}", h.Update)
+	r.Delete("/{id}", h.Delete)
+	return r
+}

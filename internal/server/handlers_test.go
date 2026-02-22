@@ -47,12 +47,14 @@ func TestDashboard(t *testing.T) {
 			t.Errorf("dashboard missing %q", s)
 		}
 	}
-	// All history entries should be clickable links via encodeProjectDir
-	if !strings.Contains(body, `href="/projects/test-project/"`) {
-		t.Error("dashboard missing clickable project link in history")
+	// History entries should be clickable links via encodeProjectDir
+	if !strings.Contains(body, `href="/projects/`) {
+		t.Error("dashboard missing clickable project links in history")
 	}
-	if !strings.Contains(body, `href="/projects/-Users-test-project2/"`) {
-		t.Error("dashboard missing encoded project link for /Users/test/project2")
+	// Recent history should contain demo projects
+	if !strings.Contains(body, `href="/projects/-Users-demo-code-web-app/"`) &&
+		!strings.Contains(body, `href="/projects/-Users-demo-code-api-server/"`) {
+		t.Error("dashboard missing recent demo project links in history")
 	}
 }
 

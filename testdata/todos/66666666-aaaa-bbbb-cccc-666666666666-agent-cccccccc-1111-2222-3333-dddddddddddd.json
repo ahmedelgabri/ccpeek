@@ -1,0 +1,10 @@
+[
+  { "content": "Implement user list endpoint", "status": "completed" },
+  { "content": "Implement user create endpoint with validation", "status": "completed" },
+  { "content": "Implement user get by ID endpoint", "status": "completed" },
+  { "content": "Implement user update endpoint", "status": "completed" },
+  { "content": "Implement user delete endpoint", "status": "completed" },
+  { "content": "Create PostgreSQL migration file", "status": "completed" },
+  { "content": "Add integration tests for all endpoints", "status": "in_progress" },
+  { "content": "Add pagination to list endpoint", "status": "pending" }
+]
