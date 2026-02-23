@@ -12,7 +12,7 @@ var manCmd = &cobra.Command{
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		header := &doc.GenManHeader{
-			Title:   "CCPEAK",
+			Title:   "CCPEEK",
 			Section: "1",
 		}
 		return doc.GenManTree(rootCmd, header, args[0])

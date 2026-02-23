@@ -1,7 +1,7 @@
 node_modules/
 test-results/
-cmd/ccpeak/ccpeak
-/ccpeak
+cmd/ccpeek/ccpeek
+/ccpeek
 internal/web/static/style.css
 result
 .hooks/

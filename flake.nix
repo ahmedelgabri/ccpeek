@@ -1,5 +1,5 @@
 {
-  description = "ccpeak - Explore your Claude Code history";
+  description = "ccpeek - Explore your Claude Code history";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -28,9 +28,9 @@
         ...
       }: {
         packages = {
-          default = self'.packages.ccpeak;
-          ccpeak = pkgs.buildGoModule {
-            pname = "ccpeak";
+          default = self'.packages.ccpeek;
+          ccpeek = pkgs.buildGoModule {
+            pname = "ccpeek";
             version = "0.3.1";
 
             src = lib.cleanSource ./.;
@@ -40,7 +40,7 @@
             ldflags = [
               "-s"
               "-w"
-              "-X github.com/ahmedelgabri/ccpeak/internal/cmd.Version=${self'.packages.ccpeak.version}"
+              "-X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=${self'.packages.ccpeek.version}"
             ];
 
             nativeBuildInputs = with pkgs; [
@@ -49,7 +49,7 @@
               tailwindcss_4
             ];
 
-            subPackages = ["cmd/ccpeak"];
+            subPackages = ["cmd/ccpeek"];
 
             preBuild = ''
               tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
@@ -57,25 +57,25 @@
 
             postInstall = ''
               # Generate shell completions before wrapping
-              $out/bin/ccpeak completion bash > ccpeak.bash
-              $out/bin/ccpeak completion zsh > _ccpeak
-              $out/bin/ccpeak completion fish > ccpeak.fish
-              installShellCompletion --bash ccpeak.bash
-              installShellCompletion --zsh _ccpeak
-              installShellCompletion --fish ccpeak.fish
+              $out/bin/ccpeek completion bash > ccpeek.bash
+              $out/bin/ccpeek completion zsh > _ccpeek
+              $out/bin/ccpeek completion fish > ccpeek.fish
+              installShellCompletion --bash ccpeek.bash
+              installShellCompletion --zsh _ccpeek
+              installShellCompletion --fish ccpeek.fish
 
               # Generate and install man pages
               mkdir -p $TMPDIR/man
-              $out/bin/ccpeak man $TMPDIR/man
+              $out/bin/ccpeek man $TMPDIR/man
               installManPage $TMPDIR/man/*.1
 
-              wrapProgram $out/bin/ccpeak \
+              wrapProgram $out/bin/ccpeek \
                 --prefix PATH : ${pkgs.lib.makeBinPath [pkgs.git]}
             '';
 
             meta = {
-              mainProgram = "ccpeak";
-              homepage = "https://github.com/ahmedelgabri/ccpeak";
+              mainProgram = "ccpeek";
+              homepage = "https://github.com/ahmedelgabri/ccpeek";
               description = "Explore your Claude Code history";
               license = lib.licenses.mit;
               platforms = lib.platforms.unix;

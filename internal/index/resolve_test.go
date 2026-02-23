@@ -3,7 +3,7 @@ package index
 import (
 	"testing"
 
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 func TestTodoSessionRegex(t *testing.T) {

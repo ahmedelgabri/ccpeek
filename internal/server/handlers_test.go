@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeak/internal/index"
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/index"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 func setupTestServer(t *testing.T) http.Handler {

@@ -1,4 +1,4 @@
-module github.com/ahmedelgabri/ccpeak
+module github.com/ahmedelgabri/ccpeek
 
 go 1.25.0
 

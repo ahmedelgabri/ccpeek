@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 const pageSize = 50

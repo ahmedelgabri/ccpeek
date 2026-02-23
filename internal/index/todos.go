@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 func indexTodos(claudeDir, dataDir string) ([]model.TodoEntry, error) {

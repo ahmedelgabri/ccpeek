@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 var snapshotTimestampRe = regexp.MustCompile(`snapshot-\w+-(\d+)-`)

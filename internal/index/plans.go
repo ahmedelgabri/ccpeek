@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 var headingRe = regexp.MustCompile(`(?m)^#\s+(.+)`)

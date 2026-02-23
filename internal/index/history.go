@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/ahmedelgabri/ccpeak/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 func indexHistory(claudeDir string) ([]model.HistoryEntry, error) {

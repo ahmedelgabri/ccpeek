@@ -45,25 +45,25 @@ jobs:
         run: |
           pnpm install
           pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
-          go build -ldflags="-s -w -X github.com/ahmedelgabri/ccpeak/internal/cmd.Version=$VERSION" -o ccpeak-native ./cmd/ccpeak/
+          go build -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
           mkdir -p dist/completions dist/man
-          ./ccpeak-native completion bash > dist/completions/ccpeak.bash
-          ./ccpeak-native completion zsh > dist/completions/_ccpeak
-          ./ccpeak-native completion fish > dist/completions/ccpeak.fish
-          ./ccpeak-native man dist/man
-          rm ccpeak-native
+          ./ccpeek-native completion bash > dist/completions/ccpeek.bash
+          ./ccpeek-native completion zsh > dist/completions/_ccpeek
+          ./ccpeek-native completion fish > dist/completions/ccpeek.fish
+          ./ccpeek-native man dist/man
+          rm ccpeek-native
       - name: Cross-compile and package
         if: steps.check_tag.outputs.exists == 'false'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          LDFLAGS="-s -w -X github.com/ahmedelgabri/ccpeak/internal/cmd.Version=$VERSION"
+          LDFLAGS="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION"
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
             OS="${target%/*}"
             ARCH="${target#*/}"
-            DIR="ccpeak-${VERSION}-${OS}-${ARCH}"
+            DIR="ccpeek-${VERSION}-${OS}-${ARCH}"
             mkdir -p "dist/${DIR}"
-            GOOS="$OS" GOARCH="$ARCH" go build -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeak" ./cmd/ccpeak/
+            GOOS="$OS" GOARCH="$ARCH" go build -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
             cp -r dist/completions "dist/${DIR}/"
             cp -r dist/man "dist/${DIR}/"
             tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"
@@ -74,14 +74,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           cd dist
-          sha256sum ccpeak-${VERSION}-*.tar.gz > "ccpeak-${VERSION}-checksums.txt"
+          sha256sum ccpeek-${VERSION}-*.tar.gz > "ccpeek-${VERSION}-checksums.txt"
       - uses: actions/upload-artifact@v4
         if: steps.check_tag.outputs.exists == 'false'
         with:
           name: release-assets
           path: |
-            dist/ccpeak-*.tar.gz
-            dist/ccpeak-*-checksums.txt
+            dist/ccpeek-*.tar.gz
+            dist/ccpeek-*-checksums.txt
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag_exists: ${{ steps.check_tag.outputs.exists }}
@@ -128,7 +128,7 @@ jobs:
             ### Using Homebrew
 
             ```bash
-            brew install ahmedelgabri/ccpeak/ccpeak
+            brew install ahmedelgabri/ccpeek/ccpeek
             ```
 
             ### Manual Download
@@ -136,18 +136,18 @@ jobs:
             Download the archive for your platform, extract it, and place the binary in your `$PATH`:
 
             ```bash
-            tar xzf ccpeak-${{ needs.build.outputs.version }}-<OS>-<ARCH>.tar.gz
-            cp ccpeak-${{ needs.build.outputs.version }}-<OS>-<ARCH>/ccpeak ~/.local/bin/
+            tar xzf ccpeek-${{ needs.build.outputs.version }}-<OS>-<ARCH>.tar.gz
+            cp ccpeek-${{ needs.build.outputs.version }}-<OS>-<ARCH>/ccpeek ~/.local/bin/
             ```
 
             Completions and man pages are included under `completions/` and `man/`.
 
-            **Checksums:** See `ccpeak-${{ needs.build.outputs.version }}-checksums.txt`
+            **Checksums:** See `ccpeek-${{ needs.build.outputs.version }}-checksums.txt`
           draft: false
           prerelease: false
           files: |
-            dist/ccpeak-*.tar.gz
-            dist/ccpeak-*-checksums.txt
+            dist/ccpeek-*.tar.gz
+            dist/ccpeek-*-checksums.txt
 
   update-homebrew:
     name: Update Homebrew Formula
@@ -160,57 +160,57 @@ jobs:
           path: dist
       - uses: actions/checkout@v4
         with:
-          repository: ahmedelgabri/homebrew-ccpeak
+          repository: ahmedelgabri/homebrew-ccpeek
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-ccpeak
+          path: homebrew-ccpeek
       - name: Update formula
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          SHA_DARWIN_ARM64=$(grep "darwin-arm64" dist/ccpeak-${VERSION}-checksums.txt | awk '{print $1}')
-          SHA_DARWIN_AMD64=$(grep "darwin-amd64" dist/ccpeak-${VERSION}-checksums.txt | awk '{print $1}')
-          SHA_LINUX_ARM64=$(grep "linux-arm64" dist/ccpeak-${VERSION}-checksums.txt | awk '{print $1}')
-          SHA_LINUX_AMD64=$(grep "linux-amd64" dist/ccpeak-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_DARWIN_ARM64=$(grep "darwin-arm64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_DARWIN_AMD64=$(grep "darwin-amd64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_LINUX_ARM64=$(grep "linux-arm64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
+          SHA_LINUX_AMD64=$(grep "linux-amd64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
 
-          cat > homebrew-ccpeak/Formula/ccpeak.rb << EOF
-          class Ccpeak < Formula
+          cat > homebrew-ccpeek/Formula/ccpeek.rb << EOF
+          class Ccpeek < Formula
             desc "Explore your Claude Code history"
-            homepage "https://github.com/ahmedelgabri/ccpeak"
+            homepage "https://github.com/ahmedelgabri/ccpeek"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               on_arm do
-                url "https://github.com/ahmedelgabri/ccpeak/releases/download/v#{version}/ccpeak-#{version}-darwin-arm64.tar.gz"
+                url "https://github.com/ahmedelgabri/ccpeek/releases/download/v#{version}/ccpeek-#{version}-darwin-arm64.tar.gz"
                 sha256 "${SHA_DARWIN_ARM64}"
               end
               on_intel do
-                url "https://github.com/ahmedelgabri/ccpeak/releases/download/v#{version}/ccpeak-#{version}-darwin-amd64.tar.gz"
+                url "https://github.com/ahmedelgabri/ccpeek/releases/download/v#{version}/ccpeek-#{version}-darwin-amd64.tar.gz"
                 sha256 "${SHA_DARWIN_AMD64}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/ahmedelgabri/ccpeak/releases/download/v#{version}/ccpeak-#{version}-linux-arm64.tar.gz"
+                url "https://github.com/ahmedelgabri/ccpeek/releases/download/v#{version}/ccpeek-#{version}-linux-arm64.tar.gz"
                 sha256 "${SHA_LINUX_ARM64}"
               end
               on_intel do
-                url "https://github.com/ahmedelgabri/ccpeak/releases/download/v#{version}/ccpeak-#{version}-linux-amd64.tar.gz"
+                url "https://github.com/ahmedelgabri/ccpeek/releases/download/v#{version}/ccpeek-#{version}-linux-amd64.tar.gz"
                 sha256 "${SHA_LINUX_AMD64}"
               end
             end
 
             def install
-              bin.install "ccpeak"
-              bash_completion.install "completions/ccpeak.bash" => "ccpeak"
-              zsh_completion.install "completions/_ccpeak"
-              fish_completion.install "completions/ccpeak.fish"
+              bin.install "ccpeek"
+              bash_completion.install "completions/ccpeek.bash" => "ccpeek"
+              zsh_completion.install "completions/_ccpeek"
+              fish_completion.install "completions/ccpeek.fish"
               man1.install Dir["man/*.1"]
             end
 
             test do
-              assert_match version.to_s, shell_output("#{bin}/ccpeak --version")
+              assert_match version.to_s, shell_output("#{bin}/ccpeek --version")
             end
           end
           EOF
@@ -218,9 +218,9 @@ jobs:
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          cd homebrew-ccpeak
+          cd homebrew-ccpeek
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ccpeak.rb
-          git diff --staged --quiet || git commit -m "ccpeak ${VERSION}"
+          git add Formula/ccpeek.rb
+          git diff --staged --quiet || git commit -m "ccpeek ${VERSION}"
           git push

@@ -1,6 +1,6 @@
 css_input := "internal/web/src/app.css"
 css_output := "internal/web/static/style.css"
-binary := "cmd/ccpeak/ccpeak"
+binary := "cmd/ccpeek/ccpeek"
 
 css:
     pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --minify
@@ -9,10 +9,10 @@ css-watch:
     pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --watch
 
 build: css
-    go build -o {{binary}} ./cmd/ccpeak/
+    go build -o {{binary}} ./cmd/ccpeek/
 
 dev: css
-    go run ./cmd/ccpeak --open
+    go run ./cmd/ccpeek --open
 
 lint:
     pnpm exec oxlint --type-aware --type-check

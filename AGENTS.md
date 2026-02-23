@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-CCPeak is a Go CLI that indexes Claude Code data from `~/.claude` and serves a local web UI for browsing conversations, plans, todos, shell snapshots, and file history. Indexed data is written to `$TMPDIR/.ccpeak/index.json`.
+CCPeek is a Go CLI that indexes Claude Code data from `~/.claude` and serves a local web UI for browsing conversations, plans, todos, shell snapshots, and file history. Indexed data is written to `$TMPDIR/.ccpeek/index.json`.
 
 ## Commands
 
@@ -11,7 +11,7 @@ All tasks are managed via [just](https://github.com/casey/just). Install tools w
 | Command          | Purpose                                                                                             |
 | ---------------- | --------------------------------------------------------------------------------------------------- |
 | `just dev`       | Build CSS then run server with `--open`                                                             |
-| `just build`     | Build CSS then compile Go binary to `cmd/ccpeak/ccpeak`                                             |
+| `just build`     | Build CSS then compile Go binary to `cmd/ccpeek/ccpeek`                                             |
 | `just css`       | Compile Tailwind CSS (input: `internal/web/src/app.css` -> output: `internal/web/static/style.css`) |
 | `just css-watch` | Watch mode for CSS                                                                                  |
 | `just test`      | Run all tests (unit + e2e)                                                                          |
@@ -25,12 +25,12 @@ Run a single Go test: `go test ./internal/server/ -run TestDashboard`
 ## Architecture
 
 ```
-cmd/ccpeak/main.go       Entry point: delegates to internal/cmd
+cmd/ccpeek/main.go       Entry point: delegates to internal/cmd
 internal/
   cmd/
     root.go                 Cobra root command with flags and server logic
     man.go                  Hidden subcommand for man page generation
-  index/                    Reads ~/.claude, writes $TMPDIR/.ccpeak/index.json
+  index/                    Reads ~/.claude, writes $TMPDIR/.ccpeek/index.json
     index.go                Orchestrator: Run() calls each sub-indexer
     projects.go             Indexes projects + sessions from JSONL conversation files
     plans.go, todos.go,     Each indexes one entity type

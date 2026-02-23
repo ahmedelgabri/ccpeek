@@ -63,4 +63,4 @@ jobs:
       - name: Build package
         run: nix build
       - name: Test executable runs
-        run: ./result/bin/ccpeak --help
+        run: ./result/bin/ccpeek --help
