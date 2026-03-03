@@ -40,7 +40,6 @@
             vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
             tags = ["sqlite_fts5"];
-            CGO_ENABLED = 1;
 
             ldflags = [
               "-s"
