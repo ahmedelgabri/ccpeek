@@ -32,7 +32,7 @@ func init() {
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
 	rootCmd.Flags().String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
-	rootCmd.Flags().String("data-dir", filepath.Join(os.TempDir(), ".ccpeek"), "Data output/read directory")
+	rootCmd.Flags().String("data-file", filepath.Join(os.TempDir(), ".ccpeek", "ccpeek.db"), "SQLite database file path")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().Bool("open", false, "Open browser after starting server")
@@ -49,18 +49,18 @@ func Execute() {
 func run(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetInt("port")
 	claudeDir, _ := cmd.Flags().GetString("claude-dir")
-	dataDir, _ := cmd.Flags().GetString("data-dir")
+	dataFile, _ := cmd.Flags().GetString("data-file")
 	skipIndex, _ := cmd.Flags().GetBool("skip-index")
 	indexOnly, _ := cmd.Flags().GetBool("index-only")
 	openBrowser, _ := cmd.Flags().GetBool("open")
 	watch, _ := cmd.Flags().GetBool("watch")
 
-	// Ensure data directory exists
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
 
-	dbPath := filepath.Join(dataDir, "ccpeek.db")
+	dbPath := dataFile
 	db, err := store.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
