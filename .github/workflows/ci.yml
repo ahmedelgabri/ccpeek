@@ -20,7 +20,7 @@ jobs:
       - name: Check formatting
         run: nix fmt -- --fail-on-change
       - name: Go vet
-        run: nix develop --command go vet ./...
+        run: nix develop --command go vet -tags sqlite_fts5 ./...
       - name: Lint JS
         run: nix develop --command just lint
 
@@ -41,7 +41,7 @@ jobs:
       - name: Build CSS
         run: pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
       - name: Unit tests
-        run: go test ./...
+        run: CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       - name: E2E tests

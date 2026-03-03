@@ -45,7 +45,7 @@ jobs:
         run: |
           pnpm install
           pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
-          go build -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
+          CGO_ENABLED=1 go build -tags sqlite_fts5 -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
           mkdir -p dist/completions dist/man
           ./ccpeek-native completion bash > dist/completions/ccpeek.bash
           ./ccpeek-native completion zsh > dist/completions/_ccpeek
@@ -63,7 +63,7 @@ jobs:
             ARCH="${target#*/}"
             DIR="ccpeek-${VERSION}-${OS}-${ARCH}"
             mkdir -p "dist/${DIR}"
-            GOOS="$OS" GOARCH="$ARCH" go build -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
+            CGO_ENABLED=1 GOOS="$OS" GOARCH="$ARCH" go build -tags sqlite_fts5 -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
             cp -r dist/completions "dist/${DIR}/"
             cp -r dist/man "dist/${DIR}/"
             tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"

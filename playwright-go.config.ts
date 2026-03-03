@@ -7,7 +7,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   webServer: {
-    command: "go run ./cmd/ccpeek --claude-dir testdata --port 4322",
+    command:
+      "CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --claude-dir testdata --port 4322",
     port: 4322,
     reuseExistingServer: !process.env.CI,
   },
