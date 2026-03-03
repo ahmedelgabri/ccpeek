@@ -32,7 +32,7 @@ func init() {
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
 	rootCmd.Flags().String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
-	rootCmd.Flags().String("data-file", filepath.Join(os.TempDir(), ".ccpeek", "ccpeek.db"), "SQLite database file path")
+	rootCmd.Flags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "SQLite database file path")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().Bool("open", false, "Open browser after starting server")
@@ -92,6 +92,19 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	return server.ListenAndServe(addr, db, claudeDir, watch)
+}
+
+// dataDir returns the XDG data directory for ccpeek.
+// It respects $XDG_DATA_HOME, falling back to ~/.local/share/ccpeek.
+func dataDir() string {
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, "ccpeek")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "ccpeek")
+	}
+	return filepath.Join(home, ".local", "share", "ccpeek")
 }
 
 func openURL(url string) {

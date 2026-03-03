@@ -69,7 +69,7 @@ The server reads Claude Code data from `~/.claude`, writes an index to
 | -------------- | ----------------- | ---------------------------------- |
 | `-p`, `--port` | `3000`            | Server port                        |
 | `--claude-dir` | `~/.claude`       | Source directory (Claude data)     |
-| `--data-file`  | `$TMPDIR/.ccpeek/ccpeek.db` | SQLite database file path   |
+| `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | SQLite database file path |
 | `--skip-index` | `false`           | Skip indexing, serve existing data |
 | `--index-only` | `false`           | Index and exit                     |
 | `--open`       | `false`           | Open browser after starting        |
