@@ -31,7 +31,7 @@
           default = self'.packages.ccpeek;
           ccpeek = pkgs.buildGoModule {
             pname = "ccpeek";
-            version = "0.5.0";
+            version = "1.0.0";
 
             src = lib.cleanSource ./.;
 
