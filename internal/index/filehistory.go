@@ -1,35 +1,31 @@
 package index
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
 var fileVersionRe = regexp.MustCompile(`^(.+)@v(\d+)$`)
 
-func indexFileHistory(claudeDir, dataDir string) ([]model.FileHistoryEntry, error) {
+func indexFileHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	srcDir := filepath.Join(claudeDir, "file-history")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	outDir := filepath.Join(dataDir, "file-history")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return nil, err
-	}
-
-	var result []model.FileHistoryEntry
-
+	count := 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -73,25 +69,19 @@ func indexFileHistory(claudeDir, dataDir string) ([]model.FileHistoryEntry, erro
 			return versions[i].Version < versions[j].Version
 		})
 
-		detail := model.FileHistoryDetail{
-			ConversationID: conversationID,
-			Files:          versions,
+		// Try to link to session
+		var sessionDBID int64
+		if dbID, err := s.GetSessionDBID(tx, conversationID); err == nil {
+			sessionDBID = dbID
+			// Also set reverse link: session -> has_file_history
+			_ = s.LinkFileHistoryToSession(tx, conversationID, dbID)
 		}
-		data, err := json.Marshal(detail)
-		if err != nil {
+
+		if err := s.InsertFileHistory(tx, conversationID, versions, sessionDBID); err != nil {
 			continue
 		}
-		_ = os.WriteFile(filepath.Join(outDir, conversationID+".json"), data, 0o644)
-
-		result = append(result, model.FileHistoryEntry{
-			ConversationID: conversationID,
-			FileCount:      len(versions),
-		})
+		count++
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].FileCount > result[j].FileCount
-	})
-
-	return result, nil
+	return count, nil
 }

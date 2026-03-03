@@ -9,6 +9,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/server"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -54,9 +55,21 @@ func run(cmd *cobra.Command, args []string) error {
 	openBrowser, _ := cmd.Flags().GetBool("open")
 	watch, _ := cmd.Flags().GetBool("watch")
 
+	// Ensure data directory exists
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("creating data dir: %w", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "ccpeek.db")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
 	if !skipIndex {
-		fmt.Println("Indexing", claudeDir, "->", dataDir)
-		if err := index.Run(claudeDir, dataDir); err != nil {
+		fmt.Println("Indexing", claudeDir, "->", dbPath)
+		if err := index.Run(claudeDir, db); err != nil {
 			return fmt.Errorf("indexing failed: %w", err)
 		}
 		fmt.Println("Indexing complete.")
@@ -78,7 +91,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(addr, dataDir, claudeDir, watch)
+	return server.ListenAndServe(addr, db, claudeDir, watch)
 }
 
 func openURL(url string) {

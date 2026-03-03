@@ -8,20 +8,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
+func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, error) {
 	srcDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return 0, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return 0, 0, err
 	}
 
-	var projects []model.ProjectEntry
+	projectCount := 0
+	totalSessions := 0
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -30,10 +34,7 @@ func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
 
 		dirName := e.Name()
 		projectDir := filepath.Join(srcDir, dirName)
-		outDir := filepath.Join(dataDir, "projects", dirName)
-		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			continue
-		}
+		displayName := decodeProjectDir(dirName)
 
 		// Read sessions-index.json if available
 		var sessionsIndex model.SessionsIndex
@@ -48,7 +49,13 @@ func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
 			continue
 		}
 
-		var sessions []model.SessionEntry
+		// Build session entries first to sort them
+		type sessionWithMessages struct {
+			entry    model.SessionEntry
+			messages []model.ConversationMessage
+		}
+		var sessionsData []sessionWithMessages
+
 		for _, f := range files {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
@@ -87,39 +94,44 @@ func indexProjects(claudeDir, dataDir string) ([]model.ProjectEntry, error) {
 				messages = append(messages, msg)
 			}
 
-			// Write parsed messages
-			data, err := json.Marshal(messages)
-			if err != nil {
-				continue
-			}
-			_ = os.WriteFile(filepath.Join(outDir, sessionID+".json"), data, 0o644)
-
 			// Build session metadata
 			session := buildSessionEntry(sessionID, messages, sessionsIndex.Entries)
-			sessions = append(sessions, session)
+			sessionsData = append(sessionsData, sessionWithMessages{entry: session, messages: messages})
 		}
 
-		sort.Slice(sessions, func(i, j int) bool {
-			ti, _ := time.Parse(time.RFC3339Nano, sessions[i].Modified)
-			tj, _ := time.Parse(time.RFC3339Nano, sessions[j].Modified)
+		if len(sessionsData) == 0 {
+			continue
+		}
+
+		// Sort sessions by modified date (newest first) before inserting
+		sort.Slice(sessionsData, func(i, j int) bool {
+			ti, _ := time.Parse(time.RFC3339Nano, sessionsData[i].entry.Modified)
+			tj, _ := time.Parse(time.RFC3339Nano, sessionsData[j].entry.Modified)
 			return ti.After(tj)
 		})
 
-		displayName := decodeProjectDir(dirName)
+		// Insert project
+		projectID, err := s.InsertProject(tx, dirName, displayName)
+		if err != nil {
+			continue
+		}
+		projectCount++
 
-		projects = append(projects, model.ProjectEntry{
-			DirName:      dirName,
-			DisplayName:  displayName,
-			SessionCount: len(sessions),
-			Sessions:     sessions,
-		})
+		// Insert sessions and their messages
+		for _, sd := range sessionsData {
+			sessionDBID, err := s.InsertSession(tx, projectID, sd.entry)
+			if err != nil {
+				continue
+			}
+
+			if err := s.InsertMessages(tx, sessionDBID, sd.messages); err != nil {
+				continue
+			}
+			totalSessions++
+		}
 	}
 
-	sort.Slice(projects, func(i, j int) bool {
-		return projects[i].SessionCount > projects[j].SessionCount
-	})
-
-	return projects, nil
+	return projectCount, totalSessions, nil
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
@@ -182,7 +194,6 @@ func buildSessionEntry(sessionID string, messages []model.ConversationMessage, i
 }
 
 // estimateTokens gives a rough token count based on character length.
-// Uses ~4 characters per token as a rough heuristic for English text.
 func estimateTokens(messages []model.ConversationMessage) int {
 	totalChars := 0
 	for _, m := range messages {
@@ -207,7 +218,6 @@ func countToolUses(messages []model.ConversationMessage) map[string]int {
 }
 
 // decodeProjectDir converts an encoded directory name back to a path.
-// e.g. "-Users-ahmed--dotfiles" -> "/Users/ahmed/.dotfiles"
 func decodeProjectDir(dirName string) string {
 	path := dirName
 	if strings.HasPrefix(path, "-") {
@@ -219,7 +229,6 @@ func decodeProjectDir(dirName string) string {
 }
 
 // encodeProjectDir converts a path to the encoded directory name format.
-// e.g. "/Users/ahmed/.dotfiles" -> "-Users-ahmed--dotfiles"
 func encodeProjectDir(path string) string {
 	result := strings.ReplaceAll(path, "/.", "--")
 	result = strings.ReplaceAll(result, "/", "-")

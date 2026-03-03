@@ -3,25 +3,29 @@ package index
 import (
 	"os"
 	"path/filepath"
-	"sort"
+
+	"github.com/jmoiron/sqlx"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexHistory(claudeDir string) ([]model.HistoryEntry, error) {
+func indexHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	historyPath := filepath.Join(claudeDir, "history.jsonl")
 	if _, err := os.Stat(historyPath); os.IsNotExist(err) {
-		return nil, nil
+		return 0, nil
 	}
 
 	entries, err := readJSONL[model.HistoryEntry](historyPath)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Timestamp > entries[j].Timestamp
-	})
+	for _, entry := range entries {
+		if err := s.InsertHistory(tx, entry); err != nil {
+			continue
+		}
+	}
 
-	return entries, nil
+	return len(entries), nil
 }

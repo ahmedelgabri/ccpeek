@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,40 +21,32 @@ type heatmapDay struct {
 }
 
 func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
-	idx := h.store.Load().Index
+	stats, _ := h.store.GetStats()
 
-	totalSessions := 0
-	for _, p := range idx.Projects {
-		totalSessions += p.SessionCount
-	}
+	history, _ := h.store.ListHistory(50)
+	dayCounts, _ := h.store.HistoryDayCounts()
 
-	history := idx.History
-	if len(history) > 50 {
-		history = history[:50]
-	}
-
-	heatmap := buildHeatmap(idx.History)
+	heatmap := buildHeatmapFromCounts(dayCounts)
 
 	renderTemplate(w, h.tmpl, "dashboard.html", map[string]any{
-		"Title":         "Dashboard",
-		"CurrentPath":   "/",
-		"Index":         idx,
-		"TotalSessions": totalSessions,
+		"Title":       "Dashboard",
+		"CurrentPath": "/",
+		"Stats":       stats,
+		"Index": map[string]any{
+			"Plans":          make([]any, stats.PlanCount),
+			"ShellSnapshots": make([]any, stats.SnapshotCount),
+			"Todos":          make([]any, stats.TodoCount),
+			"Projects":       make([]any, stats.ProjectCount),
+			"FileHistory":    make([]any, stats.FileHistCount),
+		},
+		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
 		"Heatmap":       heatmap,
 	})
 }
 
-func buildHeatmap(history []model.HistoryEntry) []heatmapDay {
-	// Count conversations per day from history timestamps
-	dayCounts := make(map[string]int)
-	for _, entry := range history {
-		t := time.UnixMilli(entry.Timestamp)
-		day := t.Format("2006-01-02")
-		dayCounts[day]++
-	}
-
-	// Build 52 weeks (364 days) of data ending today
+// buildHeatmapFromCounts builds heatmap data from pre-aggregated day counts.
+func buildHeatmapFromCounts(dayCounts map[string]int) []heatmapDay {
 	now := time.Now()
 	days := make([]heatmapDay, 364)
 	maxCount := 0
@@ -73,7 +63,6 @@ func buildHeatmap(history []model.HistoryEntry) []heatmapDay {
 		}
 	}
 
-	// Assign intensity levels
 	for i := range days {
 		if days[i].Count == 0 {
 			days[i].Level = 0
@@ -87,32 +76,34 @@ func buildHeatmap(history []model.HistoryEntry) []heatmapDay {
 	return days
 }
 
+// buildHeatmap builds heatmap data from history entries (used in tests).
+func buildHeatmap(history []model.HistoryEntry) []heatmapDay {
+	dayCounts := make(map[string]int)
+	for _, entry := range history {
+		t := time.UnixMilli(entry.Timestamp)
+		day := t.Format("2006-01-02")
+		dayCounts[day]++
+	}
+	return buildHeatmapFromCounts(dayCounts)
+}
+
 func (h *handlers) plansList(w http.ResponseWriter, r *http.Request) {
+	plans, err := h.store.ListPlans()
+	if err != nil {
+		http.Error(w, "loading plans: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	renderTemplate(w, h.tmpl, "plans_list.html", map[string]any{
 		"Title":       "Plans",
 		"CurrentPath": "/plans/",
-		"Plans":       h.store.Load().Index.Plans,
+		"Plans":       plans,
 	})
 }
 
 func (h *handlers) planDetail(w http.ResponseWriter, r *http.Request) {
 	fileName := r.PathValue("fileName")
-	store := h.store.Load()
 
-	var entry *model.PlanEntry
-	for i := range store.Index.Plans {
-		name := strings.TrimSuffix(store.Index.Plans[i].FileName, ".md")
-		if name == fileName {
-			entry = &store.Index.Plans[i]
-			break
-		}
-	}
-	if entry == nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	content, err := os.ReadFile(filepath.Join(store.DataDir, "plans", entry.FileName))
+	entry, content, err := h.store.GetPlan(fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -122,36 +113,27 @@ func (h *handlers) planDetail(w http.ResponseWriter, r *http.Request) {
 		"Title":       entry.Title,
 		"CurrentPath": "/plans/",
 		"Plan":        entry,
-		"Content":     renderMarkdown(string(content)),
+		"Content":     renderMarkdown(content),
 	})
 }
 
 func (h *handlers) snapshotsList(w http.ResponseWriter, r *http.Request) {
+	snapshots, err := h.store.ListShellSnapshots()
+	if err != nil {
+		http.Error(w, "loading snapshots: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	renderTemplate(w, h.tmpl, "snapshots_list.html", map[string]any{
 		"Title":       "Shell Snapshots",
 		"CurrentPath": "/shell-snapshots/",
-		"Snapshots":   h.store.Load().Index.ShellSnapshots,
+		"Snapshots":   snapshots,
 	})
 }
 
 func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
 	fileName := r.PathValue("fileName")
-	store := h.store.Load()
 
-	var entry *model.ShellSnapshotEntry
-	for i := range store.Index.ShellSnapshots {
-		name := strings.TrimSuffix(store.Index.ShellSnapshots[i].FileName, ".sh")
-		if name == fileName {
-			entry = &store.Index.ShellSnapshots[i]
-			break
-		}
-	}
-	if entry == nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	content, err := os.ReadFile(filepath.Join(store.DataDir, "shell-snapshots", entry.FileName))
+	entry, content, err := h.store.GetShellSnapshot(fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -161,44 +143,29 @@ func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
 		"Title":       entry.FileName,
 		"CurrentPath": "/shell-snapshots/",
 		"Snapshot":    entry,
-		"Content":     wrapCode(string(content), "bash"),
+		"Content":     wrapCode(content, "bash"),
 	})
 }
 
 func (h *handlers) todosList(w http.ResponseWriter, r *http.Request) {
+	todos, err := h.store.ListTodos()
+	if err != nil {
+		http.Error(w, "loading todos: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	renderTemplate(w, h.tmpl, "todos_list.html", map[string]any{
 		"Title":       "Todos",
 		"CurrentPath": "/todos/",
-		"Todos":       h.store.Load().Index.Todos,
+		"Todos":       todos,
 	})
 }
 
 func (h *handlers) todoDetail(w http.ResponseWriter, r *http.Request) {
 	fileName := r.PathValue("fileName")
-	store := h.store.Load()
 
-	var entry *model.TodoEntry
-	for i := range store.Index.Todos {
-		name := strings.TrimSuffix(store.Index.Todos[i].FileName, ".json")
-		if name == fileName {
-			entry = &store.Index.Todos[i]
-			break
-		}
-	}
-	if entry == nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "todos", entry.FileName))
+	entry, items, err := h.store.GetTodo(fileName)
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var items []model.TodoItem
-	if err := json.Unmarshal(data, &items); err != nil {
-		http.Error(w, "invalid todo data", http.StatusInternalServerError)
 		return
 	}
 
@@ -211,25 +178,23 @@ func (h *handlers) todoDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) projectsList(w http.ResponseWriter, r *http.Request) {
+	projects, err := h.store.ListProjects()
+	if err != nil {
+		http.Error(w, "loading projects: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	renderTemplate(w, h.tmpl, "projects_list.html", map[string]any{
 		"Title":       "Projects",
 		"CurrentPath": "/projects/",
-		"Projects":    h.store.Load().Index.Projects,
+		"Projects":    projects,
 	})
 }
 
 func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 	dirName := r.PathValue("dirName")
-	store := h.store.Load()
 
-	var project *model.ProjectEntry
-	for i := range store.Index.Projects {
-		if store.Index.Projects[i].DirName == dirName {
-			project = &store.Index.Projects[i]
-			break
-		}
-	}
-	if project == nil {
+	project, err := h.store.GetProject(dirName)
+	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -242,60 +207,24 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // lookupSession finds a project and session from the URL path values.
-// Returns the DataStore snapshot alongside the project/session so callers
-// can reuse it without additional atomic loads.
-// Returns false and writes a 404 if either is not found.
-func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*DataStore, *model.ProjectEntry, *model.SessionEntry, bool) {
+func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*model.ProjectEntry, *model.SessionEntry, bool) {
 	dirName := r.PathValue("dirName")
 	sessionID := r.PathValue("sessionId")
 
-	store := h.store.Load()
-	var project *model.ProjectEntry
-	for i := range store.Index.Projects {
-		if store.Index.Projects[i].DirName == dirName {
-			project = &store.Index.Projects[i]
-			break
-		}
-	}
-	if project == nil {
+	project, session, err := h.store.GetSession(dirName, sessionID)
+	if err != nil || session == nil {
 		http.NotFound(w, r)
-		return nil, nil, nil, false
+		return nil, nil, false
 	}
-
-	var session *model.SessionEntry
-	for i := range project.Sessions {
-		if project.Sessions[i].SessionID == sessionID {
-			session = &project.Sessions[i]
-			break
-		}
-	}
-	if session == nil {
-		http.NotFound(w, r)
-		return nil, nil, nil, false
-	}
-
-	return store, project, session, true
+	return project, session, true
 }
 
 func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	var messages []model.ConversationMessage
-	if err := json.Unmarshal(data, &messages); err != nil {
-		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
-		return
-	}
-
-	// Pagination
 	page := 1
 	if p := r.URL.Query().Get("page"); p != "" {
 		if n, err := strconv.Atoi(p); err == nil && n > 0 {
@@ -303,21 +232,20 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	totalPages := (len(messages) + pageSize - 1) / pageSize
+	offset := (page - 1) * pageSize
+	messages, totalMsgs, err := h.store.GetSessionMessages(session.SessionID, offset, pageSize)
+	if err != nil {
+		http.Error(w, "loading messages: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	totalPages := (totalMsgs + pageSize - 1) / pageSize
 	if page > totalPages {
 		page = totalPages
 	}
 	if totalPages == 0 {
 		totalPages = 1
 	}
-
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if end > len(messages) {
-		end = len(messages)
-	}
-
-	pageMessages := messages[start:end]
 
 	title := session.FirstPrompt
 	if title == "" {
@@ -331,8 +259,8 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		"Session":       session,
 		"ActiveTab":     "conversation",
 		"HasCodeBlocks": hasCodeBlocks(session),
-		"Messages":      pageMessages,
-		"TotalMsgs":     len(messages),
+		"Messages":      messages,
+		"TotalMsgs":     totalMsgs,
 		"Page":          page,
 		"TotalPages":    totalPages,
 		"HasPrev":       page > 1,
@@ -343,7 +271,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
@@ -353,15 +281,9 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "todos", session.TodoFileName))
+	_, items, err := h.store.GetTodo(strings.TrimSuffix(session.TodoFileName, ".json"))
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var items []model.TodoItem
-	if err := json.Unmarshal(data, &items); err != nil {
-		http.Error(w, "invalid todo data", http.StatusInternalServerError)
 		return
 	}
 
@@ -382,7 +304,7 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
@@ -392,15 +314,9 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "file-history", session.SessionID+".json"))
-	if err != nil {
+	_, detail, err := h.store.GetFileHistory(session.SessionID)
+	if err != nil || detail == nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var detail model.FileHistoryDetail
-	if err := json.Unmarshal(data, &detail); err != nil {
-		http.Error(w, "invalid file history data", http.StatusInternalServerError)
 		return
 	}
 
@@ -453,25 +369,20 @@ type bashCommand struct {
 }
 
 func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
+	_ = project
 
 	if session.BashCommandCount == 0 {
 		http.NotFound(w, r)
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	messages, err := h.store.GetAllSessionMessages(session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var messages []model.ConversationMessage
-	if err := json.Unmarshal(data, &messages); err != nil {
-		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
 		return
 	}
 
@@ -524,25 +435,20 @@ type toolStat struct {
 }
 
 func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
+	_ = project
 
 	if len(session.ToolUseCounts) == 0 {
 		http.NotFound(w, r)
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	messages, err := h.store.GetAllSessionMessages(session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var messages []model.ConversationMessage
-	if err := json.Unmarshal(data, &messages); err != nil {
-		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
 		return
 	}
 
@@ -564,7 +470,6 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build sorted stats
 	var stats []toolStat
 	for name, count := range session.ToolUseCounts {
 		stats = append(stats, toolStat{Name: name, Count: count})
@@ -597,20 +502,14 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	messages, err := h.store.GetAllSessionMessages(session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var messages []model.ConversationMessage
-	if err := json.Unmarshal(data, &messages); err != nil {
-		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
 		return
 	}
 
@@ -679,33 +578,28 @@ func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
 }
 
 type codeBlock struct {
-	Tool      string // "Write" or "Edit"
+	Tool      string
 	FilePath  string
-	Content   string // Full content for Write, new_string for Edit
-	OldString string // Only for Edit
+	Content   string
+	OldString string
 	Timestamp string
 }
 
 func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
-	store, project, session, ok := h.lookupSession(w, r)
+	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
+	_ = project
 
 	if !hasCodeBlocks(session) {
 		http.NotFound(w, r)
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
+	messages, err := h.store.GetAllSessionMessages(session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-
-	var messages []model.ConversationMessage
-	if err := json.Unmarshal(data, &messages); err != nil {
-		http.Error(w, "invalid conversation data", http.StatusInternalServerError)
 		return
 	}
 
@@ -800,7 +694,6 @@ func extractToolDetail(b model.ContentBlock) string {
 			return desc
 		}
 	default:
-		// Generic: try common field names
 		for _, key := range []string{"query", "url", "command", "file_path", "path", "description"} {
 			if v, ok := input[key].(string); ok {
 				return truncate(v, 120)
@@ -811,42 +704,27 @@ func extractToolDetail(b model.ContentBlock) string {
 }
 
 func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.store.ListFileHistory()
+	if err != nil {
+		http.Error(w, "loading file history: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	renderTemplate(w, h.tmpl, "filehistory_list.html", map[string]any{
 		"Title":       "File History",
 		"CurrentPath": "/file-history/",
-		"Entries":     h.store.Load().Index.FileHistory,
+		"Entries":     entries,
 	})
 }
 
 func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 	conversationID := r.PathValue("conversationId")
-	store := h.store.Load()
 
-	var entry *model.FileHistoryEntry
-	for i := range store.Index.FileHistory {
-		if store.Index.FileHistory[i].ConversationID == conversationID {
-			entry = &store.Index.FileHistory[i]
-			break
-		}
-	}
-	if entry == nil {
+	entry, detail, err := h.store.GetFileHistory(conversationID)
+	if err != nil || detail == nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(store.DataDir, "file-history", conversationID+".json"))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	var detail model.FileHistoryDetail
-	if err := json.Unmarshal(data, &detail); err != nil {
-		http.Error(w, "invalid file history data", http.StatusInternalServerError)
-		return
-	}
-
-	// Group files by hash (reuse same VersionEntry/HashGroup as conversationFileHistory)
 	type VersionEntry struct {
 		model.FileVersionInfo
 		DiffHTML template.HTML
@@ -897,55 +775,24 @@ type searchResult struct {
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	store := h.store.Load()
 
 	var results []searchResult
 	if query != "" {
-		queryLower := strings.ToLower(query)
-		for _, project := range store.Index.Projects {
-			for _, session := range project.Sessions {
-				data, err := os.ReadFile(filepath.Join(store.DataDir, "projects", project.DirName, session.SessionID+".json"))
-				if err != nil {
-					continue
-				}
-				var messages []model.ConversationMessage
-				if json.Unmarshal(data, &messages) != nil {
-					continue
-				}
-				for _, m := range messages {
-					text := m.Message.ContentText()
-					if text == "" {
-						continue
-					}
-					idx := strings.Index(strings.ToLower(text), queryLower)
-					if idx < 0 {
-						continue
-					}
-					snippet := extractSnippet(text, idx, len(query), 120)
-					prompt := session.FirstPrompt
-					if prompt == "" {
-						prompt = session.SessionID
-					}
-					results = append(results, searchResult{
-						ProjectDirName: project.DirName,
-						ProjectDisplay: project.DisplayName,
-						SessionID:      session.SessionID,
-						SessionPrompt:  prompt,
-						Role:           m.Message.Role,
-						Timestamp:      m.Timestamp,
-						Snippet:        snippet,
-					})
-					if len(results) >= maxSearchResults {
-						break
-					}
-				}
-				if len(results) >= maxSearchResults {
-					break
-				}
-			}
-			if len(results) >= maxSearchResults {
-				break
-			}
+		storeResults, err := h.store.Search(query, maxSearchResults)
+		if err != nil {
+			// FTS query syntax error — fall back to no results
+			storeResults = nil
+		}
+		for _, sr := range storeResults {
+			results = append(results, searchResult{
+				ProjectDirName: sr.ProjectDirName,
+				ProjectDisplay: sr.ProjectDisplay,
+				SessionID:      sr.SessionID,
+				SessionPrompt:  sr.SessionPrompt,
+				Role:           sr.Role,
+				Timestamp:      sr.Timestamp,
+				Snippet:        sr.Snippet,
+			})
 		}
 	}
 
@@ -964,7 +811,6 @@ func extractSnippet(text string, pos, matchLen, contextLen int) string {
 	start := max(pos-contextLen, 0)
 	end := min(pos+matchLen+contextLen, len(text))
 	snippet := text[start:end]
-	// Clean up whitespace
 	snippet = strings.Join(strings.Fields(snippet), " ")
 	prefix := ""
 	suffix := ""
@@ -979,16 +825,9 @@ func extractSnippet(text string, pos, matchLen, contextLen int) string {
 
 func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 	dirName := r.PathValue("dirName")
-	store := h.store.Load()
 
-	var project *model.ProjectEntry
-	for i := range store.Index.Projects {
-		if store.Index.Projects[i].DirName == dirName {
-			project = &store.Index.Projects[i]
-			break
-		}
-	}
-	if project == nil {
+	project, err := h.store.GetProject(dirName)
+	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1015,7 +854,6 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Merge tool names from both sessions for comparison
 	toolNames := make(map[string]bool)
 	for name := range sessionA.ToolUseCounts {
 		toolNames[name] = true

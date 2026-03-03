@@ -6,27 +6,25 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
 var headingRe = regexp.MustCompile(`(?m)^#\s+(.+)`)
 
-func indexPlans(claudeDir, dataDir string) ([]model.PlanEntry, error) {
+func indexPlans(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	srcDir := filepath.Join(claudeDir, "plans")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	outDir := filepath.Join(dataDir, "plans")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return nil, err
-	}
-
-	var plans []model.PlanEntry
+	count := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -48,16 +46,17 @@ func indexPlans(claudeDir, dataDir string) ([]model.PlanEntry, error) {
 			title = string(m[1])
 		}
 
-		if err := copyFile(src, filepath.Join(outDir, e.Name())); err != nil {
-			continue
-		}
-
-		plans = append(plans, model.PlanEntry{
+		entry := model.PlanEntry{
 			FileName:  e.Name(),
 			Title:     title,
 			SizeBytes: info.Size(),
-		})
+		}
+
+		if err := s.InsertPlan(tx, entry, string(content)); err != nil {
+			continue
+		}
+		count++
 	}
 
-	return plans, nil
+	return count, nil
 }

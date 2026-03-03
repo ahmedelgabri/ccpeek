@@ -1,100 +1,66 @@
 package index
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-// Run performs the full indexing of claudeDir into dataDir.
-func Run(claudeDir, dataDir string) error {
-	// Clean and create output directory
-	if err := os.RemoveAll(dataDir); err != nil {
-		return fmt.Errorf("cleaning data dir: %w", err)
-	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return fmt.Errorf("creating data dir: %w", err)
+// Run performs the full indexing of claudeDir into the store.
+func Run(claudeDir string, s *store.Store) error {
+	// Reset database for full re-index
+	if err := s.Reset(); err != nil {
+		return fmt.Errorf("resetting database: %w", err)
 	}
 
-	plans, err := indexPlans(claudeDir, dataDir)
+	tx, err := s.BeginTx()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	planCount, err := indexPlans(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing plans: %w", err)
 	}
-	fmt.Printf("  Plans: %d\n", len(plans))
+	fmt.Printf("  Plans: %d\n", planCount)
 
-	snapshots, err := indexShellSnapshots(claudeDir, dataDir)
+	snapCount, err := indexShellSnapshots(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing shell snapshots: %w", err)
 	}
-	fmt.Printf("  Shell snapshots: %d\n", len(snapshots))
+	fmt.Printf("  Shell snapshots: %d\n", snapCount)
 
-	todos, err := indexTodos(claudeDir, dataDir)
-	if err != nil {
-		return fmt.Errorf("indexing todos: %w", err)
-	}
-	fmt.Printf("  Todos: %d (non-empty)\n", len(todos))
-
-	projects, err := indexProjects(claudeDir, dataDir)
+	// Index projects first (creates sessions that todos/file-history link to)
+	projectCount, sessionCount, err := indexProjects(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing projects: %w", err)
 	}
-	totalSessions := 0
-	for _, p := range projects {
-		totalSessions += p.SessionCount
-	}
-	fmt.Printf("  Projects: %d (%d sessions)\n", len(projects), totalSessions)
+	fmt.Printf("  Projects: %d (%d sessions)\n", projectCount, sessionCount)
 
-	fileHistory, err := indexFileHistory(claudeDir, dataDir)
+	todoCount, err := indexTodos(claudeDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing todos: %w", err)
+	}
+	fmt.Printf("  Todos: %d (non-empty)\n", todoCount)
+
+	fhCount, err := indexFileHistory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing file history: %w", err)
 	}
-	fmt.Printf("  File history: %d conversations\n", len(fileHistory))
+	fmt.Printf("  File history: %d conversations\n", fhCount)
 
-	history, err := indexHistory(claudeDir)
+	histCount, err := indexHistory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing history: %w", err)
 	}
-	fmt.Printf("  History: %d entries\n", len(history))
+	fmt.Printf("  History: %d entries\n", histCount)
 
-	idx := model.IndexData{
-		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
-		Plans:          plans,
-		ShellSnapshots: snapshots,
-		Todos:          todos,
-		Projects:       projects,
-		FileHistory:    fileHistory,
-		History:        history,
+	// Set generated timestamp
+	if err := s.SetMeta(tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("setting metadata: %w", err)
 	}
 
-	resolveRelationships(&idx)
-
-	data, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling index: %w", err)
-	}
-
-	return os.WriteFile(filepath.Join(dataDir, "index.json"), data, 0o644)
-}
-
-// copyFile copies src to dst.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
+	return tx.Commit()
 }
