@@ -548,11 +548,11 @@ func (s *Store) ListFileHistory() ([]model.FileHistoryEntry, error) {
 // GetFileHistory returns a file history detail (all versions).
 func (s *Store) GetFileHistory(conversationID string) (*model.FileHistoryEntry, *model.FileHistoryDetail, error) {
 	var fhRow struct {
-		ID              int64          `db:"id"`
-		ConversationID  string         `db:"conversation_id"`
-		FileCount       int            `db:"file_count"`
-		ProjectDir      sql.NullString `db:"project_dir"`
-		ProjectName     sql.NullString `db:"project_name"`
+		ID             int64          `db:"id"`
+		ConversationID string         `db:"conversation_id"`
+		FileCount      int            `db:"file_count"`
+		ProjectDir     sql.NullString `db:"project_dir"`
+		ProjectName    sql.NullString `db:"project_name"`
 	}
 	err := s.db.Get(&fhRow, `
 		SELECT fh.id, fh.conversation_id, fh.file_count,
