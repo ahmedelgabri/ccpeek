@@ -35,7 +35,12 @@
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-/jfshB1eK0bU4e4q5ax1L1HZ6Mf+gC9S0yqMJpL5GZU=";
+            # TODO: update hash after dependency change (sqlx + go-sqlite3)
+            # Run `nix build` to get the correct hash from the error output.
+            vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+            tags = ["sqlite_fts5"];
+            CGO_ENABLED = 1;
 
             ldflags = [
               "-s"
