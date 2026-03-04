@@ -1,6 +1,6 @@
 package store
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -47,11 +47,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-	text_content,
-	content=messages,
-	content_rowid=id
-);
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text_content);
 
 CREATE TABLE IF NOT EXISTS plans (
 	id         INTEGER PRIMARY KEY,
@@ -111,4 +107,10 @@ CREATE TABLE IF NOT EXISTS history (
 	project   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_history_ts ON history(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS source_files (
+	path       TEXT PRIMARY KEY,
+	mtime_ns   INTEGER NOT NULL DEFAULT 0,
+	indexed_at TEXT NOT NULL DEFAULT ''
+);
 `

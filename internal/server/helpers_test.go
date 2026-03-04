@@ -162,6 +162,48 @@ func TestToJSON(t *testing.T) {
 	}
 }
 
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		start string
+		end   string
+		want  string
+	}{
+		{"2024-01-15T10:00:00Z", "2024-01-15T10:00:30Z", "30s"},
+		{"2024-01-15T10:00:00Z", "2024-01-15T10:05:00Z", "5m"},
+		{"2024-01-15T10:00:00Z", "2024-01-15T12:30:00Z", "2h 30m"},
+		{"2024-01-15T10:00:00Z", "2024-01-15T12:00:00Z", "2h"},
+		{"", "2024-01-15T12:00:00Z", ""},
+		{"2024-01-15T10:00:00Z", "", ""},
+	}
+
+	for _, tt := range tests {
+		got := formatDuration(tt.start, tt.end)
+		if got != tt.want {
+			t.Errorf("formatDuration(%q, %q) = %q, want %q", tt.start, tt.end, got, tt.want)
+		}
+	}
+}
+
+func TestPercentDiff(t *testing.T) {
+	tests := []struct {
+		a, b int
+		want int
+	}{
+		{10, 15, 50},
+		{10, 5, -50},
+		{10, 10, 0},
+		{0, 0, 0},
+		{0, 5, 100},
+	}
+
+	for _, tt := range tests {
+		got := percentDiff(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("percentDiff(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
 func TestStatusColor(t *testing.T) {
 	tests := []struct {
 		input string

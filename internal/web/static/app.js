@@ -5,3 +5,5 @@ import "./tool-filter.js";
 import "./session-filters.js";
 import "./heatmap.js";
 import "./keyboard-nav.js";
+import "./token-chart.js";
+import "./tool-timeline.js";

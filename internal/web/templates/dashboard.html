@@ -227,6 +227,42 @@
     </div>
   {{ end }}
 
+  {{ if .TokenTimeline }}
+    <div class="mb-12">
+      <h2 class="text-lg font-semibold text-slate-200 mb-4">Token Usage</h2>
+      <div class="bg-surface-card border border-surface-border rounded-xl p-5">
+        <div id="token-chart" data-timeline="{{ toJSON .TokenTimeline }}"></div>
+      </div>
+    </div>
+  {{ end }}
+
+  {{ if .ToolStats }}
+    <div class="mb-12">
+      <h2 class="text-lg font-semibold text-slate-200 mb-4">Tool Usage</h2>
+      <div
+        class="bg-surface-card border border-surface-border rounded-xl p-5 space-y-2"
+      >
+        {{ range .ToolStats }}
+          <div class="flex items-center gap-3">
+            <span
+              class="text-xs text-slate-400 font-mono w-20 shrink-0 text-right"
+              >{{ .Name }}</span
+            >
+            <div class="flex-1 h-5 bg-slate-800/50 rounded overflow-hidden">
+              <div
+                class="h-full bg-violet-500/40 rounded"
+                style="width: {{ .Percent }}%"
+              ></div>
+            </div>
+            <span class="text-xs text-slate-500 tabular-nums w-12 text-right"
+              >{{ .Count }}</span
+            >
+          </div>
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
+
 
   <div>
     <h2

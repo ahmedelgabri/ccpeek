@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
 const pageSize = 50
@@ -28,6 +29,9 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 
 	heatmap := buildHeatmapFromCounts(dayCounts)
 
+	toolStats, _ := h.store.GetToolUsageStats(15)
+	tokenTimeline, _ := h.store.GetTokenTimeline()
+
 	renderTemplate(w, h.tmpl, "dashboard.html", map[string]any{
 		"Title":       "Dashboard",
 		"CurrentPath": "/",
@@ -42,6 +46,8 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
 		"Heatmap":       heatmap,
+		"ToolStats":      toolStats,
+		"TokenTimeline":  tokenTimeline,
 	})
 }
 
@@ -193,16 +199,47 @@ func (h *handlers) projectsList(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 	dirName := r.PathValue("dirName")
 
-	project, err := h.store.GetProject(dirName)
+	projectID, err := h.store.GetProjectID(dirName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
+	q := r.URL.Query()
+	filter := store.SessionFilter{
+		Sort:   q.Get("sort"),
+		Branch: q.Get("branch"),
+		From:   q.Get("from"),
+		To:     q.Get("to"),
+	}
+
+	sessions, err := h.store.ListSessionsFiltered(projectID, filter)
+	if err != nil {
+		http.Error(w, "loading sessions: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	branches, _ := h.store.ListBranches(projectID)
+	projectStats, _ := h.store.GetProjectStats(projectID)
+
+	project, err := h.store.GetProject(dirName)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	project.Sessions = sessions
+	project.SessionCount = len(sessions)
+
 	renderTemplate(w, h.tmpl, "sessions_list.html", map[string]any{
-		"Title":       project.DisplayName,
-		"CurrentPath": "/projects/",
-		"Project":     project,
+		"Title":        project.DisplayName,
+		"CurrentPath":  "/projects/",
+		"Project":      project,
+		"ProjectStats": projectStats,
+		"Branches":     branches,
+		"Sort":         filter.Sort,
+		"Branch":       filter.Branch,
+		"From":         filter.From,
+		"To":           filter.To,
 	})
 }
 
@@ -488,6 +525,8 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		title = session.SessionID
 	}
 
+	toolTimeline, _ := h.store.GetToolTimeline(session.SessionID)
+
 	renderTemplate(w, h.tmpl, "conversation_tools.html", map[string]any{
 		"Title":         title + " - Tools",
 		"CurrentPath":   "/projects/",
@@ -498,6 +537,7 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		"Stats":         stats,
 		"Calls":         calls,
 		"TotalCalls":    totalCalls,
+		"ToolTimeline":  toolTimeline,
 	})
 }
 
@@ -774,11 +814,19 @@ type searchResult struct {
 }
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	q := r.URL.Query()
+	query := strings.TrimSpace(q.Get("q"))
+
+	filter := store.SearchFilter{
+		Project: q.Get("project"),
+		Role:    q.Get("role"),
+		From:    q.Get("from"),
+		To:      q.Get("to"),
+	}
 
 	var results []searchResult
 	if query != "" {
-		storeResults, err := h.store.Search(query, maxSearchResults)
+		storeResults, err := h.store.Search(query, maxSearchResults, filter)
 		if err != nil {
 			// FTS query syntax error — fall back to no results
 			storeResults = nil
@@ -796,6 +844,8 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	projects, _ := h.store.ListProjectNames()
+
 	renderTemplate(w, h.tmpl, "search.html", map[string]any{
 		"Title":       "Search",
 		"CurrentPath": "/search/",
@@ -803,6 +853,11 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 		"Results":     results,
 		"ResultCount": len(results),
 		"Capped":      len(results) >= maxSearchResults,
+		"Projects":    projects,
+		"Project":     filter.Project,
+		"Role":        filter.Role,
+		"From":        filter.From,
+		"To":          filter.To,
 	})
 }
 
@@ -862,21 +917,46 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 		toolNames[name] = true
 	}
 	type toolCompare struct {
-		Name   string
-		CountA int
-		CountB int
+		Name    string
+		CountA  int
+		CountB  int
+		WidthA  int
+		WidthB  int
+		Diff    int
 	}
 	var tools []toolCompare
 	for name := range toolNames {
+		a := sessionA.ToolUseCounts[name]
+		b := sessionB.ToolUseCounts[name]
+		maxC := a
+		if b > maxC {
+			maxC = b
+		}
+		widthA, widthB := 0, 0
+		if maxC > 0 {
+			widthA = a * 100 / maxC
+			widthB = b * 100 / maxC
+		}
 		tools = append(tools, toolCompare{
 			Name:   name,
-			CountA: sessionA.ToolUseCounts[name],
-			CountB: sessionB.ToolUseCounts[name],
+			CountA: a,
+			CountB: b,
+			WidthA: widthA,
+			WidthB: widthB,
+			Diff:   percentDiff(a, b),
 		})
 	}
 	sort.Slice(tools, func(i, j int) bool {
 		return tools[i].CountA+tools[i].CountB > tools[j].CountA+tools[j].CountB
 	})
+
+	totalToolsA, totalToolsB := 0, 0
+	for _, c := range sessionA.ToolUseCounts {
+		totalToolsA += c
+	}
+	for _, c := range sessionB.ToolUseCounts {
+		totalToolsB += c
+	}
 
 	renderTemplate(w, h.tmpl, "session_compare.html", map[string]any{
 		"Title":       "Compare Sessions",
@@ -885,5 +965,13 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 		"SessionA":    sessionA,
 		"SessionB":    sessionB,
 		"Tools":       tools,
+		"TotalToolsA": totalToolsA,
+		"TotalToolsB": totalToolsB,
+		"DurationA":   formatDuration(sessionA.Created, sessionA.Modified),
+		"DurationB":   formatDuration(sessionB.Created, sessionB.Modified),
+		"DiffMessages": percentDiff(sessionA.MessageCount, sessionB.MessageCount),
+		"DiffTokens":   percentDiff(sessionA.EstimatedTokens, sessionB.EstimatedTokens),
+		"DiffCommands": percentDiff(sessionA.BashCommandCount, sessionB.BashCommandCount),
+		"DiffTools":    percentDiff(totalToolsA, totalToolsB),
 	})
 }
