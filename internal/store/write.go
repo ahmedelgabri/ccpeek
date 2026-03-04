@@ -218,6 +218,18 @@ func (s *Store) LinkTodoToSession(tx *sqlx.Tx, todoFileName string, sessionDBID 
 	return err
 }
 
+// SetSourceFileMtime records the mtime for a source file.
+// If tx is non-nil, executes within that transaction; otherwise uses the db directly.
+func (s *Store) SetSourceFileMtime(tx *sqlx.Tx, path string, mtimeNs int64, indexedAt string) error {
+	q := `INSERT OR REPLACE INTO source_files (path, mtime_ns, indexed_at) VALUES (?, ?, ?)`
+	if tx != nil {
+		_, err := tx.Exec(q, path, mtimeNs, indexedAt)
+		return err
+	}
+	_, err := s.db.Exec(q, path, mtimeNs, indexedAt)
+	return err
+}
+
 // LinkFileHistoryToSession links a file history entry to a session.
 func (s *Store) LinkFileHistoryToSession(tx *sqlx.Tx, conversationID string, sessionDBID int64) error {
 	if _, err := tx.Exec(

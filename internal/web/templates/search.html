@@ -1,11 +1,69 @@
 {{ define "content" }}
   {{ if .Query }}
-    <div class="text-sm text-slate-500 mb-4">
-      {{ .ResultCount }}
-      result{{ if ne .ResultCount 1 }}s{{ end }}{{ if .Capped }}
-        (showing first {{ .ResultCount }})
-      {{ end }}
-      for "{{ .Query }}"
+    <div class="flex flex-wrap items-center gap-2 mb-4">
+      <span class="text-sm text-slate-500">
+        {{ .ResultCount }}
+        result{{ if ne .ResultCount 1 }}s{{ end }}{{ if .Capped }}
+          (showing first {{ .ResultCount }})
+        {{ end }}
+        for "{{ .Query }}"
+      </span>
+      <form
+        method="get"
+        action="/search/"
+        class="flex flex-wrap items-center gap-2 ml-auto"
+      >
+        <input type="hidden" name="q" value="{{ .Query }}" />
+        {{ if .Projects }}
+          <select
+            name="project"
+            class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer"
+            onchange="this.form.submit()"
+          >
+            <option value="">All projects</option>
+            {{ range $.Projects }}
+              <option
+                value="{{ .DirName }}"
+                {{ if eq .DirName $.Project }}selected{{ end }}
+              >
+                {{ .DisplayName }}
+              </option>
+            {{ end }}
+          </select>
+        {{ end }}
+        <select
+          name="role"
+          class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer"
+          onchange="this.form.submit()"
+        >
+          <option value="">All roles</option>
+          <option value="user" {{ if eq .Role "user" }}selected{{ end }}>
+            User
+          </option>
+          <option
+            value="assistant"
+            {{ if eq .Role "assistant" }}selected{{ end }}
+          >
+            Assistant
+          </option>
+        </select>
+        <input
+          type="date"
+          name="from"
+          value="{{ .From }}"
+          class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400"
+          onchange="this.form.submit()"
+          title="From date"
+        />
+        <input
+          type="date"
+          name="to"
+          value="{{ .To }}"
+          class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400"
+          onchange="this.form.submit()"
+          title="To date"
+        />
+      </form>
     </div>
 
     <div
@@ -30,7 +88,7 @@
             >
           </div>
           <div class="text-sm text-slate-400 leading-relaxed">
-            {{ .Snippet }}
+            {{ .Snippet | safeHTML }}
           </div>
           <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-600">
             <span class="font-mono">{{ .ProjectDisplay }}</span>

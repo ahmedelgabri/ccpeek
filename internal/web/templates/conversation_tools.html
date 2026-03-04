@@ -43,6 +43,16 @@
 
   {{ template "session_tabs" . }}
 
+  {{ if .ToolTimeline }}
+    <div class="mb-6">
+      <div
+        id="tool-timeline"
+        data-timeline="{{ toJSON .ToolTimeline }}"
+        class="bg-surface-card border border-surface-border rounded-xl p-4 overflow-x-auto"
+      ></div>
+    </div>
+  {{ end }}
+
 
   <div class="flex flex-wrap gap-2 mb-6" id="tool-filters">
     {{ range .Stats }}

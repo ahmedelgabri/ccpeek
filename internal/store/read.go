@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"sort"
 
 	"github.com/jmoiron/sqlx"
 
@@ -329,6 +330,105 @@ func (s *Store) listSessionsForProject(projectID int64) ([]model.SessionEntry, e
 	return sessions, nil
 }
 
+// SessionFilter holds optional filter/sort parameters for listing sessions.
+type SessionFilter struct {
+	Sort   string // "oldest", "messages", "tokens" (default: newest first)
+	Branch string // filter by git branch (exact match)
+	From   string // filter by created_at >= (ISO date)
+	To     string // filter by created_at <= (ISO date)
+}
+
+// ListSessionsFiltered returns sessions for a project with optional filters and sorting.
+func (s *Store) ListSessionsFiltered(projectID int64, f SessionFilter) ([]model.SessionEntry, error) {
+	query := `
+		SELECT session_id, first_prompt, message_count, created_at, modified_at,
+			   git_branch, project_path, todo_file_name, has_file_history,
+			   bash_command_count, tool_use_counts, estimated_tokens
+		FROM sessions WHERE project_id = ?`
+	args := []any{projectID}
+
+	if f.Branch != "" {
+		query += ` AND git_branch = ?`
+		args = append(args, f.Branch)
+	}
+	if f.From != "" {
+		query += ` AND created_at >= ?`
+		args = append(args, f.From)
+	}
+	if f.To != "" {
+		query += ` AND created_at <= ?`
+		args = append(args, f.To+"T23:59:59Z")
+	}
+
+	switch f.Sort {
+	case "oldest":
+		query += ` ORDER BY modified_at ASC`
+	case "messages":
+		query += ` ORDER BY message_count DESC`
+	case "tokens":
+		query += ` ORDER BY estimated_tokens DESC`
+	case "tools":
+		query += ` ORDER BY (SELECT COALESCE(SUM(value), 0) FROM json_each(tool_use_counts)) DESC`
+	default:
+		query += ` ORDER BY modified_at DESC`
+	}
+
+	var rows []struct {
+		SessionID        string `db:"session_id"`
+		FirstPrompt      string `db:"first_prompt"`
+		MessageCount     int    `db:"message_count"`
+		CreatedAt        string `db:"created_at"`
+		ModifiedAt       string `db:"modified_at"`
+		GitBranch        string `db:"git_branch"`
+		ProjectPath      string `db:"project_path"`
+		TodoFileName     string `db:"todo_file_name"`
+		HasFileHistory   int    `db:"has_file_history"`
+		BashCommandCount int    `db:"bash_command_count"`
+		ToolUseCounts    string `db:"tool_use_counts"`
+		EstimatedTokens  int    `db:"estimated_tokens"`
+	}
+	if err := s.db.Select(&rows, query, args...); err != nil {
+		return nil, err
+	}
+	sessions := make([]model.SessionEntry, len(rows))
+	for i, r := range rows {
+		toolCounts := make(map[string]int)
+		_ = json.Unmarshal([]byte(r.ToolUseCounts), &toolCounts)
+		sessions[i] = model.SessionEntry{
+			SessionID:        r.SessionID,
+			FirstPrompt:      r.FirstPrompt,
+			MessageCount:     r.MessageCount,
+			Created:          r.CreatedAt,
+			Modified:         r.ModifiedAt,
+			GitBranch:        r.GitBranch,
+			ProjectPath:      r.ProjectPath,
+			TodoFileName:     r.TodoFileName,
+			HasFileHistory:   r.HasFileHistory != 0,
+			BashCommandCount: r.BashCommandCount,
+			ToolUseCounts:    toolCounts,
+			EstimatedTokens:  r.EstimatedTokens,
+		}
+	}
+	return sessions, nil
+}
+
+// GetProjectID returns the internal database ID for a project dir_name.
+func (s *Store) GetProjectID(dirName string) (int64, error) {
+	var id int64
+	err := s.db.Get(&id, `SELECT id FROM projects WHERE dir_name = ?`, dirName)
+	return id, err
+}
+
+// ListBranches returns distinct git branches for a project.
+func (s *Store) ListBranches(projectID int64) ([]string, error) {
+	var branches []string
+	err := s.db.Select(&branches, `
+		SELECT DISTINCT git_branch FROM sessions
+		WHERE project_id = ? AND git_branch != ''
+		ORDER BY git_branch`, projectID)
+	return branches, err
+}
+
 // GetSession finds a session by its session_id string, returning the session
 // plus its project. Uses a direct JOIN query instead of loading all sessions.
 func (s *Store) GetSession(dirName, sessionID string) (*model.ProjectEntry, *model.SessionEntry, error) {
@@ -599,8 +699,48 @@ type SearchResult struct {
 	Snippet        string
 }
 
-// Search performs a full-text search across messages.
-func (s *Store) Search(query string, limit int) ([]SearchResult, error) {
+// SearchFilter holds optional filters for search.
+type SearchFilter struct {
+	Project string // filter by project dir_name
+	Role    string // filter by message role ("user" or "assistant")
+	From    string // filter by timestamp >= (ISO date)
+	To      string // filter by timestamp <= (ISO date)
+}
+
+// Search performs a full-text search across messages with optional filters.
+func (s *Store) Search(query string, limit int, f SearchFilter) ([]SearchResult, error) {
+	q := `
+		SELECT m.role, m.timestamp,
+			   s.session_id AS session_id_text, s.first_prompt,
+			   p.dir_name, p.display_name,
+			   snippet(messages_fts, 0, '<mark class="bg-yellow-500/30 text-yellow-200 px-0.5 rounded">', '</mark>', '...', 40) AS snippet
+		FROM messages_fts
+		JOIN messages m ON messages_fts.rowid = m.id
+		JOIN sessions s ON m.session_id = s.id
+		JOIN projects p ON s.project_id = p.id
+		WHERE messages_fts MATCH ?`
+	args := []any{query}
+
+	if f.Project != "" {
+		q += ` AND p.dir_name = ?`
+		args = append(args, f.Project)
+	}
+	if f.Role != "" {
+		q += ` AND m.role = ?`
+		args = append(args, f.Role)
+	}
+	if f.From != "" {
+		q += ` AND m.timestamp >= ?`
+		args = append(args, f.From)
+	}
+	if f.To != "" {
+		q += ` AND m.timestamp <= ?`
+		args = append(args, f.To+"T23:59:59Z")
+	}
+
+	q += ` ORDER BY rank LIMIT ?`
+	args = append(args, limit)
+
 	var rows []struct {
 		Role           string `db:"role"`
 		Timestamp      string `db:"timestamp"`
@@ -610,19 +750,7 @@ func (s *Store) Search(query string, limit int) ([]SearchResult, error) {
 		ProjectDisplay string `db:"display_name"`
 		Snippet        string `db:"snippet"`
 	}
-	err := s.db.Select(&rows, `
-		SELECT m.role, m.timestamp,
-			   s.session_id AS session_id_text, s.first_prompt,
-			   p.dir_name, p.display_name,
-			   snippet(messages_fts, 0, '', '', '...', 40) AS snippet
-		FROM messages_fts
-		JOIN messages m ON messages_fts.rowid = m.id
-		JOIN sessions s ON m.session_id = s.id
-		JOIN projects p ON s.project_id = p.id
-		WHERE messages_fts MATCH ?
-		ORDER BY rank
-		LIMIT ?`, query, limit)
-	if err != nil {
+	if err := s.db.Select(&rows, q, args...); err != nil {
 		return nil, err
 	}
 	results := make([]SearchResult, len(rows))
@@ -642,6 +770,164 @@ func (s *Store) Search(query string, limit int) ([]SearchResult, error) {
 		}
 	}
 	return results, nil
+}
+
+// ListProjectNames returns all project dir_name/display_name pairs for filter dropdowns.
+func (s *Store) ListProjectNames() ([]struct {
+	DirName     string `db:"dir_name"`
+	DisplayName string `db:"display_name"`
+}, error) {
+	var rows []struct {
+		DirName     string `db:"dir_name"`
+		DisplayName string `db:"display_name"`
+	}
+	err := s.db.Select(&rows, `SELECT dir_name, display_name FROM projects ORDER BY display_name`)
+	return rows, err
+}
+
+// ToolUsageStat holds an aggregate tool usage count across all sessions.
+type ToolUsageStat struct {
+	Name    string
+	Count   int
+	Percent float64
+}
+
+// GetToolUsageStats aggregates tool_use_counts across all sessions and returns
+// the top tools sorted by usage count.
+func (s *Store) GetToolUsageStats(limit int) ([]ToolUsageStat, error) {
+	var rows []struct {
+		ToolUseCounts string `db:"tool_use_counts"`
+	}
+	if err := s.db.Select(&rows, `SELECT tool_use_counts FROM sessions WHERE tool_use_counts != '{}'`); err != nil {
+		return nil, err
+	}
+
+	totals := make(map[string]int)
+	for _, r := range rows {
+		var counts map[string]int
+		if json.Unmarshal([]byte(r.ToolUseCounts), &counts) == nil {
+			for name, count := range counts {
+				totals[name] += count
+			}
+		}
+	}
+
+	stats := make([]ToolUsageStat, 0, len(totals))
+	for name, count := range totals {
+		stats = append(stats, ToolUsageStat{Name: name, Count: count})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].Count > stats[j].Count
+	})
+	if limit > 0 && len(stats) > limit {
+		stats = stats[:limit]
+	}
+
+	// Compute percentages relative to the top tool
+	if len(stats) > 0 {
+		maxCount := stats[0].Count
+		for i := range stats {
+			stats[i].Percent = float64(stats[i].Count) / float64(maxCount) * 100
+		}
+	}
+
+	return stats, nil
+}
+
+// ProjectStats holds aggregate stats for a single project.
+type ProjectStats struct {
+	SessionCount  int    `db:"session_count"`
+	TotalMessages int    `db:"total_messages"`
+	TotalTokens   int    `db:"total_tokens"`
+	FirstSession  string `db:"first_session"`
+	LastSession   string `db:"last_session"`
+}
+
+// GetProjectStats returns aggregate stats for a project.
+func (s *Store) GetProjectStats(projectID int64) (ProjectStats, error) {
+	var st ProjectStats
+	err := s.db.Get(&st, `
+		SELECT
+			COUNT(*) AS session_count,
+			COALESCE(SUM(message_count), 0) AS total_messages,
+			COALESCE(SUM(estimated_tokens), 0) AS total_tokens,
+			COALESCE(MIN(created_at), '') AS first_session,
+			COALESCE(MAX(modified_at), '') AS last_session
+		FROM sessions WHERE project_id = ?`, projectID)
+	return st, err
+}
+
+// TokenTimelineEntry holds a daily token usage total.
+type TokenTimelineEntry struct {
+	Date   string `db:"day" json:"date"`
+	Tokens int    `db:"tokens" json:"tokens"`
+}
+
+// GetTokenTimeline returns daily token totals from session created_at dates.
+func (s *Store) GetTokenTimeline() ([]TokenTimelineEntry, error) {
+	var entries []TokenTimelineEntry
+	err := s.db.Select(&entries, `
+		SELECT DATE(created_at) AS day, SUM(estimated_tokens) AS tokens
+		FROM sessions
+		WHERE created_at != ''
+		GROUP BY day
+		ORDER BY day`)
+	return entries, err
+}
+
+// ToolTimelineEntry holds a tool call with its timestamp for timeline rendering.
+type ToolTimelineEntry struct {
+	Name      string `json:"name"`
+	Timestamp string `json:"timestamp"`
+}
+
+// GetToolTimeline returns tool_use blocks with timestamps for a session.
+func (s *Store) GetToolTimeline(sessionID string) ([]ToolTimelineEntry, error) {
+	var dbID int64
+	if err := s.db.Get(&dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+		return nil, err
+	}
+
+	var rows []struct {
+		Content   string `db:"content"`
+		Timestamp string `db:"timestamp"`
+	}
+	if err := s.db.Select(&rows, `
+		SELECT content, timestamp FROM messages
+		WHERE session_id = ? AND role = 'assistant'
+		ORDER BY seq`, dbID); err != nil {
+		return nil, err
+	}
+
+	var entries []ToolTimelineEntry
+	for _, r := range rows {
+		// Parse content blocks to find tool_use entries
+		var blocks []struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}
+		if json.Unmarshal([]byte(r.Content), &blocks) == nil {
+			for _, b := range blocks {
+				if b.Type == "tool_use" && b.Name != "" {
+					entries = append(entries, ToolTimelineEntry{
+						Name:      b.Name,
+						Timestamp: r.Timestamp,
+					})
+				}
+			}
+		}
+	}
+	return entries, nil
+}
+
+// GetSourceFileMtime returns the stored mtime for a source file, or 0 if not found.
+func (s *Store) GetSourceFileMtime(path string) (int64, error) {
+	var mtimeNs int64
+	err := s.db.Get(&mtimeNs, `SELECT mtime_ns FROM source_files WHERE path = ?`, path)
+	if err != nil {
+		return 0, err
+	}
+	return mtimeNs, nil
 }
 
 // GetSessionDBID returns the internal database ID for a session_id string.

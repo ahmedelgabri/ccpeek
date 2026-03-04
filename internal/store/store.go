@@ -52,7 +52,7 @@ func (s *Store) Reset() error {
 	tables := []string{
 		"messages_fts", "messages", "todo_items", "todos",
 		"file_versions", "file_history", "sessions", "projects",
-		"plans", "shell_snapshots", "history", "meta",
+		"plans", "shell_snapshots", "history", "source_files", "meta",
 	}
 	for _, t := range tables {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + t); err != nil {

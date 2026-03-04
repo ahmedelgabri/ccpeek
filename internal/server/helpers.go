@@ -97,6 +97,61 @@ func toJSON(v any) string {
 	return string(data)
 }
 
+// formatDuration formats the duration between two ISO date strings.
+func formatDuration(startISO, endISO string) string {
+	layouts := []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"}
+	var start, end time.Time
+	var ok bool
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, startISO); err == nil {
+			start = t
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return ""
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, endISO); err == nil {
+			end = t
+			break
+		}
+	}
+	if end.IsZero() {
+		return ""
+	}
+	d := end.Sub(start)
+	if d < 0 {
+		d = -d
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+}
+
+// percentDiff returns the percentage difference from a to b.
+// Returns 0 if a is 0.
+func percentDiff(a, b int) int {
+	if a == 0 {
+		if b == 0 {
+			return 0
+		}
+		return 100
+	}
+	return int(float64(b-a) / float64(a) * 100)
+}
+
 // statusColor returns a CSS class for a todo status.
 func statusColor(status string) string {
 	switch status {

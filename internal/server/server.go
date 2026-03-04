@@ -88,12 +88,14 @@ func watchAndReindex(claudeDir string, db *store.Store) {
 	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
 	for range ticker.C {
-		log.Println("Re-indexing...")
-		if err := index.Run(claudeDir, db); err != nil {
+		changed, err := index.RunIncremental(claudeDir, db)
+		if err != nil {
 			log.Printf("Re-index failed: %v", err)
 			continue
 		}
-		log.Println("Re-index complete.")
+		if changed {
+			log.Println("Re-index complete.")
+		}
 	}
 }
 

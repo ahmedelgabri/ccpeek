@@ -60,6 +60,9 @@ func TestDashboard(t *testing.T) {
 		!strings.Contains(body, `href="/projects/-Users-demo-code-api-server/"`) {
 		t.Error("dashboard missing recent demo project links in history")
 	}
+	if !strings.Contains(body, "Tool Usage") {
+		t.Error("dashboard missing tool usage section")
+	}
 }
 
 func TestPlansList(t *testing.T) {
@@ -225,6 +228,56 @@ func TestSessionsList(t *testing.T) {
 	}
 	if !strings.Contains(body, ">commands</span") {
 		t.Error("sessions list missing commands badge")
+	}
+}
+
+func TestSessionsListSort(t *testing.T) {
+	handler := setupTestServer(t)
+
+	for _, sort := range []string{"oldest", "messages", "tokens", "tools"} {
+		req := httptest.NewRequest("GET", "/projects/test-project/?sort="+sort, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Errorf("sort=%s: expected 200, got %d", sort, w.Code)
+		}
+	}
+}
+
+func TestSessionsListBranchFilter(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/?branch=main", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "session") {
+		t.Error("branch filter should return sessions")
+	}
+}
+
+func TestSessionsListDateRange(t *testing.T) {
+	handler := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/projects/test-project/?from=2024-01-01&to=2024-12-31", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, `value="2024-01-01"`) {
+		t.Error("date range should preserve from value")
+	}
+	if !strings.Contains(body, `value="2024-12-31"`) {
+		t.Error("date range should preserve to value")
 	}
 }
 
@@ -492,6 +545,9 @@ func TestSearch(t *testing.T) {
 	if !strings.Contains(body, `for "hello"`) {
 		t.Error("search results missing query echo")
 	}
+	if !strings.Contains(body, "<mark") {
+		t.Error("search results missing highlight mark tags")
+	}
 
 	req = httptest.NewRequest("GET", "/search/?q=zzzznonexistent", nil)
 	w = httptest.NewRecorder()
@@ -568,6 +624,11 @@ func TestSessionCompare(t *testing.T) {
 	}
 	if !strings.Contains(body, "Messages") {
 		t.Error("compare page missing metadata")
+	}
+	for _, want := range []string{"Total tool calls", "Summary", "Diff"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("compare page missing %q", want)
+		}
 	}
 }
 
