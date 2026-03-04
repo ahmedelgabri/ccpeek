@@ -4,31 +4,28 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
 var snapshotTimestampRe = regexp.MustCompile(`snapshot-\w+-(\d+)-`)
 
-func indexShellSnapshots(claudeDir, dataDir string) ([]model.ShellSnapshotEntry, error) {
+func indexShellSnapshots(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	srcDir := filepath.Join(claudeDir, "shell-snapshots")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	outDir := filepath.Join(dataDir, "shell-snapshots")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return nil, err
-	}
-
-	var snapshots []model.ShellSnapshotEntry
+	count := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sh") {
 			continue
@@ -36,6 +33,11 @@ func indexShellSnapshots(claudeDir, dataDir string) ([]model.ShellSnapshotEntry,
 
 		src := filepath.Join(srcDir, e.Name())
 		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+
+		content, err := os.ReadFile(src)
 		if err != nil {
 			continue
 		}
@@ -48,20 +50,17 @@ func indexShellSnapshots(claudeDir, dataDir string) ([]model.ShellSnapshotEntry,
 			timestamp = info.ModTime().UnixMilli()
 		}
 
-		if err := copyFile(src, filepath.Join(outDir, e.Name())); err != nil {
-			continue
-		}
-
-		snapshots = append(snapshots, model.ShellSnapshotEntry{
+		entry := model.ShellSnapshotEntry{
 			FileName:  e.Name(),
 			Timestamp: timestamp,
 			SizeBytes: info.Size(),
-		})
+		}
+
+		if err := s.InsertShellSnapshot(tx, entry, string(content)); err != nil {
+			continue
+		}
+		count++
 	}
 
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].Timestamp > snapshots[j].Timestamp
-	})
-
-	return snapshots, nil
+	return count, nil
 }

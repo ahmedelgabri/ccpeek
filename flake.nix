@@ -31,11 +31,13 @@
           default = self'.packages.ccpeek;
           ccpeek = pkgs.buildGoModule {
             pname = "ccpeek";
-            version = "0.4.0";
+            version = "1.0.0";
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-/jfshB1eK0bU4e4q5ax1L1HZ6Mf+gC9S0yqMJpL5GZU=";
+            vendorHash = "sha256-JtrVV1sPajxSl23KokuHxPZV/mAQonJs+o02RQxpiM8=";
+
+            tags = ["sqlite_fts5"];
 
             ldflags = [
               "-s"

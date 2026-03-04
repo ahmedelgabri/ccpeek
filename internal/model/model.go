@@ -66,9 +66,9 @@ type FileHistoryEntry struct {
 }
 
 type HistoryEntry struct {
-	Display   string `json:"display"`
-	Timestamp int64  `json:"timestamp"`
-	Project   string `json:"project"`
+	Display   string `json:"display" db:"display"`
+	Timestamp int64  `json:"timestamp" db:"timestamp"`
+	Project   string `json:"project" db:"project"`
 }
 
 // ConversationMessage represents a single message in a session JSONL.
@@ -172,9 +172,9 @@ func (b *ContentBlock) ToolResultText() string {
 
 // TodoItem represents a single item in a todo list file.
 type TodoItem struct {
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	ActiveForm string `json:"activeForm,omitempty"`
+	Content    string `json:"content" db:"content"`
+	Status     string `json:"status" db:"status"`
+	ActiveForm string `json:"activeForm,omitempty" db:"activeform"`
 }
 
 // FileHistoryDetail is the detail data for a single conversation's file history.
@@ -184,9 +184,9 @@ type FileHistoryDetail struct {
 }
 
 type FileVersionInfo struct {
-	Hash    string `json:"hash"`
-	Version int    `json:"version"`
-	Content string `json:"content"`
+	Hash    string `json:"hash" db:"hash"`
+	Version int    `json:"version" db:"version"`
+	Content string `json:"content" db:"content"`
 }
 
 // RawJSONLLine is the shape of raw lines from Claude's conversation JSONL files.

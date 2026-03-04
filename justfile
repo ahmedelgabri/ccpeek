@@ -9,10 +9,10 @@ css-watch:
     pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --watch
 
 build: css
-    go build -o {{binary}} ./cmd/ccpeek/
+    CGO_ENABLED=1 go build -tags sqlite_fts5 -o {{binary}} ./cmd/ccpeek/
 
 dev: css
-    go run ./cmd/ccpeek --open
+    CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --open
 
 lint:
     pnpm exec oxlint --type-aware --type-check
@@ -24,7 +24,7 @@ format-check:
     prettier --check "**/*.{js,ts,html}"
 
 test-unit: css
-    go test ./...
+    CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
 
 test-e2e: css
     pnpm exec playwright test --config=playwright-go.config.ts

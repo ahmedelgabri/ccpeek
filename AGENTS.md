@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-CCPeek is a Go CLI that indexes Claude Code data from `~/.claude` and serves a local web UI for browsing conversations, plans, todos, shell snapshots, and file history. Indexed data is written to `$TMPDIR/.ccpeek/index.json`.
+CCPeek is a Go CLI that indexes Claude Code data from `~/.claude` and serves a local web UI for browsing conversations, plans, todos, shell snapshots, and file history. Indexed data is written to `$XDG_DATA_HOME/ccpeek/ccpeek.db` (defaults to `~/.local/share/ccpeek/ccpeek.db`).
 
 ## Commands
 
@@ -30,7 +30,7 @@ internal/
   cmd/
     root.go                 Cobra root command with flags and server logic
     man.go                  Hidden subcommand for man page generation
-  index/                    Reads ~/.claude, writes $TMPDIR/.ccpeek/index.json
+  index/                    Reads ~/.claude, writes ~/.local/share/ccpeek/ccpeek.db
     index.go                Orchestrator: Run() calls each sub-indexer
     projects.go             Indexes projects + sessions from JSONL conversation files
     plans.go, todos.go,     Each indexes one entity type

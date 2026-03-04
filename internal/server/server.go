@@ -1,34 +1,19 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
-	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/ahmedelgabri/ccpeek/internal/web"
 )
 
-// DataStore holds the loaded index data and the path to detail files.
-type DataStore struct {
-	Index   model.IndexData
-	DataDir string
-}
-
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(addr, dataDir, claudeDir string, watch bool) error {
-	store, err := loadDataStore(dataDir)
-	if err != nil {
-		return fmt.Errorf("loading data: %w", err)
-	}
-
+func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -39,11 +24,10 @@ func ListenAndServe(addr, dataDir, claudeDir string, watch bool) error {
 		return fmt.Errorf("static fs: %w", err)
 	}
 
-	h := &handlers{tmpl: tmpl}
-	h.store.Store(store)
+	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		go watchAndReindex(claudeDir, dataDir, &h.store)
+		go watchAndReindex(claudeDir, db)
 	}
 
 	return http.ListenAndServe(addr, requestLogger(registerRoutes(h, staticFS)))
@@ -51,12 +35,7 @@ func ListenAndServe(addr, dataDir, claudeDir string, watch bool) error {
 
 // NewHandler creates the HTTP handler without starting a listener.
 // Used for testing.
-func NewHandler(dataDir string) (http.Handler, error) {
-	store, err := loadDataStore(dataDir)
-	if err != nil {
-		return nil, fmt.Errorf("loading data: %w", err)
-	}
-
+func NewHandler(db *store.Store) (http.Handler, error) {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return nil, fmt.Errorf("loading templates: %w", err)
@@ -67,8 +46,7 @@ func NewHandler(dataDir string) (http.Handler, error) {
 		return nil, fmt.Errorf("static fs: %w", err)
 	}
 
-	h := &handlers{tmpl: tmpl}
-	h.store.Store(store)
+	h := &handlers{tmpl: tmpl, store: db}
 
 	return registerRoutes(h, staticFS), nil
 }
@@ -99,43 +77,23 @@ func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
 	return mux
 }
 
-func loadDataStore(dataDir string) (*DataStore, error) {
-	data, err := os.ReadFile(filepath.Join(dataDir, "index.json"))
-	if err != nil {
-		return nil, fmt.Errorf("reading index.json: %w", err)
-	}
-
-	var idx model.IndexData
-	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("parsing index.json: %w", err)
-	}
-
-	return &DataStore{Index: idx, DataDir: dataDir}, nil
-}
-
 type handlers struct {
-	store atomic.Pointer[DataStore]
+	store *store.Store
 	tmpl  *templates
 }
 
 const watchInterval = 30 * time.Second
 
-func watchAndReindex(claudeDir, dataDir string, store *atomic.Pointer[DataStore]) {
+func watchAndReindex(claudeDir string, db *store.Store) {
 	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		log.Println("Re-indexing...")
-		if err := index.Run(claudeDir, dataDir); err != nil {
+		if err := index.Run(claudeDir, db); err != nil {
 			log.Printf("Re-index failed: %v", err)
 			continue
 		}
-		newStore, err := loadDataStore(dataDir)
-		if err != nil {
-			log.Printf("Failed to load re-indexed data: %v", err)
-			continue
-		}
-		store.Store(newStore)
-		log.Println("Re-index complete, data reloaded.")
+		log.Println("Re-index complete.")
 	}
 }
 

@@ -3,6 +3,8 @@ module github.com/ahmedelgabri/ccpeek
 go 1.25.0
 
 require (
+	github.com/jmoiron/sqlx v1.4.0
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/goldmark v1.7.16
 )

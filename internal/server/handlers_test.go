@@ -10,19 +10,25 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
 func setupTestServer(t *testing.T) http.Handler {
 	t.Helper()
 
 	testdataDir := filepath.Join("..", "..", "testdata")
-	dataDir := t.TempDir()
 
-	if err := index.Run(testdataDir, dataDir); err != nil {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal("opening store:", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	if err := index.Run(testdataDir, db); err != nil {
 		t.Fatal("index failed:", err)
 	}
 
-	handler, err := NewHandler(dataDir)
+	handler, err := NewHandler(db)
 	if err != nil {
 		t.Fatal("NewHandler failed:", err)
 	}
@@ -47,11 +53,9 @@ func TestDashboard(t *testing.T) {
 			t.Errorf("dashboard missing %q", s)
 		}
 	}
-	// History entries should be clickable links via encodeProjectDir
 	if !strings.Contains(body, `href="/projects/`) {
 		t.Error("dashboard missing clickable project links in history")
 	}
-	// Recent history should contain demo projects
 	if !strings.Contains(body, `href="/projects/-Users-demo-code-web-app/"`) &&
 		!strings.Contains(body, `href="/projects/-Users-demo-code-api-server/"`) {
 		t.Error("dashboard missing recent demo project links in history")
@@ -91,7 +95,6 @@ func TestPlanDetail(t *testing.T) {
 	if !strings.Contains(body, "Test Plan Title") {
 		t.Error("plan detail missing title")
 	}
-	// Markdown should render
 	if !strings.Contains(body, "Step one") {
 		t.Error("plan detail missing rendered markdown content")
 	}
@@ -135,7 +138,6 @@ func TestSnapshotDetail(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	// Chroma should render syntax-highlighted code
 	if !strings.Contains(body, "test snapshot") {
 		t.Error("snapshot detail missing content")
 	}
@@ -180,7 +182,6 @@ func TestTodoDetail(t *testing.T) {
 	if !strings.Contains(body, "completed") {
 		t.Error("todo detail missing status")
 	}
-	// Session back-link
 	if !strings.Contains(body, "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/") {
 		t.Error("todo detail missing session back-link")
 	}
@@ -216,7 +217,6 @@ func TestSessionsList(t *testing.T) {
 	if !strings.Contains(body, "session") {
 		t.Error("sessions list missing session info")
 	}
-	// Badges for linked entities
 	if !strings.Contains(body, ">todo</span") {
 		t.Error("sessions list missing todo badge")
 	}
@@ -251,7 +251,6 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "message-assistant") {
 		t.Error("conversation missing assistant messages")
 	}
-	// Tab bar with links to todos, file history, and commands
 	if !strings.Contains(body, "/todos/") {
 		t.Error("conversation missing todos tab link")
 	}
@@ -286,7 +285,6 @@ func TestConversationTodos(t *testing.T) {
 	if !strings.Contains(body, "completed") {
 		t.Error("conversation todos missing status")
 	}
-	// Tab bar should show active todos tab
 	if !strings.Contains(body, "Todos") {
 		t.Error("conversation todos missing tabs")
 	}
@@ -294,7 +292,6 @@ func TestConversationTodos(t *testing.T) {
 
 func TestConversationTodosNotFound(t *testing.T) {
 	handler := setupTestServer(t)
-	// Session that doesn't have a todo file
 	req := httptest.NewRequest("GET", "/projects/test-project/nonexistent/todos/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -321,7 +318,6 @@ func TestConversationFileHistory(t *testing.T) {
 	if !strings.Contains(body, "2 file versions") {
 		t.Error("conversation file history missing version count")
 	}
-	// Tab bar should show active file history tab
 	if !strings.Contains(body, "File History") {
 		t.Error("conversation file history missing tabs")
 	}
@@ -358,7 +354,6 @@ func TestConversationCommands(t *testing.T) {
 	if !strings.Contains(body, "1 commands") {
 		t.Error("commands page missing command count")
 	}
-	// Tab bar should show active commands tab
 	if !strings.Contains(body, "Commands") {
 		t.Error("commands page missing tabs")
 	}
@@ -474,7 +469,6 @@ func TestConversationCommandsNotFound(t *testing.T) {
 func TestSearch(t *testing.T) {
 	handler := setupTestServer(t)
 
-	// Empty query shows search page
 	req := httptest.NewRequest("GET", "/search/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -485,7 +479,6 @@ func TestSearch(t *testing.T) {
 		t.Error("search page missing title")
 	}
 
-	// Query with results
 	req = httptest.NewRequest("GET", "/search/?q=hello", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -500,7 +493,6 @@ func TestSearch(t *testing.T) {
 		t.Error("search results missing query echo")
 	}
 
-	// Query with no results
 	req = httptest.NewRequest("GET", "/search/?q=zzzznonexistent", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -548,7 +540,6 @@ func TestFileHistoryDetail(t *testing.T) {
 	if !strings.Contains(body, "2 file versions") {
 		t.Error("file history detail missing version count")
 	}
-	// Session back-link
 	if !strings.Contains(body, "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/") {
 		t.Error("file history detail missing session back-link")
 	}
@@ -557,7 +548,6 @@ func TestFileHistoryDetail(t *testing.T) {
 func TestSessionCompare(t *testing.T) {
 	handler := setupTestServer(t)
 
-	// Missing params returns 400
 	req := httptest.NewRequest("GET", "/projects/test-project/compare", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -565,7 +555,6 @@ func TestSessionCompare(t *testing.T) {
 		t.Errorf("expected 400 for missing params, got %d", w.Code)
 	}
 
-	// Same session for both (valid, just a degenerate case)
 	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	req = httptest.NewRequest("GET", "/projects/test-project/compare?a="+sessionID+"&b="+sessionID, nil)
 	w = httptest.NewRecorder()
@@ -628,7 +617,6 @@ func TestConversationToolsNotFound(t *testing.T) {
 func TestExtractSnippet(t *testing.T) {
 	text := "The quick brown fox jumps over the lazy dog"
 
-	// Match at the start
 	snippet := extractSnippet(text, 0, 3, 10)
 	if snippet == "" {
 		t.Error("extractSnippet returned empty for match at start")
@@ -640,7 +628,6 @@ func TestExtractSnippet(t *testing.T) {
 		t.Error("snippet at start should have trailing ellipsis")
 	}
 
-	// Match in the middle
 	snippet = extractSnippet(text, 20, 5, 5)
 	if !strings.HasPrefix(snippet, "...") {
 		t.Error("snippet in middle should have leading ellipsis")
@@ -649,7 +636,6 @@ func TestExtractSnippet(t *testing.T) {
 		t.Error("snippet in middle should have trailing ellipsis")
 	}
 
-	// Match near the end
 	snippet = extractSnippet(text, len(text)-3, 3, 10)
 	if !strings.HasPrefix(snippet, "...") {
 		t.Error("snippet at end should have leading ellipsis")
@@ -660,7 +646,6 @@ func TestExtractSnippet(t *testing.T) {
 }
 
 func TestBuildHeatmap(t *testing.T) {
-	// Empty history
 	days := buildHeatmap(nil)
 	if len(days) != 364 {
 		t.Errorf("expected 364 days, got %d", len(days))
@@ -671,7 +656,6 @@ func TestBuildHeatmap(t *testing.T) {
 		}
 	}
 
-	// History with entries
 	now := time.Now()
 	today := now.UnixMilli()
 	history := []model.HistoryEntry{
@@ -683,7 +667,6 @@ func TestBuildHeatmap(t *testing.T) {
 	if len(days) != 364 {
 		t.Errorf("expected 364 days, got %d", len(days))
 	}
-	// Last day should have a non-zero level
 	lastDay := days[363]
 	if lastDay.Count != 3 {
 		t.Errorf("expected count 3 for today, got %d", lastDay.Count)
@@ -704,7 +687,6 @@ func TestConversationPagination(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	// Page 1 should contain message count info
 	if !strings.Contains(body, "5 messages") {
 		t.Error("pagination page missing message count")
 	}
@@ -747,7 +729,6 @@ func TestSearchPreservesQuery(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	// The sidebar search input should have the query value
 	if !strings.Contains(body, `value="hello"`) {
 		t.Error("search page sidebar input missing query value")
 	}
