@@ -6,10 +6,13 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Binaries
+  prepare:
+    name: Check Version
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip release]')"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_exists: ${{ steps.check_tag.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,21 +30,35 @@ jobs:
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: prepare
+    if: needs.prepare.outputs.tag_exists == 'false'
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        if: steps.check_tag.outputs.exists == 'false'
         with:
           go-version-file: go.mod
       - uses: pnpm/action-setup@v4
-        if: steps.check_tag.outputs.exists == 'false'
       - uses: actions/setup-node@v4
-        if: steps.check_tag.outputs.exists == 'false'
         with:
           node-version: 22
           cache: pnpm
-      - name: Build CSS and native binary
-        if: steps.check_tag.outputs.exists == 'false'
+      - name: Install cross-compiler
+        if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build CSS and generate assets
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           pnpm install
           pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
@@ -53,52 +70,46 @@ jobs:
           ./ccpeek-native man dist/man
           rm ccpeek-native
       - name: Cross-compile and package
-        if: steps.check_tag.outputs.exists == 'false'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           LDFLAGS="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION"
-          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
-            OS="${target%/*}"
-            ARCH="${target#*/}"
-            DIR="ccpeek-${VERSION}-${OS}-${ARCH}"
+          for arch in amd64 arm64; do
+            DIR="ccpeek-${VERSION}-${{ matrix.os }}-${arch}"
             mkdir -p "dist/${DIR}"
-            CGO_ENABLED=1 GOOS="$OS" GOARCH="$ARCH" go build -tags sqlite_fts5 -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
+            CC_FLAG=""
+            if [ "${{ matrix.os }}" = "linux" ] && [ "$arch" = "arm64" ]; then
+              CC_FLAG="CC=aarch64-linux-gnu-gcc"
+            fi
+            env $CC_FLAG CGO_ENABLED=1 GOOS=${{ matrix.os }} GOARCH=${arch} go build -tags sqlite_fts5 -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
             cp -r dist/completions "dist/${DIR}/"
             cp -r dist/man "dist/${DIR}/"
             tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"
           done
-      - name: Generate checksums
-        if: steps.check_tag.outputs.exists == 'false'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          cd dist
-          sha256sum ccpeek-${VERSION}-*.tar.gz > "ccpeek-${VERSION}-checksums.txt"
       - uses: actions/upload-artifact@v4
-        if: steps.check_tag.outputs.exists == 'false'
         with:
-          name: release-assets
-          path: |
-            dist/ccpeek-*.tar.gz
-            dist/ccpeek-*-checksums.txt
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag_exists: ${{ steps.check_tag.outputs.exists }}
+          name: release-assets-${{ matrix.os }}
+          path: dist/ccpeek-*.tar.gz
 
   release:
     name: Create Release
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
-    if: needs.build.outputs.tag_exists == 'false'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
           path: dist
+      - name: Generate checksums
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          cd dist
+          sha256sum ccpeek-${VERSION}-*.tar.gz > "ccpeek-${VERSION}-checksums.txt"
       - name: Generate changelog
         id: changelog
         run: |
@@ -110,8 +121,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.build.outputs.version }}
-          name: v${{ needs.build.outputs.version }}
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: v${{ needs.prepare.outputs.version }}
           body: |
             ## Changes
 
@@ -136,13 +147,13 @@ jobs:
             Download the archive for your platform, extract it, and place the binary in your `$PATH`:
 
             ```bash
-            tar xzf ccpeek-${{ needs.build.outputs.version }}-<OS>-<ARCH>.tar.gz
-            cp ccpeek-${{ needs.build.outputs.version }}-<OS>-<ARCH>/ccpeek ~/.local/bin/
+            tar xzf ccpeek-${{ needs.prepare.outputs.version }}-<OS>-<ARCH>.tar.gz
+            cp ccpeek-${{ needs.prepare.outputs.version }}-<OS>-<ARCH>/ccpeek ~/.local/bin/
             ```
 
             Completions and man pages are included under `completions/` and `man/`.
 
-            **Checksums:** See `ccpeek-${{ needs.build.outputs.version }}-checksums.txt`
+            **Checksums:** See `ccpeek-${{ needs.prepare.outputs.version }}-checksums.txt`
           draft: false
           prerelease: false
           files: |
@@ -151,13 +162,20 @@ jobs:
 
   update-homebrew:
     name: Update Homebrew Formula
-    needs: [build, release]
+    needs: [prepare, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
           path: dist
+      - name: Generate checksums
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          cd dist
+          sha256sum ccpeek-${VERSION}-*.tar.gz > "ccpeek-${VERSION}-checksums.txt"
       - uses: actions/checkout@v4
         with:
           repository: ahmedelgabri/homebrew-ccpeek
@@ -165,7 +183,7 @@ jobs:
           path: homebrew-ccpeek
       - name: Update formula
         env:
-          VERSION: ${{ needs.build.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           SHA_DARWIN_ARM64=$(grep "darwin-arm64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
           SHA_DARWIN_AMD64=$(grep "darwin-amd64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
@@ -216,7 +234,7 @@ jobs:
           EOF
       - name: Commit and push
         env:
-          VERSION: ${{ needs.build.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           cd homebrew-ccpeek
           git config user.name "github-actions[bot]"
