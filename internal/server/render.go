@@ -10,7 +10,6 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/renderer/html"
 )
 
 var md goldmark.Markdown
@@ -18,7 +17,8 @@ var md goldmark.Markdown
 func init() {
 	md = goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRendererOptions(html.WithUnsafe()),
+		// Note: html.WithUnsafe() intentionally omitted to prevent XSS.
+		// Raw HTML in markdown source will be escaped, not rendered.
 	)
 }
 
