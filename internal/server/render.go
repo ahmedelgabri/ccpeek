@@ -71,6 +71,16 @@ func renderDiff(a, b string) template.HTML {
 	return template.HTML(buf.String())
 }
 
+// highlightSnippet safely renders search result snippets with highlighting.
+// It HTML-escapes the content first, then replaces safe placeholder markers
+// with actual HTML highlight tags. This prevents XSS from user content.
+func highlightSnippet(raw string) template.HTML {
+	escaped := template.HTMLEscapeString(raw)
+	escaped = strings.ReplaceAll(escaped, "[[HL_START]]", `<mark class="bg-yellow-500/30 text-yellow-200 px-0.5 rounded">`)
+	escaped = strings.ReplaceAll(escaped, "[[HL_END]]", `</mark>`)
+	return template.HTML(escaped)
+}
+
 var funcMap = template.FuncMap{
 	"formatBytes":      formatBytes,
 	"formatTimestamp":  formatTimestamp,
@@ -84,7 +94,7 @@ var funcMap = template.FuncMap{
 	"toJSON":           toJSON,
 	"renderDiff":       renderDiff,
 	"formatTokens":     formatTokens,
-	"safeHTML":         func(s string) template.HTML { return template.HTML(s) },
+	"highlightSnippet": highlightSnippet,
 	"statusColor":      statusColor,
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },
 	"sub":              func(a, b int) int { return a - b },

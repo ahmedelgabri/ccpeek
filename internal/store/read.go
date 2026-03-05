@@ -708,12 +708,14 @@ type SearchFilter struct {
 }
 
 // Search performs a full-text search across messages with optional filters.
+// Snippet markers use safe placeholders that are post-processed by highlightSnippet
+// to prevent XSS from user content.
 func (s *Store) Search(query string, limit int, f SearchFilter) ([]SearchResult, error) {
 	q := `
 		SELECT m.role, m.timestamp,
 			   s.session_id AS session_id_text, s.first_prompt,
 			   p.dir_name, p.display_name,
-			   snippet(messages_fts, 0, '<mark class="bg-yellow-500/30 text-yellow-200 px-0.5 rounded">', '</mark>', '...', 40) AS snippet
+			   snippet(messages_fts, 0, '[[HL_START]]', '[[HL_END]]', '...', 40) AS snippet
 		FROM messages_fts
 		JOIN messages m ON messages_fts.rowid = m.id
 		JOIN sessions s ON m.session_id = s.id
