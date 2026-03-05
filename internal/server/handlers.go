@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"html/template"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -22,15 +23,34 @@ type heatmapDay struct {
 }
 
 func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
-	stats, _ := h.store.GetStats()
+	stats, err := h.store.GetStats()
+	if err != nil {
+		log.Printf("dashboard: GetStats failed: %v", err)
+		http.Error(w, "Failed to load dashboard stats", http.StatusInternalServerError)
+		return
+	}
 
-	history, _ := h.store.ListHistory(50)
-	dayCounts, _ := h.store.HistoryDayCounts()
+	history, err := h.store.ListHistory(50)
+	if err != nil {
+		log.Printf("dashboard: ListHistory failed: %v", err)
+	}
+
+	dayCounts, err := h.store.HistoryDayCounts()
+	if err != nil {
+		log.Printf("dashboard: HistoryDayCounts failed: %v", err)
+	}
 
 	heatmap := buildHeatmapFromCounts(dayCounts)
 
-	toolStats, _ := h.store.GetToolUsageStats(15)
-	tokenTimeline, _ := h.store.GetTokenTimeline()
+	toolStats, err := h.store.GetToolUsageStats(15)
+	if err != nil {
+		log.Printf("dashboard: GetToolUsageStats failed: %v", err)
+	}
+
+	tokenTimeline, err := h.store.GetTokenTimeline()
+	if err != nil {
+		log.Printf("dashboard: GetTokenTimeline failed: %v", err)
+	}
 
 	renderTemplate(w, h.tmpl, "dashboard.html", map[string]any{
 		"Title":       "Dashboard",
