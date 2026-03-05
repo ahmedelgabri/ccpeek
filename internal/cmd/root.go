@@ -79,8 +79,8 @@ func run(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	addr := fmt.Sprintf(":%d", port)
-	url := fmt.Sprintf("http://localhost:%d", port)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	fmt.Println("Serving on", url)
 
 	if watch {
