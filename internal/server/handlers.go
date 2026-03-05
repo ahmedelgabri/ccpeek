@@ -46,8 +46,8 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
 		"Heatmap":       heatmap,
-		"ToolStats":      toolStats,
-		"TokenTimeline":  tokenTimeline,
+		"ToolStats":     toolStats,
+		"TokenTimeline": tokenTimeline,
 	})
 }
 
@@ -917,12 +917,12 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 		toolNames[name] = true
 	}
 	type toolCompare struct {
-		Name    string
-		CountA  int
-		CountB  int
-		WidthA  int
-		WidthB  int
-		Diff    int
+		Name   string
+		CountA int
+		CountB int
+		WidthA int
+		WidthB int
+		Diff   int
 	}
 	var tools []toolCompare
 	for name := range toolNames {
@@ -959,16 +959,16 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, h.tmpl, "session_compare.html", map[string]any{
-		"Title":       "Compare Sessions",
-		"CurrentPath": "/projects/",
-		"Project":     project,
-		"SessionA":    sessionA,
-		"SessionB":    sessionB,
-		"Tools":       tools,
-		"TotalToolsA": totalToolsA,
-		"TotalToolsB": totalToolsB,
-		"DurationA":   formatDuration(sessionA.Created, sessionA.Modified),
-		"DurationB":   formatDuration(sessionB.Created, sessionB.Modified),
+		"Title":        "Compare Sessions",
+		"CurrentPath":  "/projects/",
+		"Project":      project,
+		"SessionA":     sessionA,
+		"SessionB":     sessionB,
+		"Tools":        tools,
+		"TotalToolsA":  totalToolsA,
+		"TotalToolsB":  totalToolsB,
+		"DurationA":    formatDuration(sessionA.Created, sessionA.Modified),
+		"DurationB":    formatDuration(sessionB.Created, sessionB.Modified),
 		"DiffMessages": percentDiff(sessionA.MessageCount, sessionB.MessageCount),
 		"DiffTokens":   percentDiff(sessionA.EstimatedTokens, sessionB.EstimatedTokens),
 		"DiffCommands": percentDiff(sessionA.BashCommandCount, sessionB.BashCommandCount),

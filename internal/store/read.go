@@ -776,7 +776,8 @@ func (s *Store) Search(query string, limit int, f SearchFilter) ([]SearchResult,
 func (s *Store) ListProjectNames() ([]struct {
 	DirName     string `db:"dir_name"`
 	DisplayName string `db:"display_name"`
-}, error) {
+}, error,
+) {
 	var rows []struct {
 		DirName     string `db:"dir_name"`
 		DisplayName string `db:"display_name"`
