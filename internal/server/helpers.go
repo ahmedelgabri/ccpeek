@@ -152,7 +152,7 @@ func percentDiff(a, b int) int {
 	return int(float64(b-a) / float64(a) * 100)
 }
 
-// statusColor returns a CSS class for a todo status.
+// statusColor returns a CSS class for a todo/task status.
 func statusColor(status string) string {
 	switch status {
 	case "completed", "done":
@@ -161,9 +161,56 @@ func statusColor(status string) string {
 		return "status-progress"
 	case "pending":
 		return "status-pending"
+	case "blocked":
+		return "status-blocked"
 	default:
 		return "status-default"
 	}
+}
+
+// outcomeColor returns a Tailwind color class for a usage facet outcome.
+func outcomeColor(outcome string) string {
+	switch outcome {
+	case "fully_achieved":
+		return "text-emerald-400"
+	case "mostly_achieved":
+		return "text-sky-400"
+	case "partially_achieved":
+		return "text-amber-400"
+	case "not_achieved":
+		return "text-rose-400"
+	default:
+		return "text-slate-400"
+	}
+}
+
+// helpfulnessColor returns a Tailwind color class for helpfulness.
+func helpfulnessColor(h string) string {
+	switch h {
+	case "essential":
+		return "text-emerald-400"
+	case "very_helpful":
+		return "text-sky-400"
+	case "moderately_helpful":
+		return "text-amber-400"
+	case "slightly_helpful":
+		return "text-orange-400"
+	case "not_helpful":
+		return "text-rose-400"
+	default:
+		return "text-slate-400"
+	}
+}
+
+// humanize converts a snake_case string to Title Case.
+func humanize(s string) string {
+	words := strings.Split(s, "_")
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // totalSessions sums session counts across projects.

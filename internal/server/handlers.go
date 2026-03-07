@@ -62,6 +62,9 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 			"Todos":          make([]any, stats.TodoCount),
 			"Projects":       make([]any, stats.ProjectCount),
 			"FileHistory":    make([]any, stats.FileHistCount),
+			"TaskGroups":     make([]any, stats.TaskGroupCount),
+			"PasteCache":     make([]any, stats.PasteCacheCount),
+			"UsageFacets":    make([]any, stats.UsageFacetCount),
 		},
 		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
@@ -896,6 +899,120 @@ func extractSnippet(text string, pos, matchLen, contextLen int) string {
 		suffix = "..."
 	}
 	return prefix + snippet + suffix
+}
+
+func (h *handlers) tasksList(w http.ResponseWriter, r *http.Request) {
+	groups, err := h.store.ListTaskGroups()
+	if err != nil {
+		http.Error(w, "loading tasks: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	renderTemplate(w, h.tmpl, "tasks_list.html", map[string]any{
+		"Title":       "Tasks",
+		"CurrentPath": "/tasks/",
+		"Groups":      groups,
+	})
+}
+
+func (h *handlers) taskDetail(w http.ResponseWriter, r *http.Request) {
+	dirName := r.PathValue("dirName")
+
+	entry, items, err := h.store.GetTaskGroup(dirName)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	renderTemplate(w, h.tmpl, "task_detail.html", map[string]any{
+		"Title":       "Task Group",
+		"CurrentPath": "/tasks/",
+		"Task":        entry,
+		"Items":       items,
+	})
+}
+
+func (h *handlers) pasteCacheList(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.store.ListPasteCache()
+	if err != nil {
+		http.Error(w, "loading paste cache: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	renderTemplate(w, h.tmpl, "pastecache_list.html", map[string]any{
+		"Title":       "Paste Cache",
+		"CurrentPath": "/paste-cache/",
+		"Entries":     entries,
+	})
+}
+
+func (h *handlers) pasteCacheDetail(w http.ResponseWriter, r *http.Request) {
+	fileName := r.PathValue("fileName")
+
+	entry, content, err := h.store.GetPasteCache(fileName)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	renderTemplate(w, h.tmpl, "pastecache_detail.html", map[string]any{
+		"Title":       entry.FileName,
+		"CurrentPath": "/paste-cache/",
+		"Entry":       entry,
+		"Content":     wrapCode(content, "text"),
+	})
+}
+
+func (h *handlers) usageDataList(w http.ResponseWriter, r *http.Request) {
+	facets, err := h.store.ListUsageFacets()
+	if err != nil {
+		http.Error(w, "loading usage data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	renderTemplate(w, h.tmpl, "usagedata_list.html", map[string]any{
+		"Title":       "Usage Data",
+		"CurrentPath": "/usage-data/",
+		"Facets":      facets,
+	})
+}
+
+func (h *handlers) usageDataDetail(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("sessionId")
+
+	facet, err := h.store.GetUsageFacet(sessionID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	renderTemplate(w, h.tmpl, "usagedata_detail.html", map[string]any{
+		"Title":       "Usage: " + truncate(facet.BriefSummary, 60),
+		"CurrentPath": "/usage-data/",
+		"Facet":       facet,
+	})
+}
+
+func (h *handlers) usageDataReport(w http.ResponseWriter, r *http.Request) {
+	content, err := h.store.GetUsageReport()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	renderTemplate(w, h.tmpl, "usagedata_report.html", map[string]any{
+		"Title":       "Usage Report",
+		"CurrentPath": "/usage-data/",
+		"Content":     content,
+	})
+}
+
+// usageReportRaw serves the raw HTML for the iframe src.
+func (h *handlers) usageReportRaw(w http.ResponseWriter, r *http.Request) {
+	content, err := h.store.GetUsageReport()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(content))
 }
 
 func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {

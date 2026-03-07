@@ -1,0 +1,48 @@
+{{ define "content" }}
+  <h1 class="text-2xl font-bold text-slate-50 mb-6">Tasks</h1>
+
+  <input
+    type="text"
+    class="search-input w-full px-4 py-2.5 mb-2 bg-surface-card border border-surface-border rounded-lg text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
+    placeholder="Filter tasks..."
+    data-search-target="searchable-list"
+  />
+  <div class="search-count text-xs text-slate-600 mb-4"></div>
+
+  <div
+    class="item-list searchable-list rounded-xl border border-surface-border overflow-hidden divide-y divide-surface-border"
+  >
+    {{ range .Groups }}
+      <a
+        href="/tasks/{{ .DirName }}/"
+        class="list-row group flex items-baseline justify-between gap-4 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
+        data-search-keys="{{ .DirName }}"
+      >
+        <div class="min-w-0 flex-1">
+          <span
+            class="text-sm text-slate-200 font-mono truncate block group-hover:text-slate-50"
+            >{{ .DirName }}</span
+          >
+          <div class="flex items-center gap-3 mt-1">
+            <span class="text-xs text-slate-600">{{ .ItemCount }} items</span>
+            {{ if .ProjectName }}
+              <span class="text-xs text-slate-500">{{ .ProjectName }}</span>
+            {{ end }}
+            {{ range $status, $count := .Statuses }}
+              <span
+                class="badge text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap {{ statusColor $status }}"
+                >{{ $status }}: {{ $count }}</span
+              >
+            {{ end }}
+          </div>
+        </div>
+      </a>
+    {{ else }}
+      <div class="px-5 py-8 text-center text-sm text-slate-600">
+        No task groups found
+      </div>
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ template "layout.html" . }}

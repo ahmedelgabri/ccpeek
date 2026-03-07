@@ -79,6 +79,24 @@ func doIndex(claudeDir string, s *store.Store) error {
 	}
 	fmt.Printf("  History: %d entries\n", histCount)
 
+	taskCount, err := indexTasks(claudeDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing tasks: %w", err)
+	}
+	fmt.Printf("  Tasks: %d groups\n", taskCount)
+
+	pasteCount, err := indexPasteCache(claudeDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing paste cache: %w", err)
+	}
+	fmt.Printf("  Paste cache: %d entries\n", pasteCount)
+
+	usageCount, err := indexUsageData(claudeDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing usage data: %w", err)
+	}
+	fmt.Printf("  Usage facets: %d\n", usageCount)
+
 	// Record mtimes for all source files
 	recordSourceMtimes(claudeDir, s, tx)
 
@@ -155,6 +173,20 @@ func collectSourceFiles(claudeDir string) []string {
 	histPath := filepath.Join(claudeDir, "history.jsonl")
 	if _, err := os.Stat(histPath); err == nil {
 		paths = append(paths, histPath)
+	}
+
+	// Tasks (directories with numbered JSON files)
+	addTaskDirs(&paths, claudeDir)
+
+	// Paste cache
+	addDir(&paths, filepath.Join(claudeDir, "paste-cache"), ".txt")
+
+	// Usage data facets
+	addDir(&paths, filepath.Join(claudeDir, "usage-data", "facets"), ".json")
+	// Usage data report
+	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
+	if _, err := os.Stat(reportPath); err == nil {
+		paths = append(paths, reportPath)
 	}
 
 	return paths

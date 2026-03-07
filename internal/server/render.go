@@ -95,7 +95,10 @@ var funcMap = template.FuncMap{
 	"renderDiff":       renderDiff,
 	"formatTokens":     formatTokens,
 	"highlightSnippet": highlightSnippet,
-	"statusColor":      statusColor,
+	"statusColor":       statusColor,
+	"outcomeColor":     outcomeColor,
+	"helpfulnessColor": helpfulnessColor,
+	"humanize":         humanize,
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },
 	"sub":              func(a, b int) int { return a - b },
 	"add":              func(a, b int) int { return a + b },
@@ -141,6 +144,13 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/session_compare.html",
 		"templates/filehistory_list.html",
 		"templates/filehistory_detail.html",
+		"templates/tasks_list.html",
+		"templates/task_detail.html",
+		"templates/pastecache_list.html",
+		"templates/pastecache_detail.html",
+		"templates/usagedata_list.html",
+		"templates/usagedata_detail.html",
+		"templates/usagedata_report.html",
 	}
 
 	pages := make(map[string]*template.Template, len(pageFiles))
