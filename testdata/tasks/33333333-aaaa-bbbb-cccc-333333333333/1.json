@@ -1,0 +1,9 @@
+{
+  "id": "1",
+  "subject": "Set up project structure",
+  "description": "Create the directory layout and initialize go.mod",
+  "activeForm": "Setting up project structure",
+  "status": "completed",
+  "blocks": ["2"],
+  "blockedBy": []
+}

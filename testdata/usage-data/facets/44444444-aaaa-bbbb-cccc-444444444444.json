@@ -1,0 +1,20 @@
+{
+  "underlying_goal": "Fix a bug in the authentication flow",
+  "goal_categories": {
+    "bug_fix": 1
+  },
+  "outcome": "mostly_achieved",
+  "user_satisfaction_counts": {
+    "likely_satisfied": 1,
+    "dissatisfied": 1
+  },
+  "claude_helpfulness": "moderately_helpful",
+  "session_type": "single_task",
+  "friction_counts": {
+    "wrong_approach": 1
+  },
+  "friction_detail": "Claude initially suggested the wrong fix for the auth token refresh logic.",
+  "primary_success": "correct_code_edits",
+  "brief_summary": "User asked for an auth bug fix; Claude got the approach wrong initially but corrected after feedback.",
+  "session_id": "44444444-aaaa-bbbb-cccc-444444444444"
+}

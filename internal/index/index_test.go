@@ -231,6 +231,127 @@ func TestRun(t *testing.T) {
 	if snapContent == "" {
 		t.Error("snapshot content is empty")
 	}
+
+	// Task groups
+	taskGroups, err := s.ListTaskGroups()
+	if err != nil {
+		t.Fatal("listing task groups:", err)
+	}
+	if len(taskGroups) != 1 {
+		t.Errorf("expected 1 task group (empty dirs skipped), got %d", len(taskGroups))
+	}
+	if len(taskGroups) > 0 {
+		tg := taskGroups[0]
+		if tg.DirName != "33333333-aaaa-bbbb-cccc-333333333333" {
+			t.Errorf("expected task group dir_name, got %q", tg.DirName)
+		}
+		if tg.ItemCount != 3 {
+			t.Errorf("expected 3 task items, got %d", tg.ItemCount)
+		}
+		if tg.Statuses["completed"] != 1 {
+			t.Errorf("expected 1 completed task, got %d", tg.Statuses["completed"])
+		}
+		if tg.Statuses["pending"] != 2 {
+			t.Errorf("expected 2 pending tasks, got %d", tg.Statuses["pending"])
+		}
+		// Should be linked to the session with same UUID
+		if tg.SessionID != "33333333-aaaa-bbbb-cccc-333333333333" {
+			t.Errorf("expected task group linked to session, got SessionID=%q", tg.SessionID)
+		}
+	}
+
+	// Task group detail
+	tgEntry, tgItems, err := s.GetTaskGroup("33333333-aaaa-bbbb-cccc-333333333333")
+	if err != nil {
+		t.Fatal("getting task group:", err)
+	}
+	if tgEntry.ItemCount != 3 {
+		t.Errorf("expected 3 items in task group detail, got %d", tgEntry.ItemCount)
+	}
+	if len(tgItems) != 3 {
+		t.Errorf("expected 3 task items, got %d", len(tgItems))
+	}
+	if len(tgItems) > 0 {
+		if tgItems[0].Subject != "Set up project structure" {
+			t.Errorf("expected first task subject, got %q", tgItems[0].Subject)
+		}
+		if tgItems[0].Status != "completed" {
+			t.Errorf("expected first task completed, got %q", tgItems[0].Status)
+		}
+		if len(tgItems[0].Blocks) != 1 || tgItems[0].Blocks[0] != "2" {
+			t.Errorf("expected first task to block [2], got %v", tgItems[0].Blocks)
+		}
+	}
+
+	// Paste cache
+	pasteEntries, err := s.ListPasteCache()
+	if err != nil {
+		t.Fatal("listing paste cache:", err)
+	}
+	if len(pasteEntries) != 2 {
+		t.Errorf("expected 2 paste cache entries, got %d", len(pasteEntries))
+	}
+
+	// Paste cache detail
+	pcEntry, pcContent, err := s.GetPasteCache("abcdef1234567890")
+	if err != nil {
+		t.Fatal("getting paste cache:", err)
+	}
+	if pcEntry.FileName != "abcdef1234567890.txt" {
+		t.Errorf("expected paste cache filename, got %q", pcEntry.FileName)
+	}
+	if pcContent == "" {
+		t.Error("paste cache content is empty")
+	}
+
+	// Usage facets
+	usageFacets, err := s.ListUsageFacets()
+	if err != nil {
+		t.Fatal("listing usage facets:", err)
+	}
+	if len(usageFacets) != 2 {
+		t.Errorf("expected 2 usage facets, got %d", len(usageFacets))
+	}
+
+	// Usage facet detail
+	facet, err := s.GetUsageFacet("33333333-aaaa-bbbb-cccc-333333333333")
+	if err != nil {
+		t.Fatal("getting usage facet:", err)
+	}
+	if facet.Outcome != "fully_achieved" {
+		t.Errorf("expected outcome fully_achieved, got %q", facet.Outcome)
+	}
+	if facet.Helpfulness != "very_helpful" {
+		t.Errorf("expected helpfulness very_helpful, got %q", facet.Helpfulness)
+	}
+	// Should be linked to the session with same UUID
+	if facet.ProjectDir != "-Users-demo-code-web-app" {
+		t.Errorf("expected usage facet linked to project, got ProjectDir=%q", facet.ProjectDir)
+	}
+
+	// Usage report
+	report, err := s.GetUsageReport()
+	if err != nil {
+		t.Fatal("getting usage report:", err)
+	}
+	if report == "" {
+		t.Error("usage report content is empty")
+	}
+
+	// Stats should include new counts
+	stats, err := s.GetStats()
+	if err != nil {
+		t.Fatal("getting stats:", err)
+	}
+	if stats.TaskGroupCount != 1 {
+		t.Errorf("expected TaskGroupCount=1, got %d", stats.TaskGroupCount)
+	}
+	if stats.PasteCacheCount != 2 {
+		t.Errorf("expected PasteCacheCount=2, got %d", stats.PasteCacheCount)
+	}
+	if stats.UsageFacetCount != 2 {
+		t.Errorf("expected UsageFacetCount=2, got %d", stats.UsageFacetCount)
+	}
 }
 
 func TestDecodeProjectDir(t *testing.T) {

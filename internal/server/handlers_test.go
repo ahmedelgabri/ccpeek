@@ -47,7 +47,7 @@ func TestDashboard(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Todos", "File History", "Recent Conversations"}
+	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Recent Conversations"}
 	for _, s := range assertions {
 		if !strings.Contains(body, s) {
 			t.Errorf("dashboard missing %q", s)
@@ -792,6 +792,194 @@ func TestSearchPreservesQuery(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `value="hello"`) {
 		t.Error("search page sidebar input missing query value")
+	}
+}
+
+func TestTasksList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/tasks/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "33333333-aaaa-bbbb-cccc-333333333333") {
+		t.Error("tasks list missing task group UUID")
+	}
+	if !strings.Contains(body, "3 items") {
+		t.Error("tasks list missing item count")
+	}
+}
+
+func TestTaskDetail(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/tasks/33333333-aaaa-bbbb-cccc-333333333333/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Set up project structure") {
+		t.Error("task detail missing task subject")
+	}
+	if !strings.Contains(body, "completed") {
+		t.Error("task detail missing completed status")
+	}
+	if !strings.Contains(body, "pending") {
+		t.Error("task detail missing pending status")
+	}
+}
+
+func TestTaskNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/tasks/nonexistent/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestPasteCacheList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/paste-cache/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "abcdef1234567890") {
+		t.Error("paste cache list missing first entry")
+	}
+	if !strings.Contains(body, "fedcba0987654321") {
+		t.Error("paste cache list missing second entry")
+	}
+}
+
+func TestPasteCacheDetail(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/paste-cache/abcdef1234567890/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "sample paste cache entry") {
+		t.Error("paste cache detail missing content")
+	}
+}
+
+func TestPasteCacheNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/paste-cache/nonexistent/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestUsageDataList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/usage-data/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "web dashboard") {
+		t.Error("usage data list missing first facet summary")
+	}
+	if !strings.Contains(body, "auth bug fix") {
+		t.Error("usage data list missing second facet summary")
+	}
+	if !strings.Contains(body, "View Report") {
+		t.Error("usage data list missing report link")
+	}
+}
+
+func TestUsageDataDetail(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/usage-data/33333333-aaaa-bbbb-cccc-333333333333/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Fully Achieved") {
+		t.Error("usage data detail missing outcome")
+	}
+	if !strings.Contains(body, "Very Helpful") {
+		t.Error("usage data detail missing helpfulness")
+	}
+	if !strings.Contains(body, "Feature Addition") {
+		t.Error("usage data detail missing goal category")
+	}
+}
+
+func TestUsageDataNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/usage-data/nonexistent/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestUsageDataReport(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/usage-data/report/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "iframe") {
+		t.Error("usage report missing iframe element")
+	}
+}
+
+func TestUsageReportRaw(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/usage-data/report/raw", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Usage Report") {
+		t.Error("raw report missing content")
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected Content-Type text/html, got %q", ct)
 	}
 }
 

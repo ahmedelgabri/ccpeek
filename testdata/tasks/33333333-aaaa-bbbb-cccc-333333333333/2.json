@@ -1,0 +1,9 @@
+{
+  "id": "2",
+  "subject": "Implement core logic",
+  "description": "Write the main business logic functions",
+  "activeForm": "Implementing core logic",
+  "status": "pending",
+  "blocks": ["3"],
+  "blockedBy": ["1"]
+}
