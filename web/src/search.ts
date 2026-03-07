@@ -1,13 +1,13 @@
 // Client-side search: filters list items by data-search-keys attribute.
-document.querySelectorAll(".search-input").forEach((input) => {
+document.querySelectorAll<HTMLInputElement>(".search-input").forEach((input) => {
   const targetClass = input.getAttribute("data-search-target");
   if (!targetClass) return;
 
-  const container = input.parentElement.querySelector("." + targetClass);
+  const container = input.parentElement?.querySelector("." + targetClass);
   if (!container) return;
 
-  const countEl = input.parentElement.querySelector(".search-count");
-  const items = container.querySelectorAll("[data-search-keys]");
+  const countEl = input.parentElement?.querySelector(".search-count");
+  const items = container.querySelectorAll<HTMLElement>("[data-search-keys]");
 
   const update = () => {
     const query = input.value.toLowerCase().trim();
@@ -32,5 +32,3 @@ document.querySelectorAll(".search-input").forEach((input) => {
   input.addEventListener("input", update);
   update();
 });
-
-export {};

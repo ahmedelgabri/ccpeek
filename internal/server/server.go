@@ -19,7 +19,7 @@ func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool) 
 		return fmt.Errorf("loading templates: %w", err)
 	}
 
-	staticFS, err := fs.Sub(web.FS, "static")
+	staticFS, err := fs.Sub(web.FS, "dist")
 	if err != nil {
 		return fmt.Errorf("static fs: %w", err)
 	}
@@ -41,7 +41,7 @@ func NewHandler(db *store.Store) (http.Handler, error) {
 		return nil, fmt.Errorf("loading templates: %w", err)
 	}
 
-	staticFS, err := fs.Sub(web.FS, "static")
+	staticFS, err := fs.Sub(web.FS, "dist")
 	if err != nil {
 		return nil, fmt.Errorf("static fs: %w", err)
 	}

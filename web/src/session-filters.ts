@@ -1,14 +1,14 @@
 // Session filters + sort: badge filters (AND logic) combined with text search, sort by date.
 const filtersEl = document.getElementById("session-filters");
-const filterList = document.querySelector(".searchable-list");
+const filterList = document.querySelector<HTMLElement>(".searchable-list");
 if (filtersEl && filterList) {
-  const searchInput = document.querySelector(".search-input");
+  const searchInput = document.querySelector<HTMLInputElement>(".search-input");
   const countEl = document.querySelector(".search-count");
   const sortBtn = document.getElementById("sort-toggle");
-  const rows = Array.from(filterList.querySelectorAll(".list-row"));
-  const activeFilters = new Set();
+  const rows = Array.from(filterList.querySelectorAll<HTMLElement>(".list-row"));
+  const activeFilters = new Set<string>();
 
-  const passesSearch = (row) => {
+  const passesSearch = (row: HTMLElement) => {
     if (!searchInput) return true;
     const query = searchInput.value.toLowerCase().trim();
     if (!query) return true;
@@ -17,7 +17,7 @@ if (filtersEl && filterList) {
     return terms.every((t) => keys.includes(t));
   };
 
-  const passesFilter = (row) => {
+  const passesFilter = (row: HTMLElement) => {
     for (const f of activeFilters) {
       if (f === "todo" && !row.getAttribute("data-has-todo")) return false;
       if (f === "files" && !row.getAttribute("data-has-files")) return false;
@@ -51,7 +51,7 @@ if (filtersEl && filterList) {
     // Uncheck hidden compare checkboxes so they don't count toward the limit
     rows.forEach((row) => {
       if (row.hidden) {
-        const cb = row.querySelector(".compare-check");
+        const cb = row.querySelector<HTMLInputElement>(".compare-check");
         if (cb && cb.checked) {
           cb.checked = false;
           cb.dispatchEvent(new Event("change", { bubbles: true }));
@@ -61,9 +61,9 @@ if (filtersEl && filterList) {
   };
 
   filtersEl.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-filter]");
+    const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-filter]");
     if (!btn) return;
-    const name = btn.getAttribute("data-filter");
+    const name = btn.getAttribute("data-filter")!;
 
     if (activeFilters.has(name)) {
       activeFilters.delete(name);
@@ -85,19 +85,17 @@ if (filtersEl && filterList) {
       const current = sortBtn.getAttribute("data-sort");
       const next = current === "desc" ? "asc" : "desc";
       sortBtn.setAttribute("data-sort", next);
-      sortBtn.querySelector("span").textContent =
+      sortBtn.querySelector("span")!.textContent =
         next === "desc" ? "Newest" : "Oldest";
-      sortBtn.querySelector("svg").style.transform =
+      (sortBtn.querySelector("svg") as SVGElement).style.transform =
         next === "asc" ? "rotate(180deg)" : "";
 
-      const sorted = [...rows].toSorted((a, b) => {
+      const sorted = [...rows].toSorted((a: HTMLElement, b: HTMLElement) => {
         const ma = a.getAttribute("data-modified") || "";
         const mb = b.getAttribute("data-modified") || "";
         return next === "desc" ? mb.localeCompare(ma) : ma.localeCompare(mb);
       });
-      sorted.forEach((row) => filterList.appendChild(row));
+      sorted.forEach((row: HTMLElement) => filterList.appendChild(row));
     });
   }
 }
-
-export {};

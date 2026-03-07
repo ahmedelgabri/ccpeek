@@ -2,6 +2,6 @@ node_modules/
 test-results/
 cmd/ccpeek/ccpeek
 /ccpeek
-internal/web/static/style.css
+internal/web/dist/
 result
 .hooks/

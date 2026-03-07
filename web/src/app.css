@@ -1,5 +1,5 @@
 @import 'tailwindcss';
-@source "../templates";
+@source "../../internal/web/templates";
 
 @theme {
 	--color-surface: #0c0e16;

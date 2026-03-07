@@ -1,35 +1,36 @@
-css_input := "internal/web/src/app.css"
-css_output := "internal/web/static/style.css"
 binary := "cmd/ccpeek/ccpeek"
 
-css:
-    pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --minify
+web-build:
+    cd web && pnpm run build
 
 css-watch:
-    pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --watch
+    cd web && pnpm exec tailwindcss --input src/app.css --output ../internal/web/dist/style.css --watch
 
-build: css
+build: web-build
     CGO_ENABLED=1 go build -tags sqlite_fts5 -o {{binary}} ./cmd/ccpeek/
 
-dev: css
+dev: web-build
     CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --open
 
 lint:
-    pnpm exec oxlint --type-aware --type-check
+    cd web && pnpm exec oxlint --type-aware --type-check
+
+typecheck:
+    cd web && pnpm run typecheck
 
 format:
-    prettier --write "**/*.{js,ts,html}"
+    cd web && pnpm exec prettier --write "src/**/*.ts" "../internal/web/templates/**/*.html"
 
 format-check:
-    prettier --check "**/*.{js,ts,html}"
+    cd web && pnpm exec prettier --check "src/**/*.ts" "../internal/web/templates/**/*.html"
 
-test-unit: css
+test-unit: web-build
     CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
 
-test-e2e: css
-    pnpm exec playwright test --config=playwright-go.config.ts
+test-e2e: web-build
+    cd web && pnpm exec playwright test --config=playwright-go.config.ts
 
 test: test-unit test-e2e
 
 clean:
-    rm -f {{binary}} {{css_output}}
+    rm -rf {{binary}} internal/web/dist

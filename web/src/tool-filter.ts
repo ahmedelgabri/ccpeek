@@ -2,23 +2,23 @@
 const toolFilters = document.getElementById("tool-filters");
 const toolCalls = document.getElementById("tool-calls");
 if (toolFilters && toolCalls) {
-  let active = null;
-  const rows = toolCalls.querySelectorAll("[data-tool-name]");
+  let active: string | null = null;
+  const rows = toolCalls.querySelectorAll<HTMLElement>("[data-tool-name]");
 
   toolFilters.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-tool-filter]");
+    const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-tool-filter]");
     if (!btn) return;
-    const name = btn.getAttribute("data-tool-filter");
+    const name = btn.getAttribute("data-tool-filter")!;
 
     if (active === name) {
       active = null;
       toolFilters
-        .querySelectorAll("[data-tool-filter]")
+        .querySelectorAll<HTMLElement>("[data-tool-filter]")
         .forEach((b) => b.classList.remove("border-violet-400"));
       rows.forEach((r) => (r.hidden = false));
     } else {
       active = name;
-      toolFilters.querySelectorAll("[data-tool-filter]").forEach((b) => {
+      toolFilters.querySelectorAll<HTMLElement>("[data-tool-filter]").forEach((b) => {
         b.classList.toggle(
           "border-violet-400",
           b.getAttribute("data-tool-filter") === name,
@@ -30,5 +30,3 @@ if (toolFilters && toolCalls) {
     }
   });
 }
-
-export {};

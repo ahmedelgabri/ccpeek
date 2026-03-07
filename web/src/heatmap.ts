@@ -1,8 +1,8 @@
 // Heatmap tooltip: show date and count on hover.
 const wrapper = document.getElementById("heatmap-wrapper");
-const container = document.getElementById("heatmap-container");
-const tooltip = document.getElementById("heatmap-tooltip");
-if (wrapper && container && tooltip) {
+const heatmapContainer = document.getElementById("heatmap-container");
+const heatmapTooltip = document.getElementById("heatmap-tooltip");
+if (wrapper && heatmapContainer && heatmapTooltip) {
   const days = [
     "Sunday",
     "Monday",
@@ -27,7 +27,7 @@ if (wrapper && container && tooltip) {
     "Dec",
   ];
 
-  const formatDate = (dateStr) => {
+  const formatDate = (dateStr: string) => {
     const parts = dateStr.split("-");
     const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
     return (
@@ -41,30 +41,30 @@ if (wrapper && container && tooltip) {
     );
   };
 
-  container.addEventListener(
+  heatmapContainer.addEventListener(
     "mouseenter",
     (e) => {
-      const cell = e.target.closest(".heatmap-cell");
+      const cell = (e.target as HTMLElement).closest(".heatmap-cell");
       if (!cell) return;
-      const date = cell.getAttribute("data-date");
-      const count = parseInt(cell.getAttribute("data-count"), 10);
+      const date = cell.getAttribute("data-date") || "";
+      const count = parseInt(cell.getAttribute("data-count") || "0", 10);
       const countLabel =
         count === 0
           ? "No sessions"
           : count === 1
             ? "1 session"
             : count + " sessions";
-      tooltip.innerHTML =
+      heatmapTooltip.innerHTML =
         "<strong>" + countLabel + "</strong><br>" + formatDate(date);
-      tooltip.classList.remove("hidden");
+      heatmapTooltip.classList.remove("hidden");
     },
     true,
   );
 
-  container.addEventListener("mousemove", (e) => {
-    if (tooltip.classList.contains("hidden")) return;
+  heatmapContainer.addEventListener("mousemove", (e) => {
+    if (heatmapTooltip.classList.contains("hidden")) return;
     const wrapperRect = wrapper.getBoundingClientRect();
-    const tipRect = tooltip.getBoundingClientRect();
+    const tipRect = heatmapTooltip.getBoundingClientRect();
     let left = e.clientX - wrapperRect.left + 12;
     if (e.clientX + tipRect.width + 16 > window.innerWidth) {
       left = e.clientX - wrapperRect.left - tipRect.width - 12;
@@ -73,19 +73,17 @@ if (wrapper && container && tooltip) {
     if (top < 0) {
       top = e.clientY - wrapperRect.top + 16;
     }
-    tooltip.style.left = left + "px";
-    tooltip.style.top = top + "px";
+    heatmapTooltip.style.left = left + "px";
+    heatmapTooltip.style.top = top + "px";
   });
 
-  container.addEventListener(
+  heatmapContainer.addEventListener(
     "mouseleave",
     (e) => {
-      const cell = e.target.closest(".heatmap-cell");
+      const cell = (e.target as HTMLElement).closest(".heatmap-cell");
       if (!cell) return;
-      tooltip.classList.add("hidden");
+      heatmapTooltip.classList.add("hidden");
     },
     true,
   );
 }
-
-export {};

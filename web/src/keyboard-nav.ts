@@ -1,7 +1,7 @@
 // Keyboard navigation: j/k to move between list rows, Enter to open, / to search, Escape to blur.
 let focusIndex = -1;
 
-const setFocus = (rows, index) => {
+const setFocus = (rows: HTMLElement[], index: number) => {
   rows.forEach((r) => r.classList.remove("ring-1", "ring-slate-500"));
   if (index >= 0 && index < rows.length) {
     focusIndex = index;
@@ -15,7 +15,7 @@ document.addEventListener("keydown", (e) => {
   const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
   if (e.key === "/" && !inInput) {
-    const search = document.querySelector(".search-input");
+    const search = document.querySelector<HTMLElement>(".search-input");
     if (search) {
       e.preventDefault();
       search.focus();
@@ -24,13 +24,13 @@ document.addEventListener("keydown", (e) => {
   }
 
   if (e.key === "Escape" && inInput) {
-    document.activeElement.blur();
+    (document.activeElement as HTMLElement).blur();
     return;
   }
 
   if (inInput) return;
 
-  const rows = Array.from(document.querySelectorAll(".list-row:not([hidden])"));
+  const rows = Array.from(document.querySelectorAll<HTMLElement>(".list-row:not([hidden])"));
   if (!rows.length) return;
 
   if (e.key === "j") {
@@ -44,5 +44,3 @@ document.addEventListener("keydown", (e) => {
     rows[focusIndex].click();
   }
 });
-
-export {};
