@@ -140,4 +140,3 @@ func addTaskDirs(paths *[]string, claudeDir string) {
 		*paths = append(*paths, srcDir)
 	}
 }
-

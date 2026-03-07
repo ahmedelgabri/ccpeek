@@ -95,7 +95,7 @@ var funcMap = template.FuncMap{
 	"renderDiff":       renderDiff,
 	"formatTokens":     formatTokens,
 	"highlightSnippet": highlightSnippet,
-	"statusColor":       statusColor,
+	"statusColor":      statusColor,
 	"outcomeColor":     outcomeColor,
 	"helpfulnessColor": helpfulnessColor,
 	"humanize":         humanize,

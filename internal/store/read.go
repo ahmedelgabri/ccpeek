@@ -12,13 +12,13 @@ import (
 
 // Stats holds aggregate counts for the dashboard.
 type Stats struct {
-	ProjectCount   int `db:"projectcount"`
-	SessionCount   int `db:"sessioncount"`
-	PlanCount      int `db:"plancount"`
-	SnapshotCount  int `db:"snapshotcount"`
-	TodoCount      int `db:"todocount"`
-	FileHistCount  int `db:"filehistcount"`
-	TaskGroupCount int `db:"taskgroupcount"`
+	ProjectCount    int `db:"projectcount"`
+	SessionCount    int `db:"sessioncount"`
+	PlanCount       int `db:"plancount"`
+	SnapshotCount   int `db:"snapshotcount"`
+	TodoCount       int `db:"todocount"`
+	FileHistCount   int `db:"filehistcount"`
+	TaskGroupCount  int `db:"taskgroupcount"`
 	PasteCacheCount int `db:"pastecachecount"`
 	UsageFacetCount int `db:"usagefacetcount"`
 }
