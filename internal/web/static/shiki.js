@@ -9,7 +9,7 @@ document
     try {
       const html = await codeToHtml(el.textContent, {
         lang,
-        theme: "dracula",
+        theme: "vitesse-dark",
       });
       el.parentElement.outerHTML = html;
     } catch {
