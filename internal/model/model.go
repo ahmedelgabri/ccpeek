@@ -189,6 +189,51 @@ type FileVersionInfo struct {
 	Content string `json:"content" db:"content"`
 }
 
+// TaskGroupEntry represents a task group directory under ~/.claude/tasks/.
+type TaskGroupEntry struct {
+	DirName     string         `json:"dirName"`
+	ItemCount   int            `json:"itemCount"`
+	Statuses    map[string]int `json:"statuses"`
+	SessionID   string         `json:"sessionId,omitempty"`
+	ProjectDir  string         `json:"projectDir,omitempty"`
+	ProjectName string         `json:"projectName,omitempty"`
+}
+
+// TaskItem represents a single task item within a task group.
+type TaskItem struct {
+	ID          string   `json:"id" db:"item_id"`
+	Subject     string   `json:"subject" db:"subject"`
+	Description string   `json:"description" db:"description"`
+	ActiveForm  string   `json:"activeForm,omitempty" db:"active_form"`
+	Status      string   `json:"status" db:"status"`
+	Blocks      []string `json:"blocks,omitempty"`
+	BlockedBy   []string `json:"blockedBy,omitempty"`
+}
+
+// PasteCacheEntry represents a paste-cache file.
+type PasteCacheEntry struct {
+	FileName  string `json:"fileName"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Preview   string `json:"preview"`
+}
+
+// UsageFacetEntry represents a usage-data facet for a session.
+type UsageFacetEntry struct {
+	SessionID      string         `json:"sessionId"`
+	UnderlyingGoal string         `json:"underlyingGoal"`
+	Outcome        string         `json:"outcome"`
+	Helpfulness    string         `json:"claudeHelpfulness"`
+	SessionType    string         `json:"sessionType"`
+	PrimarySuccess string         `json:"primarySuccess"`
+	BriefSummary   string         `json:"briefSummary"`
+	FrictionDetail string         `json:"frictionDetail"`
+	GoalCategories map[string]int `json:"goalCategories"`
+	Satisfaction   map[string]int `json:"userSatisfactionCounts"`
+	FrictionCounts map[string]int `json:"frictionCounts"`
+	ProjectDir     string         `json:"projectDir,omitempty"`
+	ProjectName    string         `json:"projectName,omitempty"`
+}
+
 // RawJSONLLine is the shape of raw lines from Claude's conversation JSONL files.
 type RawJSONLLine struct {
 	Type      string          `json:"type"`

@@ -12,12 +12,15 @@ import (
 
 // Stats holds aggregate counts for the dashboard.
 type Stats struct {
-	ProjectCount  int `db:"projectcount"`
-	SessionCount  int `db:"sessioncount"`
-	PlanCount     int `db:"plancount"`
-	SnapshotCount int `db:"snapshotcount"`
-	TodoCount     int `db:"todocount"`
-	FileHistCount int `db:"filehistcount"`
+	ProjectCount   int `db:"projectcount"`
+	SessionCount   int `db:"sessioncount"`
+	PlanCount      int `db:"plancount"`
+	SnapshotCount  int `db:"snapshotcount"`
+	TodoCount      int `db:"todocount"`
+	FileHistCount  int `db:"filehistcount"`
+	TaskGroupCount int `db:"taskgroupcount"`
+	PasteCacheCount int `db:"pastecachecount"`
+	UsageFacetCount int `db:"usagefacetcount"`
 }
 
 // GetStats returns aggregate counts for the dashboard using a single query.
@@ -30,7 +33,10 @@ func (s *Store) GetStats() (Stats, error) {
 			(SELECT COUNT(*) FROM plans) AS plancount,
 			(SELECT COUNT(*) FROM shell_snapshots) AS snapshotcount,
 			(SELECT COUNT(*) FROM todos) AS todocount,
-			(SELECT COUNT(*) FROM file_history) AS filehistcount`)
+			(SELECT COUNT(*) FROM file_history) AS filehistcount,
+			(SELECT COUNT(*) FROM task_groups) AS taskgroupcount,
+			(SELECT COUNT(*) FROM paste_cache) AS pastecachecount,
+			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount`)
 	return st, err
 }
 
@@ -931,6 +937,275 @@ func (s *Store) GetSourceFileMtime(path string) (int64, error) {
 		return 0, err
 	}
 	return mtimeNs, nil
+}
+
+// ListTaskGroups returns all task groups with non-zero items.
+func (s *Store) ListTaskGroups() ([]model.TaskGroupEntry, error) {
+	var rows []struct {
+		DirName     string         `db:"dir_name"`
+		ItemCount   int            `db:"item_count"`
+		Statuses    string         `db:"statuses"`
+		SessionID   sql.NullString `db:"session_id_text"`
+		ProjectDir  sql.NullString `db:"project_dir"`
+		ProjectName sql.NullString `db:"project_name"`
+	}
+	err := s.db.Select(&rows, `
+		SELECT tg.dir_name, tg.item_count, tg.statuses,
+			   s.session_id AS session_id_text,
+			   p.dir_name AS project_dir,
+			   p.display_name AS project_name
+		FROM task_groups tg
+		LEFT JOIN sessions s ON tg.session_id = s.id
+		LEFT JOIN projects p ON s.project_id = p.id
+		ORDER BY tg.item_count DESC`)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]model.TaskGroupEntry, len(rows))
+	for i, r := range rows {
+		statuses := make(map[string]int)
+		_ = json.Unmarshal([]byte(r.Statuses), &statuses)
+		groups[i] = model.TaskGroupEntry{
+			DirName:     r.DirName,
+			ItemCount:   r.ItemCount,
+			Statuses:    statuses,
+			SessionID:   r.SessionID.String,
+			ProjectDir:  r.ProjectDir.String,
+			ProjectName: r.ProjectName.String,
+		}
+	}
+	return groups, nil
+}
+
+// GetTaskGroup returns a task group and its items.
+func (s *Store) GetTaskGroup(dirName string) (*model.TaskGroupEntry, []model.TaskItem, error) {
+	var row struct {
+		ID          int64          `db:"id"`
+		DirName     string         `db:"dir_name"`
+		ItemCount   int            `db:"item_count"`
+		Statuses    string         `db:"statuses"`
+		SessionID   sql.NullString `db:"session_id_text"`
+		ProjectDir  sql.NullString `db:"project_dir"`
+		ProjectName sql.NullString `db:"project_name"`
+	}
+	err := s.db.Get(&row, `
+		SELECT tg.id, tg.dir_name, tg.item_count, tg.statuses,
+			   s.session_id AS session_id_text,
+			   p.dir_name AS project_dir,
+			   p.display_name AS project_name
+		FROM task_groups tg
+		LEFT JOIN sessions s ON tg.session_id = s.id
+		LEFT JOIN projects p ON s.project_id = p.id
+		WHERE tg.dir_name = ?`, dirName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	statuses := make(map[string]int)
+	_ = json.Unmarshal([]byte(row.Statuses), &statuses)
+	entry := &model.TaskGroupEntry{
+		DirName:     row.DirName,
+		ItemCount:   row.ItemCount,
+		Statuses:    statuses,
+		SessionID:   row.SessionID.String,
+		ProjectDir:  row.ProjectDir.String,
+		ProjectName: row.ProjectName.String,
+	}
+
+	var itemRows []struct {
+		ItemID      string `db:"item_id"`
+		Subject     string `db:"subject"`
+		Description string `db:"description"`
+		ActiveForm  string `db:"active_form"`
+		Status      string `db:"status"`
+		Blocks      string `db:"blocks"`
+		BlockedBy   string `db:"blocked_by"`
+	}
+	err = s.db.Select(&itemRows, `
+		SELECT item_id, subject, description, active_form, status, blocks, blocked_by
+		FROM task_items WHERE task_group_id = ? ORDER BY seq`, row.ID)
+	if err != nil {
+		return entry, nil, err
+	}
+
+	items := make([]model.TaskItem, len(itemRows))
+	for i, r := range itemRows {
+		var blocks, blockedBy []string
+		_ = json.Unmarshal([]byte(r.Blocks), &blocks)
+		_ = json.Unmarshal([]byte(r.BlockedBy), &blockedBy)
+		items[i] = model.TaskItem{
+			ID:          r.ItemID,
+			Subject:     r.Subject,
+			Description: r.Description,
+			ActiveForm:  r.ActiveForm,
+			Status:      r.Status,
+			Blocks:      blocks,
+			BlockedBy:   blockedBy,
+		}
+	}
+	return entry, items, nil
+}
+
+// ListPasteCache returns all paste-cache entries sorted by size desc.
+func (s *Store) ListPasteCache() ([]model.PasteCacheEntry, error) {
+	var rows []struct {
+		FileName  string `db:"file_name"`
+		SizeBytes int64  `db:"size_bytes"`
+		Content   string `db:"content"`
+	}
+	if err := s.db.Select(&rows, `SELECT file_name, size_bytes, content FROM paste_cache ORDER BY size_bytes DESC`); err != nil {
+		return nil, err
+	}
+	entries := make([]model.PasteCacheEntry, len(rows))
+	for i, r := range rows {
+		preview := r.Content
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		entries[i] = model.PasteCacheEntry{
+			FileName:  r.FileName,
+			SizeBytes: r.SizeBytes,
+			Preview:   preview,
+		}
+	}
+	return entries, nil
+}
+
+// GetPasteCache returns a paste-cache entry and its full content.
+func (s *Store) GetPasteCache(fileNameWithoutExt string) (*model.PasteCacheEntry, string, error) {
+	var row struct {
+		FileName  string `db:"file_name"`
+		SizeBytes int64  `db:"size_bytes"`
+		Content   string `db:"content"`
+	}
+	err := s.db.Get(&row,
+		`SELECT file_name, size_bytes, content FROM paste_cache
+		 WHERE file_name = ? OR REPLACE(file_name, '.txt', '') = ?`,
+		fileNameWithoutExt+".txt", fileNameWithoutExt,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	entry := &model.PasteCacheEntry{FileName: row.FileName, SizeBytes: row.SizeBytes}
+	return entry, row.Content, nil
+}
+
+// ListUsageFacets returns all usage facets.
+func (s *Store) ListUsageFacets() ([]model.UsageFacetEntry, error) {
+	var rows []struct {
+		SessionID      string         `db:"session_id_text"`
+		UnderlyingGoal string         `db:"underlying_goal"`
+		Outcome        string         `db:"outcome"`
+		Helpfulness    string         `db:"helpfulness"`
+		SessionType    string         `db:"session_type"`
+		PrimarySuccess string         `db:"primary_success"`
+		BriefSummary   string         `db:"brief_summary"`
+		FrictionDetail string         `db:"friction_detail"`
+		GoalCategories string         `db:"goal_categories"`
+		Satisfaction   string         `db:"satisfaction"`
+		FrictionCounts string         `db:"friction_counts"`
+		ProjectDir     sql.NullString `db:"project_dir"`
+		ProjectName    sql.NullString `db:"project_name"`
+	}
+	err := s.db.Select(&rows, `
+		SELECT uf.session_id_text, uf.underlying_goal, uf.outcome, uf.helpfulness,
+			   uf.session_type, uf.primary_success, uf.brief_summary, uf.friction_detail,
+			   uf.goal_categories, uf.satisfaction, uf.friction_counts,
+			   p.dir_name AS project_dir, p.display_name AS project_name
+		FROM usage_facets uf
+		LEFT JOIN sessions s ON uf.db_session_id = s.id
+		LEFT JOIN projects p ON s.project_id = p.id
+		ORDER BY uf.underlying_goal`)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]model.UsageFacetEntry, len(rows))
+	for i, r := range rows {
+		goals := make(map[string]int)
+		sat := make(map[string]int)
+		fric := make(map[string]int)
+		_ = json.Unmarshal([]byte(r.GoalCategories), &goals)
+		_ = json.Unmarshal([]byte(r.Satisfaction), &sat)
+		_ = json.Unmarshal([]byte(r.FrictionCounts), &fric)
+		entries[i] = model.UsageFacetEntry{
+			SessionID:      r.SessionID,
+			UnderlyingGoal: r.UnderlyingGoal,
+			Outcome:        r.Outcome,
+			Helpfulness:    r.Helpfulness,
+			SessionType:    r.SessionType,
+			PrimarySuccess: r.PrimarySuccess,
+			BriefSummary:   r.BriefSummary,
+			FrictionDetail: r.FrictionDetail,
+			GoalCategories: goals,
+			Satisfaction:   sat,
+			FrictionCounts: fric,
+			ProjectDir:     r.ProjectDir.String,
+			ProjectName:    r.ProjectName.String,
+		}
+	}
+	return entries, nil
+}
+
+// GetUsageFacet returns a single usage facet by session ID.
+func (s *Store) GetUsageFacet(sessionID string) (*model.UsageFacetEntry, error) {
+	var row struct {
+		SessionID      string         `db:"session_id_text"`
+		UnderlyingGoal string         `db:"underlying_goal"`
+		Outcome        string         `db:"outcome"`
+		Helpfulness    string         `db:"helpfulness"`
+		SessionType    string         `db:"session_type"`
+		PrimarySuccess string         `db:"primary_success"`
+		BriefSummary   string         `db:"brief_summary"`
+		FrictionDetail string         `db:"friction_detail"`
+		GoalCategories string         `db:"goal_categories"`
+		Satisfaction   string         `db:"satisfaction"`
+		FrictionCounts string         `db:"friction_counts"`
+		ProjectDir     sql.NullString `db:"project_dir"`
+		ProjectName    sql.NullString `db:"project_name"`
+	}
+	err := s.db.Get(&row, `
+		SELECT uf.session_id_text, uf.underlying_goal, uf.outcome, uf.helpfulness,
+			   uf.session_type, uf.primary_success, uf.brief_summary, uf.friction_detail,
+			   uf.goal_categories, uf.satisfaction, uf.friction_counts,
+			   p.dir_name AS project_dir, p.display_name AS project_name
+		FROM usage_facets uf
+		LEFT JOIN sessions s ON uf.db_session_id = s.id
+		LEFT JOIN projects p ON s.project_id = p.id
+		WHERE uf.session_id_text = ?`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	goals := make(map[string]int)
+	sat := make(map[string]int)
+	fric := make(map[string]int)
+	_ = json.Unmarshal([]byte(row.GoalCategories), &goals)
+	_ = json.Unmarshal([]byte(row.Satisfaction), &sat)
+	_ = json.Unmarshal([]byte(row.FrictionCounts), &fric)
+	return &model.UsageFacetEntry{
+		SessionID:      row.SessionID,
+		UnderlyingGoal: row.UnderlyingGoal,
+		Outcome:        row.Outcome,
+		Helpfulness:    row.Helpfulness,
+		SessionType:    row.SessionType,
+		PrimarySuccess: row.PrimarySuccess,
+		BriefSummary:   row.BriefSummary,
+		FrictionDetail: row.FrictionDetail,
+		GoalCategories: goals,
+		Satisfaction:   sat,
+		FrictionCounts: fric,
+		ProjectDir:     row.ProjectDir.String,
+		ProjectName:    row.ProjectName.String,
+	}, nil
+}
+
+// GetUsageReport returns the stored usage report HTML content.
+func (s *Store) GetUsageReport() (string, error) {
+	var content string
+	err := s.db.Get(&content, `SELECT content FROM usage_report LIMIT 1`)
+	if err != nil {
+		return "", err
+	}
+	return content, nil
 }
 
 // GetSessionDBID returns the internal database ID for a session_id string.

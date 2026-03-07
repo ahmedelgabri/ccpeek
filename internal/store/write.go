@@ -193,6 +193,85 @@ func (s *Store) InsertHistory(tx *sqlx.Tx, entry model.HistoryEntry) error {
 	return err
 }
 
+// InsertTaskGroup inserts a task group and its items. sessionDBID can be 0 for unlinked groups.
+func (s *Store) InsertTaskGroup(tx *sqlx.Tx, entry model.TaskGroupEntry, items []model.TaskItem, sessionDBID int64) error {
+	statusJSON, err := json.Marshal(entry.Statuses)
+	if err != nil {
+		statusJSON = []byte("{}")
+	}
+
+	var sessID any
+	if sessionDBID > 0 {
+		sessID = sessionDBID
+	}
+
+	res, err := tx.Exec(
+		`INSERT INTO task_groups (dir_name, session_id, item_count, statuses) VALUES (?, ?, ?, ?)`,
+		entry.DirName, sessID, entry.ItemCount, string(statusJSON),
+	)
+	if err != nil {
+		return err
+	}
+
+	groupID, _ := res.LastInsertId()
+
+	itemStmt, err := tx.Prepare(
+		`INSERT INTO task_items (task_group_id, seq, item_id, subject, description, active_form, status, blocks, blocked_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		return err
+	}
+	defer itemStmt.Close()
+
+	for i, item := range items {
+		blocksJSON, _ := json.Marshal(item.Blocks)
+		blockedByJSON, _ := json.Marshal(item.BlockedBy)
+		if _, err := itemStmt.Exec(groupID, i, item.ID, item.Subject, item.Description, item.ActiveForm, item.Status, string(blocksJSON), string(blockedByJSON)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// InsertPasteCache inserts a paste-cache entry with its content.
+func (s *Store) InsertPasteCache(tx *sqlx.Tx, entry model.PasteCacheEntry, content string) error {
+	_, err := tx.Exec(
+		`INSERT INTO paste_cache (file_name, size_bytes, content) VALUES (?, ?, ?)`,
+		entry.FileName, entry.SizeBytes, content,
+	)
+	return err
+}
+
+// InsertUsageFacet inserts a usage-data facet. sessionDBID can be 0 for unlinked facets.
+func (s *Store) InsertUsageFacet(tx *sqlx.Tx, entry model.UsageFacetEntry, sessionDBID int64) error {
+	goalJSON, _ := json.Marshal(entry.GoalCategories)
+	satJSON, _ := json.Marshal(entry.Satisfaction)
+	fricJSON, _ := json.Marshal(entry.FrictionCounts)
+
+	var sessID any
+	if sessionDBID > 0 {
+		sessID = sessionDBID
+	}
+
+	_, err := tx.Exec(
+		`INSERT INTO usage_facets (session_id_text, db_session_id, underlying_goal, outcome, helpfulness,
+		 session_type, primary_success, brief_summary, friction_detail, goal_categories, satisfaction, friction_counts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.SessionID, sessID, entry.UnderlyingGoal, entry.Outcome, entry.Helpfulness,
+		entry.SessionType, entry.PrimarySuccess, entry.BriefSummary, entry.FrictionDetail,
+		string(goalJSON), string(satJSON), string(fricJSON),
+	)
+	return err
+}
+
+// InsertUsageReport inserts the usage-data report HTML content.
+func (s *Store) InsertUsageReport(tx *sqlx.Tx, content string) error {
+	_, err := tx.Exec(`INSERT INTO usage_report (content) VALUES (?)`, content)
+	return err
+}
+
 // SetMeta sets a metadata key-value pair.
 func (s *Store) SetMeta(tx *sqlx.Tx, key, value string) error {
 	_, err := tx.Exec(

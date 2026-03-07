@@ -1,6 +1,6 @@
 package store
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -107,6 +107,56 @@ CREATE TABLE IF NOT EXISTS history (
 	project   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_history_ts ON history(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS task_groups (
+	id         INTEGER PRIMARY KEY,
+	dir_name   TEXT NOT NULL UNIQUE,
+	session_id INTEGER REFERENCES sessions(id),
+	item_count INTEGER NOT NULL DEFAULT 0,
+	statuses   TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS task_items (
+	id             INTEGER PRIMARY KEY,
+	task_group_id  INTEGER NOT NULL REFERENCES task_groups(id),
+	seq            INTEGER NOT NULL,
+	item_id        TEXT NOT NULL DEFAULT '',
+	subject        TEXT NOT NULL DEFAULT '',
+	description    TEXT NOT NULL DEFAULT '',
+	active_form    TEXT NOT NULL DEFAULT '',
+	status         TEXT NOT NULL DEFAULT '',
+	blocks         TEXT NOT NULL DEFAULT '[]',
+	blocked_by     TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_task_items_group ON task_items(task_group_id, seq);
+
+CREATE TABLE IF NOT EXISTS paste_cache (
+	id         INTEGER PRIMARY KEY,
+	file_name  TEXT NOT NULL UNIQUE,
+	size_bytes INTEGER NOT NULL DEFAULT 0,
+	content    TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS usage_facets (
+	id               INTEGER PRIMARY KEY,
+	session_id_text  TEXT NOT NULL UNIQUE,
+	db_session_id    INTEGER REFERENCES sessions(id),
+	underlying_goal  TEXT NOT NULL DEFAULT '',
+	outcome          TEXT NOT NULL DEFAULT '',
+	helpfulness      TEXT NOT NULL DEFAULT '',
+	session_type     TEXT NOT NULL DEFAULT '',
+	primary_success  TEXT NOT NULL DEFAULT '',
+	brief_summary    TEXT NOT NULL DEFAULT '',
+	friction_detail  TEXT NOT NULL DEFAULT '',
+	goal_categories  TEXT NOT NULL DEFAULT '{}',
+	satisfaction     TEXT NOT NULL DEFAULT '{}',
+	friction_counts  TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS usage_report (
+	id      INTEGER PRIMARY KEY,
+	content TEXT NOT NULL DEFAULT ''
+);
 
 CREATE TABLE IF NOT EXISTS source_files (
 	path       TEXT PRIMARY KEY,
