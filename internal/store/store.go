@@ -51,7 +51,9 @@ func (s *Store) Close() error {
 func (s *Store) Reset() error {
 	tables := []string{
 		"messages_fts", "messages", "todo_items", "todos",
-		"file_versions", "file_history", "sessions", "projects",
+		"file_versions", "file_history",
+		"task_items", "task_groups", "usage_facets", "usage_report", "paste_cache",
+		"sessions", "projects",
 		"plans", "shell_snapshots", "history", "source_files", "meta",
 	}
 	for _, t := range tables {
