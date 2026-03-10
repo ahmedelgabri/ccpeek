@@ -344,7 +344,8 @@
         {{ range .ToolStats }}
           <div class="flex items-center gap-3">
             <span
-              class="text-xs text-slate-400 font-mono w-28 shrink-0 text-right"
+              class="text-xs text-slate-400 font-mono min-w-28 max-w-48 shrink-0 text-right truncate"
+              title="{{ .Name }}"
               >{{ .Name }}</span
             >
             <div class="flex-1 h-5 bg-slate-800/50 rounded overflow-hidden">
