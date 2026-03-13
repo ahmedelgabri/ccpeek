@@ -13,6 +13,7 @@ test.describe("navigation", () => {
     const links = [
       { text: "Projects", url: "/projects/" },
       { text: "Plans", url: "/plans/" },
+      { text: "Memories", url: "/memories/" },
       { text: "Shell Snapshots", url: "/shell-snapshots/" },
       { text: "Todos", url: "/todos/" },
       { text: "File History", url: "/file-history/" },

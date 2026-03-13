@@ -65,6 +65,7 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 			"TaskGroups":     make([]any, stats.TaskGroupCount),
 			"PasteCache":     make([]any, stats.PasteCacheCount),
 			"UsageFacets":    make([]any, stats.UsageFacetCount),
+			"Memories":       make([]any, stats.MemoryCount),
 		},
 		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
@@ -1013,6 +1014,41 @@ func (h *handlers) usageReportRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(content))
+}
+
+func (h *handlers) memoriesList(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.store.ListMemories()
+	if err != nil {
+		http.Error(w, "loading memories: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	renderTemplate(w, h.tmpl, "memories_list.html", map[string]any{
+		"Title":       "Memories",
+		"CurrentPath": "/memories/",
+		"Entries":     entries,
+	})
+}
+
+func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
+	projectDir := r.PathValue("projectDir")
+
+	entry, content, err := h.store.GetMemory(projectDir)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	name := entry.ProjectName
+	if name == "" {
+		name = entry.ProjectDir
+	}
+
+	renderTemplate(w, h.tmpl, "memory_detail.html", map[string]any{
+		"Title":       "Memory: " + name,
+		"CurrentPath": "/memories/",
+		"Entry":       entry,
+		"Content":     renderMarkdown(content),
+	})
 }
 
 func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {

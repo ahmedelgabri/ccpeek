@@ -47,7 +47,7 @@ func TestDashboard(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Recent Conversations"}
+	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Memories", "Recent Conversations"}
 	for _, s := range assertions {
 		if !strings.Contains(body, s) {
 			t.Errorf("dashboard missing %q", s)
@@ -980,6 +980,55 @@ func TestUsageReportRaw(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Errorf("expected Content-Type text/html, got %q", ct)
+	}
+}
+
+func TestMemoriesList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/memories/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "test-project") {
+		t.Error("memories list missing project dir")
+	}
+	if !strings.Contains(body, "Filter memories...") {
+		t.Error("memories list missing search input")
+	}
+}
+
+func TestMemoryDetail(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/memories/test-project/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Architecture") {
+		t.Error("memory detail missing rendered markdown content")
+	}
+	if !strings.Contains(body, "View Project") {
+		t.Error("memory detail missing view project link")
+	}
+}
+
+func TestMemoryNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/memories/nonexistent/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 

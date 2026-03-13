@@ -1,0 +1,45 @@
+{{ define "content" }}
+  <h1 class="text-2xl font-bold text-slate-50 mb-6">Memories</h1>
+
+  <input
+    type="text"
+    class="search-input w-full px-4 py-2.5 mb-2 bg-surface-card border border-surface-border rounded-lg text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
+    placeholder="Filter memories..."
+    data-search-target="searchable-list"
+  />
+  <div class="search-count text-xs text-slate-600 mb-4"></div>
+
+  <div
+    class="item-list searchable-list rounded-xl border border-surface-border overflow-hidden divide-y divide-surface-border"
+  >
+    {{ range .Entries }}
+      <a
+        href="/memories/{{ .ProjectDir }}/"
+        class="list-row group flex flex-col gap-1 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
+        data-search-keys="{{ .ProjectName }} {{ .ProjectDir }} {{ .Preview }}"
+      >
+        <div class="flex items-baseline justify-between gap-4">
+          <span class="text-sm text-slate-200 group-hover:text-slate-50"
+            >{{ if .ProjectName }}
+              {{ .ProjectName }}
+            {{ else }}
+              {{ .ProjectDir }}
+            {{ end }}</span
+          >
+          <span class="text-xs text-slate-500 whitespace-nowrap"
+            >{{ formatBytes .SizeBytes }}</span
+          >
+        </div>
+        {{ if .Preview }}
+          <span class="text-xs text-slate-600 truncate">{{ .Preview }}</span>
+        {{ end }}
+      </a>
+    {{ else }}
+      <div class="px-5 py-8 text-center text-sm text-slate-600">
+        No memory files found
+      </div>
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ template "layout.html" . }}

@@ -217,6 +217,14 @@ type PasteCacheEntry struct {
 	Preview   string `json:"preview"`
 }
 
+// MemoryEntry represents a project's MEMORY.md file.
+type MemoryEntry struct {
+	ProjectDir  string `json:"projectDir"`
+	ProjectName string `json:"projectName"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	Preview     string `json:"preview"`
+}
+
 // UsageFacetEntry represents a usage-data facet for a session.
 type UsageFacetEntry struct {
 	SessionID      string         `json:"sessionId"`

@@ -1,6 +1,6 @@
 package store
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -156,6 +156,14 @@ CREATE TABLE IF NOT EXISTS usage_facets (
 CREATE TABLE IF NOT EXISTS usage_report (
 	id      INTEGER PRIMARY KEY,
 	content TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS memories (
+	id          INTEGER PRIMARY KEY,
+	project_dir TEXT NOT NULL UNIQUE,
+	project_id  INTEGER REFERENCES projects(id),
+	size_bytes  INTEGER NOT NULL DEFAULT 0,
+	content     TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS source_files (

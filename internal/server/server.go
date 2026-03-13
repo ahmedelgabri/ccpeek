@@ -82,6 +82,8 @@ func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /usage-data/report/{$}", h.usageDataReport)
 	mux.HandleFunc("GET /usage-data/report/raw", h.usageReportRaw)
 	mux.HandleFunc("GET /usage-data/{sessionId}/{$}", h.usageDataDetail)
+	mux.HandleFunc("GET /memories/{$}", h.memoriesList)
+	mux.HandleFunc("GET /memories/{projectDir}/{$}", h.memoryDetail)
 	return mux
 }
 

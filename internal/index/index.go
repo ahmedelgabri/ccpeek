@@ -97,6 +97,12 @@ func doIndex(claudeDir string, s *store.Store) error {
 	}
 	fmt.Printf("  Usage facets: %d\n", usageCount)
 
+	memoryCount, err := indexMemory(claudeDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing memories: %w", err)
+	}
+	fmt.Printf("  Memories: %d\n", memoryCount)
+
 	// Record mtimes for all source files
 	recordSourceMtimes(claudeDir, s, tx)
 
@@ -145,7 +151,7 @@ func hasChanges(claudeDir string, s *store.Store) bool {
 func collectSourceFiles(claudeDir string) []string {
 	var paths []string
 
-	// JSONL session files
+	// JSONL session files and MEMORY.md files
 	projDir := filepath.Join(claudeDir, "projects")
 	if entries, err := os.ReadDir(projDir); err == nil {
 		for _, e := range entries {
@@ -159,6 +165,10 @@ func collectSourceFiles(claudeDir string) []string {
 						paths = append(paths, filepath.Join(subDir, f.Name()))
 					}
 				}
+			}
+			memPath := filepath.Join(subDir, "memory", "MEMORY.md")
+			if _, err := os.Stat(memPath); err == nil {
+				paths = append(paths, memPath)
 			}
 		}
 	}

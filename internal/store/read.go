@@ -21,6 +21,7 @@ type Stats struct {
 	TaskGroupCount  int `db:"taskgroupcount"`
 	PasteCacheCount int `db:"pastecachecount"`
 	UsageFacetCount int `db:"usagefacetcount"`
+	MemoryCount     int `db:"memorycount"`
 }
 
 // GetStats returns aggregate counts for the dashboard using a single query.
@@ -36,7 +37,8 @@ func (s *Store) GetStats() (Stats, error) {
 			(SELECT COUNT(*) FROM file_history) AS filehistcount,
 			(SELECT COUNT(*) FROM task_groups) AS taskgroupcount,
 			(SELECT COUNT(*) FROM paste_cache) AS pastecachecount,
-			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount`)
+			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount,
+			(SELECT COUNT(*) FROM memories) AS memorycount`)
 	return st, err
 }
 
@@ -1206,6 +1208,62 @@ func (s *Store) GetUsageReport() (string, error) {
 		return "", err
 	}
 	return content, nil
+}
+
+// ListMemories returns all memory entries with project display names.
+func (s *Store) ListMemories() ([]model.MemoryEntry, error) {
+	var rows []struct {
+		ProjectDir  string         `db:"project_dir"`
+		ProjectName sql.NullString `db:"project_name"`
+		SizeBytes   int64          `db:"size_bytes"`
+		Content     string         `db:"content"`
+	}
+	err := s.db.Select(&rows, `
+		SELECT m.project_dir, p.display_name AS project_name, m.size_bytes, m.content
+		FROM memories m
+		LEFT JOIN projects p ON m.project_id = p.id
+		ORDER BY p.display_name, m.project_dir`)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]model.MemoryEntry, len(rows))
+	for i, r := range rows {
+		preview := r.Content
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		entries[i] = model.MemoryEntry{
+			ProjectDir:  r.ProjectDir,
+			ProjectName: r.ProjectName.String,
+			SizeBytes:   r.SizeBytes,
+			Preview:     preview,
+		}
+	}
+	return entries, nil
+}
+
+// GetMemory returns a memory entry and its full content by project dir.
+func (s *Store) GetMemory(projectDir string) (*model.MemoryEntry, string, error) {
+	var row struct {
+		ProjectDir  string         `db:"project_dir"`
+		ProjectName sql.NullString `db:"project_name"`
+		SizeBytes   int64          `db:"size_bytes"`
+		Content     string         `db:"content"`
+	}
+	err := s.db.Get(&row, `
+		SELECT m.project_dir, p.display_name AS project_name, m.size_bytes, m.content
+		FROM memories m
+		LEFT JOIN projects p ON m.project_id = p.id
+		WHERE m.project_dir = ?`, projectDir)
+	if err != nil {
+		return nil, "", err
+	}
+	entry := &model.MemoryEntry{
+		ProjectDir:  row.ProjectDir,
+		ProjectName: row.ProjectName.String,
+		SizeBytes:   row.SizeBytes,
+	}
+	return entry, row.Content, nil
 }
 
 // GetSessionDBID returns the internal database ID for a session_id string.

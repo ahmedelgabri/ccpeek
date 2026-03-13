@@ -131,6 +131,21 @@ test.describe("browse file history detail", () => {
   });
 });
 
+test.describe("browse memories", () => {
+  test("lists memories and can view one", async ({ page }) => {
+    await page.goto("/memories/");
+    const main = page.locator("main");
+    await expect(main.getByRole("heading", { name: "Memories" })).toBeVisible();
+
+    const firstLink = main.locator("a.list-row").first();
+    await firstLink.click();
+
+    // Verify detail page has rendered markdown and View Project link
+    await expect(main.locator(".prose")).toBeVisible();
+    await expect(main.getByText("View Project")).toBeVisible();
+  });
+});
+
 test.describe("search", () => {
   test("plans search filters results", async ({ page }) => {
     await page.goto("/plans/");

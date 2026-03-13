@@ -352,6 +352,42 @@ func TestRun(t *testing.T) {
 	if stats.UsageFacetCount != 2 {
 		t.Errorf("expected UsageFacetCount=2, got %d", stats.UsageFacetCount)
 	}
+	if stats.MemoryCount != 1 {
+		t.Errorf("expected MemoryCount=1, got %d", stats.MemoryCount)
+	}
+
+	// Memories
+	memories, err := s.ListMemories()
+	if err != nil {
+		t.Fatal("listing memories:", err)
+	}
+	if len(memories) != 1 {
+		t.Errorf("expected 1 memory entry, got %d", len(memories))
+	}
+	if len(memories) > 0 {
+		mem := memories[0]
+		if mem.ProjectDir != "test-project" {
+			t.Errorf("expected memory ProjectDir 'test-project', got %q", mem.ProjectDir)
+		}
+		if mem.ProjectName == "" {
+			t.Error("expected memory to have a linked project name")
+		}
+	}
+
+	// Memory detail
+	memEntry, memContent, err := s.GetMemory("test-project")
+	if err != nil {
+		t.Fatal("getting memory:", err)
+	}
+	if memEntry.ProjectDir != "test-project" {
+		t.Errorf("expected memory ProjectDir 'test-project', got %q", memEntry.ProjectDir)
+	}
+	if memContent == "" {
+		t.Error("memory content is empty")
+	}
+	if memEntry.SizeBytes == 0 {
+		t.Error("memory SizeBytes should be non-zero")
+	}
 }
 
 func TestDecodeProjectDir(t *testing.T) {

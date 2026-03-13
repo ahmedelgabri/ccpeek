@@ -1,0 +1,41 @@
+{{ define "content" }}
+  <div class="flex items-center gap-4 mb-4">
+    <a
+      href="/memories/"
+      class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 transition-colors"
+    >
+      <svg
+        class="w-3.5 h-3.5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+        />
+      </svg>
+      Memories
+    </a>
+  </div>
+  <h1 class="text-2xl font-bold text-slate-50 mb-2">
+    {{ if .Entry.ProjectName }}
+      {{ .Entry.ProjectName }}
+    {{ else }}
+      {{ .Entry.ProjectDir }}
+    {{ end }}
+  </h1>
+  <div class="flex items-center gap-4 text-xs text-slate-500 mb-6">
+    <span>{{ formatBytes .Entry.SizeBytes }}</span>
+    <a
+      href="/projects/{{ .Entry.ProjectDir }}/"
+      class="text-cyan-400 no-underline hover:text-cyan-300 transition-colors"
+      >View Project</a
+    >
+  </div>
+
+  <div class="prose">{{ .Content }}</div>
+{{ end }}
+{{ template "layout.html" . }}

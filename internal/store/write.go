@@ -244,6 +244,19 @@ func (s *Store) InsertPasteCache(tx *sqlx.Tx, entry model.PasteCacheEntry, conte
 	return err
 }
 
+// InsertMemory inserts a MEMORY.md entry. projectID can be nil for unlinked memories.
+func (s *Store) InsertMemory(tx *sqlx.Tx, projectDir string, projectID *int64, sizeBytes int64, content string) error {
+	var pid any
+	if projectID != nil {
+		pid = *projectID
+	}
+	_, err := tx.Exec(
+		`INSERT INTO memories (project_dir, project_id, size_bytes, content) VALUES (?, ?, ?, ?)`,
+		projectDir, pid, sizeBytes, content,
+	)
+	return err
+}
+
 // InsertUsageFacet inserts a usage-data facet. sessionDBID can be 0 for unlinked facets.
 func (s *Store) InsertUsageFacet(tx *sqlx.Tx, entry model.UsageFacetEntry, sessionDBID int64) error {
 	goalJSON, _ := json.Marshal(entry.GoalCategories)

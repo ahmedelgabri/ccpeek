@@ -151,6 +151,8 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/usagedata_list.html",
 		"templates/usagedata_detail.html",
 		"templates/usagedata_report.html",
+		"templates/memories_list.html",
+		"templates/memory_detail.html",
 	}
 
 	pages := make(map[string]*template.Template, len(pageFiles))
