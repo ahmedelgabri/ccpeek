@@ -164,6 +164,7 @@
   >
     {{ range .Project.Sessions }}
       <div
+        id="{{ toAnchor "s" .SessionID }}"
         class="list-row group flex items-center gap-4 px-5 py-3 transition-colors duration-150 hover:bg-surface-hover"
         data-search-keys="{{ .FirstPrompt }} {{ .SessionID }} {{ .GitBranch }}"
         data-has-todo="{{ if .TodoFileName }}1{{ end }}"

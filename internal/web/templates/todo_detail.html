@@ -46,18 +46,19 @@
   </h1>
 
   <ul class="space-y-1.5">
-    {{ range .Items }}
+    {{ range $i, $item := .Items }}
       <li
-        class="todo-item flex items-baseline gap-3 px-4 py-3 rounded-lg {{ statusColor .Status }}"
+        id="item-{{ $i }}"
+        class="todo-item flex items-baseline gap-3 px-4 py-3 rounded-lg {{ statusColor $item.Status }}"
       >
         <span
           class="todo-status text-[10px] font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap uppercase tracking-wide"
-          >{{ .Status }}</span
+          >{{ $item.Status }}</span
         >
-        <span class="text-sm text-slate-300">{{ .Content }}</span>
-        {{ if .ActiveForm }}
+        <span class="text-sm text-slate-300">{{ $item.Content }}</span>
+        {{ if $item.ActiveForm }}
           <span class="text-xs text-slate-600 italic ml-auto"
-            >{{ .ActiveForm }}</span
+            >{{ $item.ActiveForm }}</span
           >
         {{ end }}
       </li>

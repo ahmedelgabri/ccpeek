@@ -1,5 +1,6 @@
 {{ define "message" }}
   <div
+    {{ if .Timestamp }}id="{{ toAnchor "msg" .Timestamp }}"{{ end }}
     class="message message-{{ .Type }} rounded-lg py-3 px-4 border-l-2 {{ if eq .Type "user" }}
       border-l-sky-500 bg-sky-500/[0.03]
     {{ else if eq .Type "assistant" }}

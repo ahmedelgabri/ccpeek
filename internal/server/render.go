@@ -148,6 +148,13 @@ func cardCSS(color string) map[string]string {
 	return m["sky"]
 }
 
+// toAnchor converts a timestamp or ID string to a URL-safe HTML id attribute.
+// Replaces colons with dashes and adds a prefix to ensure validity.
+func toAnchor(prefix, value string) string {
+	safe := strings.NewReplacer(":", "-", ".", "-").Replace(value)
+	return prefix + "-" + safe
+}
+
 var funcMap = template.FuncMap{
 	"formatBytes":      formatBytes,
 	"formatTimestamp":  formatTimestamp,
@@ -171,6 +178,7 @@ var funcMap = template.FuncMap{
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },
 	"sub":              func(a, b int) int { return a - b },
 	"add":              func(a, b int) int { return a + b },
+	"toAnchor":         toAnchor,
 	"cardCSS":          cardCSS,
 	"exportCmd": func(host, format, filterQuery string) string {
 		histFile := map[string]string{

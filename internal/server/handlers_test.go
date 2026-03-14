@@ -189,6 +189,9 @@ func TestTodoDetail(t *testing.T) {
 	if !strings.Contains(body, "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/") {
 		t.Error("todo detail missing session back-link")
 	}
+	if !strings.Contains(body, `id="item-0"`) {
+		t.Error("todo detail missing id attributes for deep linking")
+	}
 }
 
 func TestProjectsList(t *testing.T) {
@@ -320,6 +323,10 @@ func TestConversation(t *testing.T) {
 	if !strings.Contains(body, "/code/") {
 		t.Error("conversation missing code tab link")
 	}
+	// Messages should have id attributes for deep linking
+	if !strings.Contains(body, `id="msg-`) {
+		t.Error("conversation messages missing id attributes for deep linking")
+	}
 }
 
 func TestConversationTodos(t *testing.T) {
@@ -411,6 +418,9 @@ func TestConversationCommands(t *testing.T) {
 	if !strings.Contains(body, "Commands") {
 		t.Error("commands page missing tabs")
 	}
+	if !strings.Contains(body, `id="cmd-`) {
+		t.Error("commands page missing id attributes for deep linking")
+	}
 }
 
 func TestConversationTools(t *testing.T) {
@@ -432,6 +442,9 @@ func TestConversationTools(t *testing.T) {
 	}
 	if !strings.Contains(body, "Tools") {
 		t.Error("tools page missing tab")
+	}
+	if !strings.Contains(body, `id="tool-`) {
+		t.Error("tools page missing id attributes for deep linking")
 	}
 }
 
@@ -463,6 +476,9 @@ func TestConversationCode(t *testing.T) {
 	}
 	if !strings.Contains(body, "Code") {
 		t.Error("code page missing tab")
+	}
+	if !strings.Contains(body, `id="code-`) {
+		t.Error("code page missing id attributes for deep linking")
 	}
 }
 
@@ -554,6 +570,10 @@ func TestSearch(t *testing.T) {
 	if !strings.Contains(body, "Conversations") {
 		t.Error("search results missing Conversations group header")
 	}
+	// Conversation search results should deep-link with fragment anchors
+	if !strings.Contains(body, "#msg-") {
+		t.Error("search results missing #msg- fragment anchors for deep linking")
+	}
 
 	// No results
 	req = httptest.NewRequest("GET", "/search/?q=zzzznonexistent", nil)
@@ -619,6 +639,9 @@ func TestSearchCommands(t *testing.T) {
 	if !strings.Contains(body, "Commands") {
 		t.Error("search for ls missing Commands group")
 	}
+	if !strings.Contains(body, "#cmd-") {
+		t.Error("search for ls missing #cmd- fragment anchors for deep linking")
+	}
 }
 
 func TestSearchPasteCache(t *testing.T) {
@@ -657,6 +680,9 @@ func TestSearchTodos(t *testing.T) {
 	if !strings.Contains(body, "/todos/") {
 		t.Error("search for Fix the bug missing todo link")
 	}
+	if !strings.Contains(body, "#item-") {
+		t.Error("search for Fix the bug missing #item- fragment anchors for deep linking")
+	}
 }
 
 func TestSearchTasks(t *testing.T) {
@@ -675,6 +701,9 @@ func TestSearchTasks(t *testing.T) {
 	}
 	if !strings.Contains(body, "/tasks/") {
 		t.Error("search for project structure missing task link")
+	}
+	if !strings.Contains(body, "#task-") {
+		t.Error("search for project structure missing #task- fragment anchors for deep linking")
 	}
 }
 
@@ -994,6 +1023,9 @@ func TestTaskDetail(t *testing.T) {
 	}
 	if !strings.Contains(body, "pending") {
 		t.Error("task detail missing pending status")
+	}
+	if !strings.Contains(body, `id="task-`) {
+		t.Error("task detail missing id attributes for deep linking")
 	}
 }
 
@@ -1427,6 +1459,10 @@ func TestScanListWithFindings(t *testing.T) {
 	// Should have source links
 	if !strings.Contains(body, "/plans/test-plan/") {
 		t.Error("scan list missing source link for plan finding")
+	}
+	// Should have id attributes for deep linking
+	if !strings.Contains(body, `id="finding-`) {
+		t.Error("scan list missing id attributes for deep linking")
 	}
 }
 

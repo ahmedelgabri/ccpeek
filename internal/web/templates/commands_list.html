@@ -147,6 +147,7 @@
   <div class="space-y-3">
     {{ range .Commands }}
       <div
+        {{ if .Timestamp }}id="{{ toAnchor "cmd" .Timestamp }}"{{ end }}
         class="group rounded-xl border border-surface-border overflow-hidden bg-surface-card"
       >
         <div

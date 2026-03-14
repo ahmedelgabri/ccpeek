@@ -146,6 +146,7 @@
     <div class="space-y-2">
       {{ range .Findings }}
         <div
+          id="finding-{{ .ID }}"
           class="rounded-xl border overflow-hidden {{ if .Ignored }}
             border-surface-border/50 opacity-50
           {{ else }}

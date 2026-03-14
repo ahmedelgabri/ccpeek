@@ -204,6 +204,26 @@ func TestPercentDiff(t *testing.T) {
 	}
 }
 
+func TestToAnchor(t *testing.T) {
+	tests := []struct {
+		prefix string
+		value  string
+		want   string
+	}{
+		{"msg", "2024-01-15T10:30:00.123Z", "msg-2024-01-15T10-30-00-123Z"},
+		{"cmd", "2024-01-15T10:30:00Z", "cmd-2024-01-15T10-30-00Z"},
+		{"s", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "s-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+		{"finding", "42", "finding-42"},
+	}
+
+	for _, tt := range tests {
+		got := toAnchor(tt.prefix, tt.value)
+		if got != tt.want {
+			t.Errorf("toAnchor(%q, %q) = %q, want %q", tt.prefix, tt.value, got, tt.want)
+		}
+	}
+}
+
 func TestStatusColor(t *testing.T) {
 	tests := []struct {
 		input string

@@ -54,6 +54,7 @@
   <ul class="space-y-2">
     {{ range .Items }}
       <li
+        id="task-{{ .ID }}"
         class="todo-item flex flex-col gap-1.5 px-4 py-3 rounded-lg {{ statusColor .Status }}"
       >
         <div class="flex items-baseline gap-3">

@@ -36,6 +36,7 @@
   <div class="space-y-4 my-6">
     {{ range .Blocks }}
       <div
+        {{ if .Timestamp }}id="{{ toAnchor "code" .Timestamp }}"{{ end }}
         class="bg-surface-card border border-surface-border rounded-xl overflow-hidden"
       >
         <div

@@ -806,10 +806,14 @@ func (s *Store) searchConversations(query string, limit int) ([]SearchHit, error
 		if prompt == "" {
 			prompt = r.SessionID
 		}
+		url := "/projects/" + r.ProjectDirName + "/" + r.SessionID + "/"
+		if r.Timestamp != "" {
+			url += anchor("msg", r.Timestamp)
+		}
 		hits[i] = SearchHit{
 			Title:    prompt,
 			Snippet:  r.Snippet,
-			URL:      "/projects/" + r.ProjectDirName + "/" + r.SessionID + "/",
+			URL:      url,
 			Subtitle: r.ProjectDisplay + " · " + r.Role,
 		}
 	}
@@ -841,10 +845,14 @@ func (s *Store) searchCommands(query string, limit int) ([]SearchHit, error) {
 
 	hits := make([]SearchHit, len(rows))
 	for i, r := range rows {
+		url := "/projects/" + r.ProjectDirName + "/" + r.SessionID + "/commands/"
+		if r.Timestamp != "" {
+			url += anchor("cmd", r.Timestamp)
+		}
 		hits[i] = SearchHit{
 			Title:    truncateStr(r.Command, 120),
 			Snippet:  likeSnippet(r.Command, query, 80),
-			URL:      "/projects/" + r.ProjectDirName + "/" + r.SessionID + "/commands/",
+			URL:      url,
 			Subtitle: r.ProjectDisplay,
 		}
 	}
@@ -918,7 +926,7 @@ func (s *Store) searchPlans(query string, limit int) ([]SearchHit, error) {
 func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 	like := "%" + query + "%"
 	q := `
-		SELECT ti.content, ti.status, t.file_name,
+		SELECT ti.content, ti.status, ti.seq, t.file_name,
 			   COALESCE(p.display_name, '') AS display_name
 		FROM todo_items ti
 		JOIN todos t ON ti.todo_id = t.id
@@ -930,6 +938,7 @@ func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 	var rows []struct {
 		Content     string `db:"content"`
 		Status      string `db:"status"`
+		Seq         int    `db:"seq"`
 		FileName    string `db:"file_name"`
 		DisplayName string `db:"display_name"`
 	}
@@ -946,7 +955,7 @@ func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 		hits[i] = SearchHit{
 			Title:    truncateStr(r.Content, 100),
 			Snippet:  likeSnippet(r.Content, query, 120),
-			URL:      "/todos/" + strings.TrimSuffix(r.FileName, ".json") + "/",
+			URL:      "/todos/" + strings.TrimSuffix(r.FileName, ".json") + "/" + fmt.Sprintf("#item-%d", r.Seq),
 			Subtitle: subtitle,
 		}
 	}
@@ -956,7 +965,7 @@ func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
 	like := "%" + query + "%"
 	q := `
-		SELECT ti.subject, ti.description, ti.status, tg.dir_name,
+		SELECT ti.item_id, ti.subject, ti.description, ti.status, tg.dir_name,
 			   COALESCE(p.display_name, '') AS display_name
 		FROM task_items ti
 		JOIN task_groups tg ON ti.task_group_id = tg.id
@@ -966,6 +975,7 @@ func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
 		LIMIT ?`
 
 	var rows []struct {
+		ItemID      string `db:"item_id"`
 		Subject     string `db:"subject"`
 		Description string `db:"description"`
 		Status      string `db:"status"`
@@ -986,10 +996,14 @@ func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
 		if r.DisplayName != "" {
 			subtitle = r.DisplayName + " · " + r.Status
 		}
+		url := "/tasks/" + r.DirName + "/"
+		if r.ItemID != "" {
+			url += "#task-" + r.ItemID
+		}
 		hits[i] = SearchHit{
 			Title:    r.Subject,
 			Snippet:  snippet,
-			URL:      "/tasks/" + r.DirName + "/",
+			URL:      url,
 			Subtitle: subtitle,
 		}
 	}
@@ -1089,6 +1103,13 @@ func (s *Store) searchUsageData(query string, limit int) ([]SearchHit, error) {
 		}
 	}
 	return hits, nil
+}
+
+// anchor builds a URL-safe fragment from a prefix and value,
+// matching the toAnchor template helper format.
+func anchor(prefix, value string) string {
+	safe := strings.NewReplacer(":", "-", ".", "-").Replace(value)
+	return "#" + prefix + "-" + safe
 }
 
 // likeSnippet extracts a snippet from text centered around the first
