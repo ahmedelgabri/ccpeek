@@ -12,7 +12,7 @@ build: css
     CGO_ENABLED=1 go build -tags sqlite_fts5 -o {{binary}} ./cmd/ccpeek/
 
 dev: css
-    CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --open
+    CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --open --watch
 
 vet:
     CGO_ENABLED=1 go vet -tags sqlite_fts5 ./...

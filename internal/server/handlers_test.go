@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1174,6 +1175,47 @@ func TestCommandsExportFish(t *testing.T) {
 	}
 }
 
+func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
+	t.Helper()
+
+	testdataDir := filepath.Join("..", "..", "testdata")
+
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal("opening store:", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	if err := index.Run(testdataDir, db, true); err != nil {
+		t.Fatal("index failed:", err)
+	}
+
+	// Insert scan findings with different rules and source types
+	tx, err := db.BeginTx()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []model.ScanFinding{
+		{RuleID: "aws-access-token", Description: "AWS key", SourceType: "message", SourceID: "test-session-abc", MatchRedacted: "AKIA****MZXB", ScannedAt: "2025-01-01T00:00:00Z"},
+		{RuleID: "aws-access-token", Description: "AWS key", SourceType: "command", SourceID: "42", MatchRedacted: "AKIA****MZXB", ScannedAt: "2025-01-01T00:00:00Z"},
+		{RuleID: "generic-api-key", Description: "Generic API Key", SourceType: "plan", SourceID: "test-plan.md", MatchRedacted: "s3cr****l0ng", ScannedAt: "2025-01-01T00:00:00Z"},
+	} {
+		if err := db.InsertScanFinding(tx, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	handler, err := NewHandler(db)
+	if err != nil {
+		t.Fatal("NewHandler failed:", err)
+	}
+
+	return handler, db
+}
+
 func TestScanList(t *testing.T) {
 	handler := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/scan/", nil)
@@ -1188,9 +1230,205 @@ func TestScanList(t *testing.T) {
 	if !strings.Contains(body, "Secret Scan") {
 		t.Error("scan page missing title")
 	}
-	// Should show gitleaks attribution
 	if !strings.Contains(body, "gitleaks") {
 		t.Error("scan page missing gitleaks attribution")
+	}
+}
+
+func TestScanListWithFindings(t *testing.T) {
+	handler, _ := setupTestServerWithFindings(t)
+	req := httptest.NewRequest("GET", "/scan/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	// Should show finding count and rule names
+	for _, s := range []string{"3 potential secret", "aws-access-token", "generic-api-key"} {
+		if !strings.Contains(body, s) {
+			t.Errorf("scan list missing %q", s)
+		}
+	}
+	// Should show redacted matches
+	if !strings.Contains(body, "AKIA****MZXB") {
+		t.Error("scan list missing redacted match")
+	}
+	// Should show source type labels
+	if !strings.Contains(body, "message") || !strings.Contains(body, "command") || !strings.Contains(body, "plan") {
+		t.Error("scan list missing source type labels")
+	}
+	// Should have ignore buttons
+	if !strings.Contains(body, "toggle-ignore") {
+		t.Error("scan list missing ignore toggle forms")
+	}
+	// Should have source links
+	if !strings.Contains(body, "/plans/test-plan/") {
+		t.Error("scan list missing source link for plan finding")
+	}
+}
+
+func TestScanListFilterByRule(t *testing.T) {
+	handler, _ := setupTestServerWithFindings(t)
+	req := httptest.NewRequest("GET", "/scan/?rule=generic-api-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	// Should only show the generic-api-key finding's redacted match
+	if !strings.Contains(body, "s3cr****l0ng") {
+		t.Error("filtered scan list missing generic-api-key finding")
+	}
+	// Should NOT show the aws finding's redacted match in the findings list
+	// (it still appears in the summary cards)
+	count := strings.Count(body, "AKIA****MZXB")
+	// The match appears in the summary card but NOT as a finding card
+	if strings.Contains(body, `text-red-300/80 bg-red-500/5`) && count > 2 {
+		t.Error("filtered scan list should not show aws finding in results")
+	}
+}
+
+func TestScanListFilterByType(t *testing.T) {
+	handler, _ := setupTestServerWithFindings(t)
+	req := httptest.NewRequest("GET", "/scan/?type=plan", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "s3cr****l0ng") {
+		t.Error("filtered scan list missing plan finding")
+	}
+}
+
+func TestScanListCacheHeaders(t *testing.T) {
+	handler, _ := setupTestServerWithFindings(t)
+	req := httptest.NewRequest("GET", "/scan/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	cc := w.Header().Get("Cache-Control")
+	if !strings.Contains(cc, "no-cache") {
+		t.Errorf("expected no-cache header, got %q", cc)
+	}
+}
+
+func TestScanToggleIgnore(t *testing.T) {
+	handler, db := setupTestServerWithFindings(t)
+
+	// Get finding IDs
+	findings, err := db.ListScanFindings("", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) == 0 {
+		t.Fatal("expected findings")
+	}
+	id := findings[0].ID
+
+	// POST to toggle ignore
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scan/%d/toggle-ignore", id), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 redirect, got %d", w.Code)
+	}
+
+	// Verify finding is now ignored
+	findings, _ = db.ListScanFindings("", "", true)
+	for _, f := range findings {
+		if f.ID == id && !f.Ignored {
+			t.Error("finding should be ignored after toggle")
+		}
+	}
+
+	// Non-ignored list should have one fewer
+	active, _ := db.ListScanFindings("", "", false)
+	if len(active) != 2 {
+		t.Errorf("expected 2 active findings after ignoring 1 of 3, got %d", len(active))
+	}
+}
+
+func TestScanToggleIgnoreInvalidID(t *testing.T) {
+	handler, _ := setupTestServerWithFindings(t)
+
+	req := httptest.NewRequest("POST", "/scan/notanumber/toggle-ignore", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid id, got %d", w.Code)
+	}
+}
+
+func TestScanListShowIgnored(t *testing.T) {
+	handler, db := setupTestServerWithFindings(t)
+
+	// Ignore one finding
+	findings, _ := db.ListScanFindings("", "", true)
+	db.ToggleScanFindingIgnored(findings[0].ID)
+
+	// Default view should hide the ignored finding
+	req := httptest.NewRequest("GET", "/scan/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "2 potential secret") {
+		t.Error("stats should show 2 after ignoring 1")
+	}
+
+	// show_ignored=1 should show all 3
+	req = httptest.NewRequest("GET", "/scan/?show_ignored=1", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body = w.Body.String()
+	// All three findings should be in the rendered output
+	if strings.Count(body, "toggle-ignore") != 3 {
+		t.Errorf("expected 3 toggle-ignore forms with show_ignored, got %d", strings.Count(body, "toggle-ignore"))
+	}
+	// The ignored finding should have the "unignore" button
+	if !strings.Contains(body, "Unignore") {
+		t.Error("ignored finding should show Unignore button")
+	}
+}
+
+func TestScanDashboardCountExcludesIgnored(t *testing.T) {
+	handler, db := setupTestServerWithFindings(t)
+
+	// Dashboard should show 3 findings
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "Secret Scan") {
+		t.Error("dashboard missing Secret Scan card")
+	}
+
+	// Ignore all 3 findings
+	findings, _ := db.ListScanFindings("", "", true)
+	for _, f := range findings {
+		db.ToggleScanFindingIgnored(f.ID)
+	}
+
+	// Dashboard should now show 0
+	req = httptest.NewRequest("GET", "/", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body = w.Body.String()
+	// The scan card count is rendered as {{ len .Index.ScanFindings }}
+	// With 0 findings, the slice is empty so it renders "0"
+	if !strings.Contains(body, `Secret Scan`) {
+		t.Error("dashboard missing Secret Scan card after ignoring all")
 	}
 }
 
