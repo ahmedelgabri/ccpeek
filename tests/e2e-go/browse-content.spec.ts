@@ -71,7 +71,7 @@ test.describe("browse projects", () => {
       .locator(".list-row")
       .filter({ hasText: "msgs" })
       .first();
-    await sessionRow.locator("a").click();
+    await sessionRow.locator("a.flex-1").click();
 
     // Verify conversation page loaded with message count
     await expect(main.getByText(/\d+ messages/).first()).toBeVisible();

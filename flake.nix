@@ -35,7 +35,7 @@
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-JtrVV1sPajxSl23KokuHxPZV/mAQonJs+o02RQxpiM8=";
+            vendorHash = "sha256-ems9UlyOiLhseCW+MjAPPsYklKSJM/m+BUIHoC4v59g=";
 
             tags = ["sqlite_fts5"];
 
