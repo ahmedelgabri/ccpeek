@@ -47,11 +47,11 @@ system.
 
 ### CLI flags (`internal/cmd/root.go`)
 
-| Flag | Behavior |
-|------|----------|
-| (default) | Incremental: hash-compare per file, re-index only changed files, keep data from deleted sources |
-| `--rebuild` | Drop all data and re-index from scratch (previous default behavior) |
-| `--prune` | Remove DB rows whose source files no longer exist on disk |
+| Flag        | Behavior                                                                                        |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| (default)   | Incremental: hash-compare per file, re-index only changed files, keep data from deleted sources |
+| `--rebuild` | Drop all data and re-index from scratch (previous default behavior)                             |
+| `--prune`   | Remove DB rows whose source files no longer exist on disk                                       |
 
 ### Watch mode
 
@@ -60,14 +60,14 @@ per-file comparison instead of the old "any change → full rebuild" approach.
 
 ## Files changed
 
-| File | What changed |
-|------|-------------|
-| `internal/store/schema.go` | Sequential migration system, v4→v5 migration |
-| `internal/store/store.go` | `migrate()` rewritten for sequential migrations |
-| `internal/store/write.go` | `sourcePath` param on all Insert methods, delete/cascade helpers, FTS rebuild |
-| `internal/store/read.go` | `GetSourceFileHash`, `ListSourceFilePaths` (replaced mtime methods) |
-| `internal/index/index.go` | `Run(rebuild bool)`, `RunIncremental()`, `Prune()`, hash helpers |
-| `internal/index/incremental.go` | Filtered variants of all sub-indexers |
-| `internal/index/*.go` | All sub-indexers pass `sourcePath` through |
-| `internal/cmd/root.go` | `--rebuild` and `--prune` flags |
-| `internal/index/incremental_test.go` | Tests for all incremental behaviors |
+| File                                 | What changed                                                                  |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `internal/store/schema.go`           | Sequential migration system, v4→v5 migration                                  |
+| `internal/store/store.go`            | `migrate()` rewritten for sequential migrations                               |
+| `internal/store/write.go`            | `sourcePath` param on all Insert methods, delete/cascade helpers, FTS rebuild |
+| `internal/store/read.go`             | `GetSourceFileHash`, `ListSourceFilePaths` (replaced mtime methods)           |
+| `internal/index/index.go`            | `Run(rebuild bool)`, `RunIncremental()`, `Prune()`, hash helpers              |
+| `internal/index/incremental.go`      | Filtered variants of all sub-indexers                                         |
+| `internal/index/*.go`                | All sub-indexers pass `sourcePath` through                                    |
+| `internal/cmd/root.go`               | `--rebuild` and `--prune` flags                                               |
+| `internal/index/incremental_test.go` | Tests for all incremental behaviors                                           |

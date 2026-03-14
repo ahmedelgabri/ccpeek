@@ -110,4 +110,3 @@ func readTaskItems(dir string) ([]model.TaskItem, error) {
 
 	return items, nil
 }
-
