@@ -126,6 +126,28 @@ func highlightSnippet(raw string) template.HTML {
 	return template.HTML(escaped)
 }
 
+// cardCSS returns a map of CSS class strings for a dashboard card color.
+// Full class names are spelled out so Tailwind's content scanner can find them.
+func cardCSS(color string) map[string]string {
+	m := map[string]map[string]string{
+		"sky":     {"border": "hover:border-sky-500/30 hover:shadow-lg hover:shadow-sky-500/5", "glow": "from-sky-500/0 via-sky-500/40 to-sky-500/0", "iconBg": "bg-sky-500/10", "icon": "text-sky-400"},
+		"emerald": {"border": "hover:border-emerald-500/30 hover:shadow-lg hover:shadow-emerald-500/5", "glow": "from-emerald-500/0 via-emerald-500/40 to-emerald-500/0", "iconBg": "bg-emerald-500/10", "icon": "text-emerald-400"},
+		"amber":   {"border": "hover:border-amber-500/30 hover:shadow-lg hover:shadow-amber-500/5", "glow": "from-amber-500/0 via-amber-500/40 to-amber-500/0", "iconBg": "bg-amber-500/10", "icon": "text-amber-400"},
+		"lime":    {"border": "hover:border-lime-500/30 hover:shadow-lg hover:shadow-lime-500/5", "glow": "from-lime-500/0 via-lime-500/40 to-lime-500/0", "iconBg": "bg-lime-500/10", "icon": "text-lime-400"},
+		"rose":    {"border": "hover:border-rose-500/30 hover:shadow-lg hover:shadow-rose-500/5", "glow": "from-rose-500/0 via-rose-500/40 to-rose-500/0", "iconBg": "bg-rose-500/10", "icon": "text-rose-400"},
+		"indigo":  {"border": "hover:border-indigo-500/30 hover:shadow-lg hover:shadow-indigo-500/5", "glow": "from-indigo-500/0 via-indigo-500/40 to-indigo-500/0", "iconBg": "bg-indigo-500/10", "icon": "text-indigo-400"},
+		"teal":    {"border": "hover:border-teal-500/30 hover:shadow-lg hover:shadow-teal-500/5", "glow": "from-teal-500/0 via-teal-500/40 to-teal-500/0", "iconBg": "bg-teal-500/10", "icon": "text-teal-400"},
+		"orange":  {"border": "hover:border-orange-500/30 hover:shadow-lg hover:shadow-orange-500/5", "glow": "from-orange-500/0 via-orange-500/40 to-orange-500/0", "iconBg": "bg-orange-500/10", "icon": "text-orange-400"},
+		"fuchsia": {"border": "hover:border-fuchsia-500/30 hover:shadow-lg hover:shadow-fuchsia-500/5", "glow": "from-fuchsia-500/0 via-fuchsia-500/40 to-fuchsia-500/0", "iconBg": "bg-fuchsia-500/10", "icon": "text-fuchsia-400"},
+		"cyan":    {"border": "hover:border-cyan-500/30 hover:shadow-lg hover:shadow-cyan-500/5", "glow": "from-cyan-500/0 via-cyan-500/40 to-cyan-500/0", "iconBg": "bg-cyan-500/10", "icon": "text-cyan-400"},
+		"red":     {"border": "hover:border-red-500/30 hover:shadow-lg hover:shadow-red-500/5", "glow": "from-red-500/0 via-red-500/40 to-red-500/0", "iconBg": "bg-red-500/10", "icon": "text-red-400"},
+	}
+	if css, ok := m[color]; ok {
+		return css
+	}
+	return m["sky"]
+}
+
 var funcMap = template.FuncMap{
 	"formatBytes":      formatBytes,
 	"formatTimestamp":  formatTimestamp,
@@ -149,6 +171,7 @@ var funcMap = template.FuncMap{
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },
 	"sub":              func(a, b int) int { return a - b },
 	"add":              func(a, b int) int { return a + b },
+	"cardCSS":          cardCSS,
 	"exportCmd": func(host, format, filterQuery string) string {
 		histFile := map[string]string{
 			"zsh":  "~/.zsh_history",
