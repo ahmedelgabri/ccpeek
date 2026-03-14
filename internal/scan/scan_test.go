@@ -55,7 +55,7 @@ func TestRunOnTestData(t *testing.T) {
 
 	// Testdata may or may not contain secrets; just verify it doesn't crash
 	// and that findings are stored in the DB
-	stored, err := db.ListScanFindings("", "")
+	stored, err := db.ListScanFindings("", "", true)
 	if err != nil {
 		t.Fatal("ListScanFindings failed:", err)
 	}
@@ -247,5 +247,118 @@ func TestScanStats(t *testing.T) {
 	}
 	if stats.FindingsByType["message"] != 1 {
 		t.Error("expected 1 message finding in type breakdown")
+	}
+}
+
+func TestIgnoreToggle(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	tx, err := db.BeginTx()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.InsertScanFinding(tx, model.ScanFinding{
+		RuleID:        "test-rule",
+		SourceType:    "message",
+		SourceID:      "s1",
+		MatchRedacted: "****",
+		ScannedAt:     "2025-01-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be visible by default (not ignored)
+	findings, _ := db.ListScanFindings("", "", false)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(findings))
+	}
+	if findings[0].Ignored {
+		t.Error("finding should not be ignored initially")
+	}
+
+	// Toggle to ignored
+	if err := db.ToggleScanFindingIgnored(findings[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be hidden when not showing ignored
+	findings, _ = db.ListScanFindings("", "", false)
+	if len(findings) != 0 {
+		t.Errorf("expected 0 non-ignored findings, got %d", len(findings))
+	}
+
+	// Should be visible when showing ignored
+	findings, _ = db.ListScanFindings("", "", true)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding with show_ignored, got %d", len(findings))
+	}
+	if !findings[0].Ignored {
+		t.Error("finding should be ignored after toggle")
+	}
+
+	// Stats should exclude ignored findings
+	stats, _ := db.GetScanStats()
+	if stats.TotalFindings != 0 {
+		t.Errorf("expected 0 in stats (ignored), got %d", stats.TotalFindings)
+	}
+
+	// Toggle back to unignored
+	if err := db.ToggleScanFindingIgnored(findings[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	findings, _ = db.ListScanFindings("", "", false)
+	if len(findings) != 1 || findings[0].Ignored {
+		t.Error("finding should be unignored after second toggle")
+	}
+}
+
+func TestSourceURL(t *testing.T) {
+	tests := []struct {
+		finding model.ScanFinding
+		want    string
+	}{
+		{
+			model.ScanFinding{SourceType: "message", SourceID: "sess-123", ProjectDirName: "proj-1"},
+			"/projects/proj-1/sess-123/",
+		},
+		{
+			model.ScanFinding{SourceType: "command", SessionID: "sess-123", ProjectDirName: "proj-1"},
+			"/projects/proj-1/sess-123/commands/",
+		},
+		{
+			model.ScanFinding{SourceType: "plan", SourceID: "my-plan.md"},
+			"/plans/my-plan/",
+		},
+		{
+			model.ScanFinding{SourceType: "shell_snapshot", SourceID: "snap.sh"},
+			"/shell-snapshots/snap/",
+		},
+		{
+			model.ScanFinding{SourceType: "paste_cache", SourceID: "clip.txt"},
+			"/paste-cache/clip/",
+		},
+		{
+			model.ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj"},
+			"/memories/-Users-demo-proj/",
+		},
+		{
+			model.ScanFinding{SourceType: "message", SourceID: "sess-123"},
+			"",
+		},
+	}
+	for _, tt := range tests {
+		got := tt.finding.SourceURL()
+		if got != tt.want {
+			t.Errorf("SourceURL() for %s/%s = %q, want %q",
+				tt.finding.SourceType, tt.finding.SourceID, got, tt.want)
+		}
 	}
 }

@@ -288,14 +288,50 @@ type ScanFinding struct {
 	ID             int64  `json:"id" db:"id"`
 	RuleID         string `json:"ruleId" db:"rule_id"`
 	Description    string `json:"description" db:"description"`
-	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, snapshot, paste_cache, memory
+	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, shell_snapshot, paste_cache, memory
 	SourceID       string `json:"sourceId" db:"source_id"`     // identifies the record within source_type
 	MatchRedacted  string `json:"matchRedacted" db:"match_redacted"`
 	Line           int    `json:"line" db:"line_number"`
 	ScannedAt      string `json:"scannedAt" db:"scanned_at"`
+	Ignored        bool   `json:"ignored" db:"ignored"`
 	ProjectDirName string `json:"projectDirName,omitempty" db:"project_dir"`
 	ProjectDisplay string `json:"projectDisplay,omitempty" db:"project_name"`
 	SessionID      string `json:"sessionId,omitempty" db:"session_id_text"`
+}
+
+// SourceURL returns a link to the source of this finding, or empty string.
+func (f *ScanFinding) SourceURL() string {
+	switch f.SourceType {
+	case "message":
+		if f.ProjectDirName != "" && f.SourceID != "" {
+			return "/projects/" + f.ProjectDirName + "/" + f.SourceID + "/"
+		}
+	case "command":
+		if f.ProjectDirName != "" && f.SessionID != "" {
+			return "/projects/" + f.ProjectDirName + "/" + f.SessionID + "/commands/"
+		}
+	case "plan":
+		name := f.SourceID
+		if len(name) > 3 && name[len(name)-3:] == ".md" {
+			name = name[:len(name)-3]
+		}
+		return "/plans/" + name + "/"
+	case "shell_snapshot":
+		name := f.SourceID
+		if len(name) > 3 && name[len(name)-3:] == ".sh" {
+			name = name[:len(name)-3]
+		}
+		return "/shell-snapshots/" + name + "/"
+	case "paste_cache":
+		name := f.SourceID
+		if len(name) > 4 && name[len(name)-4:] == ".txt" {
+			name = name[:len(name)-4]
+		}
+		return "/paste-cache/" + name + "/"
+	case "memory":
+		return "/memories/" + f.SourceID + "/"
+	}
+	return ""
 }
 
 // ScanStats holds aggregate counts for the scan results page.

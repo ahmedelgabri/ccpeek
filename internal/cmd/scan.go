@@ -4,11 +4,22 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/spf13/cobra"
+)
+
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorDim    = "\033[2m"
+	colorBold   = "\033[1m"
 )
 
 var scanCmd = &cobra.Command{
@@ -50,14 +61,21 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scan failed: %w", err)
 	}
 
+	printScanResults(findings)
+	return nil
+}
+
+func printScanResults(findings []model.ScanFinding) {
 	if len(findings) == 0 {
-		fmt.Println("No secrets found.")
-		return nil
+		fmt.Printf("\n  %s%s CLEAN %s  No secrets detected.%s\n\n",
+			colorGreen, colorBold, colorReset+colorGreen, colorReset)
+		return
 	}
 
-	fmt.Printf("Found %d potential secret(s).\n\n", len(findings))
+	fmt.Printf("\n  %s%s WARNING %s  Found %d potential secret(s)%s\n\n",
+		colorYellow, colorBold, colorReset+colorYellow, len(findings), colorReset)
 
-	// Summary by rule
+	// Summary table
 	ruleCounts := make(map[string]int)
 	for _, f := range findings {
 		ruleCounts[f.RuleID]++
@@ -75,7 +93,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	})
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "RULE\tCOUNT\tSOURCE TYPES")
+	fmt.Fprintf(w, "  %sRULE\tCOUNT\tSOURCE%s\n", colorDim, colorReset)
 	for _, rc := range sorted {
 		types := make(map[string]bool)
 		for _, f := range findings {
@@ -88,21 +106,26 @@ func runScan(cmd *cobra.Command, args []string) error {
 			typeList = append(typeList, t)
 		}
 		sort.Strings(typeList)
-		fmt.Fprintf(w, "%s\t%d\t%s\n", rc.rule, rc.count, joinStrings(typeList))
+		fmt.Fprintf(w, "  %s%s%s\t%d\t%s\n",
+			colorRed, rc.rule, colorReset, rc.count, strings.Join(typeList, ", "))
 	}
 	w.Flush()
 
-	fmt.Printf("\nView details in the web UI at /scan/\n")
-	return nil
-}
-
-func joinStrings(ss []string) string {
-	result := ""
-	for i, s := range ss {
-		if i > 0 {
-			result += ", "
+	// Individual findings
+	fmt.Printf("\n  %sFindings:%s\n\n", colorBold, colorReset)
+	for i, f := range findings {
+		fmt.Printf("  %s%d.%s %s%s%s %s%s%s\n",
+			colorDim, i+1, colorReset,
+			colorRed, f.RuleID, colorReset,
+			colorDim, f.Description, colorReset)
+		fmt.Printf("     %sSecret:%s  %s\n", colorDim, colorReset, f.MatchRedacted)
+		fmt.Printf("     %sSource:%s  %s %s(%s)%s\n",
+			colorDim, colorReset, f.SourceType,
+			colorDim, f.SourceID, colorReset)
+		if i < len(findings)-1 {
+			fmt.Println()
 		}
-		result += s
 	}
-	return result
+
+	fmt.Printf("\n  %sView and manage findings in the web UI at /scan/%s\n\n", colorDim, colorReset)
 }

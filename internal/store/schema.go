@@ -6,7 +6,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -191,7 +191,8 @@ CREATE TABLE IF NOT EXISTS scan_findings (
 	source_id      TEXT NOT NULL DEFAULT '',
 	match_redacted TEXT NOT NULL DEFAULT '',
 	line_number    INTEGER NOT NULL DEFAULT 0,
-	scanned_at     TEXT NOT NULL DEFAULT ''
+	scanned_at     TEXT NOT NULL DEFAULT '',
+	ignored        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_scan_findings_rule ON scan_findings(rule_id);
 CREATE INDEX IF NOT EXISTS idx_scan_findings_type ON scan_findings(source_type);
@@ -209,6 +210,7 @@ var migrations = []func(tx *sqlx.Tx) error{
 	migrateV4ToV5,
 	migrateV5ToV6,
 	migrateV6ToV7,
+	migrateV7ToV8,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -252,6 +254,18 @@ func migrateV4ToV5(tx *sqlx.Tx) error {
 	}
 
 	return nil
+}
+
+// migrateV7ToV8 adds the ignored column to scan_findings.
+func migrateV7ToV8(tx *sqlx.Tx) error {
+	// Column may already exist if the table was created with the full initial schema
+	var hasCol int
+	err := tx.Get(&hasCol, `SELECT COUNT(*) FROM pragma_table_info('scan_findings') WHERE name = 'ignored'`)
+	if err != nil || hasCol > 0 {
+		return nil
+	}
+	_, err = tx.Exec(`ALTER TABLE scan_findings ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // migrateV6ToV7 adds the scan_findings table for secret scanning.

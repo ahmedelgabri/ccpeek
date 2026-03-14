@@ -1405,10 +1405,14 @@ func (s *Store) CommandCount() (int, error) {
 }
 
 // ListScanFindings returns all scan findings, optionally filtered.
-func (s *Store) ListScanFindings(ruleFilter, typeFilter string) ([]model.ScanFinding, error) {
+// Joins with sessions/projects to populate linking fields for message and command findings.
+func (s *Store) ListScanFindings(ruleFilter, typeFilter string, showIgnored bool) ([]model.ScanFinding, error) {
 	var where []string
 	var args []any
 
+	if !showIgnored {
+		where = append(where, "f.ignored = 0")
+	}
 	if ruleFilter != "" {
 		where = append(where, "f.rule_id = ?")
 		args = append(args, ruleFilter)
@@ -1424,8 +1428,17 @@ func (s *Store) ListScanFindings(ruleFilter, typeFilter string) ([]model.ScanFin
 	}
 
 	query := `SELECT f.id, f.rule_id, f.description, f.source_type, f.source_id,
-		f.match_redacted, f.line_number, f.scanned_at
-		FROM scan_findings f` + whereClause + ` ORDER BY f.rule_id, f.id`
+		f.match_redacted, f.line_number, f.scanned_at, f.ignored,
+		COALESCE(p.dir_name, '') AS project_dir,
+		COALESCE(p.display_name, '') AS project_name,
+		COALESCE(s.session_id, '') AS session_id_text
+		FROM scan_findings f
+		LEFT JOIN sessions s ON (
+			(f.source_type = 'message' AND s.session_id = f.source_id)
+			OR (f.source_type = 'command' AND s.id = (SELECT c.session_id FROM commands c WHERE c.id = CAST(f.source_id AS INTEGER) LIMIT 1))
+		)
+		LEFT JOIN projects p ON s.project_id = p.id` +
+		whereClause + ` ORDER BY f.ignored ASC, f.rule_id, f.id`
 
 	var rows []model.ScanFinding
 	if err := s.db.Select(&rows, query, args...); err != nil {
@@ -1434,14 +1447,14 @@ func (s *Store) ListScanFindings(ruleFilter, typeFilter string) ([]model.ScanFin
 	return rows, nil
 }
 
-// GetScanStats returns aggregate counts for scan findings.
+// GetScanStats returns aggregate counts for scan findings (excluding ignored).
 func (s *Store) GetScanStats() (model.ScanStats, error) {
 	stats := model.ScanStats{
 		FindingsByRule: make(map[string]int),
 		FindingsByType: make(map[string]int),
 	}
 
-	if err := s.db.Get(&stats.TotalFindings, `SELECT COUNT(*) FROM scan_findings`); err != nil {
+	if err := s.db.Get(&stats.TotalFindings, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`); err != nil {
 		return stats, err
 	}
 
@@ -1449,7 +1462,7 @@ func (s *Store) GetScanStats() (model.ScanStats, error) {
 		RuleID string `db:"rule_id"`
 		Count  int    `db:"cnt"`
 	}
-	if err := s.db.Select(&ruleRows, `SELECT rule_id, COUNT(*) AS cnt FROM scan_findings GROUP BY rule_id ORDER BY cnt DESC`); err != nil {
+	if err := s.db.Select(&ruleRows, `SELECT rule_id, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY rule_id ORDER BY cnt DESC`); err != nil {
 		return stats, err
 	}
 	for _, r := range ruleRows {
@@ -1460,7 +1473,7 @@ func (s *Store) GetScanStats() (model.ScanStats, error) {
 		SourceType string `db:"source_type"`
 		Count      int    `db:"cnt"`
 	}
-	if err := s.db.Select(&typeRows, `SELECT source_type, COUNT(*) AS cnt FROM scan_findings GROUP BY source_type ORDER BY cnt DESC`); err != nil {
+	if err := s.db.Select(&typeRows, `SELECT source_type, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY source_type ORDER BY cnt DESC`); err != nil {
 		return stats, err
 	}
 	for _, r := range typeRows {
@@ -1470,14 +1483,14 @@ func (s *Store) GetScanStats() (model.ScanStats, error) {
 	return stats, nil
 }
 
-// ScanFindingCount returns the total number of scan findings.
+// ScanFindingCount returns the total number of non-ignored scan findings.
 func (s *Store) ScanFindingCount() (int, error) {
 	var count int
-	err := s.db.Get(&count, `SELECT COUNT(*) FROM scan_findings`)
+	err := s.db.Get(&count, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`)
 	return count, err
 }
 
-// ScanFindingRules returns distinct rule IDs from scan findings.
+// ScanFindingRules returns distinct rule IDs from non-ignored scan findings.
 func (s *Store) ScanFindingRules() ([]string, error) {
 	var rules []string
 	err := s.db.Select(&rules, `SELECT DISTINCT rule_id FROM scan_findings ORDER BY rule_id`)
@@ -1489,4 +1502,10 @@ func (s *Store) ScanFindingSourceTypes() ([]string, error) {
 	var types []string
 	err := s.db.Select(&types, `SELECT DISTINCT source_type FROM scan_findings ORDER BY source_type`)
 	return types, err
+}
+
+// ToggleScanFindingIgnored toggles the ignored state of a scan finding.
+func (s *Store) ToggleScanFindingIgnored(id int64) error {
+	_, err := s.db.Exec(`UPDATE scan_findings SET ignored = CASE WHEN ignored = 0 THEN 1 ELSE 0 END WHERE id = ?`, id)
+	return err
 }

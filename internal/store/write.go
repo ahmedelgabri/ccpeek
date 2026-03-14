@@ -484,9 +484,10 @@ func (s *Store) RebuildFTS(tx *sqlx.Tx) error {
 	return nil
 }
 
-// ClearScanFindings removes all existing scan findings.
+// ClearScanFindings removes all non-ignored scan findings.
+// Ignored findings are preserved across re-scans.
 func (s *Store) ClearScanFindings() error {
-	_, err := s.db.Exec(`DELETE FROM scan_findings`)
+	_, err := s.db.Exec(`DELETE FROM scan_findings WHERE ignored = 0`)
 	return err
 }
 

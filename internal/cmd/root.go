@@ -101,7 +101,11 @@ func run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
-		fmt.Printf("  Findings: %d\n", len(findings))
+		if len(findings) == 0 {
+			fmt.Printf("  \033[32mNo secrets detected.\033[0m\n")
+		} else {
+			fmt.Printf("  \033[1;33mWARNING\033[0m \033[33m%d potential secret(s) found. Run `ccpeek scan` for details.\033[0m\n", len(findings))
+		}
 	}
 
 	if indexOnly {

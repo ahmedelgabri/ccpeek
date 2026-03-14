@@ -1253,10 +1253,12 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
-	ruleFilter := r.URL.Query().Get("rule")
-	typeFilter := r.URL.Query().Get("type")
+	q := r.URL.Query()
+	ruleFilter := q.Get("rule")
+	typeFilter := q.Get("type")
+	showIgnored := q.Get("show_ignored") == "1"
 
-	findings, err := h.store.ListScanFindings(ruleFilter, typeFilter)
+	findings, err := h.store.ListScanFindings(ruleFilter, typeFilter, showIgnored)
 	if err != nil {
 		http.Error(w, "loading scan findings: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1279,5 +1281,27 @@ func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
 		"Types":       types,
 		"Rule":        ruleFilter,
 		"Type":        typeFilter,
+		"ShowIgnored": showIgnored,
 	})
+}
+
+func (h *handlers) scanToggleIgnore(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.store.ToggleScanFindingIgnored(id); err != nil {
+		http.Error(w, "toggling ignore: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect back to the scan page
+	referer := r.Header.Get("Referer")
+	if referer == "" {
+		referer = "/scan/"
+	}
+	http.Redirect(w, r, referer, http.StatusSeeOther)
 }
