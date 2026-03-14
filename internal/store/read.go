@@ -1490,20 +1490,6 @@ func (s *Store) ScanFindingCount() (int, error) {
 	return count, err
 }
 
-// ScanFindingRules returns distinct rule IDs from non-ignored scan findings.
-func (s *Store) ScanFindingRules() ([]string, error) {
-	var rules []string
-	err := s.db.Select(&rules, `SELECT DISTINCT rule_id FROM scan_findings ORDER BY rule_id`)
-	return rules, err
-}
-
-// ScanFindingSourceTypes returns distinct source types from scan findings.
-func (s *Store) ScanFindingSourceTypes() ([]string, error) {
-	var types []string
-	err := s.db.Select(&types, `SELECT DISTINCT source_type FROM scan_findings ORDER BY source_type`)
-	return types, err
-}
-
 // ToggleScanFindingIgnored toggles the ignored state of a scan finding.
 func (s *Store) ToggleScanFindingIgnored(id int64) error {
 	_, err := s.db.Exec(`UPDATE scan_findings SET ignored = CASE WHEN ignored = 0 THEN 1 ELSE 0 END WHERE id = ?`, id)

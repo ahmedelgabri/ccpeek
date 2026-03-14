@@ -22,17 +22,26 @@
         </h2>
         <div class="space-y-1.5">
           {{ range $rule, $count := .Stats.FindingsByRule }}
-            <div class="flex items-center justify-between text-xs">
-              <a
-                href="/scan/?rule={{ $rule }}"
-                class="text-slate-300 hover:text-slate-100 transition-colors truncate"
-                >{{ $rule }}</a
-              >
+            <a
+              href="/scan/?rule={{ $rule }}{{ if $.ShowIgnored }}
+                &show_ignored=1
+              {{ end }}"
+              class="flex items-center justify-between text-xs rounded-md px-2 py-1 -mx-2 transition-colors no-underline {{ if eq $.Rule $rule }}
+                bg-red-500/10 text-red-400
+              {{ else }}
+                text-slate-300 hover:text-slate-100 hover:bg-white/[0.04]
+              {{ end }}"
+            >
+              <span class="truncate">{{ $rule }}</span>
               <span
-                class="text-slate-500 tabular-nums font-medium shrink-0 ml-3"
+                class="tabular-nums font-medium shrink-0 ml-3 {{ if eq $.Rule $rule }}
+                  text-red-400/60
+                {{ else }}
+                  text-slate-500
+                {{ end }}"
                 >{{ $count }}</span
               >
-            </div>
+            </a>
           {{ end }}
         </div>
       </div>
@@ -44,72 +53,95 @@
         </h2>
         <div class="space-y-1.5">
           {{ range $type, $count := .Stats.FindingsByType }}
-            <div class="flex items-center justify-between text-xs">
-              <a
-                href="/scan/?type={{ $type }}"
-                class="text-slate-300 hover:text-slate-100 transition-colors truncate"
-                >{{ $type }}</a
-              >
+            <a
+              href="/scan/?type={{ $type }}{{ if $.ShowIgnored }}
+                &show_ignored=1
+              {{ end }}"
+              class="flex items-center justify-between text-xs rounded-md px-2 py-1 -mx-2 transition-colors no-underline {{ if eq $.Type $type }}
+                bg-sky-500/10 text-sky-400
+              {{ else }}
+                text-slate-300 hover:text-slate-100 hover:bg-white/[0.04]
+              {{ end }}"
+            >
+              <span class="truncate">{{ $type }}</span>
               <span
-                class="text-slate-500 tabular-nums font-medium shrink-0 ml-3"
+                class="tabular-nums font-medium shrink-0 ml-3 {{ if eq $.Type $type }}
+                  text-sky-400/60
+                {{ else }}
+                  text-slate-500
+                {{ end }}"
                 >{{ $count }}</span
               >
-            </div>
+            </a>
           {{ end }}
         </div>
       </div>
     </div>
 
-    <form
-      method="get"
-      action="/scan/"
-      class="flex flex-wrap items-center gap-2 mb-4"
-    >
-      <select
-        name="rule"
-        class="px-2.5 py-1.5 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer transition-colors"
-        onchange="this.form.submit()"
-      >
-        <option value="">All rules</option>
-        {{ range .Rules }}
-          <option value="{{ . }}" {{ if eq $.Rule . }}selected{{ end }}>
-            {{ . }}
-          </option>
+    <div class="flex flex-wrap items-center gap-2 mb-4">
+      {{ if or .Rule .Type }}
+        <span class="text-[10px] text-slate-600 mr-1">Filtering:</span>
+        {{ if .Rule }}
+          <a
+            href="/scan/?{{ if .Type }}
+              type={{ .Type }}&
+            {{ end }}{{ if .ShowIgnored }}show_ignored=1{{ end }}"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors no-underline"
+          >
+            {{ .Rule }}
+            <svg
+              class="w-3 h-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
+            </svg>
+          </a>
         {{ end }}
-      </select>
-      <select
-        name="type"
-        class="px-2.5 py-1.5 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer transition-colors"
-        onchange="this.form.submit()"
-      >
-        <option value="">All sources</option>
-        {{ range .Types }}
-          <option value="{{ . }}" {{ if eq $.Type . }}selected{{ end }}>
-            {{ . }}
-          </option>
+        {{ if .Type }}
+          <a
+            href="/scan/?{{ if .Rule }}
+              rule={{ .Rule }}&
+            {{ end }}{{ if .ShowIgnored }}show_ignored=1{{ end }}"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 transition-colors no-underline"
+          >
+            {{ .Type }}
+            <svg
+              class="w-3 h-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
+            </svg>
+          </a>
         {{ end }}
-      </select>
+      {{ end }}
       <label
-        class="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none"
+        class="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none {{ if or .Rule .Type }}
+          ml-auto
+        {{ end }}"
       >
         <input
           type="checkbox"
-          name="show_ignored"
-          value="1"
+          onchange="var u=new URL(location);if(this.checked){u.searchParams.set('show_ignored','1')}else{u.searchParams.delete('show_ignored')};location=u"
           {{ if .ShowIgnored }}checked{{ end }}
-          onchange="this.form.submit()"
           class="accent-slate-500"
         />
         Show ignored
       </label>
-      {{ if or .Rule .Type .ShowIgnored }}
-        <a
-          href="/scan/"
-          class="px-2.5 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-300 transition-colors"
-          >Clear filters</a
-        >
-      {{ end }}
-    </form>
+    </div>
 
     <div class="space-y-2">
       {{ range .Findings }}

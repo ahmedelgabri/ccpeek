@@ -1269,16 +1269,11 @@ func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
 		log.Printf("scanList: GetScanStats failed: %v", err)
 	}
 
-	rules, _ := h.store.ScanFindingRules()
-	types, _ := h.store.ScanFindingSourceTypes()
-
 	renderTemplate(w, h.tmpl, "scan_list.html", map[string]any{
 		"Title":       "Secret Scan",
 		"CurrentPath": "/scan/",
 		"Findings":    findings,
 		"Stats":       stats,
-		"Rules":       rules,
-		"Types":       types,
 		"Rule":        ruleFilter,
 		"Type":        typeFilter,
 		"ShowIgnored": showIgnored,
