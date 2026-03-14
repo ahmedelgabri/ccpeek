@@ -283,6 +283,28 @@ func parseTimestampUnix(ts string) int64 {
 	return 0
 }
 
+// ScanFinding represents a secret or sensitive value detected during scanning.
+type ScanFinding struct {
+	ID             int64  `json:"id" db:"id"`
+	RuleID         string `json:"ruleId" db:"rule_id"`
+	Description    string `json:"description" db:"description"`
+	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, snapshot, paste_cache, memory
+	SourceID       string `json:"sourceId" db:"source_id"`     // identifies the record within source_type
+	MatchRedacted  string `json:"matchRedacted" db:"match_redacted"`
+	Line           int    `json:"line" db:"line_number"`
+	ScannedAt      string `json:"scannedAt" db:"scanned_at"`
+	ProjectDirName string `json:"projectDirName,omitempty" db:"project_dir"`
+	ProjectDisplay string `json:"projectDisplay,omitempty" db:"project_name"`
+	SessionID      string `json:"sessionId,omitempty" db:"session_id_text"`
+}
+
+// ScanStats holds aggregate counts for the scan results page.
+type ScanStats struct {
+	TotalFindings  int            `json:"totalFindings"`
+	FindingsByRule map[string]int `json:"findingsByRule"`
+	FindingsByType map[string]int `json:"findingsByType"`
+}
+
 // RawJSONLLine is the shape of raw lines from Claude's conversation JSONL files.
 type RawJSONLLine struct {
 	Type      string          `json:"type"`

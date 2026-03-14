@@ -47,7 +47,7 @@ func TestDashboard(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Commands", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Memories", "Recent Conversations"}
+	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Commands", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Memories", "Secret Scan", "Recent Conversations"}
 	for _, s := range assertions {
 		if !strings.Contains(body, s) {
 			t.Errorf("dashboard missing %q", s)
@@ -1171,6 +1171,26 @@ func TestCommandsExportFish(t *testing.T) {
 	}
 	if !strings.Contains(body, "when:") {
 		t.Error("fish export missing timestamp")
+	}
+}
+
+func TestScanList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/scan/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Secret Scan") {
+		t.Error("scan page missing title")
+	}
+	// Should show gitleaks attribution
+	if !strings.Contains(body, "gitleaks") {
+		t.Error("scan page missing gitleaks attribution")
 	}
 }
 

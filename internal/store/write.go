@@ -484,6 +484,22 @@ func (s *Store) RebuildFTS(tx *sqlx.Tx) error {
 	return nil
 }
 
+// ClearScanFindings removes all existing scan findings.
+func (s *Store) ClearScanFindings() error {
+	_, err := s.db.Exec(`DELETE FROM scan_findings`)
+	return err
+}
+
+// InsertScanFinding inserts a single scan finding.
+func (s *Store) InsertScanFinding(tx *sqlx.Tx, f model.ScanFinding) error {
+	_, err := tx.Exec(
+		`INSERT INTO scan_findings (rule_id, description, source_type, source_id, match_redacted, line_number, scanned_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		f.RuleID, f.Description, f.SourceType, f.SourceID, f.MatchRedacted, f.Line, f.ScannedAt,
+	)
+	return err
+}
+
 // RepopulateFTS fills the FTS table from all existing messages.
 // Must be called after RebuildFTS.
 func (s *Store) RepopulateFTS(tx *sqlx.Tx) error {

@@ -54,7 +54,7 @@ func (s *Store) Reset() error {
 		"file_versions", "file_history",
 		"task_items", "task_groups", "usage_facets", "usage_report", "paste_cache",
 		"memories", "sessions", "projects",
-		"plans", "shell_snapshots", "history", "source_files", "meta",
+		"plans", "shell_snapshots", "history", "scan_findings", "source_files", "meta",
 	}
 	for _, t := range tables {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + t); err != nil {

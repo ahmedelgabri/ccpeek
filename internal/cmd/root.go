@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
+	"github.com/ahmedelgabri/ccpeek/internal/scan"
 	"github.com/ahmedelgabri/ccpeek/internal/server"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/spf13/cobra"
@@ -40,6 +41,7 @@ func init() {
 	rootCmd.Flags().Bool("watch", false, "Re-index periodically while serving")
 	rootCmd.Flags().Bool("rebuild", false, "Force full rebuild (drop all data and re-index from scratch)")
 	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
+	rootCmd.Flags().Bool("skip-scan", false, "Skip secret scanning after indexing")
 }
 
 func Execute() {
@@ -59,6 +61,7 @@ func run(cmd *cobra.Command, args []string) error {
 	watch, _ := cmd.Flags().GetBool("watch")
 	rebuild, _ := cmd.Flags().GetBool("rebuild")
 	prune, _ := cmd.Flags().GetBool("prune")
+	skipScan, _ := cmd.Flags().GetBool("skip-scan")
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
@@ -86,6 +89,19 @@ func run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("pruning failed: %w", err)
 		}
 		fmt.Println("Pruning complete.")
+	}
+
+	if !skipScan {
+		fmt.Println("Scanning for secrets...")
+		scanner, err := scan.New(db)
+		if err != nil {
+			return fmt.Errorf("initializing scanner: %w", err)
+		}
+		findings, err := scanner.Run()
+		if err != nil {
+			return fmt.Errorf("scan failed: %w", err)
+		}
+		fmt.Printf("  Findings: %d\n", len(findings))
 	}
 
 	if indexOnly {

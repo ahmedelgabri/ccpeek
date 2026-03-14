@@ -6,7 +6,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -183,6 +183,19 @@ CREATE TABLE IF NOT EXISTS commands (
 CREATE INDEX IF NOT EXISTS idx_commands_session ON commands(session_id, seq);
 CREATE INDEX IF NOT EXISTS idx_commands_ts ON commands(timestamp DESC);
 
+CREATE TABLE IF NOT EXISTS scan_findings (
+	id             INTEGER PRIMARY KEY,
+	rule_id        TEXT NOT NULL DEFAULT '',
+	description    TEXT NOT NULL DEFAULT '',
+	source_type    TEXT NOT NULL DEFAULT '',
+	source_id      TEXT NOT NULL DEFAULT '',
+	match_redacted TEXT NOT NULL DEFAULT '',
+	line_number    INTEGER NOT NULL DEFAULT 0,
+	scanned_at     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scan_findings_rule ON scan_findings(rule_id);
+CREATE INDEX IF NOT EXISTS idx_scan_findings_type ON scan_findings(source_type);
+
 CREATE TABLE IF NOT EXISTS source_files (
 	path         TEXT PRIMARY KEY,
 	content_hash TEXT NOT NULL DEFAULT '',
@@ -195,6 +208,7 @@ CREATE TABLE IF NOT EXISTS source_files (
 var migrations = []func(tx *sqlx.Tx) error{
 	migrateV4ToV5,
 	migrateV5ToV6,
+	migrateV6ToV7,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -237,6 +251,30 @@ func migrateV4ToV5(tx *sqlx.Tx) error {
 		}
 	}
 
+	return nil
+}
+
+// migrateV6ToV7 adds the scan_findings table for secret scanning.
+func migrateV6ToV7(tx *sqlx.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS scan_findings (
+			id             INTEGER PRIMARY KEY,
+			rule_id        TEXT NOT NULL DEFAULT '',
+			description    TEXT NOT NULL DEFAULT '',
+			source_type    TEXT NOT NULL DEFAULT '',
+			source_id      TEXT NOT NULL DEFAULT '',
+			match_redacted TEXT NOT NULL DEFAULT '',
+			line_number    INTEGER NOT NULL DEFAULT 0,
+			scanned_at     TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scan_findings_rule ON scan_findings(rule_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_scan_findings_type ON scan_findings(source_type)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("creating scan_findings table: %w", err)
+		}
+	}
 	return nil
 }
 

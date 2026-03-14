@@ -13,17 +13,18 @@ import (
 
 // Stats holds aggregate counts for the dashboard.
 type Stats struct {
-	ProjectCount    int `db:"projectcount"`
-	SessionCount    int `db:"sessioncount"`
-	PlanCount       int `db:"plancount"`
-	SnapshotCount   int `db:"snapshotcount"`
-	TodoCount       int `db:"todocount"`
-	FileHistCount   int `db:"filehistcount"`
-	TaskGroupCount  int `db:"taskgroupcount"`
-	PasteCacheCount int `db:"pastecachecount"`
-	UsageFacetCount int `db:"usagefacetcount"`
-	MemoryCount     int `db:"memorycount"`
-	CommandCount    int `db:"commandcount"`
+	ProjectCount     int `db:"projectcount"`
+	SessionCount     int `db:"sessioncount"`
+	PlanCount        int `db:"plancount"`
+	SnapshotCount    int `db:"snapshotcount"`
+	TodoCount        int `db:"todocount"`
+	FileHistCount    int `db:"filehistcount"`
+	TaskGroupCount   int `db:"taskgroupcount"`
+	PasteCacheCount  int `db:"pastecachecount"`
+	UsageFacetCount  int `db:"usagefacetcount"`
+	MemoryCount      int `db:"memorycount"`
+	CommandCount     int `db:"commandcount"`
+	ScanFindingCount int `db:"scanfindingcount"`
 }
 
 // GetStats returns aggregate counts for the dashboard using a single query.
@@ -41,7 +42,8 @@ func (s *Store) GetStats() (Stats, error) {
 			(SELECT COUNT(*) FROM paste_cache) AS pastecachecount,
 			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount,
 			(SELECT COUNT(*) FROM memories) AS memorycount,
-			(SELECT COUNT(*) FROM commands) AS commandcount`)
+			(SELECT COUNT(*) FROM commands) AS commandcount,
+			(SELECT COUNT(*) FROM scan_findings) AS scanfindingcount`)
 	return st, err
 }
 
@@ -1400,4 +1402,91 @@ func (s *Store) CommandCount() (int, error) {
 	var count int
 	err := s.db.Get(&count, `SELECT COUNT(*) FROM commands`)
 	return count, err
+}
+
+// ListScanFindings returns all scan findings, optionally filtered.
+func (s *Store) ListScanFindings(ruleFilter, typeFilter string) ([]model.ScanFinding, error) {
+	var where []string
+	var args []any
+
+	if ruleFilter != "" {
+		where = append(where, "f.rule_id = ?")
+		args = append(args, ruleFilter)
+	}
+	if typeFilter != "" {
+		where = append(where, "f.source_type = ?")
+		args = append(args, typeFilter)
+	}
+
+	whereClause := ""
+	if len(where) > 0 {
+		whereClause = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	query := `SELECT f.id, f.rule_id, f.description, f.source_type, f.source_id,
+		f.match_redacted, f.line_number, f.scanned_at
+		FROM scan_findings f` + whereClause + ` ORDER BY f.rule_id, f.id`
+
+	var rows []model.ScanFinding
+	if err := s.db.Select(&rows, query, args...); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// GetScanStats returns aggregate counts for scan findings.
+func (s *Store) GetScanStats() (model.ScanStats, error) {
+	stats := model.ScanStats{
+		FindingsByRule: make(map[string]int),
+		FindingsByType: make(map[string]int),
+	}
+
+	if err := s.db.Get(&stats.TotalFindings, `SELECT COUNT(*) FROM scan_findings`); err != nil {
+		return stats, err
+	}
+
+	var ruleRows []struct {
+		RuleID string `db:"rule_id"`
+		Count  int    `db:"cnt"`
+	}
+	if err := s.db.Select(&ruleRows, `SELECT rule_id, COUNT(*) AS cnt FROM scan_findings GROUP BY rule_id ORDER BY cnt DESC`); err != nil {
+		return stats, err
+	}
+	for _, r := range ruleRows {
+		stats.FindingsByRule[r.RuleID] = r.Count
+	}
+
+	var typeRows []struct {
+		SourceType string `db:"source_type"`
+		Count      int    `db:"cnt"`
+	}
+	if err := s.db.Select(&typeRows, `SELECT source_type, COUNT(*) AS cnt FROM scan_findings GROUP BY source_type ORDER BY cnt DESC`); err != nil {
+		return stats, err
+	}
+	for _, r := range typeRows {
+		stats.FindingsByType[r.SourceType] = r.Count
+	}
+
+	return stats, nil
+}
+
+// ScanFindingCount returns the total number of scan findings.
+func (s *Store) ScanFindingCount() (int, error) {
+	var count int
+	err := s.db.Get(&count, `SELECT COUNT(*) FROM scan_findings`)
+	return count, err
+}
+
+// ScanFindingRules returns distinct rule IDs from scan findings.
+func (s *Store) ScanFindingRules() ([]string, error) {
+	var rules []string
+	err := s.db.Select(&rules, `SELECT DISTINCT rule_id FROM scan_findings ORDER BY rule_id`)
+	return rules, err
+}
+
+// ScanFindingSourceTypes returns distinct source types from scan findings.
+func (s *Store) ScanFindingSourceTypes() ([]string, error) {
+	var types []string
+	err := s.db.Select(&types, `SELECT DISTINCT source_type FROM scan_findings ORDER BY source_type`)
+	return types, err
 }

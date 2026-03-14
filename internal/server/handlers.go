@@ -67,6 +67,7 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 			"UsageFacets":    make([]any, stats.UsageFacetCount),
 			"Memories":       make([]any, stats.MemoryCount),
 			"Commands":       make([]any, stats.CommandCount),
+			"ScanFindings":   make([]any, stats.ScanFindingCount),
 		},
 		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
@@ -1248,5 +1249,35 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 		"DiffTokens":   percentDiff(sessionA.EstimatedTokens, sessionB.EstimatedTokens),
 		"DiffCommands": percentDiff(sessionA.BashCommandCount, sessionB.BashCommandCount),
 		"DiffTools":    percentDiff(totalToolsA, totalToolsB),
+	})
+}
+
+func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
+	ruleFilter := r.URL.Query().Get("rule")
+	typeFilter := r.URL.Query().Get("type")
+
+	findings, err := h.store.ListScanFindings(ruleFilter, typeFilter)
+	if err != nil {
+		http.Error(w, "loading scan findings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stats, err := h.store.GetScanStats()
+	if err != nil {
+		log.Printf("scanList: GetScanStats failed: %v", err)
+	}
+
+	rules, _ := h.store.ScanFindingRules()
+	types, _ := h.store.ScanFindingSourceTypes()
+
+	renderTemplate(w, h.tmpl, "scan_list.html", map[string]any{
+		"Title":       "Secret Scan",
+		"CurrentPath": "/scan/",
+		"Findings":    findings,
+		"Stats":       stats,
+		"Rules":       rules,
+		"Types":       types,
+		"Rule":        ruleFilter,
+		"Type":        typeFilter,
 	})
 }
