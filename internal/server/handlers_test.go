@@ -1628,6 +1628,187 @@ func TestScanDashboardCountExcludesIgnored(t *testing.T) {
 	}
 }
 
+func TestSearchTextFragments(t *testing.T) {
+	handler := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/search/?q=hello", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, ":~:text=hello") {
+		t.Error("search results missing Text Fragment directive (:~:text=hello)")
+	}
+	// Text fragment should be combined with element anchor
+	if !strings.Contains(body, "#msg-") || !strings.Contains(body, ":~:text=") {
+		t.Error("search results should combine element anchor with text fragment")
+	}
+}
+
+func TestSearchTextFragmentsMultiWord(t *testing.T) {
+	handler := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/search/?q=Fix+the+bug", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	// URL-encoded spaces: "Fix the bug" → "Fix+the+bug" or "Fix&#43;the&#43;bug" after HTML escaping
+	if !strings.Contains(body, ":~:text=Fix") {
+		t.Error("multi-word search missing text fragment directive")
+	}
+	if !strings.Contains(body, "Todos") {
+		t.Error("multi-word search for 'Fix the bug' should match Todos")
+	}
+}
+
+func TestClickableTimestampMessages(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	// Timestamps should be <a> tags linking to their own anchor
+	if !strings.Contains(body, `href="#msg-`) {
+		t.Error("message timestamps should be clickable self-anchor links")
+	}
+}
+
+func TestClickableTimestampCommands(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/commands/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `href="#cmd-`) {
+		t.Error("command timestamps should be clickable self-anchor links")
+	}
+}
+
+func TestClickableTimestampTools(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/tools/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `href="#tool-`) {
+		t.Error("tool call timestamps should be clickable self-anchor links")
+	}
+}
+
+func TestClickableTimestampSessionsList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `href="#s-`) {
+		t.Error("session list timestamps should be clickable self-anchor links")
+	}
+}
+
+func TestCommandsListDeepLinks(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	// Timestamp links should point to session commands tab with anchor
+	if !strings.Contains(body, "/commands/#cmd-") {
+		t.Error("commands list timestamps should deep-link to session commands tab")
+	}
+	// Project badge should link to sessions list with session anchor
+	if !strings.Contains(body, "/#s-") {
+		t.Error("commands list project badge should deep-link to session in sessions list")
+	}
+}
+
+func TestUrlForInTemplates(t *testing.T) {
+	handler := setupTestServer(t)
+
+	// Conversation page back-link should use urlFor "session-anchor"
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body := w.Body.String()
+
+	// Back-link should go to sessions list with session anchor
+	if !strings.Contains(body, "/projects/test-project/#s-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
+		t.Error("conversation back-link should use session-anchor URL")
+	}
+	// Export link should use urlFor "session-export"
+	if !strings.Contains(body, "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/export.md") {
+		t.Error("conversation export link missing")
+	}
+}
+
+func TestUrlForSessionTabs(t *testing.T) {
+	handler := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/commands/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	body := w.Body.String()
+
+	// Session tabs should use urlFor-generated URLs (no trailing double slashes, etc.)
+	for _, tab := range []string{"todos", "commands", "tools", "code"} {
+		expected := fmt.Sprintf("/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/%s/", tab)
+		if !strings.Contains(body, expected) {
+			t.Errorf("session tabs missing %s tab URL", tab)
+		}
+	}
+}
+
+func TestIdAttributesPresent(t *testing.T) {
+	handler := setupTestServer(t)
+
+	tests := []struct {
+		path     string
+		idPrefix string
+		desc     string
+	}{
+		{"/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/", `id="msg-`, "conversation messages"},
+		{"/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/commands/", `id="cmd-`, "conversation commands"},
+		{"/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/tools/", `id="tool-`, "conversation tools"},
+		{"/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/code/", `id="code-`, "conversation code"},
+		{"/projects/test-project/", `id="s-`, "sessions list"},
+		{"/todos/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-agent-11111111-2222-3333-4444-555555555555/", `id="item-`, "todo items"},
+		{"/tasks/33333333-aaaa-bbbb-cccc-333333333333/", `id="task-`, "task items"},
+	}
+
+	for _, tt := range tests {
+		req := httptest.NewRequest("GET", tt.path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Errorf("GET %s: expected 200, got %d", tt.path, w.Code)
+			continue
+		}
+		if !strings.Contains(w.Body.String(), tt.idPrefix) {
+			t.Errorf("GET %s: %s missing %s id attributes", tt.path, tt.desc, tt.idPrefix)
+		}
+	}
+}
+
+func TestCSSTargetHighlight(t *testing.T) {
+	handler := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/static/style.css", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, ":target") {
+		t.Error("CSS missing :target pseudo-class for deep-link highlighting")
+	}
+}
+
 func TestStaticFiles(t *testing.T) {
 	handler := setupTestServer(t)
 

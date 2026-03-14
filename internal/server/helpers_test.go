@@ -224,6 +224,45 @@ func TestToAnchor(t *testing.T) {
 	}
 }
 
+func TestUrlFor(t *testing.T) {
+	tests := []struct {
+		kind string
+		args []string
+		want string
+	}{
+		{"project", []string{"my-project"}, "/projects/my-project/"},
+		{"session", []string{"my-project", "sess-123"}, "/projects/my-project/sess-123/"},
+		{"session-anchor", []string{"my-project", "sess-123"}, "/projects/my-project/#s-sess-123"},
+		{"session-tab", []string{"my-project", "sess-123", "commands"}, "/projects/my-project/sess-123/commands/"},
+		{"session-tab", []string{"my-project", "sess-123", "todos"}, "/projects/my-project/sess-123/todos/"},
+		{"session-tab", []string{"my-project", "sess-123", "tools"}, "/projects/my-project/sess-123/tools/"},
+		{"session-tab", []string{"my-project", "sess-123", "code"}, "/projects/my-project/sess-123/code/"},
+		{"session-tab", []string{"my-project", "sess-123", "file-history"}, "/projects/my-project/sess-123/file-history/"},
+		{"session-export", []string{"my-project", "sess-123"}, "/projects/my-project/sess-123/export.md"},
+		{"plan", []string{"my-plan.md"}, "/plans/my-plan/"},
+		{"plan", []string{"no-ext"}, "/plans/no-ext/"},
+		{"snapshot", []string{"snapshot-zsh-123.sh"}, "/shell-snapshots/snapshot-zsh-123/"},
+		{"snapshot", []string{"no-ext"}, "/shell-snapshots/no-ext/"},
+		{"todo", []string{"abc-123.json"}, "/todos/abc-123/"},
+		{"todo", []string{"no-ext"}, "/todos/no-ext/"},
+		{"task", []string{"task-group-1"}, "/tasks/task-group-1/"},
+		{"paste", []string{"clip.txt"}, "/paste-cache/clip/"},
+		{"paste", []string{"no-ext"}, "/paste-cache/no-ext/"},
+		{"memory", []string{"-Users-demo-proj"}, "/memories/-Users-demo-proj/"},
+		{"file-history", []string{"conv-id-123"}, "/file-history/conv-id-123/"},
+		{"usage", []string{"sess-456"}, "/usage-data/sess-456/"},
+		{"command-anchor", []string{"proj", "sess", "2024-01-15T10:00:00Z"}, "/projects/proj/sess/commands/#cmd-2024-01-15T10-00-00Z"},
+		{"unknown-type", []string{}, "/"},
+	}
+
+	for _, tt := range tests {
+		got := urlFor(tt.kind, tt.args...)
+		if got != tt.want {
+			t.Errorf("urlFor(%q, %v) = %q, want %q", tt.kind, tt.args, got, tt.want)
+		}
+	}
+}
+
 func TestStatusColor(t *testing.T) {
 	tests := []struct {
 		input string

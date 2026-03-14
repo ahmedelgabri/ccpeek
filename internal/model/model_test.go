@@ -124,6 +124,124 @@ func TestFormatCommands(t *testing.T) {
 	})
 }
 
+func TestSplitSourceID(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantSess string
+		wantTS   string
+	}{
+		{"sess-123@2024-01-15T10:00:00Z", "sess-123", "2024-01-15T10:00:00Z"},
+		{"sess-123", "sess-123", ""},
+		{"", "", ""},
+		{"a@b@c", "a@b", "c"},
+	}
+
+	for _, tt := range tests {
+		sess, ts := splitSourceID(tt.input)
+		if sess != tt.wantSess || ts != tt.wantTS {
+			t.Errorf("splitSourceID(%q) = (%q, %q), want (%q, %q)",
+				tt.input, sess, ts, tt.wantSess, tt.wantTS)
+		}
+	}
+}
+
+func TestAnchorize(t *testing.T) {
+	tests := []struct {
+		prefix string
+		value  string
+		want   string
+	}{
+		{"msg", "2024-01-15T10:30:00.123Z", "msg-2024-01-15T10-30-00-123Z"},
+		{"cmd", "2024-01-15T10:30:00Z", "cmd-2024-01-15T10-30-00Z"},
+		{"s", "aaaaaaaa-bbbb", "s-aaaaaaaa-bbbb"},
+	}
+
+	for _, tt := range tests {
+		got := anchorize(tt.prefix, tt.value)
+		if got != tt.want {
+			t.Errorf("anchorize(%q, %q) = %q, want %q", tt.prefix, tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestSourceURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		finding ScanFinding
+		want    string
+	}{
+		{
+			"message with timestamp",
+			ScanFinding{SourceType: "message", SourceID: "sess-123@2024-01-15T10:00:00Z", ProjectDirName: "proj"},
+			"/projects/proj/sess-123/#msg-2024-01-15T10-00-00Z",
+		},
+		{
+			"message without timestamp",
+			ScanFinding{SourceType: "message", SourceID: "sess-123", ProjectDirName: "proj"},
+			"/projects/proj/sess-123/",
+		},
+		{
+			"message missing project",
+			ScanFinding{SourceType: "message", SourceID: "sess-123"},
+			"",
+		},
+		{
+			"command with timestamp",
+			ScanFinding{SourceType: "command", SourceID: "sess-123@2024-01-15T10:00:00Z", ProjectDirName: "proj"},
+			"/projects/proj/sess-123/commands/#cmd-2024-01-15T10-00-00Z",
+		},
+		{
+			"command without timestamp (old format, SourceID used as sessionID)",
+			ScanFinding{SourceType: "command", SourceID: "42", ProjectDirName: "proj", SessionID: "sess-456"},
+			"/projects/proj/42/commands/",
+		},
+		{
+			"command without timestamp or project (fallback to SessionID)",
+			ScanFinding{SourceType: "command", SourceID: "42", SessionID: "sess-456"},
+			"",
+		},
+		{
+			"plan with extension",
+			ScanFinding{SourceType: "plan", SourceID: "my-plan.md"},
+			"/plans/my-plan/",
+		},
+		{
+			"plan without extension",
+			ScanFinding{SourceType: "plan", SourceID: "my-plan"},
+			"/plans/my-plan/",
+		},
+		{
+			"shell_snapshot",
+			ScanFinding{SourceType: "shell_snapshot", SourceID: "snap.sh"},
+			"/shell-snapshots/snap/",
+		},
+		{
+			"paste_cache",
+			ScanFinding{SourceType: "paste_cache", SourceID: "clip.txt"},
+			"/paste-cache/clip/",
+		},
+		{
+			"memory",
+			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj"},
+			"/memories/-Users-demo-proj/",
+		},
+		{
+			"unknown type",
+			ScanFinding{SourceType: "unknown"},
+			"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.finding.SourceURL()
+			if got != tt.want {
+				t.Errorf("SourceURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func truncStr(s string, n int) string {
 	if len(s) <= n {
 		return s
