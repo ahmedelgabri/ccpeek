@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -771,6 +772,14 @@ func (s *Store) SearchAll(query string, perTypeLimit int) ([]SearchGroup, error)
 		groups = append(groups, SearchGroup{Type: "Usage Data", Color: "fuchsia", Hits: hits})
 	}
 
+	// Append Text Fragment directives to all URLs so browsers highlight
+	// the matched text on the target page.
+	for i := range groups {
+		for j := range groups[i].Hits {
+			groups[i].Hits[j].URL = withTextFragment(groups[i].Hits[j].URL, query)
+		}
+	}
+
 	return groups, nil
 }
 
@@ -1110,6 +1119,17 @@ func (s *Store) searchUsageData(query string, limit int) ([]SearchHit, error) {
 func anchor(prefix, value string) string {
 	safe := strings.NewReplacer(":", "-", ".", "-").Replace(value)
 	return "#" + prefix + "-" + safe
+}
+
+// withTextFragment appends a Text Fragment directive (:~:text=) to a URL.
+// If the URL already has a # fragment, the directive is appended after it.
+// See https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments
+func withTextFragment(rawURL, query string) string {
+	encoded := url.QueryEscape(query)
+	if strings.Contains(rawURL, "#") {
+		return rawURL + ":~:text=" + encoded
+	}
+	return rawURL + "#:~:text=" + encoded
 }
 
 // likeSnippet extracts a snippet from text centered around the first

@@ -160,9 +160,7 @@
               >{{ .ProjectDisplay }}</a
             >
             <a
-              href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/commands/{{ if .Timestamp }}
-                #{{ toAnchor "cmd" .Timestamp }}
-              {{ end }}"
+              href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/commands/#{{ toAnchor "cmd" .Timestamp }}"
               class="text-slate-600 whitespace-nowrap tabular-nums no-underline hover:text-slate-400 transition-colors"
               >{{ formatDate .Timestamp }}</a
             >

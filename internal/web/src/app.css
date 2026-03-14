@@ -134,3 +134,20 @@
 	font-size: 0.75rem;
 	margin: 0.75em 0;
 }
+
+/* Highlight the targeted element when navigating via #fragment */
+:target {
+	outline: 2px solid rgba(56, 189, 248, 0.4);
+	outline-offset: 2px;
+	border-radius: 0.5rem;
+	animation: target-fade 3s ease-out forwards;
+}
+
+@keyframes target-fade {
+	0% {
+		outline-color: rgba(56, 189, 248, 0.4);
+	}
+	100% {
+		outline-color: transparent;
+	}
+}
