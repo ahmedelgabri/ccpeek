@@ -14,7 +14,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag_exists: ${{ steps.check_tag.outputs.exists }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Get version from flake.nix
@@ -44,16 +44,16 @@ jobs:
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v3
       - name: Install cross-compiler
         if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
@@ -87,7 +87,7 @@ jobs:
             cp -r dist/man "dist/${DIR}/"
             tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-assets-${{ matrix.os }}
           path: dist/ccpeek-*.tar.gz
@@ -97,10 +97,10 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-assets-*
           merge-multiple: true
@@ -166,7 +166,7 @@ jobs:
     needs: [prepare, release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-assets-*
           merge-multiple: true
@@ -177,7 +177,7 @@ jobs:
         run: |
           cd dist
           sha256sum ccpeek-${VERSION}-*.tar.gz > "ccpeek-${VERSION}-checksums.txt"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: ahmedelgabri/homebrew-ccpeek
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
