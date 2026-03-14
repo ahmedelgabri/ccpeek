@@ -1,6 +1,6 @@
 {{ define "content" }}
   <a
-    href="/projects/{{ .Project.DirName }}/"
+    href="/projects/{{ .Project.DirName }}/#{{ toAnchor "s" .Session.SessionID }}"
     class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors"
   >
     <svg

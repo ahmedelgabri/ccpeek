@@ -155,7 +155,7 @@
         >
           <div class="flex items-center gap-3 text-xs min-w-0">
             <a
-              href="/projects/{{ .ProjectDirName }}/"
+              href="/projects/{{ .ProjectDirName }}/#{{ toAnchor "s" .SessionID }}"
               class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 no-underline whitespace-nowrap shrink-0 hover:bg-sky-500/20 transition-colors"
               >{{ .ProjectDisplay }}</a
             >
