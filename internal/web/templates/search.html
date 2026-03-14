@@ -1,104 +1,55 @@
 {{ define "content" }}
   {{ if .Query }}
-    <div class="flex flex-wrap items-center gap-2 mb-4">
+    <div class="flex items-center gap-2 mb-4">
       <span class="text-sm text-slate-500">
-        {{ .ResultCount }}
-        result{{ if ne .ResultCount 1 }}s{{ end }}{{ if .Capped }}
-          (showing first {{ .ResultCount }})
-        {{ end }}
+        {{ .TotalResults }}
+        result{{ if ne .TotalResults 1 }}s{{ end }}
         for "{{ .Query }}"
       </span>
-      <form
-        method="get"
-        action="/search/"
-        class="flex flex-wrap items-center gap-2 ml-auto"
-      >
-        <input type="hidden" name="q" value="{{ .Query }}" />
-        {{ if .Projects }}
-          <select
-            name="project"
-            class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer"
-            onchange="this.form.submit()"
-          >
-            <option value="">All projects</option>
-            {{ range $.Projects }}
-              <option
-                value="{{ .DirName }}"
-                {{ if eq .DirName $.Project }}selected{{ end }}
-              >
-                {{ .DisplayName }}
-              </option>
-            {{ end }}
-          </select>
-        {{ end }}
-        <select
-          name="role"
-          class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer"
-          onchange="this.form.submit()"
-        >
-          <option value="">All roles</option>
-          <option value="user" {{ if eq .Role "user" }}selected{{ end }}>
-            User
-          </option>
-          <option
-            value="assistant"
-            {{ if eq .Role "assistant" }}selected{{ end }}
-          >
-            Assistant
-          </option>
-        </select>
-        <input
-          type="date"
-          name="from"
-          value="{{ .From }}"
-          class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400"
-          onchange="this.form.submit()"
-          title="From date"
-        />
-        <input
-          type="date"
-          name="to"
-          value="{{ .To }}"
-          class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400"
-          onchange="this.form.submit()"
-          title="To date"
-        />
-      </form>
     </div>
 
-    <div
-      class="rounded-xl border border-surface-border overflow-hidden divide-y divide-surface-border"
-    >
-      {{ range .Results }}
-        <a
-          href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/"
-          class="block px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
-        >
-          <div class="flex items-baseline gap-3 mb-1">
-            <span class="text-sm text-slate-200 truncate"
-              >{{ .SessionPrompt }}</span
+    {{ if .Groups }}
+      <div class="space-y-6">
+        {{ range .Groups }}
+          <div>
+            <div class="flex items-center gap-2 mb-3">
+              <span
+                class="text-xs font-medium px-2 py-0.5 rounded-full bg-{{ .Color }}-500/10 text-{{ .Color }}-400"
+                >{{ .Type }}</span
+              >
+              <span class="text-xs text-slate-600"
+                >{{ len .Hits }}
+                result{{ if ne (len .Hits) 1 }}s{{ end }}</span
+              >
+            </div>
+            <div
+              class="rounded-xl border border-surface-border overflow-hidden divide-y divide-surface-border"
             >
-            <span
-              class="text-[10px] font-medium px-2 py-0.5 rounded-full {{ if eq .Role "user" }}
-                bg-sky-500/10 text-sky-400
-              {{ else }}
-                bg-violet-500/10 text-violet-400
-              {{ end }}"
-              >{{ .Role }}</span
-            >
+              {{ range .Hits }}
+                <a
+                  href="{{ .URL }}"
+                  class="block px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
+                >
+                  <div class="text-sm text-slate-200 truncate mb-1">
+                    {{ .Title }}
+                  </div>
+                  {{ if .Snippet }}
+                    <div class="text-sm text-slate-400 leading-relaxed">
+                      {{ .Snippet | highlightSnippet }}
+                    </div>
+                  {{ end }}
+                  {{ if .Subtitle }}
+                    <div class="text-xs text-slate-600 mt-1.5">
+                      {{ .Subtitle }}
+                    </div>
+                  {{ end }}
+                </a>
+              {{ end }}
+            </div>
           </div>
-          <div class="text-sm text-slate-400 leading-relaxed">
-            {{ .Snippet | highlightSnippet }}
-          </div>
-          <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-600">
-            <span class="font-mono">{{ .ProjectDisplay }}</span>
-            {{ if .Timestamp }}
-              <span>{{ formatDate .Timestamp }}</span>
-            {{ end }}
-          </div>
-        </a>
-      {{ end }}
-    </div>
+        {{ end }}
+      </div>
+    {{ end }}
   {{ end }}
 {{ end }}
 

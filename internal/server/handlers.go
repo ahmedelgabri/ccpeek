@@ -841,63 +841,30 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const maxSearchResults = 100
-
-type searchResult struct {
-	ProjectDirName string
-	ProjectDisplay string
-	SessionID      string
-	SessionPrompt  string
-	Role           string
-	Timestamp      string
-	Snippet        string
-}
+const searchPerTypeLimit = 20
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	query := strings.TrimSpace(q.Get("q"))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	filter := store.SearchFilter{
-		Project: q.Get("project"),
-		Role:    q.Get("role"),
-		From:    q.Get("from"),
-		To:      q.Get("to"),
-	}
-
-	var results []searchResult
+	var groups []store.SearchGroup
+	totalResults := 0
 	if query != "" {
-		storeResults, err := h.store.Search(query, maxSearchResults, filter)
+		var err error
+		groups, err = h.store.SearchAll(query, searchPerTypeLimit)
 		if err != nil {
-			// FTS query syntax error — fall back to no results
-			storeResults = nil
+			groups = nil
 		}
-		for _, sr := range storeResults {
-			results = append(results, searchResult{
-				ProjectDirName: sr.ProjectDirName,
-				ProjectDisplay: sr.ProjectDisplay,
-				SessionID:      sr.SessionID,
-				SessionPrompt:  sr.SessionPrompt,
-				Role:           sr.Role,
-				Timestamp:      sr.Timestamp,
-				Snippet:        sr.Snippet,
-			})
+		for _, g := range groups {
+			totalResults += len(g.Hits)
 		}
 	}
-
-	projects, _ := h.store.ListProjectNames()
 
 	renderTemplate(w, h.tmpl, "search.html", map[string]any{
-		"Title":       "Search",
-		"CurrentPath": "/search/",
-		"Query":       query,
-		"Results":     results,
-		"ResultCount": len(results),
-		"Capped":      len(results) >= maxSearchResults,
-		"Projects":    projects,
-		"Project":     filter.Project,
-		"Role":        filter.Role,
-		"From":        filter.From,
-		"To":          filter.To,
+		"Title":        "Search",
+		"CurrentPath":  "/search/",
+		"Query":        query,
+		"Groups":       groups,
+		"TotalResults": totalResults,
 	})
 }
 

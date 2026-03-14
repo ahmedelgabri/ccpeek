@@ -523,6 +523,7 @@ func TestConversationCommandsNotFound(t *testing.T) {
 func TestSearch(t *testing.T) {
 	handler := setupTestServer(t)
 
+	// Empty search page
 	req := httptest.NewRequest("GET", "/search/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -533,6 +534,7 @@ func TestSearch(t *testing.T) {
 		t.Error("search page missing title")
 	}
 
+	// Search for conversation content
 	req = httptest.NewRequest("GET", "/search/?q=hello", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -549,7 +551,11 @@ func TestSearch(t *testing.T) {
 	if !strings.Contains(body, "<mark") {
 		t.Error("search results missing highlight mark tags")
 	}
+	if !strings.Contains(body, "Conversations") {
+		t.Error("search results missing Conversations group header")
+	}
 
+	// No results
 	req = httptest.NewRequest("GET", "/search/?q=zzzznonexistent", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -558,6 +564,160 @@ func TestSearch(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `for "zzzznonexistent"`) {
 		t.Error("search should echo non-matching query")
+	}
+}
+
+func TestSearchMemories(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=Architecture", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Memories") {
+		t.Error("search for Architecture missing Memories group")
+	}
+	if !strings.Contains(body, "/memories/") {
+		t.Error("search for Architecture missing memory link")
+	}
+}
+
+func TestSearchPlans(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=Step+one", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Plans") {
+		t.Error("search for Step one missing Plans group")
+	}
+	if !strings.Contains(body, "/plans/") {
+		t.Error("search for Step one missing plan link")
+	}
+}
+
+func TestSearchCommands(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=ls", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Commands") {
+		t.Error("search for ls missing Commands group")
+	}
+}
+
+func TestSearchPasteCache(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=clipboard", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Paste Cache") {
+		t.Error("search for clipboard missing Paste Cache group")
+	}
+	if !strings.Contains(body, "/paste-cache/") {
+		t.Error("search for clipboard missing paste cache link")
+	}
+}
+
+func TestSearchTodos(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=Fix+the+bug", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Todos") {
+		t.Error("search for Fix the bug missing Todos group")
+	}
+	if !strings.Contains(body, "/todos/") {
+		t.Error("search for Fix the bug missing todo link")
+	}
+}
+
+func TestSearchTasks(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=project+structure", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Tasks") {
+		t.Error("search for project structure missing Tasks group")
+	}
+	if !strings.Contains(body, "/tasks/") {
+		t.Error("search for project structure missing task link")
+	}
+}
+
+func TestSearchUsageData(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/search/?q=web+dashboard", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Usage Data") {
+		t.Error("search for web dashboard missing Usage Data group")
+	}
+	if !strings.Contains(body, "/usage-data/") {
+		t.Error("search for web dashboard missing usage data link")
+	}
+}
+
+func TestSearchGroupedResults(t *testing.T) {
+	handler := setupTestServer(t)
+	// "test" should match across multiple types
+	req := httptest.NewRequest("GET", "/search/?q=test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	// Should have results from multiple groups
+	groupCount := 0
+	for _, group := range []string{"Conversations", "Plans", "Memories"} {
+		if strings.Contains(body, group) {
+			groupCount++
+		}
+	}
+	if groupCount < 2 {
+		t.Errorf("search for 'test' should match at least 2 groups, got %d", groupCount)
 	}
 }
 
