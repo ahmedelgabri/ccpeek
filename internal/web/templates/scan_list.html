@@ -135,7 +135,7 @@
       >
         <input
           type="checkbox"
-          onchange="var u=new URL(location);if(this.checked){u.searchParams.set('show_ignored','1')}else{u.searchParams.delete('show_ignored')};location.href=u.href"
+          data-scan-show-ignored
           {{ if .ShowIgnored }}checked{{ end }}
           class="accent-slate-500"
         />

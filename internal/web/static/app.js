@@ -7,3 +7,4 @@ import "./heatmap.js";
 import "./keyboard-nav.js";
 import "./token-chart.js";
 import "./tool-timeline.js";
+import "./scan.js";

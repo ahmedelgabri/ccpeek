@@ -1253,6 +1253,8 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+
 	q := r.URL.Query()
 	ruleFilter := q.Get("rule")
 	typeFilter := q.Get("type")

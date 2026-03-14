@@ -43,7 +43,7 @@ func (s *Store) GetStats() (Stats, error) {
 			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount,
 			(SELECT COUNT(*) FROM memories) AS memorycount,
 			(SELECT COUNT(*) FROM commands) AS commandcount,
-			(SELECT COUNT(*) FROM scan_findings) AS scanfindingcount`)
+			(SELECT COUNT(*) FROM scan_findings WHERE ignored = 0) AS scanfindingcount`)
 	return st, err
 }
 
