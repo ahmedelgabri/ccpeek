@@ -13,9 +13,21 @@
           >Prev</span
         >
       {{ end }}
-      <span class="text-sm text-slate-500"
-        >Page {{ .Page }} of {{ .TotalPages }} ({{ .TotalMsgs }} messages)</span
+      <form
+        class="flex items-center gap-1.5"
+        onsubmit="var p=this.querySelector('input').value;if(p>=1&&p<={{ .TotalPages }})location.search='?page='+p;return false;"
       >
+        <span class="text-sm text-slate-500">Page</span>
+        <input
+          type="number"
+          min="1"
+          max="{{ .TotalPages }}"
+          value="{{ .Page }}"
+          class="w-14 px-2 py-1 text-sm text-center bg-surface-card border border-surface-border rounded-md text-slate-200 focus:outline-none focus:border-slate-600 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <span class="text-sm text-slate-500">of {{ .TotalPages }}</span>
+      </form>
+      <span class="text-xs text-slate-600">({{ .TotalMsgs }} messages)</span>
       {{ if .HasNext }}
         <a
           href="?page={{ .NextPage }}"

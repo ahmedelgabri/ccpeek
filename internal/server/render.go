@@ -7,16 +7,34 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/alecthomas/chroma/v2"
+	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
+	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/yuin/goldmark"
+	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
 )
 
-var md goldmark.Markdown
+var (
+	md           goldmark.Markdown
+	chromaStyle  *chroma.Style
+	chromaFmtter *chromahtml.Formatter
+)
 
 func init() {
+	chromaStyle = styles.Get("github-dark")
+	chromaFmtter = chromahtml.New(chromahtml.WithClasses(true))
+
 	md = goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithExtensions(
+			extension.GFM,
+			highlighting.NewHighlighting(
+				highlighting.WithStyle("github-dark"),
+				highlighting.WithFormatOptions(chromahtml.WithClasses(true)),
+			),
+		),
 		// Note: html.WithUnsafe() intentionally omitted to prevent XSS.
 		// Raw HTML in markdown source will be escaped, not rendered.
 	)
@@ -31,7 +49,34 @@ func renderMarkdown(source string) template.HTML {
 }
 
 func wrapCode(code, lang string) template.HTML {
-	return template.HTML(`<pre><code class="language-` + lang + `">` + template.HTMLEscapeString(code) + `</code></pre>`)
+	return highlightCode(code, lang)
+}
+
+// highlightCode renders source code with chroma syntax highlighting.
+func highlightCode(code, lang string) template.HTML {
+	lexer := lexers.Get(lang)
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	lexer = chroma.Coalesce(lexer)
+
+	iterator, err := lexer.Tokenise(nil, code)
+	if err != nil {
+		return template.HTML(`<pre>` + template.HTMLEscapeString(code) + `</pre>`)
+	}
+
+	var buf bytes.Buffer
+	if err := chromaFmtter.Format(&buf, chromaStyle, iterator); err != nil {
+		return template.HTML(`<pre>` + template.HTMLEscapeString(code) + `</pre>`)
+	}
+	return template.HTML(buf.String())
+}
+
+// chromaCSS returns the CSS for the chroma style classes.
+func chromaCSS() template.CSS {
+	var buf bytes.Buffer
+	_ = chromaFmtter.WriteCSS(&buf, chromaStyle)
+	return template.CSS(buf.String())
 }
 
 func renderDiff(a, b string) template.HTML {
@@ -91,6 +136,8 @@ var funcMap = template.FuncMap{
 	"encodeProjectDir": encodeProjectDir,
 	"renderMarkdown":   renderMarkdown,
 	"wrapCode":         wrapCode,
+	"highlightCode":    highlightCode,
+	"chromaCSS":        chromaCSS,
 	"toJSON":           toJSON,
 	"renderDiff":       renderDiff,
 	"formatTokens":     formatTokens,
@@ -102,6 +149,19 @@ var funcMap = template.FuncMap{
 	"trimSuffix":       func(suffix, s string) string { return strings.TrimSuffix(s, suffix) },
 	"sub":              func(a, b int) int { return a - b },
 	"add":              func(a, b int) int { return a + b },
+	"exportCmd": func(host, format, filterQuery string) string {
+		histFile := map[string]string{
+			"zsh":  "~/.zsh_history",
+			"bash": "~/.bash_history",
+			"fish": "~/.local/share/fish/fish_history",
+		}
+		reload := map[string]string{
+			"zsh":  " && fc -R",
+			"bash": " && history -r",
+			"fish": "",
+		}
+		return "curl -s 'http://" + host + "/commands/export?format=" + format + filterQuery + "' >> " + histFile[format] + reload[format]
+	},
 }
 
 // templates holds a pre-parsed template for each page name.
@@ -140,6 +200,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/conversation_commands.html",
 		"templates/conversation_tools.html",
 		"templates/conversation_code.html",
+		"templates/commands_list.html",
 		"templates/search.html",
 		"templates/session_compare.html",
 		"templates/filehistory_list.html",

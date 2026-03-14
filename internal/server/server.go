@@ -70,6 +70,8 @@ func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/tools/{$}", h.conversationTools)
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/code/{$}", h.conversationCode)
 	mux.HandleFunc("GET /projects/{dirName}/{sessionId}/export.md", h.conversationExport)
+	mux.HandleFunc("GET /commands/{$}", h.commandsList)
+	mux.HandleFunc("GET /commands/export", h.commandsExport)
 	mux.HandleFunc("GET /search/{$}", h.search)
 	mux.HandleFunc("GET /file-history/{$}", h.fileHistoryList)
 	mux.HandleFunc("GET /file-history/{conversationId}/{$}", h.fileHistoryDetail)

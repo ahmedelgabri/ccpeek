@@ -1,8 +1,10 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -69,6 +71,57 @@ func TestParseRealConversation(t *testing.T) {
 		t.Logf("msg[%d] type=%s isString=%v blocks=%d text=%q",
 			i, m.Type, m.Message.IsString(), len(m.Message.ContentBlocks()), truncStr(m.Message.ContentText(), 80))
 	}
+}
+
+func TestFormatCommands(t *testing.T) {
+	cmds := []CommandEntry{
+		{Command: "ls -la", Timestamp: "2025-01-15T10:30:00Z"},
+		{Command: "echo hello", Timestamp: "2025-01-15T10:31:00Z"},
+	}
+
+	t.Run("plain", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = FormatCommands(&buf, cmds, "plain")
+		out := buf.String()
+		if !strings.Contains(out, "ls -la\n") {
+			t.Error("plain format missing command")
+		}
+		if strings.Contains(out, ":0;") {
+			t.Error("plain format should not have zsh timestamps")
+		}
+	})
+
+	t.Run("bash", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = FormatCommands(&buf, cmds, "bash")
+		if !strings.Contains(buf.String(), "ls -la\n") {
+			t.Error("bash format missing command")
+		}
+	})
+
+	t.Run("zsh", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = FormatCommands(&buf, cmds, "zsh")
+		out := buf.String()
+		if !strings.Contains(out, ":0;ls -la") {
+			t.Error("zsh format missing command with timestamp")
+		}
+		if !strings.HasPrefix(out, ": ") {
+			t.Error("zsh format should start with ': '")
+		}
+	})
+
+	t.Run("fish", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = FormatCommands(&buf, cmds, "fish")
+		out := buf.String()
+		if !strings.Contains(out, "- cmd: ls -la") {
+			t.Error("fish format missing command")
+		}
+		if !strings.Contains(out, "when: ") {
+			t.Error("fish format missing timestamp")
+		}
+	})
 }
 
 func truncStr(s string, n int) string {

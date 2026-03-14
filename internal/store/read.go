@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 
@@ -22,6 +23,7 @@ type Stats struct {
 	PasteCacheCount int `db:"pastecachecount"`
 	UsageFacetCount int `db:"usagefacetcount"`
 	MemoryCount     int `db:"memorycount"`
+	CommandCount    int `db:"commandcount"`
 }
 
 // GetStats returns aggregate counts for the dashboard using a single query.
@@ -38,7 +40,8 @@ func (s *Store) GetStats() (Stats, error) {
 			(SELECT COUNT(*) FROM task_groups) AS taskgroupcount,
 			(SELECT COUNT(*) FROM paste_cache) AS pastecachecount,
 			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount,
-			(SELECT COUNT(*) FROM memories) AS memorycount`)
+			(SELECT COUNT(*) FROM memories) AS memorycount,
+			(SELECT COUNT(*) FROM commands) AS commandcount`)
 	return st, err
 }
 
@@ -1284,4 +1287,117 @@ func (s *Store) GetSessionDBID(tx *sqlx.Tx, sessionID string) (int64, error) {
 		err = s.db.Get(&id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
 	}
 	return id, err
+}
+
+// CommandFilter holds optional filter parameters for listing commands.
+type CommandFilter struct {
+	Project string // filter by project dir_name
+	Search  string // filter by command text (LIKE)
+	From    string // filter by timestamp >= (ISO date)
+	To      string // filter by timestamp <= (ISO date)
+}
+
+// ListCommands returns bash commands across all sessions with optional filters.
+func (s *Store) ListCommands(limit, offset int, filter CommandFilter) ([]model.CommandEntry, int, error) {
+	baseFrom := `
+		FROM commands c
+		JOIN sessions s ON c.session_id = s.id
+		JOIN projects p ON s.project_id = p.id`
+
+	var where []string
+	var args []any
+
+	if filter.Project != "" {
+		where = append(where, "p.dir_name = ?")
+		args = append(args, filter.Project)
+	}
+	if filter.Search != "" {
+		where = append(where, "c.command LIKE ?")
+		args = append(args, "%"+filter.Search+"%")
+	}
+	if filter.From != "" {
+		where = append(where, "c.timestamp >= ?")
+		args = append(args, filter.From)
+	}
+	if filter.To != "" {
+		where = append(where, "c.timestamp <= ?")
+		args = append(args, filter.To+"T23:59:59Z")
+	}
+
+	whereClause := ""
+	if len(where) > 0 {
+		whereClause = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	// Count total
+	var total int
+	countArgs := make([]any, len(args))
+	copy(countArgs, args)
+	if err := s.db.Get(&total, "SELECT COUNT(*)"+baseFrom+whereClause, countArgs...); err != nil {
+		return nil, 0, err
+	}
+
+	// Fetch page
+	query := "SELECT c.command, c.timestamp, s.session_id, s.first_prompt, p.dir_name, p.display_name" +
+		baseFrom + whereClause +
+		" ORDER BY c.timestamp DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	var rows []model.CommandEntry
+	if err := s.db.Select(&rows, query, args...); err != nil {
+		return nil, 0, err
+	}
+
+	return rows, total, nil
+}
+
+// ListAllCommands returns all bash commands (no pagination) with optional filters.
+// Used for export.
+func (s *Store) ListAllCommands(filter CommandFilter) ([]model.CommandEntry, error) {
+	baseFrom := `
+		FROM commands c
+		JOIN sessions s ON c.session_id = s.id
+		JOIN projects p ON s.project_id = p.id`
+
+	var where []string
+	var args []any
+
+	if filter.Project != "" {
+		where = append(where, "p.dir_name = ?")
+		args = append(args, filter.Project)
+	}
+	if filter.Search != "" {
+		where = append(where, "c.command LIKE ?")
+		args = append(args, "%"+filter.Search+"%")
+	}
+	if filter.From != "" {
+		where = append(where, "c.timestamp >= ?")
+		args = append(args, filter.From)
+	}
+	if filter.To != "" {
+		where = append(where, "c.timestamp <= ?")
+		args = append(args, filter.To+"T23:59:59Z")
+	}
+
+	whereClause := ""
+	if len(where) > 0 {
+		whereClause = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	query := "SELECT c.command, c.timestamp, s.session_id, s.first_prompt, p.dir_name, p.display_name" +
+		baseFrom + whereClause +
+		" ORDER BY c.timestamp DESC"
+
+	var rows []model.CommandEntry
+	if err := s.db.Select(&rows, query, args...); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// CommandCount returns the total number of commands in the database.
+func (s *Store) CommandCount() (int, error) {
+	var count int
+	err := s.db.Get(&count, `SELECT COUNT(*) FROM commands`)
+	return count, err
 }

@@ -236,6 +236,9 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 			if err := s.InsertMessages(tx, sessionDBID, sd.messages); err != nil {
 				continue
 			}
+			if err := s.InsertCommands(tx, sessionDBID, sd.messages); err != nil {
+				continue
+			}
 			totalSessions++
 		}
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -173,6 +173,16 @@ CREATE TABLE IF NOT EXISTS memories (
 	content     TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS commands (
+	id         INTEGER PRIMARY KEY,
+	session_id INTEGER NOT NULL REFERENCES sessions(id),
+	seq        INTEGER NOT NULL,
+	command    TEXT NOT NULL,
+	timestamp  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_commands_session ON commands(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_commands_ts ON commands(timestamp DESC);
+
 CREATE TABLE IF NOT EXISTS source_files (
 	path         TEXT PRIMARY KEY,
 	content_hash TEXT NOT NULL DEFAULT '',
@@ -184,6 +194,7 @@ CREATE TABLE IF NOT EXISTS source_files (
 // Index 0 = v4→v5: add source_path + content_hash for incremental indexing.
 var migrations = []func(tx *sqlx.Tx) error{
 	migrateV4ToV5,
+	migrateV5ToV6,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -226,5 +237,26 @@ func migrateV4ToV5(tx *sqlx.Tx) error {
 		}
 	}
 
+	return nil
+}
+
+// migrateV5ToV6 adds the commands table for global bash command browsing.
+func migrateV5ToV6(tx *sqlx.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS commands (
+			id         INTEGER PRIMARY KEY,
+			session_id INTEGER NOT NULL REFERENCES sessions(id),
+			seq        INTEGER NOT NULL,
+			command    TEXT NOT NULL,
+			timestamp  TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_session ON commands(session_id, seq)`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_ts ON commands(timestamp DESC)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("creating commands table: %w", err)
+		}
+	}
 	return nil
 }

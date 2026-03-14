@@ -79,6 +79,7 @@
 .prose pre code {
 	background: none;
 	padding: 0;
+	font-size: inherit;
 }
 .prose ul,
 .prose ol {
@@ -119,14 +120,17 @@
 	margin: 1.5em 0;
 }
 
-/* Shiki code highlighting */
-.code-block pre,
-.prose pre:has(> code .shiki) {
-	margin: 0;
-}
-
-pre.shiki {
+/* Chroma code highlighting */
+.chroma-wrap pre,
+.chroma {
+	font-size: 0.75rem;
+	line-height: 1.5;
 	border-radius: 0.75rem;
 	padding: 0.75rem;
+	margin: 0;
 	overflow-x: auto;
+}
+.prose .chroma {
+	font-size: 0.75rem;
+	margin: 0.75em 0;
 }

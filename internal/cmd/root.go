@@ -30,9 +30,10 @@ func init() {
 		home = ""
 	}
 
+	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
+	rootCmd.PersistentFlags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "SQLite database file path")
+
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
-	rootCmd.Flags().String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
-	rootCmd.Flags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "SQLite database file path")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().Bool("open", false, "Open browser after starting server")

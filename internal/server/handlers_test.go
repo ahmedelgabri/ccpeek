@@ -47,7 +47,7 @@ func TestDashboard(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Memories", "Recent Conversations"}
+	assertions := []string{"Dashboard", "Projects", "Plans", "Shell Snapshots", "Commands", "Todos", "File History", "Tasks", "Paste Cache", "Usage Data", "Memories", "Recent Conversations"}
 	for _, s := range assertions {
 		if !strings.Contains(body, s) {
 			t.Errorf("dashboard missing %q", s)
@@ -1029,6 +1029,148 @@ func TestMemoryNotFound(t *testing.T) {
 
 	if w.Code != 404 {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestCommandsList(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Commands") {
+		t.Error("commands list missing title")
+	}
+	if !strings.Contains(body, "ls -la") {
+		t.Error("commands list missing bash command from testdata")
+	}
+	if !strings.Contains(body, "data-copy") {
+		t.Error("commands list missing copy buttons")
+	}
+	if !strings.Contains(body, "Export") {
+		t.Error("commands list missing export button")
+	}
+	if !strings.Contains(body, "format=zsh") {
+		t.Error("commands list missing zsh export link")
+	}
+	if !strings.Contains(body, "format=bash") {
+		t.Error("commands list missing bash export link")
+	}
+	if !strings.Contains(body, "format=fish") {
+		t.Error("commands list missing fish export link")
+	}
+}
+
+func TestCommandsListFilter(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/?search=ls", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "ls -la") {
+		t.Error("filtered commands missing matching command")
+	}
+}
+
+func TestCommandsListNoResults(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/?search=nonexistentcommand", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if strings.Contains(body, "Append to your shell history") {
+		t.Error("commands with no results should not show export dropdown")
+	}
+}
+
+func TestCommandsExportPlain(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/export?format=plain", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/plain") {
+		t.Errorf("expected text/plain, got %s", ct)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "ls -la") {
+		t.Error("plain export missing command")
+	}
+	// Plain format should not have zsh timestamps
+	if strings.Contains(body, ":0;") {
+		t.Error("plain export should not contain zsh format")
+	}
+}
+
+func TestCommandsExportZsh(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/export?format=zsh", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, ":0;ls -la") {
+		t.Error("zsh export missing command in zsh format")
+	}
+}
+
+func TestCommandsExportBash(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/export?format=bash", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "ls -la") {
+		t.Error("bash export missing command")
+	}
+}
+
+func TestCommandsExportFish(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/export?format=fish", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "- cmd: ls -la") {
+		t.Error("fish export missing command in fish format")
+	}
+	if !strings.Contains(body, "when:") {
+		t.Error("fish export missing timestamp")
 	}
 }
 

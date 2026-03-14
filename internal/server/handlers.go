@@ -66,6 +66,7 @@ func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 			"PasteCache":     make([]any, stats.PasteCacheCount),
 			"UsageFacets":    make([]any, stats.UsageFacetCount),
 			"Memories":       make([]any, stats.MemoryCount),
+			"Commands":       make([]any, stats.CommandCount),
 		},
 		"TotalSessions": stats.SessionCount,
 		"RecentHistory": history,
@@ -1049,6 +1050,107 @@ func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
 		"Entry":       entry,
 		"Content":     renderMarkdown(content),
 	})
+}
+
+func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	filter := store.CommandFilter{
+		Project: q.Get("project"),
+		Search:  q.Get("search"),
+		From:    q.Get("from"),
+		To:      q.Get("to"),
+	}
+
+	page := 1
+	if p := q.Get("page"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			page = n
+		}
+	}
+
+	offset := (page - 1) * pageSize
+	commands, total, err := h.store.ListCommands(pageSize, offset, filter)
+	if err != nil {
+		http.Error(w, "loading commands: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	projects, _ := h.store.ListProjectNames()
+
+	// Build filter query string for pagination and export links
+	var filterParts []string
+	if filter.Project != "" {
+		filterParts = append(filterParts, "project="+filter.Project)
+	}
+	if filter.Search != "" {
+		filterParts = append(filterParts, "search="+filter.Search)
+	}
+	if filter.From != "" {
+		filterParts = append(filterParts, "from="+filter.From)
+	}
+	if filter.To != "" {
+		filterParts = append(filterParts, "to="+filter.To)
+	}
+	filterQuery := ""
+	if len(filterParts) > 0 {
+		filterQuery = "&" + strings.Join(filterParts, "&")
+	}
+
+	renderTemplate(w, h.tmpl, "commands_list.html", map[string]any{
+		"Title":       "Commands",
+		"CurrentPath": "/commands/",
+		"Commands":    commands,
+		"Total":       total,
+		"Page":        page,
+		"TotalPages":  totalPages,
+		"HasPrev":     page > 1,
+		"HasNext":     page < totalPages,
+		"PrevPage":    page - 1,
+		"NextPage":    page + 1,
+		"Projects":    projects,
+		"Project":     filter.Project,
+		"Search":      filter.Search,
+		"From":        filter.From,
+		"To":          filter.To,
+		"FilterQuery": filterQuery,
+		"Host":        r.Host,
+	})
+}
+
+func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	filter := store.CommandFilter{
+		Project: q.Get("project"),
+		Search:  q.Get("search"),
+		From:    q.Get("from"),
+		To:      q.Get("to"),
+	}
+	format := q.Get("format")
+	if format == "" {
+		format = "plain"
+	}
+
+	commands, err := h.store.ListAllCommands(filter)
+	if err != nil {
+		http.Error(w, "loading commands: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var buf strings.Builder
+	_ = model.FormatCommands(&buf, commands, format)
+
+	filename := "commands." + format + ".txt"
+	if format == "fish" {
+		filename = "commands_fish_history"
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Write([]byte(buf.String()))
 }
 
 func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {

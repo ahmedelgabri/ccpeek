@@ -60,9 +60,9 @@
             Copy
           </button>
         </div>
-        <pre
-          class="px-4 py-3 text-sm text-slate-300 overflow-x-auto m-0"
-        ><code>{{ .Command }}</code></pre>
+        <div class="chroma-wrap overflow-x-auto">
+          {{ highlightCode .Command "bash" }}
+        </div>
       </div>
     {{ end }}
   </div>

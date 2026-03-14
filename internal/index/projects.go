@@ -128,6 +128,9 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 			if err := s.InsertMessages(tx, sessionDBID, sd.messages); err != nil {
 				continue
 			}
+			if err := s.InsertCommands(tx, sessionDBID, sd.messages); err != nil {
+				continue
+			}
 			totalSessions++
 		}
 	}

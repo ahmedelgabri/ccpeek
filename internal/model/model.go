@@ -2,6 +2,10 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"strconv"
+	"time"
 )
 
 // IndexData is the top-level metadata written to index.json.
@@ -240,6 +244,43 @@ type UsageFacetEntry struct {
 	FrictionCounts map[string]int `json:"frictionCounts"`
 	ProjectDir     string         `json:"projectDir,omitempty"`
 	ProjectName    string         `json:"projectName,omitempty"`
+}
+
+// CommandEntry represents a bash command extracted from a session.
+type CommandEntry struct {
+	Command        string `json:"command" db:"command"`
+	Timestamp      string `json:"timestamp" db:"timestamp"`
+	SessionID      string `json:"sessionId" db:"session_id"`
+	FirstPrompt    string `json:"firstPrompt" db:"first_prompt"`
+	ProjectDirName string `json:"projectDirName" db:"dir_name"`
+	ProjectDisplay string `json:"projectDisplay" db:"display_name"`
+}
+
+// FormatCommands writes commands to w in the given shell history format.
+// Supported formats: "zsh", "bash", "fish", "plain" (default).
+func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
+	for _, cmd := range commands {
+		switch format {
+		case "zsh":
+			ts := parseTimestampUnix(cmd.Timestamp)
+			fmt.Fprintf(w, ": %d:0;%s\n", ts, cmd.Command)
+		case "fish":
+			ts := parseTimestampUnix(cmd.Timestamp)
+			fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
+		default: // "plain" or "bash"
+			fmt.Fprintf(w, "%s\n", cmd.Command)
+		}
+	}
+	return nil
+}
+
+func parseTimestampUnix(ts string) int64 {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"} {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t.Unix()
+		}
+	}
+	return 0
 }
 
 // RawJSONLLine is the shape of raw lines from Claude's conversation JSONL files.

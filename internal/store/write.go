@@ -125,6 +125,39 @@ func (s *Store) InsertMessages(tx *sqlx.Tx, dbSessionID int64, messages []model.
 	return nil
 }
 
+// InsertCommands inserts extracted bash commands for a session.
+func (s *Store) InsertCommands(tx *sqlx.Tx, dbSessionID int64, messages []model.ConversationMessage) error {
+	stmt, err := tx.Prepare(
+		`INSERT INTO commands (session_id, seq, command, timestamp) VALUES (?, ?, ?, ?)`,
+	)
+	if err != nil {
+		return fmt.Errorf("preparing command insert: %w", err)
+	}
+	defer stmt.Close()
+
+	seq := 0
+	for _, m := range messages {
+		if m.Message.Role != "assistant" {
+			continue
+		}
+		for _, b := range m.Message.ContentBlocks() {
+			if b.Type != "tool_use" || b.Name != "Bash" {
+				continue
+			}
+			var input struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal(b.Input, &input) == nil && input.Command != "" {
+				if _, err := stmt.Exec(dbSessionID, seq, input.Command, m.Timestamp); err != nil {
+					return fmt.Errorf("inserting command %d: %w", seq, err)
+				}
+				seq++
+			}
+		}
+	}
+	return nil
+}
+
 // InsertTodo inserts a todo entry and its items. sessionDBID can be 0 for unlinked todos.
 func (s *Store) InsertTodo(tx *sqlx.Tx, entry model.TodoEntry, items []model.TodoItem, sessionDBID int64, sourcePath string) error {
 	statusJSON, err := json.Marshal(entry.Statuses)
@@ -398,6 +431,10 @@ func (s *Store) DeleteSessionCascade(tx *sqlx.Tx, sourcePath string) error {
 		// Delete messages
 		if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ?`, sid); err != nil {
 			return fmt.Errorf("deleting messages for session %d: %w", sid, err)
+		}
+		// Delete commands
+		if _, err := tx.Exec(`DELETE FROM commands WHERE session_id = ?`, sid); err != nil {
+			return fmt.Errorf("deleting commands for session %d: %w", sid, err)
 		}
 		// Unlink todos (set session_id to NULL, keep the todo)
 		if _, err := tx.Exec(`UPDATE todos SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
