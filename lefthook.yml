@@ -2,8 +2,14 @@ pre-commit:
   parallel: true
   jobs:
     - name: lint
+      env:
+        TERM: dumb
       run: just lint
     - name: format-check
+      env:
+        TERM: dumb
       run: just format-check
     - name: unit-tests
+      env:
+        TERM: dumb
       run: just test-unit
