@@ -27,7 +27,11 @@
         {{ end }}</span
       >
       {{ if .Timestamp }}
-        <span class="text-xs text-slate-600">{{ formatDate .Timestamp }}</span>
+        <a
+          href="#{{ toAnchor "msg" .Timestamp }}"
+          class="text-xs text-slate-600 no-underline hover:text-slate-400 transition-colors"
+          >{{ formatDate .Timestamp }}</a
+        >
       {{ end }}
     </div>
     <div>

@@ -83,8 +83,10 @@
           >
         {{ end }}
         {{ if .Timestamp }}
-          <span class="text-xs text-slate-600 whitespace-nowrap ml-auto"
-            >{{ formatDate .Timestamp }}</span
+          <a
+            href="#{{ toAnchor "tool" .Timestamp }}"
+            class="text-xs text-slate-600 whitespace-nowrap ml-auto no-underline hover:text-slate-400 transition-colors"
+            >{{ formatDate .Timestamp }}</a
           >
         {{ end }}
       </div>

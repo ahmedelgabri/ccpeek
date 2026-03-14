@@ -1815,6 +1815,8 @@ func (s *Store) ListScanFindings(ruleFilter, typeFilter string, showIgnored bool
 		whereClause = " WHERE " + strings.Join(where, " AND ")
 	}
 
+	// source_id for message/command findings may contain "sessionID@timestamp".
+	// Extract the session ID part (before @) for joining.
 	query := `SELECT f.id, f.rule_id, f.description, f.source_type, f.source_id,
 		f.match_redacted, f.line_number, f.scanned_at, f.ignored,
 		COALESCE(p.dir_name, '') AS project_dir,
@@ -1822,8 +1824,10 @@ func (s *Store) ListScanFindings(ruleFilter, typeFilter string, showIgnored bool
 		COALESCE(s.session_id, '') AS session_id_text
 		FROM scan_findings f
 		LEFT JOIN sessions s ON (
-			(f.source_type = 'message' AND s.session_id = f.source_id)
-			OR (f.source_type = 'command' AND s.id = (SELECT c.session_id FROM commands c WHERE c.id = CAST(f.source_id AS INTEGER) LIMIT 1))
+			(f.source_type IN ('message', 'command') AND s.session_id = CASE
+				WHEN INSTR(f.source_id, '@') > 0 THEN SUBSTR(f.source_id, 1, INSTR(f.source_id, '@') - 1)
+				ELSE f.source_id
+			END)
 		)
 		LEFT JOIN projects p ON s.project_id = p.id` +
 		whereClause + ` ORDER BY f.ignored ASC, f.rule_id, f.id`

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -300,15 +301,34 @@ type ScanFinding struct {
 }
 
 // SourceURL returns a link to the source of this finding, or empty string.
+// For message and command findings, SourceID may contain "sessionID@timestamp"
+// to enable deep linking to the specific message or command.
 func (f *ScanFinding) SourceURL() string {
 	switch f.SourceType {
 	case "message":
-		if f.ProjectDirName != "" && f.SourceID != "" {
-			return "/projects/" + f.ProjectDirName + "/" + f.SourceID + "/"
+		sessionID, ts := splitSourceID(f.SourceID)
+		dir := f.ProjectDirName
+		if dir == "" || sessionID == "" {
+			return ""
 		}
+		url := "/projects/" + dir + "/" + sessionID + "/"
+		if ts != "" {
+			url += "#" + anchorize("msg", ts)
+		}
+		return url
 	case "command":
-		if f.ProjectDirName != "" && f.SessionID != "" {
-			return "/projects/" + f.ProjectDirName + "/" + f.SessionID + "/commands/"
+		sessionID, ts := splitSourceID(f.SourceID)
+		dir := f.ProjectDirName
+		if dir != "" && sessionID != "" {
+			url := "/projects/" + dir + "/" + sessionID + "/commands/"
+			if ts != "" {
+				url += "#" + anchorize("cmd", ts)
+			}
+			return url
+		}
+		// Fallback for old-format findings (SourceID = DB id)
+		if dir != "" && f.SessionID != "" {
+			return "/projects/" + dir + "/" + f.SessionID + "/commands/"
 		}
 	case "plan":
 		name := f.SourceID
@@ -332,6 +352,21 @@ func (f *ScanFinding) SourceURL() string {
 		return "/memories/" + f.SourceID + "/"
 	}
 	return ""
+}
+
+// splitSourceID splits "sessionID@timestamp" into its parts.
+// If no "@" is present, returns the whole string as sessionID with empty timestamp.
+func splitSourceID(s string) (sessionID, timestamp string) {
+	if i := strings.LastIndex(s, "@"); i > 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// anchorize builds a URL-safe fragment id from a prefix and value.
+func anchorize(prefix, value string) string {
+	safe := strings.NewReplacer(":", "-", ".", "-").Replace(value)
+	return prefix + "-" + safe
 }
 
 // ScanStats holds aggregate counts for the scan results page.

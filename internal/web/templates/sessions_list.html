@@ -224,8 +224,10 @@
           </div>
         </a>
         {{ if .Modified }}
-          <span class="text-xs text-slate-600 whitespace-nowrap"
-            >{{ formatDate .Modified }}</span
+          <a
+            href="#{{ toAnchor "s" .SessionID }}"
+            class="text-xs text-slate-600 whitespace-nowrap no-underline hover:text-slate-400 transition-colors"
+            >{{ formatDate .Modified }}</a
           >
         {{ end }}
       </div>

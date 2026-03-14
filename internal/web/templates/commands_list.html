@@ -159,8 +159,12 @@
               class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 no-underline whitespace-nowrap shrink-0 hover:bg-sky-500/20 transition-colors"
               >{{ .ProjectDisplay }}</a
             >
-            <span class="text-slate-600 whitespace-nowrap tabular-nums"
-              >{{ formatDate .Timestamp }}</span
+            <a
+              href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/commands/{{ if .Timestamp }}
+                #{{ toAnchor "cmd" .Timestamp }}
+              {{ end }}"
+              class="text-slate-600 whitespace-nowrap tabular-nums no-underline hover:text-slate-400 transition-colors"
+              >{{ formatDate .Timestamp }}</a
             >
           </div>
           <button

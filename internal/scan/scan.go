@@ -80,13 +80,14 @@ func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
 	type row struct {
 		ID        int64  `db:"id"`
 		SessionID string `db:"session_id"`
+		Timestamp string `db:"timestamp"`
 		Content   string `db:"content"`
 		Role      string `db:"role"`
 	}
 
 	var rows []row
 	err := sc.store.DB().Select(&rows, `
-		SELECT m.id, s.session_id, m.content, m.role
+		SELECT m.id, s.session_id, m.timestamp, m.content, m.role
 		FROM messages m
 		JOIN sessions s ON m.session_id = s.id
 	`)
@@ -103,8 +104,13 @@ func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
 			continue
 		}
 
+		// Encode session ID and timestamp so SourceURL can deep-link
+		sourceID := r.SessionID
+		if r.Timestamp != "" {
+			sourceID += "@" + r.Timestamp
+		}
 		for _, f := range sc.detect(text) {
-			findings = append(findings, toFinding(f, "message", r.SessionID))
+			findings = append(findings, toFinding(f, "message", sourceID))
 		}
 	}
 	return findings, nil
@@ -112,20 +118,31 @@ func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
 
 func (sc *Scanner) scanCommands() ([]model.ScanFinding, error) {
 	type row struct {
-		ID      int64  `db:"id"`
-		Command string `db:"command"`
+		ID        int64  `db:"id"`
+		SessionID string `db:"session_id"`
+		Timestamp string `db:"timestamp"`
+		Command   string `db:"command"`
 	}
 
 	var rows []row
-	err := sc.store.DB().Select(&rows, `SELECT id, command FROM commands`)
+	err := sc.store.DB().Select(&rows, `
+		SELECT c.id, s.session_id, c.timestamp, c.command
+		FROM commands c
+		JOIN sessions s ON c.session_id = s.id
+	`)
 	if err != nil {
 		return nil, err
 	}
 
 	var findings []model.ScanFinding
 	for _, r := range rows {
+		// Encode session ID and timestamp so SourceURL can deep-link
+		sourceID := r.SessionID
+		if r.Timestamp != "" {
+			sourceID += "@" + r.Timestamp
+		}
 		for _, f := range sc.detect(r.Command) {
-			findings = append(findings, toFinding(f, "command", fmt.Sprintf("%d", r.ID)))
+			findings = append(findings, toFinding(f, "command", sourceID))
 		}
 	}
 	return findings, nil
