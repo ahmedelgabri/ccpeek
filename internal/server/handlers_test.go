@@ -1200,7 +1200,7 @@ func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 		{RuleID: "aws-access-token", Description: "AWS key", SourceType: "command", SourceID: "42", MatchRedacted: "AKIA****MZXB", ScannedAt: "2025-01-01T00:00:00Z"},
 		{RuleID: "generic-api-key", Description: "Generic API Key", SourceType: "plan", SourceID: "test-plan.md", MatchRedacted: "s3cr****l0ng", ScannedAt: "2025-01-01T00:00:00Z"},
 	} {
-		if err := db.InsertScanFinding(tx, f); err != nil {
+		if _, err := db.InsertScanFinding(tx, f); err != nil {
 			t.Fatal(err)
 		}
 	}

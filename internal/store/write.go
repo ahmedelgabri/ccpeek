@@ -493,7 +493,8 @@ func (s *Store) ClearScanFindings() error {
 
 // InsertScanFinding inserts a single scan finding.
 // Skips insertion if an ignored finding with the same identity already exists.
-func (s *Store) InsertScanFinding(tx *sqlx.Tx, f model.ScanFinding) error {
+// Returns true if the finding was inserted, false if it was skipped.
+func (s *Store) InsertScanFinding(tx *sqlx.Tx, f model.ScanFinding) (bool, error) {
 	var exists int
 	err := tx.Get(&exists,
 		`SELECT COUNT(*) FROM scan_findings
@@ -501,14 +502,14 @@ func (s *Store) InsertScanFinding(tx *sqlx.Tx, f model.ScanFinding) error {
 		f.RuleID, f.SourceType, f.SourceID,
 	)
 	if err == nil && exists > 0 {
-		return nil
+		return false, nil
 	}
 	_, err = tx.Exec(
 		`INSERT INTO scan_findings (rule_id, description, source_type, source_id, match_redacted, line_number, scanned_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		f.RuleID, f.Description, f.SourceType, f.SourceID, f.MatchRedacted, f.Line, f.ScannedAt,
 	)
-	return err
+	return err == nil, err
 }
 
 // RepopulateFTS fills the FTS table from all existing messages.

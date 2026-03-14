@@ -278,7 +278,7 @@ func TestScanStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = db.InsertScanFinding(tx, model.ScanFinding{
+	_, err = db.InsertScanFinding(tx, model.ScanFinding{
 		RuleID:        "aws-access-key",
 		Description:   "AWS Access Key",
 		SourceType:    "message",
@@ -319,7 +319,7 @@ func TestIgnoreToggle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = db.InsertScanFinding(tx, model.ScanFinding{
+	_, err = db.InsertScanFinding(tx, model.ScanFinding{
 		RuleID:        "test-rule",
 		SourceType:    "message",
 		SourceID:      "s1",

@@ -62,13 +62,18 @@ func (sc *Scanner) Run() ([]model.ScanFinding, error) {
 	}
 	defer tx.Rollback()
 
+	var active []model.ScanFinding
 	for _, f := range all {
-		if err := sc.store.InsertScanFinding(tx, f); err != nil {
+		inserted, err := sc.store.InsertScanFinding(tx, f)
+		if err != nil {
 			return nil, fmt.Errorf("inserting finding: %w", err)
+		}
+		if inserted {
+			active = append(active, f)
 		}
 	}
 
-	return all, tx.Commit()
+	return active, tx.Commit()
 }
 
 func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
