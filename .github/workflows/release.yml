@@ -53,6 +53,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: extractions/setup-just@v2
       - name: Install cross-compiler
         if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
@@ -61,7 +62,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           pnpm install
-          pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
+          just css
           CGO_ENABLED=1 go build -tags sqlite_fts5 -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
           mkdir -p dist/completions dist/man
           ./ccpeek-native completion bash > dist/completions/ccpeek.bash

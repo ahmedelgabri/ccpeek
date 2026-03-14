@@ -18,9 +18,9 @@ jobs:
       - name: Install npm dependencies
         run: nix develop --command pnpm install
       - name: Check formatting
-        run: nix fmt -- --fail-on-change
+        run: nix develop --command just format-check
       - name: Go vet
-        run: nix develop --command go vet -tags sqlite_fts5 ./...
+        run: nix develop --command just vet
       - name: Lint JS
         run: nix develop --command just lint
 
@@ -37,15 +37,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: extractions/setup-just@v2
       - run: pnpm install
-      - name: Build CSS
-        run: pnpm exec tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
       - name: Unit tests
-        run: CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
+        run: just test-unit
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       - name: E2E tests
-        run: npx playwright test --config=playwright-go.config.ts
+        run: just test-e2e
 
   build:
     name: Build (Nix)

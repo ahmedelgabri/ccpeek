@@ -14,14 +14,17 @@ build: css
 dev: css
     CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --open
 
+vet:
+    CGO_ENABLED=1 go vet -tags sqlite_fts5 ./...
+
 lint:
     pnpm exec oxlint --type-aware --type-check
 
 format:
-    prettier --write "**/*.{js,ts,html}"
+    nix fmt
 
 format-check:
-    prettier --check "**/*.{js,ts,html}"
+    nix fmt -- --fail-on-change
 
 test-unit: css
     CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
