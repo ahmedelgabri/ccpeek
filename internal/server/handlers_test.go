@@ -24,7 +24,7 @@ func setupTestServer(t *testing.T) http.Handler {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := index.Run(testdataDir, db); err != nil {
+	if err := index.Run(testdataDir, db, true); err != nil {
 		t.Fatal("index failed:", err)
 	}
 

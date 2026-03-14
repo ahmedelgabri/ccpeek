@@ -56,7 +56,7 @@ func indexShellSnapshots(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, er
 			SizeBytes: info.Size(),
 		}
 
-		if err := s.InsertShellSnapshot(tx, entry, string(content)); err != nil {
+		if err := s.InsertShellSnapshot(tx, entry, string(content), src); err != nil {
 			continue
 		}
 		count++

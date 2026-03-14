@@ -71,7 +71,7 @@ func indexTodos(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 			}
 		}
 
-		if err := s.InsertTodo(tx, entry, items, sessionDBID); err != nil {
+		if err := s.InsertTodo(tx, entry, items, sessionDBID, src); err != nil {
 			continue
 		}
 		count++

@@ -15,19 +15,19 @@ func (s *Store) BeginTx() (*sqlx.Tx, error) {
 }
 
 // InsertPlan inserts a plan entry with its content.
-func (s *Store) InsertPlan(tx *sqlx.Tx, p model.PlanEntry, content string) error {
+func (s *Store) InsertPlan(tx *sqlx.Tx, p model.PlanEntry, content, sourcePath string) error {
 	_, err := tx.Exec(
-		`INSERT INTO plans (file_name, title, size_bytes, content) VALUES (?, ?, ?, ?)`,
-		p.FileName, p.Title, p.SizeBytes, content,
+		`INSERT INTO plans (file_name, title, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?)`,
+		p.FileName, p.Title, p.SizeBytes, content, sourcePath,
 	)
 	return err
 }
 
 // InsertShellSnapshot inserts a shell snapshot entry with its content.
-func (s *Store) InsertShellSnapshot(tx *sqlx.Tx, snap model.ShellSnapshotEntry, content string) error {
+func (s *Store) InsertShellSnapshot(tx *sqlx.Tx, snap model.ShellSnapshotEntry, content, sourcePath string) error {
 	_, err := tx.Exec(
-		`INSERT INTO shell_snapshots (file_name, timestamp, size_bytes, content) VALUES (?, ?, ?, ?)`,
-		snap.FileName, snap.Timestamp, snap.SizeBytes, content,
+		`INSERT INTO shell_snapshots (file_name, timestamp, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?)`,
+		snap.FileName, snap.Timestamp, snap.SizeBytes, content, sourcePath,
 	)
 	return err
 }
@@ -44,8 +44,23 @@ func (s *Store) InsertProject(tx *sqlx.Tx, dirName, displayName string) (int64, 
 	return res.LastInsertId()
 }
 
+// UpsertProject inserts or updates a project and returns its database ID.
+func (s *Store) UpsertProject(tx *sqlx.Tx, dirName, displayName string) (int64, error) {
+	_, err := tx.Exec(
+		`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)
+		 ON CONFLICT(dir_name) DO UPDATE SET display_name = excluded.display_name`,
+		dirName, displayName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = tx.Get(&id, `SELECT id FROM projects WHERE dir_name = ?`, dirName)
+	return id, err
+}
+
 // InsertSession inserts a session entry and returns its database ID.
-func (s *Store) InsertSession(tx *sqlx.Tx, projectID int64, sess model.SessionEntry) (int64, error) {
+func (s *Store) InsertSession(tx *sqlx.Tx, projectID int64, sess model.SessionEntry, sourcePath string) (int64, error) {
 	toolJSON, err := json.Marshal(sess.ToolUseCounts)
 	if err != nil {
 		toolJSON = []byte("{}")
@@ -54,11 +69,11 @@ func (s *Store) InsertSession(tx *sqlx.Tx, projectID int64, sess model.SessionEn
 	res, err := tx.Exec(
 		`INSERT INTO sessions (session_id, project_id, first_prompt, message_count,
 		 created_at, modified_at, git_branch, project_path,
-		 bash_command_count, tool_use_counts, estimated_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 bash_command_count, tool_use_counts, estimated_tokens, source_path)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, projectID, sess.FirstPrompt, sess.MessageCount,
 		sess.Created, sess.Modified, sess.GitBranch, sess.ProjectPath,
-		sess.BashCommandCount, string(toolJSON), sess.EstimatedTokens,
+		sess.BashCommandCount, string(toolJSON), sess.EstimatedTokens, sourcePath,
 	)
 	if err != nil {
 		return 0, err
@@ -111,7 +126,7 @@ func (s *Store) InsertMessages(tx *sqlx.Tx, dbSessionID int64, messages []model.
 }
 
 // InsertTodo inserts a todo entry and its items. sessionDBID can be 0 for unlinked todos.
-func (s *Store) InsertTodo(tx *sqlx.Tx, entry model.TodoEntry, items []model.TodoItem, sessionDBID int64) error {
+func (s *Store) InsertTodo(tx *sqlx.Tx, entry model.TodoEntry, items []model.TodoItem, sessionDBID int64, sourcePath string) error {
 	statusJSON, err := json.Marshal(entry.Statuses)
 	if err != nil {
 		statusJSON = []byte("{}")
@@ -123,8 +138,8 @@ func (s *Store) InsertTodo(tx *sqlx.Tx, entry model.TodoEntry, items []model.Tod
 	}
 
 	res, err := tx.Exec(
-		`INSERT INTO todos (file_name, session_id, item_count, statuses) VALUES (?, ?, ?, ?)`,
-		entry.FileName, sessID, entry.ItemCount, string(statusJSON),
+		`INSERT INTO todos (file_name, session_id, item_count, statuses, source_path) VALUES (?, ?, ?, ?, ?)`,
+		entry.FileName, sessID, entry.ItemCount, string(statusJSON), sourcePath,
 	)
 	if err != nil {
 		return err
@@ -151,15 +166,15 @@ func (s *Store) InsertTodo(tx *sqlx.Tx, entry model.TodoEntry, items []model.Tod
 
 // InsertFileHistory inserts a file history entry and its versions.
 // sessionDBID can be 0 for unlinked entries.
-func (s *Store) InsertFileHistory(tx *sqlx.Tx, conversationID string, versions []model.FileVersionInfo, sessionDBID int64) error {
+func (s *Store) InsertFileHistory(tx *sqlx.Tx, conversationID string, versions []model.FileVersionInfo, sessionDBID int64, sourcePath string) error {
 	var sessID any
 	if sessionDBID > 0 {
 		sessID = sessionDBID
 	}
 
 	res, err := tx.Exec(
-		`INSERT INTO file_history (conversation_id, session_id, file_count) VALUES (?, ?, ?)`,
-		conversationID, sessID, len(versions),
+		`INSERT INTO file_history (conversation_id, session_id, file_count, source_path) VALUES (?, ?, ?, ?)`,
+		conversationID, sessID, len(versions), sourcePath,
 	)
 	if err != nil {
 		return err
@@ -185,16 +200,16 @@ func (s *Store) InsertFileHistory(tx *sqlx.Tx, conversationID string, versions [
 }
 
 // InsertHistory inserts a history timeline entry.
-func (s *Store) InsertHistory(tx *sqlx.Tx, entry model.HistoryEntry) error {
+func (s *Store) InsertHistory(tx *sqlx.Tx, entry model.HistoryEntry, sourcePath string) error {
 	_, err := tx.Exec(
-		`INSERT INTO history (display, timestamp, project) VALUES (?, ?, ?)`,
-		entry.Display, entry.Timestamp, entry.Project,
+		`INSERT INTO history (display, timestamp, project, source_path) VALUES (?, ?, ?, ?)`,
+		entry.Display, entry.Timestamp, entry.Project, sourcePath,
 	)
 	return err
 }
 
 // InsertTaskGroup inserts a task group and its items. sessionDBID can be 0 for unlinked groups.
-func (s *Store) InsertTaskGroup(tx *sqlx.Tx, entry model.TaskGroupEntry, items []model.TaskItem, sessionDBID int64) error {
+func (s *Store) InsertTaskGroup(tx *sqlx.Tx, entry model.TaskGroupEntry, items []model.TaskItem, sessionDBID int64, sourcePath string) error {
 	statusJSON, err := json.Marshal(entry.Statuses)
 	if err != nil {
 		statusJSON = []byte("{}")
@@ -206,8 +221,8 @@ func (s *Store) InsertTaskGroup(tx *sqlx.Tx, entry model.TaskGroupEntry, items [
 	}
 
 	res, err := tx.Exec(
-		`INSERT INTO task_groups (dir_name, session_id, item_count, statuses) VALUES (?, ?, ?, ?)`,
-		entry.DirName, sessID, entry.ItemCount, string(statusJSON),
+		`INSERT INTO task_groups (dir_name, session_id, item_count, statuses, source_path) VALUES (?, ?, ?, ?, ?)`,
+		entry.DirName, sessID, entry.ItemCount, string(statusJSON), sourcePath,
 	)
 	if err != nil {
 		return err
@@ -236,29 +251,29 @@ func (s *Store) InsertTaskGroup(tx *sqlx.Tx, entry model.TaskGroupEntry, items [
 }
 
 // InsertPasteCache inserts a paste-cache entry with its content.
-func (s *Store) InsertPasteCache(tx *sqlx.Tx, entry model.PasteCacheEntry, content string) error {
+func (s *Store) InsertPasteCache(tx *sqlx.Tx, entry model.PasteCacheEntry, content, sourcePath string) error {
 	_, err := tx.Exec(
-		`INSERT INTO paste_cache (file_name, size_bytes, content) VALUES (?, ?, ?)`,
-		entry.FileName, entry.SizeBytes, content,
+		`INSERT INTO paste_cache (file_name, size_bytes, content, source_path) VALUES (?, ?, ?, ?)`,
+		entry.FileName, entry.SizeBytes, content, sourcePath,
 	)
 	return err
 }
 
 // InsertMemory inserts a MEMORY.md entry. projectID can be nil for unlinked memories.
-func (s *Store) InsertMemory(tx *sqlx.Tx, projectDir string, projectID *int64, sizeBytes int64, content string) error {
+func (s *Store) InsertMemory(tx *sqlx.Tx, projectDir string, projectID *int64, sizeBytes int64, content, sourcePath string) error {
 	var pid any
 	if projectID != nil {
 		pid = *projectID
 	}
 	_, err := tx.Exec(
-		`INSERT INTO memories (project_dir, project_id, size_bytes, content) VALUES (?, ?, ?, ?)`,
-		projectDir, pid, sizeBytes, content,
+		`INSERT INTO memories (project_dir, project_id, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?)`,
+		projectDir, pid, sizeBytes, content, sourcePath,
 	)
 	return err
 }
 
 // InsertUsageFacet inserts a usage-data facet. sessionDBID can be 0 for unlinked facets.
-func (s *Store) InsertUsageFacet(tx *sqlx.Tx, entry model.UsageFacetEntry, sessionDBID int64) error {
+func (s *Store) InsertUsageFacet(tx *sqlx.Tx, entry model.UsageFacetEntry, sessionDBID int64, sourcePath string) error {
 	goalJSON, _ := json.Marshal(entry.GoalCategories)
 	satJSON, _ := json.Marshal(entry.Satisfaction)
 	fricJSON, _ := json.Marshal(entry.FrictionCounts)
@@ -270,18 +285,18 @@ func (s *Store) InsertUsageFacet(tx *sqlx.Tx, entry model.UsageFacetEntry, sessi
 
 	_, err := tx.Exec(
 		`INSERT INTO usage_facets (session_id_text, db_session_id, underlying_goal, outcome, helpfulness,
-		 session_type, primary_success, brief_summary, friction_detail, goal_categories, satisfaction, friction_counts)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 session_type, primary_success, brief_summary, friction_detail, goal_categories, satisfaction, friction_counts, source_path)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.SessionID, sessID, entry.UnderlyingGoal, entry.Outcome, entry.Helpfulness,
 		entry.SessionType, entry.PrimarySuccess, entry.BriefSummary, entry.FrictionDetail,
-		string(goalJSON), string(satJSON), string(fricJSON),
+		string(goalJSON), string(satJSON), string(fricJSON), sourcePath,
 	)
 	return err
 }
 
 // InsertUsageReport inserts the usage-data report HTML content.
-func (s *Store) InsertUsageReport(tx *sqlx.Tx, content string) error {
-	_, err := tx.Exec(`INSERT INTO usage_report (content) VALUES (?)`, content)
+func (s *Store) InsertUsageReport(tx *sqlx.Tx, content, sourcePath string) error {
+	_, err := tx.Exec(`INSERT INTO usage_report (content, source_path) VALUES (?, ?)`, content, sourcePath)
 	return err
 }
 
@@ -310,15 +325,14 @@ func (s *Store) LinkTodoToSession(tx *sqlx.Tx, todoFileName string, sessionDBID 
 	return err
 }
 
-// SetSourceFileMtime records the mtime for a source file.
-// If tx is non-nil, executes within that transaction; otherwise uses the db directly.
-func (s *Store) SetSourceFileMtime(tx *sqlx.Tx, path string, mtimeNs int64, indexedAt string) error {
-	q := `INSERT OR REPLACE INTO source_files (path, mtime_ns, indexed_at) VALUES (?, ?, ?)`
+// SetSourceFileHash records the content hash for a source file.
+func (s *Store) SetSourceFileHash(tx *sqlx.Tx, path, contentHash, indexedAt string) error {
+	q := `INSERT OR REPLACE INTO source_files (path, content_hash, indexed_at) VALUES (?, ?, ?)`
 	if tx != nil {
-		_, err := tx.Exec(q, path, mtimeNs, indexedAt)
+		_, err := tx.Exec(q, path, contentHash, indexedAt)
 		return err
 	}
-	_, err := s.db.Exec(q, path, mtimeNs, indexedAt)
+	_, err := s.db.Exec(q, path, contentHash, indexedAt)
 	return err
 }
 
@@ -335,4 +349,135 @@ func (s *Store) LinkFileHistoryToSession(tx *sqlx.Tx, conversationID string, ses
 		sessionDBID,
 	)
 	return err
+}
+
+// DeleteBySource deletes all rows from a table where source_path matches.
+// For tables with child rows (todos→todo_items, etc.), the caller must
+// delete children first.
+func (s *Store) DeleteBySource(tx *sqlx.Tx, table, sourcePath string) error {
+	_, err := tx.Exec(
+		fmt.Sprintf(`DELETE FROM %s WHERE source_path = ?`, table),
+		sourcePath,
+	)
+	return err
+}
+
+// DeleteChildrenBySource deletes child rows whose parent has a given source_path.
+// parentTable is the parent table, parentIDCol is its PK column,
+// childTable is the child table, childFKCol is the FK column in the child.
+func (s *Store) DeleteChildrenBySource(tx *sqlx.Tx, parentTable, parentIDCol, childTable, childFKCol, sourcePath string) error {
+	_, err := tx.Exec(
+		fmt.Sprintf(`DELETE FROM %s WHERE %s IN (SELECT %s FROM %s WHERE source_path = ?)`,
+			childTable, childFKCol, parentIDCol, parentTable),
+		sourcePath,
+	)
+	return err
+}
+
+// DeleteSessionCascade deletes sessions and their messages/FTS for a given source_path.
+// Also clears session linkage on todos and file_history that reference deleted sessions.
+func (s *Store) DeleteSessionCascade(tx *sqlx.Tx, sourcePath string) error {
+	// Collect session IDs being deleted
+	var sessionIDs []int64
+	if err := tx.Select(&sessionIDs,
+		`SELECT id FROM sessions WHERE source_path = ?`, sourcePath); err != nil {
+		return err
+	}
+
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+
+	for _, sid := range sessionIDs {
+		// Delete FTS entries for these messages
+		if _, err := tx.Exec(
+			`DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_id = ?)`, sid,
+		); err != nil {
+			return fmt.Errorf("deleting FTS for session %d: %w", sid, err)
+		}
+		// Delete messages
+		if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ?`, sid); err != nil {
+			return fmt.Errorf("deleting messages for session %d: %w", sid, err)
+		}
+		// Unlink todos (set session_id to NULL, keep the todo)
+		if _, err := tx.Exec(`UPDATE todos SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
+			return fmt.Errorf("unlinking todos for session %d: %w", sid, err)
+		}
+		// Unlink file_history
+		if _, err := tx.Exec(`UPDATE file_history SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
+			return fmt.Errorf("unlinking file_history for session %d: %w", sid, err)
+		}
+		// Unlink task_groups
+		if _, err := tx.Exec(`UPDATE task_groups SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
+			return fmt.Errorf("unlinking task_groups for session %d: %w", sid, err)
+		}
+		// Unlink usage_facets
+		if _, err := tx.Exec(`UPDATE usage_facets SET db_session_id = NULL WHERE db_session_id = ?`, sid); err != nil {
+			return fmt.Errorf("unlinking usage_facets for session %d: %w", sid, err)
+		}
+	}
+
+	// Delete the sessions themselves
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE source_path = ?`, sourcePath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// PruneOrphanedProjects removes projects that have no remaining sessions.
+func (s *Store) PruneOrphanedProjects(tx *sqlx.Tx) error {
+	_, err := tx.Exec(`DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM sessions)`)
+	return err
+}
+
+// RebuildFTS drops and rebuilds the FTS index from existing messages.
+func (s *Store) RebuildFTS(tx *sqlx.Tx) error {
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE VIRTUAL TABLE messages_fts USING fts5(text_content)`); err != nil {
+		return err
+	}
+	// Repopulate from messages — we store the raw JSON content, so we need
+	// to extract text. Since ContentText() is Go-side, we do a simple
+	// approach: insert the content column directly (it's JSON but FTS will
+	// still tokenize the text portions for search).
+	// For proper extraction, the caller should repopulate via Go code.
+	return nil
+}
+
+// RepopulateFTS fills the FTS table from all existing messages.
+// Must be called after RebuildFTS.
+func (s *Store) RepopulateFTS(tx *sqlx.Tx) error {
+	rows, err := tx.Query(`SELECT id, content FROM messages`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	stmt, err := tx.Prepare(`INSERT INTO messages_fts (rowid, text_content) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for rows.Next() {
+		var id int64
+		var contentJSON string
+		if err := rows.Scan(&id, &contentJSON); err != nil {
+			return err
+		}
+
+		msg := model.MessagePayload{}
+		msg.Content = []byte(contentJSON)
+		text := msg.ContentText()
+		if text != "" {
+			if _, err := stmt.Exec(id, text); err != nil {
+				return err
+			}
+		}
+	}
+
+	return rows.Err()
 }

@@ -16,7 +16,7 @@ func TestRun(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(testdataDir, s); err != nil {
+	if err := Run(testdataDir, s, true); err != nil {
 		t.Fatal("Run failed:", err)
 	}
 

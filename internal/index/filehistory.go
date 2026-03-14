@@ -77,7 +77,7 @@ func indexFileHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error
 			_ = s.LinkFileHistoryToSession(tx, conversationID, dbID)
 		}
 
-		if err := s.InsertFileHistory(tx, conversationID, versions, sessionDBID); err != nil {
+		if err := s.InsertFileHistory(tx, conversationID, versions, sessionDBID, convDir); err != nil {
 			continue
 		}
 		count++

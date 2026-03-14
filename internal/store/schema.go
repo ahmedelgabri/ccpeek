@@ -1,8 +1,15 @@
 package store
 
-const schemaVersion = 4
+import (
+	"fmt"
 
-const schema = `
+	"github.com/jmoiron/sqlx"
+)
+
+const schemaVersion = 5
+
+// initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
+const initialSchema = `
 CREATE TABLE IF NOT EXISTS meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -167,8 +174,57 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 CREATE TABLE IF NOT EXISTS source_files (
-	path       TEXT PRIMARY KEY,
-	mtime_ns   INTEGER NOT NULL DEFAULT 0,
-	indexed_at TEXT NOT NULL DEFAULT ''
+	path         TEXT PRIMARY KEY,
+	content_hash TEXT NOT NULL DEFAULT '',
+	indexed_at   TEXT NOT NULL DEFAULT ''
 );
 `
+
+// migrations is a list of migration functions applied sequentially.
+// Index 0 = v4→v5: add source_path + content_hash for incremental indexing.
+var migrations = []func(tx *sqlx.Tx) error{
+	migrateV4ToV5,
+}
+
+// migrateV4ToV5 adds source_path columns to entity tables and replaces
+// mtime_ns with content_hash in source_files.
+func migrateV4ToV5(tx *sqlx.Tx) error {
+	// Tables that get source_path for per-file tracking
+	tables := []string{
+		"plans", "shell_snapshots", "sessions", "todos",
+		"file_history", "history", "task_groups", "paste_cache",
+		"usage_facets", "usage_report", "memories",
+	}
+	for _, t := range tables {
+		col := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN source_path TEXT NOT NULL DEFAULT ''`, t)
+		if _, err := tx.Exec(col); err != nil {
+			return fmt.Errorf("adding source_path to %s: %w", t, err)
+		}
+		idx := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_source ON %s(source_path)`, t, t)
+		if _, err := tx.Exec(idx); err != nil {
+			return fmt.Errorf("creating source_path index on %s: %w", t, err)
+		}
+	}
+
+	// Replace mtime_ns with content_hash in source_files.
+	// SQLite doesn't support DROP COLUMN before 3.35.0 and doesn't support
+	// ALTER COLUMN, so recreate the table.
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS source_files_new (
+			path         TEXT PRIMARY KEY,
+			content_hash TEXT NOT NULL DEFAULT '',
+			indexed_at   TEXT NOT NULL DEFAULT ''
+		)`,
+		`INSERT OR IGNORE INTO source_files_new (path, indexed_at)
+			SELECT path, indexed_at FROM source_files`,
+		`DROP TABLE source_files`,
+		`ALTER TABLE source_files_new RENAME TO source_files`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migrating source_files: %w", err)
+		}
+	}
+
+	return nil
+}

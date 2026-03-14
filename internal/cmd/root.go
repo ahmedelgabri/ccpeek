@@ -37,6 +37,8 @@ func init() {
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().Bool("open", false, "Open browser after starting server")
 	rootCmd.Flags().Bool("watch", false, "Re-index periodically while serving")
+	rootCmd.Flags().Bool("rebuild", false, "Force full rebuild (drop all data and re-index from scratch)")
+	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
 }
 
 func Execute() {
@@ -54,6 +56,8 @@ func run(cmd *cobra.Command, args []string) error {
 	indexOnly, _ := cmd.Flags().GetBool("index-only")
 	openBrowser, _ := cmd.Flags().GetBool("open")
 	watch, _ := cmd.Flags().GetBool("watch")
+	rebuild, _ := cmd.Flags().GetBool("rebuild")
+	prune, _ := cmd.Flags().GetBool("prune")
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
@@ -69,10 +73,18 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if !skipIndex {
 		fmt.Println("Indexing", claudeDir, "->", dbPath)
-		if err := index.Run(claudeDir, db); err != nil {
+		if err := index.Run(claudeDir, db, rebuild); err != nil {
 			return fmt.Errorf("indexing failed: %w", err)
 		}
 		fmt.Println("Indexing complete.")
+	}
+
+	if prune {
+		fmt.Println("Pruning deleted source files...")
+		if err := index.Prune(claudeDir, db); err != nil {
+			return fmt.Errorf("pruning failed: %w", err)
+		}
+		fmt.Println("Pruning complete.")
 	}
 
 	if indexOnly {

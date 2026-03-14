@@ -22,7 +22,7 @@ func indexHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	}
 
 	for _, entry := range entries {
-		if err := s.InsertHistory(tx, entry); err != nil {
+		if err := s.InsertHistory(tx, entry, historyPath); err != nil {
 			continue
 		}
 	}

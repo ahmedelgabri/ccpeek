@@ -52,7 +52,7 @@ func indexPlans(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 			SizeBytes: info.Size(),
 		}
 
-		if err := s.InsertPlan(tx, entry, string(content)); err != nil {
+		if err := s.InsertPlan(tx, entry, string(content), src); err != nil {
 			continue
 		}
 		count++

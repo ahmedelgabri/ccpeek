@@ -73,7 +73,7 @@ func indexUsageData(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) 
 			}
 		}
 
-		if err := s.InsertUsageFacet(tx, entry, sessionDBID); err != nil {
+		if err := s.InsertUsageFacet(tx, entry, sessionDBID, src); err != nil {
 			continue
 		}
 		count++
@@ -82,7 +82,7 @@ func indexUsageData(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) 
 	// Index the report.html if it exists
 	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
 	if data, err := os.ReadFile(reportPath); err == nil {
-		_ = s.InsertUsageReport(tx, string(data))
+		_ = s.InsertUsageReport(tx, string(data), reportPath)
 	}
 
 	return count, nil

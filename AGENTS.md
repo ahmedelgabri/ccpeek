@@ -31,7 +31,8 @@ internal/
     root.go                 Cobra root command with flags and server logic
     man.go                  Hidden subcommand for man page generation
   index/                    Reads ~/.claude, writes ~/.local/share/ccpeek/ccpeek.db
-    index.go                Orchestrator: Run() calls each sub-indexer
+    index.go                Orchestrator: Run(rebuild), RunIncremental(), Prune(), hash helpers
+    incremental.go          Filtered variants of sub-indexers for incremental mode
     projects.go             Indexes projects + sessions from JSONL conversation files
     plans.go, todos.go,     Each indexes one entity type
     snapshots.go,
@@ -67,7 +68,8 @@ testdata/                   Fixture data mimicking ~/.claude structure for unit 
 
 - **Templates**: Each page defines `{{template "content"}}`. The base `layout.html` is cloned per page template to avoid definition collisions. Template functions are registered in `render.go`.
 - **Embedded assets**: All templates and static files are embedded via `//go:embed` in `web/embed.go`. Changes to templates take effect on rebuild, not at runtime.
-- **Indexing pipeline**: `index.Run()` reads source data, each sub-indexer handles one entity type, then `resolveRelationships()` cross-links entities using UUID extraction from filenames.
+- **Indexing pipeline**: `index.Run(rebuild bool)` performs indexing. By default it does incremental indexing: each source file is SHA-256 hashed and compared against stored hashes, only changed files are re-indexed (delete old rows, insert new). `--rebuild` forces a full drop-and-rebuild. `--prune` removes DB rows whose source files no longer exist on disk. Data from deleted source files is preserved by default. Each entity row stores a `source_path` column linking it back to its source file.
+- **Schema migrations**: Sequential versioned migrations in `store/schema.go`. `initialSchema` is the baseline, `migrations` slice holds `func(tx)` for each version bump (e.g. v4→v5 added `source_path`/`content_hash` columns). `store.migrate()` applies pending migrations on startup.
 - **Testing**: Handler tests use `httptest` with `NewHandler()` against real testdata fixtures. E2e tests use Playwright against a live Go server with `--skip-index`.
 - **CSS**: Tailwind v4 with `@import 'tailwindcss'` and `@source "../templates"` directive. Custom theme colors (`surface`, `surface-card`, etc.) defined in `@theme` block. The compiled `static/style.css` is gitignored; run `just css` to generate it.
 - **List items**: Use class `list-row` (not `list-item`, which collides with Tailwind's `display: list-item` utility).

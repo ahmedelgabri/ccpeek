@@ -931,14 +931,21 @@ func (s *Store) GetToolTimeline(sessionID string) ([]ToolTimelineEntry, error) {
 	return entries, nil
 }
 
-// GetSourceFileMtime returns the stored mtime for a source file, or 0 if not found.
-func (s *Store) GetSourceFileMtime(path string) (int64, error) {
-	var mtimeNs int64
-	err := s.db.Get(&mtimeNs, `SELECT mtime_ns FROM source_files WHERE path = ?`, path)
+// GetSourceFileHash returns the stored content hash for a source file.
+func (s *Store) GetSourceFileHash(path string) (string, error) {
+	var hash string
+	err := s.db.Get(&hash, `SELECT content_hash FROM source_files WHERE path = ?`, path)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	return mtimeNs, nil
+	return hash, nil
+}
+
+// ListSourceFilePaths returns all tracked source file paths.
+func (s *Store) ListSourceFilePaths() ([]string, error) {
+	var paths []string
+	err := s.db.Select(&paths, `SELECT path FROM source_files`)
+	return paths, err
 }
 
 // ListTaskGroups returns all task groups with non-zero items.

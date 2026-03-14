@@ -47,7 +47,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// Reset drops all data and recreates the schema. Used for full re-index.
+// Reset drops all data and recreates the schema. Used for full rebuild.
 func (s *Store) Reset() error {
 	tables := []string{
 		"messages_fts", "messages", "todo_items", "todos",
@@ -64,22 +64,60 @@ func (s *Store) Reset() error {
 	return s.migrate()
 }
 
+// migrate applies the initial schema (if needed) then runs any pending
+// sequential migrations to bring the database up to schemaVersion.
 func (s *Store) migrate() error {
-	// Check current schema version
+	// Ensure meta table exists so we can read the version
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("creating meta table: %w", err)
+	}
+
 	var currentVersion int
 	row := s.db.QueryRow("SELECT value FROM meta WHERE key = 'schema_version'")
-	if err := row.Scan(&currentVersion); err == nil {
-		if currentVersion >= schemaVersion {
-			return nil
+	if err := row.Scan(&currentVersion); err != nil {
+		// No version yet — fresh database, apply initial schema
+		currentVersion = 0
+	}
+
+	if currentVersion >= schemaVersion {
+		return nil
+	}
+
+	// Apply initial schema (all CREATE IF NOT EXISTS, safe to re-run)
+	if _, err := s.db.Exec(initialSchema); err != nil {
+		return fmt.Errorf("applying initial schema: %w", err)
+	}
+
+	// If this was a fresh database (no version set), we're now at baseline v4
+	if currentVersion == 0 {
+		currentVersion = 4
+	}
+
+	// Apply sequential migrations from currentVersion to schemaVersion
+	// migrations[0] = v4→v5, migrations[1] = v5→v6, etc.
+	baseVersion := 4 // the schema version that initialSchema represents
+	for v := currentVersion; v < schemaVersion; v++ {
+		idx := v - baseVersion
+		if idx < 0 || idx >= len(migrations) {
+			continue
+		}
+
+		tx, err := s.db.Beginx()
+		if err != nil {
+			return fmt.Errorf("beginning migration %d: %w", v+1, err)
+		}
+
+		if err := migrations[idx](tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migration v%d→v%d: %w", v, v+1, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v%d→v%d: %w", v, v+1, err)
 		}
 	}
 
-	// Apply schema
-	if _, err := s.db.Exec(schema); err != nil {
-		return fmt.Errorf("applying schema: %w", err)
-	}
-
-	// Set version
+	// Record final version
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)`,
 		strconv.Itoa(schemaVersion),

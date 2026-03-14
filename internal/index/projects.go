@@ -119,7 +119,8 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 
 		// Insert sessions and their messages
 		for _, sd := range sessionsData {
-			sessionDBID, err := s.InsertSession(tx, projectID, sd.entry)
+			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
+			sessionDBID, err := s.InsertSession(tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
 				continue
 			}

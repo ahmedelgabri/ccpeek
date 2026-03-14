@@ -44,7 +44,7 @@ func indexMemory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 			projectID = &pid
 		}
 
-		if err := s.InsertMemory(tx, e.Name(), projectID, info.Size(), string(content)); err != nil {
+		if err := s.InsertMemory(tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
 			continue
 		}
 		count++

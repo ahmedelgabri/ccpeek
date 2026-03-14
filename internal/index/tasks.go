@@ -52,7 +52,7 @@ func indexTasks(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 			sessionDBID = dbID
 		}
 
-		if err := s.InsertTaskGroup(tx, entry, items, sessionDBID); err != nil {
+		if err := s.InsertTaskGroup(tx, entry, items, sessionDBID, taskDir); err != nil {
 			continue
 		}
 		count++
@@ -111,32 +111,3 @@ func readTaskItems(dir string) ([]model.TaskItem, error) {
 	return items, nil
 }
 
-// addTaskDirs adds task directory paths (not individual files) for mtime tracking.
-func addTaskDirs(paths *[]string, claudeDir string) {
-	srcDir := filepath.Join(claudeDir, "tasks")
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		// Track the directory itself so new JSON files trigger re-index
-		*paths = append(*paths, filepath.Join(srcDir, e.Name()))
-		taskDir := filepath.Join(srcDir, e.Name())
-		files, err := os.ReadDir(taskDir)
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
-				*paths = append(*paths, filepath.Join(taskDir, f.Name()))
-			}
-		}
-	}
-	// Also track the tasks dir itself so new subdirectories trigger re-index
-	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
-		*paths = append(*paths, srcDir)
-	}
-}
