@@ -90,6 +90,64 @@ func TestRunClearsPreviousFindings(t *testing.T) {
 	}
 }
 
+func TestIgnoredFindingsSurviveRescan(t *testing.T) {
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Insert a message with a detectable secret
+	tx, err := db.BeginTx()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, _ := db.InsertProject(tx, "test-proj", "Test")
+	sess := model.SessionEntry{
+		SessionID: "s1", FirstPrompt: "test", MessageCount: 1,
+		Created: "2025-01-01T00:00:00Z", Modified: "2025-01-01T00:00:00Z",
+	}
+	sessionDBID, _ := db.InsertSession(tx, projectID, sess, "")
+	messages := []model.ConversationMessage{{
+		Type: "human", Timestamp: "2025-01-01T00:00:00Z",
+		Message: model.MessagePayload{
+			Role:    "user",
+			Content: []byte(`"key: AKIA2OGYBAH6QLHAMZXB"`),
+		},
+	}}
+	db.InsertMessages(tx, sessionDBID, messages)
+	tx.Commit()
+
+	scanner, _ := New(db)
+
+	// First scan
+	findings, _ := scanner.Run()
+	if len(findings) == 0 {
+		t.Fatal("expected findings")
+	}
+
+	// Ignore the finding
+	stored, _ := db.ListScanFindings("", "", true)
+	db.ToggleScanFindingIgnored(stored[0].ID)
+
+	// Re-scan — ignored finding should persist, not duplicate
+	scanner.Run()
+
+	all, _ := db.ListScanFindings("", "", true)
+	if len(all) != 1 {
+		t.Errorf("expected 1 finding after re-scan (ignored persisted, no duplicate), got %d", len(all))
+	}
+	if !all[0].Ignored {
+		t.Error("the surviving finding should still be ignored")
+	}
+
+	// Non-ignored view should be empty
+	active, _ := db.ListScanFindings("", "", false)
+	if len(active) != 0 {
+		t.Errorf("expected 0 active findings, got %d", len(active))
+	}
+}
+
 func TestDetectKnownSecrets(t *testing.T) {
 	db, err := store.Open(":memory:")
 	if err != nil {
