@@ -2,10 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
@@ -92,8 +90,15 @@ func printScanResults(findings []model.ScanFinding) {
 		return sorted[i].count > sorted[j].count
 	})
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "  %sRULE\tCOUNT\tSOURCE%s\n", colorDim, colorReset)
+	// Find the longest rule name for alignment
+	maxRule := 4 // len("RULE")
+	for _, rc := range sorted {
+		if len(rc.rule) > maxRule {
+			maxRule = len(rc.rule)
+		}
+	}
+
+	fmt.Printf("  %s%-*s  %5s  %s%s\n", colorDim, maxRule, "RULE", "COUNT", "SOURCE", colorReset)
 	for _, rc := range sorted {
 		types := make(map[string]bool)
 		for _, f := range findings {
@@ -106,10 +111,9 @@ func printScanResults(findings []model.ScanFinding) {
 			typeList = append(typeList, t)
 		}
 		sort.Strings(typeList)
-		fmt.Fprintf(w, "  %s%s%s\t%d\t%s\n",
-			colorRed, rc.rule, colorReset, rc.count, strings.Join(typeList, ", "))
+		fmt.Printf("  %s%-*s%s  %5d  %s\n",
+			colorRed, maxRule, rc.rule, colorReset, rc.count, strings.Join(typeList, ", "))
 	}
-	w.Flush()
 
 	// Individual findings
 	fmt.Printf("\n  %sFindings:%s\n\n", colorBold, colorReset)
