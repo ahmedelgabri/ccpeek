@@ -6,7 +6,7 @@
   >
     {{ range .Todos }}
       <a
-        href="/todos/{{ .FileName | trimSuffix ".json" }}/"
+        href="{{ urlFor "todo" .FileName }}"
         class="list-row group flex items-baseline justify-between gap-4 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
       >
         <div class="min-w-0 flex-1">

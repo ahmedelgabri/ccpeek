@@ -35,7 +35,7 @@
   >
     {{ range .Facets }}
       <a
-        href="/usage-data/{{ .SessionID }}/"
+        href="{{ urlFor "usage" .SessionID }}"
         class="list-row group flex flex-col gap-1.5 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
         data-search-keys="{{ .BriefSummary }} {{ .UnderlyingGoal }} {{ .SessionID }} {{ .Outcome }}"
       >

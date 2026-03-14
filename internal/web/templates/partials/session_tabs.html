@@ -1,7 +1,7 @@
 {{ define "session_tabs" }}
   <div class="flex items-center gap-1 border-b border-surface-border mb-6">
     <a
-      href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/"
+      href="{{ urlFor "session" .Project.DirName .Session.SessionID }}"
       class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "conversation" }}
         text-slate-100 border-b-2 border-violet-400
       {{ else }}
@@ -12,7 +12,7 @@
     </a>
     {{ if .Session.TodoFileName }}
       <a
-        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/todos/"
+        href="{{ urlFor "session-tab" .Project.DirName .Session.SessionID "todos" }}"
         class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "todos" }}
           text-slate-100 border-b-2 border-violet-400
         {{ else }}
@@ -24,7 +24,7 @@
     {{ end }}
     {{ if .Session.HasFileHistory }}
       <a
-        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/file-history/"
+        href="{{ urlFor "session-tab" .Project.DirName .Session.SessionID "file-history" }}"
         class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "file-history" }}
           text-slate-100 border-b-2 border-violet-400
         {{ else }}
@@ -36,7 +36,7 @@
     {{ end }}
     {{ if .Session.BashCommandCount }}
       <a
-        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/commands/"
+        href="{{ urlFor "session-tab" .Project.DirName .Session.SessionID "commands" }}"
         class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "commands" }}
           text-slate-100 border-b-2 border-violet-400
         {{ else }}
@@ -48,7 +48,7 @@
     {{ end }}
     {{ if .Session.ToolUseCounts }}
       <a
-        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/tools/"
+        href="{{ urlFor "session-tab" .Project.DirName .Session.SessionID "tools" }}"
         class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "tools" }}
           text-slate-100 border-b-2 border-violet-400
         {{ else }}
@@ -60,7 +60,7 @@
     {{ end }}
     {{ if .HasCodeBlocks }}
       <a
-        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/code/"
+        href="{{ urlFor "session-tab" .Project.DirName .Session.SessionID "code" }}"
         class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px {{ if eq .ActiveTab "code" }}
           text-slate-100 border-b-2 border-violet-400
         {{ else }}

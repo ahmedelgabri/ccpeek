@@ -1,6 +1,6 @@
 {{ define "content" }}
   <a
-    href="/projects/{{ .Project.DirName }}/#{{ toAnchor "s" .SessionA.SessionID }}"
+    href="{{ urlFor "session-anchor" .Project.DirName .SessionA.SessionID }}"
     class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors"
   >
     <svg
@@ -25,7 +25,7 @@
     <div class="bg-surface-card border border-surface-border rounded-xl p-4">
       <h2 class="text-lg font-semibold text-slate-200 mb-3">
         <a
-          href="/projects/{{ .Project.DirName }}/{{ .SessionA.SessionID }}/"
+          href="{{ urlFor "session" .Project.DirName .SessionA.SessionID }}"
           class="text-violet-400 no-underline hover:text-violet-300"
         >
           {{ if .SessionA.FirstPrompt }}
@@ -80,7 +80,7 @@
     <div class="bg-surface-card border border-surface-border rounded-xl p-4">
       <h2 class="text-lg font-semibold text-slate-200 mb-3">
         <a
-          href="/projects/{{ .Project.DirName }}/{{ .SessionB.SessionID }}/"
+          href="{{ urlFor "session" .Project.DirName .SessionB.SessionID }}"
           class="text-sky-400 no-underline hover:text-sky-300"
         >
           {{ if .SessionB.FirstPrompt }}

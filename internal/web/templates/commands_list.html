@@ -155,12 +155,12 @@
         >
           <div class="flex items-center gap-3 text-xs min-w-0">
             <a
-              href="/projects/{{ .ProjectDirName }}/#{{ toAnchor "s" .SessionID }}"
+              href="{{ urlFor "session-anchor" .ProjectDirName .SessionID }}"
               class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 no-underline whitespace-nowrap shrink-0 hover:bg-sky-500/20 transition-colors"
               >{{ .ProjectDisplay }}</a
             >
             <a
-              href="/projects/{{ .ProjectDirName }}/{{ .SessionID }}/commands/#{{ toAnchor "cmd" .Timestamp }}"
+              href="{{ urlFor "command-anchor" .ProjectDirName .SessionID .Timestamp }}"
               class="text-slate-600 whitespace-nowrap tabular-nums no-underline hover:text-slate-400 transition-colors"
               >{{ formatDate .Timestamp }}</a
             >

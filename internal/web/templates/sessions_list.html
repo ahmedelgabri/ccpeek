@@ -179,7 +179,7 @@
           data-session-id="{{ .SessionID }}"
         />
         <a
-          href="/projects/{{ $.Project.DirName }}/{{ .SessionID }}/"
+          href="{{ urlFor "session" $.Project.DirName .SessionID }}"
           class="min-w-0 flex-1 no-underline"
         >
           <div

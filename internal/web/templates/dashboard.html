@@ -152,7 +152,7 @@
     <div class="rounded-xl border border-surface-border overflow-hidden">
       {{ range $i, $item := .RecentHistory }}
         <a
-          href="/projects/{{ encodeProjectDir .Project }}/"
+          href="{{ urlFor "project" (encodeProjectDir .Project) }}"
           class="flex items-baseline gap-4 px-5 py-3 text-sm no-underline transition-colors duration-150 hover:bg-surface-hover {{ if $i }}
             border-t border-surface-border
           {{ end }}"

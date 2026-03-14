@@ -1,6 +1,6 @@
 {{ define "content" }}
   <a
-    href="/projects/{{ .Project.DirName }}/#{{ toAnchor "s" .Session.SessionID }}"
+    href="{{ urlFor "session-anchor" .Project.DirName .Session.SessionID }}"
     class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 mb-4 transition-colors"
   >
     <svg
@@ -42,7 +42,7 @@
         <span>~{{ formatTokens .Session.EstimatedTokens }} tokens</span>
       {{ end }}
       <a
-        href="/projects/{{ .Project.DirName }}/{{ .Session.SessionID }}/export.md"
+        href="{{ urlFor "session-export" .Project.DirName .Session.SessionID }}"
         class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-surface-border bg-surface-card text-slate-400 hover:text-slate-200 hover:border-slate-500 no-underline transition-colors"
       >
         <svg

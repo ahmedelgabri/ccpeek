@@ -21,7 +21,7 @@
     </a>
     {{ if .Task.ProjectDir }}
       <a
-        href="/projects/{{ .Task.ProjectDir }}/{{ .Task.SessionID }}/"
+        href="{{ urlFor "session" .Task.ProjectDir .Task.SessionID }}"
         class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 transition-colors"
       >
         <svg

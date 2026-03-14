@@ -155,6 +155,59 @@ func toAnchor(prefix, value string) string {
 	return prefix + "-" + safe
 }
 
+// urlFor builds URLs for linking between pages. Centralizes all URL
+// construction so templates don't need to know routing patterns.
+//
+// Supported types and arguments:
+//
+//	"project"          dirName                    → /projects/{dir}/
+//	"session"          dirName, sessionID         → /projects/{dir}/{sid}/
+//	"session-anchor"   dirName, sessionID         → /projects/{dir}/#s-{sid}
+//	"session-tab"      dirName, sessionID, tab    → /projects/{dir}/{sid}/{tab}/
+//	"session-export"   dirName, sessionID         → /projects/{dir}/{sid}/export.md
+//	"plan"             fileName                   → /plans/{name}/
+//	"snapshot"         fileName                   → /shell-snapshots/{name}/
+//	"todo"             fileName                   → /todos/{name}/
+//	"task"             dirName                    → /tasks/{dir}/
+//	"paste"            fileName                   → /paste-cache/{name}/
+//	"memory"           projectDir                 → /memories/{dir}/
+//	"file-history"     conversationID             → /file-history/{id}/
+//	"usage"            sessionID                  → /usage-data/{sid}/
+//	"command-anchor"   dirName, sessionID, ts     → /projects/{dir}/{sid}/commands/#cmd-{ts}
+func urlFor(kind string, args ...string) string {
+	switch kind {
+	case "project":
+		return "/projects/" + args[0] + "/"
+	case "session":
+		return "/projects/" + args[0] + "/" + args[1] + "/"
+	case "session-anchor":
+		return "/projects/" + args[0] + "/#" + toAnchor("s", args[1])
+	case "session-tab":
+		return "/projects/" + args[0] + "/" + args[1] + "/" + args[2] + "/"
+	case "session-export":
+		return "/projects/" + args[0] + "/" + args[1] + "/export.md"
+	case "plan":
+		return "/plans/" + strings.TrimSuffix(args[0], ".md") + "/"
+	case "snapshot":
+		return "/shell-snapshots/" + strings.TrimSuffix(args[0], ".sh") + "/"
+	case "todo":
+		return "/todos/" + strings.TrimSuffix(args[0], ".json") + "/"
+	case "task":
+		return "/tasks/" + args[0] + "/"
+	case "paste":
+		return "/paste-cache/" + strings.TrimSuffix(args[0], ".txt") + "/"
+	case "memory":
+		return "/memories/" + args[0] + "/"
+	case "file-history":
+		return "/file-history/" + args[0] + "/"
+	case "usage":
+		return "/usage-data/" + args[0] + "/"
+	case "command-anchor":
+		return "/projects/" + args[0] + "/" + args[1] + "/commands/#" + toAnchor("cmd", args[2])
+	}
+	return "/"
+}
+
 var funcMap = template.FuncMap{
 	"formatBytes":      formatBytes,
 	"formatTimestamp":  formatTimestamp,
@@ -179,6 +232,7 @@ var funcMap = template.FuncMap{
 	"sub":              func(a, b int) int { return a - b },
 	"add":              func(a, b int) int { return a + b },
 	"toAnchor":         toAnchor,
+	"urlFor":           urlFor,
 	"cardCSS":          cardCSS,
 	"exportCmd": func(host, format, filterQuery string) string {
 		histFile := map[string]string{

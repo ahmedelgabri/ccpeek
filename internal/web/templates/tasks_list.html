@@ -14,7 +14,7 @@
   >
     {{ range .Groups }}
       <a
-        href="/tasks/{{ .DirName }}/"
+        href="{{ urlFor "task" .DirName }}"
         class="list-row group flex items-baseline justify-between gap-4 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
         data-search-keys="{{ .DirName }}"
       >
