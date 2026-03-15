@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
@@ -402,9 +403,9 @@ func TestDecodeProjectDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := decodeProjectDir(tt.input)
+		got := model.DecodeProjectDir(tt.input)
 		if got != tt.want {
-			t.Errorf("decodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("DecodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

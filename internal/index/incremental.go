@@ -144,7 +144,7 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 
 		dirName := e.Name()
 		projectDir := filepath.Join(srcDir, dirName)
-		displayName := decodeProjectDir(dirName)
+		displayName := model.DecodeProjectDir(dirName)
 
 		// Read sessions-index.json if available
 		var sessionsIndex model.SessionsIndex

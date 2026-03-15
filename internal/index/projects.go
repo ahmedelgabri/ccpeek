@@ -34,7 +34,7 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 
 		dirName := e.Name()
 		projectDir := filepath.Join(srcDir, dirName)
-		displayName := decodeProjectDir(dirName)
+		displayName := model.DecodeProjectDir(dirName)
 
 		// Read sessions-index.json if available
 		var sessionsIndex model.SessionsIndex
@@ -219,22 +219,4 @@ func countToolUses(messages []model.ConversationMessage) map[string]int {
 		}
 	}
 	return counts
-}
-
-// decodeProjectDir converts an encoded directory name back to a path.
-func decodeProjectDir(dirName string) string {
-	path := dirName
-	if strings.HasPrefix(path, "-") {
-		path = "/" + path[1:]
-	}
-	path = strings.ReplaceAll(path, "--", "/.")
-	path = strings.ReplaceAll(path, "-", "/")
-	return path
-}
-
-// encodeProjectDir converts a path to the encoded directory name format.
-func encodeProjectDir(path string) string {
-	result := strings.ReplaceAll(path, "/.", "--")
-	result = strings.ReplaceAll(result, "/", "-")
-	return result
 }

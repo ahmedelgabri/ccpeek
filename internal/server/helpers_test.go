@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 func TestDecodeProjectDir(t *testing.T) {
@@ -16,9 +18,9 @@ func TestDecodeProjectDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := decodeProjectDir(tt.input)
+		got := model.DecodeProjectDir(tt.input)
 		if got != tt.want {
-			t.Errorf("decodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("DecodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -34,9 +36,9 @@ func TestEncodeProjectDir(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := encodeProjectDir(tt.input)
+		got := model.EncodeProjectDir(tt.input)
 		if got != tt.want {
-			t.Errorf("encodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("EncodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

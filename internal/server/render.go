@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/alecthomas/chroma/v2"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -214,8 +215,8 @@ var funcMap = template.FuncMap{
 	"formatDate":       formatDate,
 	"formatShortDate":  formatShortDate,
 	"truncate":         truncate,
-	"decodeProjectDir": decodeProjectDir,
-	"encodeProjectDir": encodeProjectDir,
+	"decodeProjectDir": model.DecodeProjectDir,
+	"encodeProjectDir": model.EncodeProjectDir,
 	"renderMarkdown":   renderMarkdown,
 	"wrapCode":         wrapCode,
 	"highlightCode":    highlightCode,

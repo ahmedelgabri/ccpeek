@@ -398,31 +398,7 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	type VersionEntry struct {
-		model.FileVersionInfo
-		DiffHTML template.HTML
-	}
-	type HashGroup struct {
-		Hash     string
-		Versions []VersionEntry
-	}
-	var groups []HashGroup
-	groupMap := make(map[string]int)
-
-	for _, f := range detail.Files {
-		ve := VersionEntry{FileVersionInfo: f}
-		if idx, ok := groupMap[f.Hash]; ok {
-			prev := groups[idx].Versions[len(groups[idx].Versions)-1]
-			ve.DiffHTML = renderDiff(prev.Content, f.Content)
-			groups[idx].Versions = append(groups[idx].Versions, ve)
-		} else {
-			groupMap[f.Hash] = len(groups)
-			groups = append(groups, HashGroup{
-				Hash:     f.Hash,
-				Versions: []VersionEntry{ve},
-			})
-		}
-	}
+	groups := groupFileVersions(detail.Files)
 
 	title := session.FirstPrompt
 	if title == "" {
@@ -806,31 +782,7 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type VersionEntry struct {
-		model.FileVersionInfo
-		DiffHTML template.HTML
-	}
-	type HashGroup struct {
-		Hash     string
-		Versions []VersionEntry
-	}
-	var groups []HashGroup
-	groupMap := make(map[string]int)
-
-	for _, f := range detail.Files {
-		ve := VersionEntry{FileVersionInfo: f}
-		if idx, ok := groupMap[f.Hash]; ok {
-			prev := groups[idx].Versions[len(groups[idx].Versions)-1]
-			ve.DiffHTML = renderDiff(prev.Content, f.Content)
-			groups[idx].Versions = append(groups[idx].Versions, ve)
-		} else {
-			groupMap[f.Hash] = len(groups)
-			groups = append(groups, HashGroup{
-				Hash:     f.Hash,
-				Versions: []VersionEntry{ve},
-			})
-		}
-	}
+	groups := groupFileVersions(detail.Files)
 
 	renderTemplate(w, h.tmpl, "filehistory_detail.html", map[string]any{
 		"Title":          "File History: " + conversationID,
@@ -987,6 +939,40 @@ func (h *handlers) usageDataReport(w http.ResponseWriter, r *http.Request) {
 		"CurrentPath": "/usage-data/",
 		"Content":     content,
 	})
+}
+
+// versionEntry is a file version with an optional diff.
+type versionEntry struct {
+	model.FileVersionInfo
+	DiffHTML template.HTML
+}
+
+// hashGroup groups file versions that share the same content hash.
+type hashGroup struct {
+	Hash     string
+	Versions []versionEntry
+}
+
+// groupFileVersions groups file versions by hash and computes diffs.
+func groupFileVersions(files []model.FileVersionInfo) []hashGroup {
+	var groups []hashGroup
+	groupMap := make(map[string]int)
+
+	for _, f := range files {
+		ve := versionEntry{FileVersionInfo: f}
+		if idx, ok := groupMap[f.Hash]; ok {
+			prev := groups[idx].Versions[len(groups[idx].Versions)-1]
+			ve.DiffHTML = renderDiff(prev.Content, f.Content)
+			groups[idx].Versions = append(groups[idx].Versions, ve)
+		} else {
+			groupMap[f.Hash] = len(groups)
+			groups = append(groups, hashGroup{
+				Hash:     f.Hash,
+				Versions: []versionEntry{ve},
+			})
+		}
+	}
+	return groups
 }
 
 // usageReportRaw serves the raw HTML for the iframe src.

@@ -280,6 +280,24 @@ func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
 	return nil
 }
 
+// DecodeProjectDir converts an encoded directory name back to a path.
+func DecodeProjectDir(dirName string) string {
+	path := dirName
+	if strings.HasPrefix(path, "-") {
+		path = "/" + path[1:]
+	}
+	path = strings.ReplaceAll(path, "--", "/.")
+	path = strings.ReplaceAll(path, "-", "/")
+	return path
+}
+
+// EncodeProjectDir converts a path to the encoded directory name format.
+func EncodeProjectDir(path string) string {
+	result := strings.ReplaceAll(path, "/.", "--")
+	result = strings.ReplaceAll(result, "/", "-")
+	return result
+}
+
 func parseTimestampUnix(ts string) int64 {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.000Z"} {
 		if t, err := time.Parse(layout, ts); err == nil {
