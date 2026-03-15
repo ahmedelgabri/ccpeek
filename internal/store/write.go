@@ -439,6 +439,12 @@ func (s *Store) DeleteSessionCascade(ctx context.Context, tx *sqlx.Tx, sourcePat
 		return nil
 	}
 
+	// Ensure FTS table exists (may be missing if DB predates FTS migration)
+	if _, err := tx.ExecContext(ctx,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text_content)`); err != nil {
+		return fmt.Errorf("ensuring FTS table: %w", err)
+	}
+
 	for _, sid := range sessionIDs {
 		// Delete FTS entries for these messages
 		if _, err := tx.ExecContext(ctx,
