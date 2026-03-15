@@ -69,5 +69,9 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading commands: %w", err)
 	}
 
+	if len(commands) == 0 {
+		fmt.Fprintln(os.Stderr, "hint: no commands found. Run 'ccpeek --index-only' first to index your Claude Code data.")
+	}
+
 	return model.FormatCommands(os.Stdout, commands, format)
 }

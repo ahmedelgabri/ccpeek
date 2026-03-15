@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
@@ -32,18 +33,19 @@ func init() {
 		home = ""
 	}
 
-	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Source directory")
+	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Path to Claude Code data directory")
 	rootCmd.PersistentFlags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "SQLite database file path")
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
-	rootCmd.Flags().Bool("open", false, "Open browser after starting server")
-	rootCmd.Flags().Bool("watch", false, "Re-index periodically while serving")
+	rootCmd.Flags().BoolP("open", "o", false, "Open browser after starting server")
+	rootCmd.Flags().BoolP("watch", "w", false, "Re-index periodically while serving")
 	rootCmd.Flags().Bool("rebuild", false, "Force full rebuild (drop all data and re-index from scratch)")
 	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
 	rootCmd.Flags().Bool("skip-scan", false, "Skip secret scanning after indexing")
 	rootCmd.Flags().BoolP("quiet", "q", false, "Suppress informational output")
+	rootCmd.Flags().Int("watch-interval", 30, "Re-index interval in seconds (used with --watch)")
 }
 
 func Execute() {
@@ -65,6 +67,7 @@ func run(cmd *cobra.Command, args []string) error {
 	prune, _ := cmd.Flags().GetBool("prune")
 	skipScan, _ := cmd.Flags().GetBool("skip-scan")
 	quiet, _ := cmd.Flags().GetBool("quiet")
+	watchInterval, _ := cmd.Flags().GetInt("watch-interval")
 
 	// Validate mutually exclusive flags
 	if skipIndex && indexOnly {
@@ -160,14 +163,14 @@ func run(cmd *cobra.Command, args []string) error {
 	logf("Serving on %s\n", url)
 
 	if watch {
-		logf("Watch mode enabled, re-indexing every 30s\n")
+		logf("Watch mode enabled, re-indexing every %ds\n", watchInterval)
 	}
 
 	if openBrowser {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(addr, db, claudeDir, watch)
+	return server.ListenAndServe(addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second)
 }
 
 // dataDir returns the XDG data directory for ccpeek.
@@ -191,7 +194,10 @@ func openURL(url string) {
 	case "linux":
 		name = "xdg-open"
 	default:
+		fmt.Fprintf(os.Stderr, "Auto-open not supported on %s, visit %s manually\n", runtime.GOOS, url)
 		return
 	}
-	_ = exec.Command(name, url).Start()
+	if err := exec.Command(name, url).Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open browser: %v\n", err)
+	}
 }

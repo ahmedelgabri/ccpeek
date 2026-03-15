@@ -16,7 +16,7 @@ import (
 var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool) error {
+func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -30,7 +30,7 @@ func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool) 
 	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		go watchAndReindex(claudeDir, db)
+		go watchAndReindex(claudeDir, db, watchInterval)
 	}
 
 	return http.ListenAndServe(addr, requestLogger(securityHeaders(registerRoutes(h, staticFS))))
@@ -99,10 +99,8 @@ type handlers struct {
 	tmpl  *templates
 }
 
-const watchInterval = 30 * time.Second
-
-func watchAndReindex(claudeDir string, db *store.Store) {
-	ticker := time.NewTicker(watchInterval)
+func watchAndReindex(claudeDir string, db *store.Store, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
 		changed, err := index.RunIncremental(claudeDir, db)
