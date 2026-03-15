@@ -80,7 +80,7 @@
       <select
         name="branch"
         class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer transition-colors"
-        onchange="this.form.submit()"
+        data-autosubmit
       >
         <option value="">All branches</option>
         {{ range $.Branches }}
@@ -95,7 +95,7 @@
       name="from"
       value="{{ .From }}"
       class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 transition-colors"
-      onchange="this.form.submit()"
+      data-autosubmit
       title="From date"
     />
     <span class="text-xs text-slate-600">to</span>
@@ -104,7 +104,7 @@
       name="to"
       value="{{ .To }}"
       class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 transition-colors"
-      onchange="this.form.submit()"
+      data-autosubmit
       title="To date"
     />
     <button
@@ -139,7 +139,7 @@
       <select
         name="sort"
         class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer transition-colors"
-        onchange="this.form.submit()"
+        data-autosubmit
       >
         <option value="" {{ if eq .Sort "" }}selected{{ end }}>Newest</option>
         <option value="oldest" {{ if eq .Sort "oldest" }}selected{{ end }}>

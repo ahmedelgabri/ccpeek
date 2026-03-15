@@ -15,7 +15,8 @@
       {{ end }}
       <form
         class="flex items-center gap-1.5"
-        onsubmit="var p=this.querySelector('input').value;if(p>=1&&p<={{ .TotalPages }})location.search='?page='+p;return false;"
+        data-page-jump
+        data-total-pages="{{ .TotalPages }}"
       >
         <span class="text-sm text-slate-500">Page</span>
         <input

@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -1067,22 +1068,22 @@ func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
 	projects, _ := h.store.ListProjectNames()
 
 	// Build filter query string for pagination and export links
-	var filterParts []string
+	filterValues := url.Values{}
 	if filter.Project != "" {
-		filterParts = append(filterParts, "project="+filter.Project)
+		filterValues.Set("project", filter.Project)
 	}
 	if filter.Search != "" {
-		filterParts = append(filterParts, "search="+filter.Search)
+		filterValues.Set("search", filter.Search)
 	}
 	if filter.From != "" {
-		filterParts = append(filterParts, "from="+filter.From)
+		filterValues.Set("from", filter.From)
 	}
 	if filter.To != "" {
-		filterParts = append(filterParts, "to="+filter.To)
+		filterValues.Set("to", filter.To)
 	}
 	filterQuery := ""
-	if len(filterParts) > 0 {
-		filterQuery = "&" + strings.Join(filterParts, "&")
+	if encoded := filterValues.Encode(); encoded != "" {
+		filterQuery = "&" + encoded
 	}
 
 	renderTemplate(w, h.tmpl, "commands_list.html", map[string]any{

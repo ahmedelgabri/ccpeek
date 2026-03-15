@@ -114,7 +114,7 @@
     <select
       name="project"
       class="px-2.5 py-1.5 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 cursor-pointer transition-colors"
-      onchange="this.form.submit()"
+      data-autosubmit
     >
       <option value="">All projects</option>
       {{ range .Projects }}
@@ -131,7 +131,7 @@
       name="from"
       value="{{ .From }}"
       class="px-2.5 py-1.5 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 transition-colors"
-      onchange="this.form.submit()"
+      data-autosubmit
       title="From date"
     />
     <input
@@ -139,7 +139,7 @@
       name="to"
       value="{{ .To }}"
       class="px-2.5 py-1.5 rounded-lg bg-surface-card border border-surface-border text-xs text-slate-400 transition-colors"
-      onchange="this.form.submit()"
+      data-autosubmit
       title="To date"
     />
   </form>
@@ -195,7 +195,9 @@
       {{ end }}
       <form
         class="flex items-center gap-1.5"
-        onsubmit="var p=this.querySelector('input').value;if(p>=1&&p<={{ .TotalPages }})location.search='?page='+p+'{{ .FilterQuery }}';return false;"
+        data-page-jump
+        data-total-pages="{{ .TotalPages }}"
+        data-filter-query="{{ .FilterQuery }}"
       >
         <span class="text-sm text-slate-500">Page</span>
         <input

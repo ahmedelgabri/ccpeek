@@ -8,3 +8,4 @@ import "./keyboard-nav.js";
 import "./token-chart.js";
 import "./tool-timeline.js";
 import "./scan.js";
+import "./forms.js";
