@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -51,7 +52,7 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 	from, _ := cmd.Flags().GetString("from")
 	to, _ := cmd.Flags().GetString("to")
 
-	db, err := store.Open(dataFile)
+	db, err := store.Open(context.TODO(), dataFile)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -64,7 +65,7 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 		To:      to,
 	}
 
-	commands, err := db.ListAllCommands(filter)
+	commands, err := db.ListAllCommands(context.TODO(), filter)
 	if err != nil {
 		return fmt.Errorf("loading commands: %w", err)
 	}

@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ func setupTestDir(t *testing.T) string {
 
 func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 	dir := setupTestDir(t)
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 		t.Fatal("initial Run:", err)
 	}
 
-	plans, err := s.ListPlans()
+	plans, err := s.ListPlans(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 	}
 
 	// Plans should still be there
-	plans, err = s.ListPlans()
+	plans, err = s.ListPlans(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 
 func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	dir := setupTestDir(t)
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	}
 
 	// Verify initial state
-	_, content, err := s.GetPlan("alpha")
+	_, content, err := s.GetPlan(context.Background(), "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	}
 
 	// Verify updated content
-	plan, content, err := s.GetPlan("alpha")
+	plan, content, err := s.GetPlan(context.Background(), "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	}
 
 	// Beta should be untouched
-	plans, err := s.ListPlans()
+	plans, err := s.ListPlans(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 
 func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 	dir := setupTestDir(t)
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 		t.Fatal("initial Run:", err)
 	}
 
-	plans, _ := s.ListPlans()
+	plans, _ := s.ListPlans(context.Background())
 	if len(plans) != 2 {
 		t.Fatalf("expected 2 plans, got %d", len(plans))
 	}
@@ -167,7 +168,7 @@ func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 		t.Fatal("RunIncremental:", err)
 	}
 
-	plans, _ = s.ListPlans()
+	plans, _ = s.ListPlans(context.Background())
 	if len(plans) != 2 {
 		t.Errorf("expected 2 plans (deleted source retained), got %d", len(plans))
 	}
@@ -175,7 +176,7 @@ func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 
 func TestPruneRemovesDeletedSourceData(t *testing.T) {
 	dir := setupTestDir(t)
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +196,7 @@ func TestPruneRemovesDeletedSourceData(t *testing.T) {
 		t.Fatal("Prune:", err)
 	}
 
-	plans, _ := s.ListPlans()
+	plans, _ := s.ListPlans(context.Background())
 	if len(plans) != 1 {
 		t.Errorf("expected 1 plan after prune, got %d", len(plans))
 	}
@@ -206,7 +207,7 @@ func TestPruneRemovesDeletedSourceData(t *testing.T) {
 
 func TestRebuildClearsEverything(t *testing.T) {
 	dir := setupTestDir(t)
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestRebuildClearsEverything(t *testing.T) {
 		t.Fatal("rebuild Run:", err)
 	}
 
-	plans, _ := s.ListPlans()
+	plans, _ := s.ListPlans(context.Background())
 	if len(plans) != 1 {
 		t.Errorf("expected 1 plan after rebuild, got %d", len(plans))
 	}
@@ -234,7 +235,7 @@ func TestRebuildClearsEverything(t *testing.T) {
 
 func TestIncrementalNewFileAdded(t *testing.T) {
 	dir := setupTestDir(t)
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +262,7 @@ func TestIncrementalNewFileAdded(t *testing.T) {
 		t.Error("expected changes after adding gamma.md")
 	}
 
-	plans, _ := s.ListPlans()
+	plans, _ := s.ListPlans(context.Background())
 	if len(plans) != 3 {
 		t.Errorf("expected 3 plans after adding gamma.md, got %d", len(plans))
 	}

@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func indexPasteCache(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error)
 			Preview:   preview,
 		}
 
-		if err := s.InsertPasteCache(tx, entry, string(content), src); err != nil {
+		if err := s.InsertPasteCache(context.TODO(), tx, entry, string(content), src); err != nil {
 			continue
 		}
 		count++

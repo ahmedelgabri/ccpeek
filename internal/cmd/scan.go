@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -68,7 +69,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported format %q: use text or json", format)
 	}
 
-	db, err := store.Open(dataFile)
+	db, err := store.Open(context.TODO(), dataFile)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

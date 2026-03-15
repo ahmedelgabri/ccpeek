@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"context"
 	"io"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 func setupTestDB(t *testing.T) *store.Store {
 	t.Helper()
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal("opening store:", err)
 	}
@@ -26,7 +27,7 @@ func setupTestDB(t *testing.T) *store.Store {
 }
 
 func TestNew(t *testing.T) {
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestRunOnTestData(t *testing.T) {
 
 	// Testdata may or may not contain secrets; just verify it doesn't crash
 	// and that findings are stored in the DB
-	stored, err := db.ListScanFindings("", "", true)
+	stored, err := db.ListScanFindings(context.Background(), "", "", true)
 	if err != nil {
 		t.Fatal("ListScanFindings failed:", err)
 	}
@@ -78,13 +79,13 @@ func TestRunClearsPreviousFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstCount, _ := db.ScanFindingCount()
+	firstCount, _ := db.ScanFindingCount(context.Background())
 
 	_, err = scanner.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondCount, _ := db.ScanFindingCount()
+	secondCount, _ := db.ScanFindingCount(context.Background())
 
 	if firstCount != secondCount {
 		t.Errorf("expected same count after re-scan, got %d then %d", firstCount, secondCount)
@@ -92,23 +93,23 @@ func TestRunClearsPreviousFindings(t *testing.T) {
 }
 
 func TestIgnoredFindingsSurviveRescan(t *testing.T) {
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
 	// Insert a message with a detectable secret
-	tx, err := db.BeginTx()
+	tx, err := db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, _ := db.InsertProject(tx, "test-proj", "Test")
+	projectID, _ := db.InsertProject(context.Background(), tx, "test-proj", "Test")
 	sess := model.SessionEntry{
 		SessionID: "s1", FirstPrompt: "test", MessageCount: 1,
 		Created: "2025-01-01T00:00:00Z", Modified: "2025-01-01T00:00:00Z",
 	}
-	sessionDBID, _ := db.InsertSession(tx, projectID, sess, "")
+	sessionDBID, _ := db.InsertSession(context.Background(), tx, projectID, sess, "")
 	messages := []model.ConversationMessage{{
 		Type: "human", Timestamp: "2025-01-01T00:00:00Z",
 		Message: model.MessagePayload{
@@ -116,7 +117,7 @@ func TestIgnoredFindingsSurviveRescan(t *testing.T) {
 			Content: []byte(`"key: AKIA2OGYBAH6QLHAMZXB"`),
 		},
 	}}
-	db.InsertMessages(tx, sessionDBID, messages)
+	db.InsertMessages(context.Background(), tx, sessionDBID, messages)
 	tx.Commit()
 
 	scanner, _ := New(db)
@@ -128,13 +129,13 @@ func TestIgnoredFindingsSurviveRescan(t *testing.T) {
 	}
 
 	// Ignore the finding
-	stored, _ := db.ListScanFindings("", "", true)
-	db.ToggleScanFindingIgnored(stored[0].ID)
+	stored, _ := db.ListScanFindings(context.Background(), "", "", true)
+	db.ToggleScanFindingIgnored(context.Background(), stored[0].ID)
 
 	// Re-scan — ignored finding should persist, not duplicate
 	scanner.Run()
 
-	all, _ := db.ListScanFindings("", "", true)
+	all, _ := db.ListScanFindings(context.Background(), "", "", true)
 	if len(all) != 1 {
 		t.Errorf("expected 1 finding after re-scan (ignored persisted, no duplicate), got %d", len(all))
 	}
@@ -143,26 +144,26 @@ func TestIgnoredFindingsSurviveRescan(t *testing.T) {
 	}
 
 	// Non-ignored view should be empty
-	active, _ := db.ListScanFindings("", "", false)
+	active, _ := db.ListScanFindings(context.Background(), "", "", false)
 	if len(active) != 0 {
 		t.Errorf("expected 0 active findings, got %d", len(active))
 	}
 }
 
 func TestDetectKnownSecrets(t *testing.T) {
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
 	// Insert a message with a known AWS key pattern
-	tx, err := db.BeginTx()
+	tx, err := db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	projectID, err := db.InsertProject(tx, "test-project", "Test Project")
+	projectID, err := db.InsertProject(context.Background(), tx, "test-project", "Test Project")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestDetectKnownSecrets(t *testing.T) {
 		Created:      "2025-01-01T00:00:00Z",
 		Modified:     "2025-01-01T00:00:00Z",
 	}
-	sessionDBID, err := db.InsertSession(tx, projectID, sess, "")
+	sessionDBID, err := db.InsertSession(context.Background(), tx, projectID, sess, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestDetectKnownSecrets(t *testing.T) {
 			},
 		},
 	}
-	if err := db.InsertMessages(tx, sessionDBID, messages); err != nil {
+	if err := db.InsertMessages(context.Background(), tx, sessionDBID, messages); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -259,14 +260,14 @@ func TestRedact(t *testing.T) {
 }
 
 func TestScanStats(t *testing.T) {
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
 	// Empty DB should return zero stats
-	stats, err := db.GetScanStats()
+	stats, err := db.GetScanStats(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,11 +276,11 @@ func TestScanStats(t *testing.T) {
 	}
 
 	// Insert a finding and check stats
-	tx, err := db.BeginTx()
+	tx, err := db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.InsertScanFinding(tx, model.ScanFinding{
+	_, err = db.InsertScanFinding(context.Background(), tx, model.ScanFinding{
 		RuleID:        "aws-access-key",
 		Description:   "AWS Access Key",
 		SourceType:    "message",
@@ -294,7 +295,7 @@ func TestScanStats(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err = db.GetScanStats()
+	stats, err = db.GetScanStats(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,17 +311,17 @@ func TestScanStats(t *testing.T) {
 }
 
 func TestIgnoreToggle(t *testing.T) {
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	tx, err := db.BeginTx()
+	tx, err := db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.InsertScanFinding(tx, model.ScanFinding{
+	_, err = db.InsertScanFinding(context.Background(), tx, model.ScanFinding{
 		RuleID:        "test-rule",
 		SourceType:    "message",
 		SourceID:      "s1",
@@ -335,7 +336,7 @@ func TestIgnoreToggle(t *testing.T) {
 	}
 
 	// Should be visible by default (not ignored)
-	findings, _ := db.ListScanFindings("", "", false)
+	findings, _ := db.ListScanFindings(context.Background(), "", "", false)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(findings))
 	}
@@ -344,18 +345,18 @@ func TestIgnoreToggle(t *testing.T) {
 	}
 
 	// Toggle to ignored
-	if err := db.ToggleScanFindingIgnored(findings[0].ID); err != nil {
+	if err := db.ToggleScanFindingIgnored(context.Background(), findings[0].ID); err != nil {
 		t.Fatal(err)
 	}
 
 	// Should be hidden when not showing ignored
-	findings, _ = db.ListScanFindings("", "", false)
+	findings, _ = db.ListScanFindings(context.Background(), "", "", false)
 	if len(findings) != 0 {
 		t.Errorf("expected 0 non-ignored findings, got %d", len(findings))
 	}
 
 	// Should be visible when showing ignored
-	findings, _ = db.ListScanFindings("", "", true)
+	findings, _ = db.ListScanFindings(context.Background(), "", "", true)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding with show_ignored, got %d", len(findings))
 	}
@@ -364,16 +365,16 @@ func TestIgnoreToggle(t *testing.T) {
 	}
 
 	// Stats should exclude ignored findings
-	stats, _ := db.GetScanStats()
+	stats, _ := db.GetScanStats(context.Background())
 	if stats.TotalFindings != 0 {
 		t.Errorf("expected 0 in stats (ignored), got %d", stats.TotalFindings)
 	}
 
 	// Toggle back to unignored
-	if err := db.ToggleScanFindingIgnored(findings[0].ID); err != nil {
+	if err := db.ToggleScanFindingIgnored(context.Background(), findings[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	findings, _ = db.ListScanFindings("", "", false)
+	findings, _ = db.ListScanFindings(context.Background(), "", "", false)
 	if len(findings) != 1 || findings[0].Ignored {
 		t.Error("finding should be unignored after second toggle")
 	}

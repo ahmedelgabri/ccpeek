@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -48,11 +49,11 @@ func indexTasks(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 
 		// Try to link to session via the directory UUID
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(tx, e.Name()); err == nil {
+		if dbID, err := s.GetSessionDBID(context.TODO(), tx, e.Name()); err == nil {
 			sessionDBID = dbID
 		}
 
-		if err := s.InsertTaskGroup(tx, entry, items, sessionDBID, taskDir); err != nil {
+		if err := s.InsertTaskGroup(context.TODO(), tx, entry, items, sessionDBID, taskDir); err != nil {
 			continue
 		}
 		count++

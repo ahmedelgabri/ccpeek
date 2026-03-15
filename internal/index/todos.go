@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -64,14 +65,14 @@ func indexTodos(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 		var sessionDBID int64
 		if m := todoSessionRe.FindStringSubmatch(e.Name()); m != nil {
 			sessionID := m[1]
-			if dbID, err := s.GetSessionDBID(tx, sessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(context.TODO(), tx, sessionID); err == nil {
 				sessionDBID = dbID
 				// Also set reverse link: session -> todo file
-				_ = s.LinkTodoToSession(tx, e.Name(), dbID)
+				_ = s.LinkTodoToSession(context.TODO(), tx, e.Name(), dbID)
 			}
 		}
 
-		if err := s.InsertTodo(tx, entry, items, sessionDBID, src); err != nil {
+		if err := s.InsertTodo(context.TODO(), tx, entry, items, sessionDBID, src); err != nil {
 			continue
 		}
 		count++

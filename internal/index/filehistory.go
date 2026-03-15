@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,13 +72,13 @@ func indexFileHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error
 
 		// Try to link to session
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(tx, conversationID); err == nil {
+		if dbID, err := s.GetSessionDBID(context.TODO(), tx, conversationID); err == nil {
 			sessionDBID = dbID
 			// Also set reverse link: session -> has_file_history
-			_ = s.LinkFileHistoryToSession(tx, conversationID, dbID)
+			_ = s.LinkFileHistoryToSession(context.TODO(), tx, conversationID, dbID)
 		}
 
-		if err := s.InsertFileHistory(tx, conversationID, versions, sessionDBID, convDir); err != nil {
+		if err := s.InsertFileHistory(context.TODO(), tx, conversationID, versions, sessionDBID, convDir); err != nil {
 			continue
 		}
 		count++

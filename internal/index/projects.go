@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -111,7 +112,7 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 		})
 
 		// Insert project
-		projectID, err := s.InsertProject(tx, dirName, displayName)
+		projectID, err := s.InsertProject(context.TODO(), tx, dirName, displayName)
 		if err != nil {
 			continue
 		}
@@ -120,15 +121,15 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 		// Insert sessions and their messages
 		for _, sd := range sessionsData {
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
-			sessionDBID, err := s.InsertSession(tx, projectID, sd.entry, jsonlPath)
+			sessionDBID, err := s.InsertSession(context.TODO(), tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
 				continue
 			}
 
-			if err := s.InsertMessages(tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertMessages(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
 				continue
 			}
-			if err := s.InsertCommands(tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertCommands(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
 				continue
 			}
 			totalSessions++

@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -62,7 +63,7 @@ func indexPlansFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 			SizeBytes: info.Size(),
 		}
 
-		if err := s.InsertPlan(tx, entry, string(content), src); err != nil {
+		if err := s.InsertPlan(context.TODO(), tx, entry, string(content), src); err != nil {
 			log.Printf("skipping plan %s: %v", src, err)
 			continue
 		}
@@ -117,7 +118,7 @@ func indexSnapshotsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 			SizeBytes: info.Size(),
 		}
 
-		if err := s.InsertShellSnapshot(tx, entry, string(content), src); err != nil {
+		if err := s.InsertShellSnapshot(context.TODO(), tx, entry, string(content), src); err != nil {
 			log.Printf("skipping snapshot %s: %v", src, err)
 			continue
 		}
@@ -223,7 +224,7 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 		})
 
 		// Upsert project (may already exist from a previous incremental run)
-		projectID, err := s.UpsertProject(tx, dirName, displayName)
+		projectID, err := s.UpsertProject(context.TODO(), tx, dirName, displayName)
 		if err != nil {
 			continue
 		}
@@ -231,17 +232,17 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 
 		for _, sd := range sessionsData {
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
-			sessionDBID, err := s.InsertSession(tx, projectID, sd.entry, jsonlPath)
+			sessionDBID, err := s.InsertSession(context.TODO(), tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
 				log.Printf("skipping session %s: %v", jsonlPath, err)
 				continue
 			}
 
-			if err := s.InsertMessages(tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertMessages(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping messages for %s: %v", jsonlPath, err)
 				continue
 			}
-			if err := s.InsertCommands(tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertCommands(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping commands for %s: %v", jsonlPath, err)
 				continue
 			}
@@ -305,13 +306,13 @@ func indexTodosFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 		var sessionDBID int64
 		if m := todoRe.FindStringSubmatch(e.Name()); m != nil {
 			sessionID := m[1]
-			if dbID, err := s.GetSessionDBID(tx, sessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(context.TODO(), tx, sessionID); err == nil {
 				sessionDBID = dbID
-				_ = s.LinkTodoToSession(tx, e.Name(), dbID)
+				_ = s.LinkTodoToSession(context.TODO(), tx, e.Name(), dbID)
 			}
 		}
 
-		if err := s.InsertTodo(tx, entry, items, sessionDBID, src); err != nil {
+		if err := s.InsertTodo(context.TODO(), tx, entry, items, sessionDBID, src); err != nil {
 			log.Printf("skipping todo %s: %v", src, err)
 			continue
 		}
@@ -380,12 +381,12 @@ func indexFileHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, cha
 		})
 
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(tx, conversationID); err == nil {
+		if dbID, err := s.GetSessionDBID(context.TODO(), tx, conversationID); err == nil {
 			sessionDBID = dbID
-			_ = s.LinkFileHistoryToSession(tx, conversationID, dbID)
+			_ = s.LinkFileHistoryToSession(context.TODO(), tx, conversationID, dbID)
 		}
 
-		if err := s.InsertFileHistory(tx, conversationID, versions, sessionDBID, convDir); err != nil {
+		if err := s.InsertFileHistory(context.TODO(), tx, conversationID, versions, sessionDBID, convDir); err != nil {
 			continue
 		}
 		count++
@@ -410,7 +411,7 @@ func indexHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed
 	}
 
 	for _, entry := range entries {
-		if err := s.InsertHistory(tx, entry, historyPath); err != nil {
+		if err := s.InsertHistory(context.TODO(), tx, entry, historyPath); err != nil {
 			continue
 		}
 	}
@@ -456,11 +457,11 @@ func indexTasksFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 		}
 
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(tx, e.Name()); err == nil {
+		if dbID, err := s.GetSessionDBID(context.TODO(), tx, e.Name()); err == nil {
 			sessionDBID = dbID
 		}
 
-		if err := s.InsertTaskGroup(tx, entry, items, sessionDBID, taskDir); err != nil {
+		if err := s.InsertTaskGroup(context.TODO(), tx, entry, items, sessionDBID, taskDir); err != nil {
 			continue
 		}
 		count++
@@ -511,7 +512,7 @@ func indexPasteCacheFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chan
 			Preview:   preview,
 		}
 
-		if err := s.InsertPasteCache(tx, entry, string(content), src); err != nil {
+		if err := s.InsertPasteCache(context.TODO(), tx, entry, string(content), src); err != nil {
 			continue
 		}
 		count++
@@ -579,12 +580,12 @@ func indexUsageDataFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 
 		var sessionDBID int64
 		if raw.SessionID != "" {
-			if dbID, err := s.GetSessionDBID(tx, raw.SessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(context.TODO(), tx, raw.SessionID); err == nil {
 				sessionDBID = dbID
 			}
 		}
 
-		if err := s.InsertUsageFacet(tx, entry, sessionDBID, src); err != nil {
+		if err := s.InsertUsageFacet(context.TODO(), tx, entry, sessionDBID, src); err != nil {
 			continue
 		}
 		count++
@@ -594,7 +595,7 @@ func indexUsageDataFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
 	if changed[reportPath] {
 		if data, err := os.ReadFile(reportPath); err == nil {
-			_ = s.InsertUsageReport(tx, string(data), reportPath)
+			_ = s.InsertUsageReport(context.TODO(), tx, string(data), reportPath)
 		}
 	}
 
@@ -639,7 +640,7 @@ func indexMemoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed 
 			projectID = &pid
 		}
 
-		if err := s.InsertMemory(tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
+		if err := s.InsertMemory(context.TODO(), tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
 			continue
 		}
 		count++

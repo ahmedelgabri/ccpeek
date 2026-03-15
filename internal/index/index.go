@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 // Progress output is written to w.
 func Run(claudeDir string, s *store.Store, rebuild bool, w io.Writer) error {
 	if rebuild {
-		if err := s.Reset(); err != nil {
+		if err := s.Reset(context.TODO()); err != nil {
 			return fmt.Errorf("resetting database: %w", err)
 		}
 		return doIndex(claudeDir, s, w)
@@ -46,12 +47,12 @@ func RunIncremental(claudeDir string, s *store.Store) (bool, error) {
 func Prune(claudeDir string, s *store.Store, w io.Writer) error {
 	// Read tracked paths before starting the transaction to avoid
 	// deadlock on single-connection in-memory databases.
-	tracked, err := s.ListSourceFilePaths()
+	tracked, err := s.ListSourceFilePaths(context.TODO())
 	if err != nil {
 		return fmt.Errorf("listing tracked paths: %w", err)
 	}
 
-	tx, err := s.BeginTx()
+	tx, err := s.BeginTx(context.TODO())
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -77,14 +78,14 @@ func Prune(claudeDir string, s *store.Store, w io.Writer) error {
 	}
 
 	if pruned > 0 {
-		if err := s.PruneOrphanedProjects(tx); err != nil {
+		if err := s.PruneOrphanedProjects(context.TODO(), tx); err != nil {
 			return fmt.Errorf("pruning orphaned projects: %w", err)
 		}
 		// Rebuild FTS after pruning sessions
-		if err := s.RebuildFTS(tx); err != nil {
+		if err := s.RebuildFTS(context.TODO(), tx); err != nil {
 			return fmt.Errorf("rebuilding FTS: %w", err)
 		}
-		if err := s.RepopulateFTS(tx); err != nil {
+		if err := s.RepopulateFTS(context.TODO(), tx); err != nil {
 			return fmt.Errorf("repopulating FTS: %w", err)
 		}
 	}
@@ -97,7 +98,7 @@ func Prune(claudeDir string, s *store.Store, w io.Writer) error {
 // does a full reindex. This is idempotent and safe to call on a DB that
 // already has data.
 func doCleanIndex(claudeDir string, s *store.Store, w io.Writer) error {
-	tx, err := s.BeginTx()
+	tx, err := s.BeginTx(context.TODO())
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -111,10 +112,10 @@ func doCleanIndex(claudeDir string, s *store.Store, w io.Writer) error {
 	}
 
 	// Also clean up orphaned projects and rebuild FTS
-	if err := s.PruneOrphanedProjects(tx); err != nil {
+	if err := s.PruneOrphanedProjects(context.TODO(), tx); err != nil {
 		return fmt.Errorf("pruning orphaned projects: %w", err)
 	}
-	if err := s.RebuildFTS(tx); err != nil {
+	if err := s.RebuildFTS(context.TODO(), tx); err != nil {
 		return fmt.Errorf("rebuilding FTS: %w", err)
 	}
 
@@ -127,7 +128,7 @@ func doCleanIndex(claudeDir string, s *store.Store, w io.Writer) error {
 
 // doIndex does a full index of all source files (assumes clean state).
 func doIndex(claudeDir string, s *store.Store, w io.Writer) error {
-	tx, err := s.BeginTx()
+	tx, err := s.BeginTx(context.TODO())
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -210,7 +211,7 @@ func doIndex(claudeDir string, s *store.Store, w io.Writer) error {
 	recordSourceHashes(claudeDir, s, tx)
 
 	// Set generated timestamp
-	if err := s.SetMeta(tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := s.SetMeta(context.TODO(), tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return fmt.Errorf("setting metadata: %w", err)
 	}
 
@@ -232,7 +233,7 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 			continue
 		}
 		hashCache[path] = hash
-		storedHash, err := s.GetSourceFileHash(path)
+		storedHash, err := s.GetSourceFileHash(context.TODO(), path)
 		if err != nil || storedHash != hash {
 			changedFiles = append(changedFiles, path)
 		}
@@ -242,7 +243,7 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 		return false, nil
 	}
 
-	tx, err := s.BeginTx()
+	tx, err := s.BeginTx(context.TODO())
 	if err != nil {
 		return false, fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -332,17 +333,17 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 
 	// Clean up orphaned projects (projects with no sessions left)
 	if sessionsChanged {
-		if err := s.PruneOrphanedProjects(tx); err != nil {
+		if err := s.PruneOrphanedProjects(context.TODO(), tx); err != nil {
 			return false, fmt.Errorf("pruning orphaned projects: %w", err)
 		}
 	}
 
 	// Rebuild FTS if any sessions/messages changed
 	if sessionsChanged {
-		if err := s.RebuildFTS(tx); err != nil {
+		if err := s.RebuildFTS(context.TODO(), tx); err != nil {
 			return false, fmt.Errorf("rebuilding FTS: %w", err)
 		}
-		if err := s.RepopulateFTS(tx); err != nil {
+		if err := s.RepopulateFTS(context.TODO(), tx); err != nil {
 			return false, fmt.Errorf("repopulating FTS: %w", err)
 		}
 	}
@@ -354,10 +355,10 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 		if !ok {
 			continue
 		}
-		_ = s.SetSourceFileHash(tx, path, hash, now)
+		_ = s.SetSourceFileHash(context.TODO(), tx, path, hash, now)
 	}
 
-	if err := s.SetMeta(tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := s.SetMeta(context.TODO(), tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return false, fmt.Errorf("setting metadata: %w", err)
 	}
 
@@ -367,33 +368,33 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 // deleteSourceData removes all indexed data originating from a source file.
 func deleteSourceData(tx *sqlx.Tx, s *store.Store, sourcePath string) error {
 	// Sessions require cascade handling (messages, FTS, unlinking)
-	if err := s.DeleteSessionCascade(tx, sourcePath); err != nil {
+	if err := s.DeleteSessionCascade(context.TODO(), tx, sourcePath); err != nil {
 		return err
 	}
 	// Todos: delete items first, then todos
-	if err := s.DeleteChildrenBySource(tx, "todos", "id", "todo_items", "todo_id", sourcePath); err != nil {
+	if err := s.DeleteChildrenBySource(context.TODO(), tx, "todos", "id", "todo_items", "todo_id", sourcePath); err != nil {
 		return err
 	}
-	if err := s.DeleteBySource(tx, "todos", sourcePath); err != nil {
+	if err := s.DeleteBySource(context.TODO(), tx, "todos", sourcePath); err != nil {
 		return err
 	}
 	// File history: delete versions first, then entries
-	if err := s.DeleteChildrenBySource(tx, "file_history", "id", "file_versions", "file_history_id", sourcePath); err != nil {
+	if err := s.DeleteChildrenBySource(context.TODO(), tx, "file_history", "id", "file_versions", "file_history_id", sourcePath); err != nil {
 		return err
 	}
-	if err := s.DeleteBySource(tx, "file_history", sourcePath); err != nil {
+	if err := s.DeleteBySource(context.TODO(), tx, "file_history", sourcePath); err != nil {
 		return err
 	}
 	// Task groups: delete items first, then groups
-	if err := s.DeleteChildrenBySource(tx, "task_groups", "id", "task_items", "task_group_id", sourcePath); err != nil {
+	if err := s.DeleteChildrenBySource(context.TODO(), tx, "task_groups", "id", "task_items", "task_group_id", sourcePath); err != nil {
 		return err
 	}
-	if err := s.DeleteBySource(tx, "task_groups", sourcePath); err != nil {
+	if err := s.DeleteBySource(context.TODO(), tx, "task_groups", sourcePath); err != nil {
 		return err
 	}
 	// Simple tables (no children)
 	for _, table := range []string{"plans", "shell_snapshots", "history", "paste_cache", "usage_facets", "usage_report", "memories"} {
-		if err := s.DeleteBySource(tx, table, sourcePath); err != nil {
+		if err := s.DeleteBySource(context.TODO(), tx, table, sourcePath); err != nil {
 			return err
 		}
 	}
@@ -459,7 +460,7 @@ func recordSourceHashes(claudeDir string, s *store.Store, tx *sqlx.Tx) {
 				continue
 			}
 		}
-		_ = s.SetSourceFileHash(tx, path, hash, now)
+		_ = s.SetSourceFileHash(context.TODO(), tx, path, hash, now)
 	}
 }
 

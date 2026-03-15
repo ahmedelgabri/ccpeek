@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -15,7 +16,7 @@ type Store struct {
 
 // Open opens (or creates) a SQLite database at the given path.
 // Use ":memory:" for an in-memory database.
-func Open(dsn string) (*Store, error) {
+func Open(ctx context.Context, dsn string) (*Store, error) {
 	if dsn != ":memory:" {
 		dsn += "?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000"
 	} else {
@@ -34,7 +35,7 @@ func Open(dsn string) (*Store, error) {
 	}
 
 	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
+	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating schema: %w", err)
 	}
@@ -48,7 +49,7 @@ func (s *Store) Close() error {
 }
 
 // Reset drops all data and recreates the schema. Used for full rebuild.
-func (s *Store) Reset() error {
+func (s *Store) Reset(ctx context.Context) error {
 	tables := []string{
 		"messages_fts", "commands", "messages", "todo_items", "todos",
 		"file_versions", "file_history",
@@ -57,23 +58,23 @@ func (s *Store) Reset() error {
 		"plans", "shell_snapshots", "history", "scan_findings", "source_files", "meta",
 	}
 	for _, t := range tables {
-		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + t); err != nil {
+		if _, err := s.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+t); err != nil {
 			return fmt.Errorf("dropping table %s: %w", t, err)
 		}
 	}
-	return s.migrate()
+	return s.migrate(ctx)
 }
 
 // migrate applies the initial schema (if needed) then runs any pending
 // sequential migrations to bring the database up to schemaVersion.
-func (s *Store) migrate() error {
+func (s *Store) migrate(ctx context.Context) error {
 	// Ensure meta table exists so we can read the version
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("creating meta table: %w", err)
 	}
 
 	var currentVersion int
-	row := s.db.QueryRow("SELECT value FROM meta WHERE key = 'schema_version'")
+	row := s.db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'schema_version'")
 	if err := row.Scan(&currentVersion); err != nil {
 		// No version yet — fresh database, apply initial schema
 		currentVersion = 0
@@ -84,7 +85,7 @@ func (s *Store) migrate() error {
 	}
 
 	// Apply initial schema (all CREATE IF NOT EXISTS, safe to re-run)
-	if _, err := s.db.Exec(initialSchema); err != nil {
+	if _, err := s.db.ExecContext(ctx, initialSchema); err != nil {
 		return fmt.Errorf("applying initial schema: %w", err)
 	}
 
@@ -102,7 +103,7 @@ func (s *Store) migrate() error {
 			continue
 		}
 
-		tx, err := s.db.Beginx()
+		tx, err := s.db.BeginTxx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("beginning migration %d: %w", v+1, err)
 		}
@@ -118,7 +119,7 @@ func (s *Store) migrate() error {
 	}
 
 	// Record final version
-	_, err := s.db.Exec(
+	_, err := s.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)`,
 		strconv.Itoa(schemaVersion),
 	)

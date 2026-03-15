@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -88,7 +89,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	dbPath := dataFile
-	db, err := store.Open(dbPath)
+	db, err := store.Open(context.TODO(), dbPath)
 	if err != nil {
 		hint := ""
 		if strings.Contains(err.Error(), "locked") {

@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"io"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,7 @@ import (
 func TestRun(t *testing.T) {
 	testdataDir := filepath.Join("..", "..", "testdata")
 
-	s, err := store.Open(":memory:")
+	s, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal("opening store:", err)
 	}
@@ -23,7 +24,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Plans
-	plans, err := s.ListPlans()
+	plans, err := s.ListPlans(context.Background())
 	if err != nil {
 		t.Fatal("listing plans:", err)
 	}
@@ -44,7 +45,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Shell snapshots (sorted newest first)
-	snapshots, err := s.ListShellSnapshots()
+	snapshots, err := s.ListShellSnapshots(context.Background())
 	if err != nil {
 		t.Fatal("listing snapshots:", err)
 	}
@@ -62,7 +63,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Todos -- empty todo should be excluded
-	todos, err := s.ListTodos()
+	todos, err := s.ListTodos(context.Background())
 	if err != nil {
 		t.Fatal("listing todos:", err)
 	}
@@ -86,7 +87,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Projects (sorted by session count descending)
-	projects, err := s.ListProjects()
+	projects, err := s.ListProjects(context.Background())
 	if err != nil {
 		t.Fatal("listing projects:", err)
 	}
@@ -132,7 +133,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Verify messages via store
-	messages, total, err := s.GetSessionMessages("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 0, 100)
+	messages, total, err := s.GetSessionMessages(context.Background(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 0, 100)
 	if err != nil {
 		t.Fatal("getting session messages:", err)
 	}
@@ -165,7 +166,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// File history (sorted by file count descending)
-	fileHistory, err := s.ListFileHistory()
+	fileHistory, err := s.ListFileHistory(context.Background())
 	if err != nil {
 		t.Fatal("listing file history:", err)
 	}
@@ -203,7 +204,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// History (sorted newest first)
-	history, err := s.ListAllHistory()
+	history, err := s.ListAllHistory(context.Background())
 	if err != nil {
 		t.Fatal("listing history:", err)
 	}
@@ -217,7 +218,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Verify plan content
-	_, planContent, err := s.GetPlan("test-plan")
+	_, planContent, err := s.GetPlan(context.Background(), "test-plan")
 	if err != nil {
 		t.Fatal("getting plan content:", err)
 	}
@@ -226,7 +227,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Verify snapshot content
-	_, snapContent, err := s.GetShellSnapshot("snapshot-zsh-1700000000-abc123")
+	_, snapContent, err := s.GetShellSnapshot(context.Background(), "snapshot-zsh-1700000000-abc123")
 	if err != nil {
 		t.Fatal("getting snapshot content:", err)
 	}
@@ -235,7 +236,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Task groups
-	taskGroups, err := s.ListTaskGroups()
+	taskGroups, err := s.ListTaskGroups(context.Background())
 	if err != nil {
 		t.Fatal("listing task groups:", err)
 	}
@@ -263,7 +264,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Task group detail
-	tgEntry, tgItems, err := s.GetTaskGroup("33333333-aaaa-bbbb-cccc-333333333333")
+	tgEntry, tgItems, err := s.GetTaskGroup(context.Background(), "33333333-aaaa-bbbb-cccc-333333333333")
 	if err != nil {
 		t.Fatal("getting task group:", err)
 	}
@@ -286,7 +287,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Paste cache
-	pasteEntries, err := s.ListPasteCache()
+	pasteEntries, err := s.ListPasteCache(context.Background())
 	if err != nil {
 		t.Fatal("listing paste cache:", err)
 	}
@@ -295,7 +296,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Paste cache detail
-	pcEntry, pcContent, err := s.GetPasteCache("abcdef1234567890")
+	pcEntry, pcContent, err := s.GetPasteCache(context.Background(), "abcdef1234567890")
 	if err != nil {
 		t.Fatal("getting paste cache:", err)
 	}
@@ -307,7 +308,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Usage facets
-	usageFacets, err := s.ListUsageFacets()
+	usageFacets, err := s.ListUsageFacets(context.Background())
 	if err != nil {
 		t.Fatal("listing usage facets:", err)
 	}
@@ -316,7 +317,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Usage facet detail
-	facet, err := s.GetUsageFacet("33333333-aaaa-bbbb-cccc-333333333333")
+	facet, err := s.GetUsageFacet(context.Background(), "33333333-aaaa-bbbb-cccc-333333333333")
 	if err != nil {
 		t.Fatal("getting usage facet:", err)
 	}
@@ -332,7 +333,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Usage report
-	report, err := s.GetUsageReport()
+	report, err := s.GetUsageReport(context.Background())
 	if err != nil {
 		t.Fatal("getting usage report:", err)
 	}
@@ -341,7 +342,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Stats should include new counts
-	stats, err := s.GetStats()
+	stats, err := s.GetStats(context.Background())
 	if err != nil {
 		t.Fatal("getting stats:", err)
 	}
@@ -359,7 +360,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Memories
-	memories, err := s.ListMemories()
+	memories, err := s.ListMemories(context.Background())
 	if err != nil {
 		t.Fatal("listing memories:", err)
 	}
@@ -377,7 +378,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Memory detail
-	memEntry, memContent, err := s.GetMemory("test-project")
+	memEntry, memContent, err := s.GetMemory(context.Background(), "test-project")
 	if err != nil {
 		t.Fatal("getting memory:", err)
 	}

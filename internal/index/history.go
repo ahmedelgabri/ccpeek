@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -22,7 +23,7 @@ func indexHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	}
 
 	for _, entry := range entries {
-		if err := s.InsertHistory(tx, entry, historyPath); err != nil {
+		if err := s.InsertHistory(context.TODO(), tx, entry, historyPath); err != nil {
 			continue
 		}
 	}

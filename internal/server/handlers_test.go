@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +21,7 @@ func setupTestServer(t *testing.T) http.Handler {
 
 	testdataDir := filepath.Join("..", "..", "testdata")
 
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal("opening store:", err)
 	}
@@ -1373,7 +1374,7 @@ func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 
 	testdataDir := filepath.Join("..", "..", "testdata")
 
-	db, err := store.Open(":memory:")
+	db, err := store.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal("opening store:", err)
 	}
@@ -1384,7 +1385,7 @@ func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 	}
 
 	// Insert scan findings with different rules and source types
-	tx, err := db.BeginTx()
+	tx, err := db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1393,7 +1394,7 @@ func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 		{RuleID: "aws-access-token", Description: "AWS key", SourceType: "command", SourceID: "42", MatchRedacted: "AKIA****MZXB", ScannedAt: "2025-01-01T00:00:00Z"},
 		{RuleID: "generic-api-key", Description: "Generic API Key", SourceType: "plan", SourceID: "test-plan.md", MatchRedacted: "s3cr****l0ng", ScannedAt: "2025-01-01T00:00:00Z"},
 	} {
-		if _, err := db.InsertScanFinding(tx, f); err != nil {
+		if _, err := db.InsertScanFinding(context.Background(), tx, f); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1523,7 +1524,7 @@ func TestScanToggleIgnore(t *testing.T) {
 	handler, db := setupTestServerWithFindings(t)
 
 	// Get finding IDs
-	findings, err := db.ListScanFindings("", "", true)
+	findings, err := db.ListScanFindings(context.Background(), "", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1542,7 +1543,7 @@ func TestScanToggleIgnore(t *testing.T) {
 	}
 
 	// Verify finding is now ignored
-	findings, _ = db.ListScanFindings("", "", true)
+	findings, _ = db.ListScanFindings(context.Background(), "", "", true)
 	for _, f := range findings {
 		if f.ID == id && !f.Ignored {
 			t.Error("finding should be ignored after toggle")
@@ -1550,7 +1551,7 @@ func TestScanToggleIgnore(t *testing.T) {
 	}
 
 	// Non-ignored list should have one fewer
-	active, _ := db.ListScanFindings("", "", false)
+	active, _ := db.ListScanFindings(context.Background(), "", "", false)
 	if len(active) != 2 {
 		t.Errorf("expected 2 active findings after ignoring 1 of 3, got %d", len(active))
 	}
@@ -1572,8 +1573,8 @@ func TestScanListShowIgnored(t *testing.T) {
 	handler, db := setupTestServerWithFindings(t)
 
 	// Ignore one finding
-	findings, _ := db.ListScanFindings("", "", true)
-	db.ToggleScanFindingIgnored(findings[0].ID)
+	findings, _ := db.ListScanFindings(context.Background(), "", "", true)
+	db.ToggleScanFindingIgnored(context.Background(), findings[0].ID)
 
 	// Default view should hide the ignored finding
 	req := httptest.NewRequest("GET", "/scan/", nil)
@@ -1612,9 +1613,9 @@ func TestScanDashboardCountExcludesIgnored(t *testing.T) {
 	}
 
 	// Ignore all 3 findings
-	findings, _ := db.ListScanFindings("", "", true)
+	findings, _ := db.ListScanFindings(context.Background(), "", "", true)
 	for _, f := range findings {
-		db.ToggleScanFindingIgnored(f.ID)
+		db.ToggleScanFindingIgnored(context.Background(), f.ID)
 	}
 
 	// Dashboard should now show 0

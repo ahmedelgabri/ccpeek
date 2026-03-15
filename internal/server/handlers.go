@@ -38,31 +38,33 @@ type heatmapDay struct {
 }
 
 func (h *handlers) dashboard(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.store.GetStats()
+	ctx := r.Context()
+
+	stats, err := h.store.GetStats(ctx)
 	if err != nil {
 		log.Printf("dashboard: GetStats failed: %v", err)
 		http.Error(w, "Failed to load dashboard stats", http.StatusInternalServerError)
 		return
 	}
 
-	history, err := h.store.ListHistory(50)
+	history, err := h.store.ListHistory(ctx, 50)
 	if err != nil {
 		log.Printf("dashboard: ListHistory failed: %v", err)
 	}
 
-	dayCounts, err := h.store.HistoryDayCounts()
+	dayCounts, err := h.store.HistoryDayCounts(ctx)
 	if err != nil {
 		log.Printf("dashboard: HistoryDayCounts failed: %v", err)
 	}
 
 	heatmap := buildHeatmapFromCounts(dayCounts)
 
-	toolStats, err := h.store.GetToolUsageStats(15)
+	toolStats, err := h.store.GetToolUsageStats(ctx, 15)
 	if err != nil {
 		log.Printf("dashboard: GetToolUsageStats failed: %v", err)
 	}
 
-	tokenTimeline, err := h.store.GetTokenTimeline()
+	tokenTimeline, err := h.store.GetTokenTimeline(ctx)
 	if err != nil {
 		log.Printf("dashboard: GetTokenTimeline failed: %v", err)
 	}
@@ -135,7 +137,9 @@ func buildHeatmap(history []model.HistoryEntry) []heatmapDay {
 }
 
 func (h *handlers) plansList(w http.ResponseWriter, r *http.Request) {
-	plans, err := h.store.ListPlans()
+	ctx := r.Context()
+
+	plans, err := h.store.ListPlans(ctx)
 	if err != nil {
 		http.Error(w, "loading plans: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -148,9 +152,10 @@ func (h *handlers) plansList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) planDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	fileName := r.PathValue("fileName")
 
-	entry, content, err := h.store.GetPlan(fileName)
+	entry, content, err := h.store.GetPlan(ctx, fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -165,7 +170,9 @@ func (h *handlers) planDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) snapshotsList(w http.ResponseWriter, r *http.Request) {
-	snapshots, err := h.store.ListShellSnapshots()
+	ctx := r.Context()
+
+	snapshots, err := h.store.ListShellSnapshots(ctx)
 	if err != nil {
 		http.Error(w, "loading snapshots: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -178,9 +185,10 @@ func (h *handlers) snapshotsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	fileName := r.PathValue("fileName")
 
-	entry, content, err := h.store.GetShellSnapshot(fileName)
+	entry, content, err := h.store.GetShellSnapshot(ctx, fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -195,7 +203,9 @@ func (h *handlers) snapshotDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) todosList(w http.ResponseWriter, r *http.Request) {
-	todos, err := h.store.ListTodos()
+	ctx := r.Context()
+
+	todos, err := h.store.ListTodos(ctx)
 	if err != nil {
 		http.Error(w, "loading todos: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -208,9 +218,10 @@ func (h *handlers) todosList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) todoDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	fileName := r.PathValue("fileName")
 
-	entry, items, err := h.store.GetTodo(fileName)
+	entry, items, err := h.store.GetTodo(ctx, fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -225,7 +236,9 @@ func (h *handlers) todoDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) projectsList(w http.ResponseWriter, r *http.Request) {
-	projects, err := h.store.ListProjects()
+	ctx := r.Context()
+
+	projects, err := h.store.ListProjects(ctx)
 	if err != nil {
 		http.Error(w, "loading projects: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -238,9 +251,10 @@ func (h *handlers) projectsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	dirName := r.PathValue("dirName")
 
-	projectID, err := h.store.GetProjectID(dirName)
+	projectID, err := h.store.GetProjectID(ctx, dirName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -254,16 +268,16 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 		To:     q.Get("to"),
 	}
 
-	sessions, err := h.store.ListSessionsFiltered(projectID, filter)
+	sessions, err := h.store.ListSessionsFiltered(ctx, projectID, filter)
 	if err != nil {
 		http.Error(w, "loading sessions: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	branches, _ := h.store.ListBranches(projectID)
-	projectStats, _ := h.store.GetProjectStats(projectID)
+	branches, _ := h.store.ListBranches(ctx, projectID)
+	projectStats, _ := h.store.GetProjectStats(ctx, projectID)
 
-	project, err := h.store.GetProject(dirName)
+	project, err := h.store.GetProject(ctx, dirName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -286,10 +300,11 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 
 // lookupSession finds a project and session from the URL path values.
 func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*model.ProjectEntry, *model.SessionEntry, bool) {
+	ctx := r.Context()
 	dirName := r.PathValue("dirName")
 	sessionID := r.PathValue("sessionId")
 
-	project, session, err := h.store.GetSession(dirName, sessionID)
+	project, session, err := h.store.GetSession(ctx, dirName, sessionID)
 	if err != nil || session == nil {
 		http.NotFound(w, r)
 		return nil, nil, false
@@ -298,6 +313,8 @@ func (h *handlers) lookupSession(w http.ResponseWriter, r *http.Request) (*model
 }
 
 func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
@@ -311,7 +328,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * pageSize
-	messages, totalMsgs, err := h.store.GetSessionMessages(session.SessionID, offset, pageSize)
+	messages, totalMsgs, err := h.store.GetSessionMessages(ctx, session.SessionID, offset, pageSize)
 	if err != nil {
 		http.Error(w, "loading messages: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -355,6 +372,8 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
@@ -365,7 +384,7 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, items, err := h.store.GetTodo(strings.TrimSuffix(session.TodoFileName, ".json"))
+	_, items, err := h.store.GetTodo(ctx, strings.TrimSuffix(session.TodoFileName, ".json"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -389,6 +408,8 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
@@ -399,7 +420,7 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	_, detail, err := h.store.GetFileHistory(session.SessionID)
+	_, detail, err := h.store.GetFileHistory(ctx, session.SessionID)
 	if err != nil || detail == nil {
 		http.NotFound(w, r)
 		return
@@ -431,6 +452,8 @@ type bashCommand struct {
 }
 
 func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
@@ -442,7 +465,7 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -498,6 +521,8 @@ type toolStat struct {
 }
 
 func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
@@ -509,7 +534,7 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -551,7 +576,7 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		title = session.SessionID
 	}
 
-	toolTimeline, _ := h.store.GetToolTimeline(session.SessionID)
+	toolTimeline, _ := h.store.GetToolTimeline(ctx, session.SessionID)
 
 	renderTemplate(w, h.tmpl, "conversation_tools.html", map[string]any{
 		"Title":         title + " - Tools",
@@ -569,12 +594,14 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -653,6 +680,8 @@ type codeBlock struct {
 }
 
 func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
 		return
@@ -664,7 +693,7 @@ func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -772,7 +801,9 @@ func extractToolDetail(b model.ContentBlock) string {
 }
 
 func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.store.ListFileHistory()
+	ctx := r.Context()
+
+	entries, err := h.store.ListFileHistory(ctx)
 	if err != nil {
 		http.Error(w, "loading file history: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -785,9 +816,10 @@ func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	conversationID := r.PathValue("conversationId")
 
-	entry, detail, err := h.store.GetFileHistory(conversationID)
+	entry, detail, err := h.store.GetFileHistory(ctx, conversationID)
 	if err != nil || detail == nil {
 		http.NotFound(w, r)
 		return
@@ -808,13 +840,14 @@ func (h *handlers) fileHistoryDetail(w http.ResponseWriter, r *http.Request) {
 const searchPerTypeLimit = 20
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
 	var groups []store.SearchGroup
 	totalResults := 0
 	if query != "" {
 		var err error
-		groups, err = h.store.SearchAll(query, searchPerTypeLimit)
+		groups, err = h.store.SearchAll(ctx, query, searchPerTypeLimit)
 		if err != nil {
 			groups = nil
 		}
@@ -850,7 +883,9 @@ func extractSnippet(text string, pos, matchLen, contextLen int) string {
 }
 
 func (h *handlers) tasksList(w http.ResponseWriter, r *http.Request) {
-	groups, err := h.store.ListTaskGroups()
+	ctx := r.Context()
+
+	groups, err := h.store.ListTaskGroups(ctx)
 	if err != nil {
 		http.Error(w, "loading tasks: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -863,9 +898,10 @@ func (h *handlers) tasksList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) taskDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	dirName := r.PathValue("dirName")
 
-	entry, items, err := h.store.GetTaskGroup(dirName)
+	entry, items, err := h.store.GetTaskGroup(ctx, dirName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -880,7 +916,9 @@ func (h *handlers) taskDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) pasteCacheList(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.store.ListPasteCache()
+	ctx := r.Context()
+
+	entries, err := h.store.ListPasteCache(ctx)
 	if err != nil {
 		http.Error(w, "loading paste cache: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -893,9 +931,10 @@ func (h *handlers) pasteCacheList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) pasteCacheDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	fileName := r.PathValue("fileName")
 
-	entry, content, err := h.store.GetPasteCache(fileName)
+	entry, content, err := h.store.GetPasteCache(ctx, fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -910,7 +949,9 @@ func (h *handlers) pasteCacheDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) usageDataList(w http.ResponseWriter, r *http.Request) {
-	facets, err := h.store.ListUsageFacets()
+	ctx := r.Context()
+
+	facets, err := h.store.ListUsageFacets(ctx)
 	if err != nil {
 		http.Error(w, "loading usage data: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -923,9 +964,10 @@ func (h *handlers) usageDataList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) usageDataDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	sessionID := r.PathValue("sessionId")
 
-	facet, err := h.store.GetUsageFacet(sessionID)
+	facet, err := h.store.GetUsageFacet(ctx, sessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -939,7 +981,8 @@ func (h *handlers) usageDataDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) usageDataReport(w http.ResponseWriter, r *http.Request) {
-	content, err := h.store.GetUsageReport()
+	ctx := r.Context()
+	content, err := h.store.GetUsageReport(ctx)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -989,7 +1032,8 @@ func groupFileVersions(files []model.FileVersionInfo) []hashGroup {
 // usageReportRaw serves the raw HTML for the iframe src.
 // A strict CSP sandbox prevents any script execution in the rendered content.
 func (h *handlers) usageReportRaw(w http.ResponseWriter, r *http.Request) {
-	content, err := h.store.GetUsageReport()
+	ctx := r.Context()
+	content, err := h.store.GetUsageReport(ctx)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -1000,7 +1044,8 @@ func (h *handlers) usageReportRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) memoriesList(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.store.ListMemories()
+	ctx := r.Context()
+	entries, err := h.store.ListMemories(ctx)
 	if err != nil {
 		http.Error(w, "loading memories: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1013,9 +1058,10 @@ func (h *handlers) memoriesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	projectDir := r.PathValue("projectDir")
 
-	entry, content, err := h.store.GetMemory(projectDir)
+	entry, content, err := h.store.GetMemory(ctx, projectDir)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -1035,6 +1081,8 @@ func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	q := r.URL.Query()
 	filter := store.CommandFilter{
 		Project: q.Get("project"),
@@ -1051,7 +1099,7 @@ func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * pageSize
-	commands, total, err := h.store.ListCommands(pageSize, offset, filter)
+	commands, total, err := h.store.ListCommands(ctx, pageSize, offset, filter)
 	if err != nil {
 		http.Error(w, "loading commands: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1062,7 +1110,7 @@ func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
 		totalPages = 1
 	}
 
-	projects, _ := h.store.ListProjectNames()
+	projects, _ := h.store.ListProjectNames(ctx)
 
 	// Build filter query string for pagination and export links
 	filterValues := url.Values{}
@@ -1105,6 +1153,7 @@ func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	q := r.URL.Query()
 	filter := store.CommandFilter{
 		Project: q.Get("project"),
@@ -1117,7 +1166,7 @@ func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
 		format = "plain"
 	}
 
-	commands, err := h.store.ListAllCommands(filter)
+	commands, err := h.store.ListAllCommands(ctx, filter)
 	if err != nil {
 		http.Error(w, "loading commands: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1136,9 +1185,10 @@ func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	dirName := r.PathValue("dirName")
 
-	project, err := h.store.GetProject(dirName)
+	project, err := h.store.GetProject(ctx, dirName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -1234,6 +1284,7 @@ func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 
 	q := r.URL.Query()
@@ -1241,13 +1292,13 @@ func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
 	typeFilter := q.Get("type")
 	showIgnored := q.Get("show_ignored") == "1"
 
-	findings, err := h.store.ListScanFindings(ruleFilter, typeFilter, showIgnored)
+	findings, err := h.store.ListScanFindings(ctx, ruleFilter, typeFilter, showIgnored)
 	if err != nil {
 		http.Error(w, "loading scan findings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	stats, err := h.store.GetScanStats()
+	stats, err := h.store.GetScanStats(ctx)
 	if err != nil {
 		log.Printf("scanList: GetScanStats failed: %v", err)
 	}
@@ -1264,6 +1315,8 @@ func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) scanToggleIgnore(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
 	// Basic CSRF check: verify the request originates from this server
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -1281,7 +1334,7 @@ func (h *handlers) scanToggleIgnore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.ToggleScanFindingIgnored(id); err != nil {
+	if err := h.store.ToggleScanFindingIgnored(ctx, id); err != nil {
 		http.Error(w, "toggling ignore: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

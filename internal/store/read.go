@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -37,9 +38,9 @@ type Stats struct {
 }
 
 // GetStats returns aggregate counts for the dashboard using a single query.
-func (s *Store) GetStats() (Stats, error) {
+func (s *Store) GetStats(ctx context.Context) (Stats, error) {
 	var st Stats
-	err := s.db.Get(&st, `
+	err := s.db.GetContext(ctx, &st, `
 		SELECT
 			(SELECT COUNT(*) FROM projects) AS projectcount,
 			(SELECT COUNT(*) FROM sessions) AS sessioncount,
@@ -57,13 +58,13 @@ func (s *Store) GetStats() (Stats, error) {
 }
 
 // ListPlans returns all plans ordered by file name.
-func (s *Store) ListPlans() ([]model.PlanEntry, error) {
+func (s *Store) ListPlans(ctx context.Context) ([]model.PlanEntry, error) {
 	var rows []struct {
 		FileName  string `db:"file_name"`
 		Title     string `db:"title"`
 		SizeBytes int64  `db:"size_bytes"`
 	}
-	if err := s.db.Select(&rows, `SELECT file_name, title, size_bytes FROM plans ORDER BY file_name`); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, title, size_bytes FROM plans ORDER BY file_name`); err != nil {
 		return nil, err
 	}
 	plans := make([]model.PlanEntry, len(rows))
@@ -74,14 +75,14 @@ func (s *Store) ListPlans() ([]model.PlanEntry, error) {
 }
 
 // GetPlan returns a plan entry and its content.
-func (s *Store) GetPlan(fileNameWithoutExt string) (*model.PlanEntry, string, error) {
+func (s *Store) GetPlan(ctx context.Context, fileNameWithoutExt string) (*model.PlanEntry, string, error) {
 	var row struct {
 		FileName  string `db:"file_name"`
 		Title     string `db:"title"`
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	err := s.db.Get(&row,
+	err := s.db.GetContext(ctx, &row,
 		`SELECT file_name, title, size_bytes, content FROM plans
 		 WHERE file_name = ? OR REPLACE(file_name, '.md', '') = ?`,
 		fileNameWithoutExt+".md", fileNameWithoutExt,
@@ -94,13 +95,13 @@ func (s *Store) GetPlan(fileNameWithoutExt string) (*model.PlanEntry, string, er
 }
 
 // ListShellSnapshots returns all snapshots sorted newest first.
-func (s *Store) ListShellSnapshots() ([]model.ShellSnapshotEntry, error) {
+func (s *Store) ListShellSnapshots(ctx context.Context) ([]model.ShellSnapshotEntry, error) {
 	var rows []struct {
 		FileName  string `db:"file_name"`
 		Timestamp int64  `db:"timestamp"`
 		SizeBytes int64  `db:"size_bytes"`
 	}
-	if err := s.db.Select(&rows, `SELECT file_name, timestamp, size_bytes FROM shell_snapshots ORDER BY timestamp DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, timestamp, size_bytes FROM shell_snapshots ORDER BY timestamp DESC`); err != nil {
 		return nil, err
 	}
 	snaps := make([]model.ShellSnapshotEntry, len(rows))
@@ -111,14 +112,14 @@ func (s *Store) ListShellSnapshots() ([]model.ShellSnapshotEntry, error) {
 }
 
 // GetShellSnapshot returns a snapshot entry and its content.
-func (s *Store) GetShellSnapshot(fileNameWithoutExt string) (*model.ShellSnapshotEntry, string, error) {
+func (s *Store) GetShellSnapshot(ctx context.Context, fileNameWithoutExt string) (*model.ShellSnapshotEntry, string, error) {
 	var row struct {
 		FileName  string `db:"file_name"`
 		Timestamp int64  `db:"timestamp"`
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	err := s.db.Get(&row,
+	err := s.db.GetContext(ctx, &row,
 		`SELECT file_name, timestamp, size_bytes, content FROM shell_snapshots
 		 WHERE file_name = ? OR REPLACE(file_name, '.sh', '') = ?`,
 		fileNameWithoutExt+".sh", fileNameWithoutExt,
@@ -131,7 +132,7 @@ func (s *Store) GetShellSnapshot(fileNameWithoutExt string) (*model.ShellSnapsho
 }
 
 // ListTodos returns all todo entries.
-func (s *Store) ListTodos() ([]model.TodoEntry, error) {
+func (s *Store) ListTodos(ctx context.Context) ([]model.TodoEntry, error) {
 	var rows []struct {
 		FileName    string         `db:"file_name"`
 		ItemCount   int            `db:"item_count"`
@@ -140,7 +141,7 @@ func (s *Store) ListTodos() ([]model.TodoEntry, error) {
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT t.file_name, t.item_count, t.statuses,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
@@ -169,7 +170,7 @@ func (s *Store) ListTodos() ([]model.TodoEntry, error) {
 }
 
 // GetTodo returns a todo entry by filename (without .json extension).
-func (s *Store) GetTodo(fileNameWithoutExt string) (*model.TodoEntry, []model.TodoItem, error) {
+func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.TodoEntry, []model.TodoItem, error) {
 	var todoRow struct {
 		ID          int64          `db:"id"`
 		FileName    string         `db:"file_name"`
@@ -179,7 +180,7 @@ func (s *Store) GetTodo(fileNameWithoutExt string) (*model.TodoEntry, []model.To
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
-	err := s.db.Get(&todoRow, `
+	err := s.db.GetContext(ctx, &todoRow, `
 		SELECT t.id, t.file_name, t.item_count, t.statuses,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
@@ -206,7 +207,7 @@ func (s *Store) GetTodo(fileNameWithoutExt string) (*model.TodoEntry, []model.To
 	}
 
 	var items []model.TodoItem
-	err = s.db.Select(&items, `
+	err = s.db.SelectContext(ctx, &items, `
 		SELECT content, status, active_form AS activeform
 		FROM todo_items WHERE todo_id = ? ORDER BY seq`, todoRow.ID)
 	if err != nil {
@@ -218,13 +219,13 @@ func (s *Store) GetTodo(fileNameWithoutExt string) (*model.TodoEntry, []model.To
 // ListProjects returns all projects with their sessions (sorted by session count desc).
 // Uses a single query to load all sessions and groups them by project in Go,
 // avoiding N+1 queries.
-func (s *Store) ListProjects() ([]model.ProjectEntry, error) {
+func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) {
 	var projRows []struct {
 		ID          int64  `db:"id"`
 		DirName     string `db:"dir_name"`
 		DisplayName string `db:"display_name"`
 	}
-	if err := s.db.Select(&projRows, `SELECT id, dir_name, display_name FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
 		return nil, err
 	}
 
@@ -244,7 +245,7 @@ func (s *Store) ListProjects() ([]model.ProjectEntry, error) {
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
 	}
-	if err := s.db.Select(&allSessRows, `
+	if err := s.db.SelectContext(ctx, &allSessRows, `
 		SELECT project_id, session_id, first_prompt, message_count, created_at, modified_at,
 			   git_branch, project_path, todo_file_name, has_file_history,
 			   bash_command_count, tool_use_counts, estimated_tokens
@@ -287,16 +288,16 @@ func (s *Store) ListProjects() ([]model.ProjectEntry, error) {
 }
 
 // GetProject returns a single project with its sessions.
-func (s *Store) GetProject(dirName string) (*model.ProjectEntry, error) {
+func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectEntry, error) {
 	var pr struct {
 		ID          int64  `db:"id"`
 		DirName     string `db:"dir_name"`
 		DisplayName string `db:"display_name"`
 	}
-	if err := s.db.Get(&pr, `SELECT id, dir_name, display_name FROM projects WHERE dir_name = ?`, dirName); err != nil {
+	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name FROM projects WHERE dir_name = ?`, dirName); err != nil {
 		return nil, err
 	}
-	sessions, err := s.listSessionsForProject(pr.ID)
+	sessions, err := s.listSessionsForProject(ctx, pr.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +309,7 @@ func (s *Store) GetProject(dirName string) (*model.ProjectEntry, error) {
 	}, nil
 }
 
-func (s *Store) listSessionsForProject(projectID int64) ([]model.SessionEntry, error) {
+func (s *Store) listSessionsForProject(ctx context.Context, projectID int64) ([]model.SessionEntry, error) {
 	var rows []struct {
 		SessionID        string `db:"session_id"`
 		FirstPrompt      string `db:"first_prompt"`
@@ -323,7 +324,7 @@ func (s *Store) listSessionsForProject(projectID int64) ([]model.SessionEntry, e
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
 	}
-	if err := s.db.Select(&rows, `
+	if err := s.db.SelectContext(ctx, &rows, `
 		SELECT session_id, first_prompt, message_count, created_at, modified_at,
 			   git_branch, project_path, todo_file_name, has_file_history,
 			   bash_command_count, tool_use_counts, estimated_tokens
@@ -361,7 +362,7 @@ type SessionFilter struct {
 }
 
 // ListSessionsFiltered returns sessions for a project with optional filters and sorting.
-func (s *Store) ListSessionsFiltered(projectID int64, f SessionFilter) ([]model.SessionEntry, error) {
+func (s *Store) ListSessionsFiltered(ctx context.Context, projectID int64, f SessionFilter) ([]model.SessionEntry, error) {
 	query := `
 		SELECT session_id, first_prompt, message_count, created_at, modified_at,
 			   git_branch, project_path, todo_file_name, has_file_history,
@@ -409,7 +410,7 @@ func (s *Store) ListSessionsFiltered(projectID int64, f SessionFilter) ([]model.
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
 	}
-	if err := s.db.Select(&rows, query, args...); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, err
 	}
 	sessions := make([]model.SessionEntry, len(rows))
@@ -435,16 +436,16 @@ func (s *Store) ListSessionsFiltered(projectID int64, f SessionFilter) ([]model.
 }
 
 // GetProjectID returns the internal database ID for a project dir_name.
-func (s *Store) GetProjectID(dirName string) (int64, error) {
+func (s *Store) GetProjectID(ctx context.Context, dirName string) (int64, error) {
 	var id int64
-	err := s.db.Get(&id, `SELECT id FROM projects WHERE dir_name = ?`, dirName)
+	err := s.db.GetContext(ctx, &id, `SELECT id FROM projects WHERE dir_name = ?`, dirName)
 	return id, err
 }
 
 // ListBranches returns distinct git branches for a project.
-func (s *Store) ListBranches(projectID int64) ([]string, error) {
+func (s *Store) ListBranches(ctx context.Context, projectID int64) ([]string, error) {
 	var branches []string
-	err := s.db.Select(&branches, `
+	err := s.db.SelectContext(ctx, &branches, `
 		SELECT DISTINCT git_branch FROM sessions
 		WHERE project_id = ? AND git_branch != ''
 		ORDER BY git_branch`, projectID)
@@ -453,7 +454,7 @@ func (s *Store) ListBranches(projectID int64) ([]string, error) {
 
 // GetSession finds a session by its session_id string, returning the session
 // plus its project. Uses a direct JOIN query instead of loading all sessions.
-func (s *Store) GetSession(dirName, sessionID string) (*model.ProjectEntry, *model.SessionEntry, error) {
+func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*model.ProjectEntry, *model.SessionEntry, error) {
 	var row struct {
 		// Project fields
 		ProjectDirName     string `db:"dir_name"`
@@ -472,7 +473,7 @@ func (s *Store) GetSession(dirName, sessionID string) (*model.ProjectEntry, *mod
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
 	}
-	err := s.db.Get(&row, `
+	err := s.db.GetContext(ctx, &row, `
 		SELECT p.dir_name, p.display_name,
 			   s.session_id, s.first_prompt, s.message_count, s.created_at, s.modified_at,
 			   s.git_branch, s.project_path, s.todo_file_name, s.has_file_history,
@@ -509,16 +510,16 @@ func (s *Store) GetSession(dirName, sessionID string) (*model.ProjectEntry, *mod
 }
 
 // GetSessionMessages returns conversation messages for a session, with pagination.
-func (s *Store) GetSessionMessages(sessionID string, offset, limit int) ([]model.ConversationMessage, int, error) {
+func (s *Store) GetSessionMessages(ctx context.Context, sessionID string, offset, limit int) ([]model.ConversationMessage, int, error) {
 	// Get the database session ID
 	var dbID int64
-	if err := s.db.Get(&dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+	if err := s.db.GetContext(ctx, &dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
 		return nil, 0, err
 	}
 
 	// Total count
 	var total int
-	if err := s.db.Get(&total, `SELECT COUNT(*) FROM messages WHERE session_id = ?`, dbID); err != nil {
+	if err := s.db.GetContext(ctx, &total, `SELECT COUNT(*) FROM messages WHERE session_id = ?`, dbID); err != nil {
 		return nil, 0, err
 	}
 
@@ -532,7 +533,7 @@ func (s *Store) GetSessionMessages(sessionID string, offset, limit int) ([]model
 		Cwd       string `db:"cwd"`
 		GitBranch string `db:"git_branch"`
 	}
-	if err := s.db.Select(&rows, `
+	if err := s.db.SelectContext(ctx, &rows, `
 		SELECT type, role, timestamp, uuid, content, cwd, git_branch
 		FROM messages WHERE session_id = ? ORDER BY seq LIMIT ? OFFSET ?`,
 		dbID, limit, offset,
@@ -558,9 +559,9 @@ func (s *Store) GetSessionMessages(sessionID string, offset, limit int) ([]model
 }
 
 // GetAllSessionMessages returns all conversation messages for a session (no pagination).
-func (s *Store) GetAllSessionMessages(sessionID string) ([]model.ConversationMessage, error) {
+func (s *Store) GetAllSessionMessages(ctx context.Context, sessionID string) ([]model.ConversationMessage, error) {
 	var dbID int64
-	if err := s.db.Get(&dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+	if err := s.db.GetContext(ctx, &dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
 		return nil, err
 	}
 
@@ -573,7 +574,7 @@ func (s *Store) GetAllSessionMessages(sessionID string) ([]model.ConversationMes
 		Cwd       string `db:"cwd"`
 		GitBranch string `db:"git_branch"`
 	}
-	if err := s.db.Select(&rows, `
+	if err := s.db.SelectContext(ctx, &rows, `
 		SELECT type, role, timestamp, uuid, content, cwd, git_branch
 		FROM messages WHERE session_id = ? ORDER BY seq`, dbID); err != nil {
 		return nil, err
@@ -597,18 +598,18 @@ func (s *Store) GetAllSessionMessages(sessionID string) ([]model.ConversationMes
 }
 
 // ListHistory returns history entries sorted newest first, with a limit.
-func (s *Store) ListHistory(limit int) ([]model.HistoryEntry, error) {
+func (s *Store) ListHistory(ctx context.Context, limit int) ([]model.HistoryEntry, error) {
 	var entries []model.HistoryEntry
-	if err := s.db.Select(&entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC LIMIT ?`, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC LIMIT ?`, limit); err != nil {
 		return nil, err
 	}
 	return entries, nil
 }
 
 // ListAllHistory returns all history entries sorted newest first.
-func (s *Store) ListAllHistory() ([]model.HistoryEntry, error) {
+func (s *Store) ListAllHistory(ctx context.Context) ([]model.HistoryEntry, error) {
 	var entries []model.HistoryEntry
-	if err := s.db.Select(&entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC`); err != nil {
 		return nil, err
 	}
 	return entries, nil
@@ -621,9 +622,9 @@ type HeatmapDayCount struct {
 }
 
 // HistoryDayCounts returns per-day activity counts from history, computed in SQL.
-func (s *Store) HistoryDayCounts() (map[string]int, error) {
+func (s *Store) HistoryDayCounts(ctx context.Context) (map[string]int, error) {
 	var rows []HeatmapDayCount
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT DATE(timestamp / 1000, 'unixepoch') AS day, COUNT(*) AS cnt
 		FROM history GROUP BY day`)
 	if err != nil {
@@ -637,14 +638,14 @@ func (s *Store) HistoryDayCounts() (map[string]int, error) {
 }
 
 // ListFileHistory returns file history entries sorted by file count desc.
-func (s *Store) ListFileHistory() ([]model.FileHistoryEntry, error) {
+func (s *Store) ListFileHistory(ctx context.Context) ([]model.FileHistoryEntry, error) {
 	var rows []struct {
 		ConversationID string         `db:"conversation_id"`
 		FileCount      int            `db:"file_count"`
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT fh.conversation_id, fh.file_count,
 			   p.dir_name AS project_dir,
 			   p.display_name AS project_name
@@ -668,7 +669,7 @@ func (s *Store) ListFileHistory() ([]model.FileHistoryEntry, error) {
 }
 
 // GetFileHistory returns a file history detail (all versions).
-func (s *Store) GetFileHistory(conversationID string) (*model.FileHistoryEntry, *model.FileHistoryDetail, error) {
+func (s *Store) GetFileHistory(ctx context.Context, conversationID string) (*model.FileHistoryEntry, *model.FileHistoryDetail, error) {
 	var fhRow struct {
 		ID             int64          `db:"id"`
 		ConversationID string         `db:"conversation_id"`
@@ -676,7 +677,7 @@ func (s *Store) GetFileHistory(conversationID string) (*model.FileHistoryEntry, 
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
-	err := s.db.Get(&fhRow, `
+	err := s.db.GetContext(ctx, &fhRow, `
 		SELECT fh.id, fh.conversation_id, fh.file_count,
 			   p.dir_name AS project_dir,
 			   p.display_name AS project_name
@@ -696,7 +697,7 @@ func (s *Store) GetFileHistory(conversationID string) (*model.FileHistoryEntry, 
 	}
 
 	var versions []model.FileVersionInfo
-	err = s.db.Select(&versions, `
+	err = s.db.SelectContext(ctx, &versions, `
 		SELECT hash, version, content FROM file_versions
 		WHERE file_history_id = ? ORDER BY hash, version`, fhRow.ID)
 	if err != nil {
@@ -727,7 +728,7 @@ type SearchGroup struct {
 
 // SearchAll performs a search across all indexed data types.
 // Returns groups in a fixed display order; empty groups are omitted.
-func (s *Store) SearchAll(query string, perTypeLimit int) ([]SearchGroup, error) {
+func (s *Store) SearchAll(ctx context.Context, query string, perTypeLimit int) ([]SearchGroup, error) {
 	if query == "" {
 		return nil, nil
 	}
@@ -735,47 +736,47 @@ func (s *Store) SearchAll(query string, perTypeLimit int) ([]SearchGroup, error)
 	var groups []SearchGroup
 
 	// 1. Conversations (FTS)
-	if hits, err := s.searchConversations(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchConversations(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Conversations", Color: "sky", Hits: hits})
 	}
 
 	// 2. Commands (LIKE)
-	if hits, err := s.searchCommands(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchCommands(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Commands", Color: "lime", Hits: hits})
 	}
 
 	// 3. Memories (LIKE)
-	if hits, err := s.searchMemories(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchMemories(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Memories", Color: "cyan", Hits: hits})
 	}
 
 	// 4. Plans (LIKE)
-	if hits, err := s.searchPlans(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchPlans(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Plans", Color: "emerald", Hits: hits})
 	}
 
 	// 5. Todos (LIKE)
-	if hits, err := s.searchTodos(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchTodos(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Todos", Color: "rose", Hits: hits})
 	}
 
 	// 6. Tasks (LIKE)
-	if hits, err := s.searchTasks(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchTasks(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Tasks", Color: "indigo", Hits: hits})
 	}
 
 	// 7. Paste Cache (LIKE)
-	if hits, err := s.searchPasteCache(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchPasteCache(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Paste Cache", Color: "orange", Hits: hits})
 	}
 
 	// 8. Shell Snapshots (LIKE)
-	if hits, err := s.searchSnapshots(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchSnapshots(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Shell Snapshots", Color: "amber", Hits: hits})
 	}
 
 	// 9. Usage Data (LIKE)
-	if hits, err := s.searchUsageData(query, perTypeLimit); err == nil && len(hits) > 0 {
+	if hits, err := s.searchUsageData(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
 		groups = append(groups, SearchGroup{Type: "Usage Data", Color: "fuchsia", Hits: hits})
 	}
 
@@ -790,7 +791,7 @@ func (s *Store) SearchAll(query string, perTypeLimit int) ([]SearchGroup, error)
 	return groups, nil
 }
 
-func (s *Store) searchConversations(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchConversations(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	q := `
 		SELECT m.role, m.timestamp,
 			   s.session_id AS session_id_text, s.first_prompt,
@@ -812,7 +813,7 @@ func (s *Store) searchConversations(query string, limit int) ([]SearchHit, error
 		ProjectDisplay string `db:"display_name"`
 		Snippet        string `db:"snippet"`
 	}
-	if err := s.db.Select(&rows, q, query, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, query, limit); err != nil {
 		return nil, err
 	}
 
@@ -836,7 +837,7 @@ func (s *Store) searchConversations(query string, limit int) ([]SearchHit, error
 	return hits, nil
 }
 
-func (s *Store) searchCommands(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchCommands(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT c.command, c.timestamp, s.session_id, s.first_prompt,
@@ -855,7 +856,7 @@ func (s *Store) searchCommands(query string, limit int) ([]SearchHit, error) {
 		ProjectDirName string `db:"dir_name"`
 		ProjectDisplay string `db:"display_name"`
 	}
-	if err := s.db.Select(&rows, q, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -875,7 +876,7 @@ func (s *Store) searchCommands(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchMemories(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchMemories(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT m.project_dir, m.content,
@@ -890,7 +891,7 @@ func (s *Store) searchMemories(query string, limit int) ([]SearchHit, error) {
 		Content     string `db:"content"`
 		DisplayName string `db:"display_name"`
 	}
-	if err := s.db.Select(&rows, q, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -906,7 +907,7 @@ func (s *Store) searchMemories(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchPlans(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchPlans(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT file_name, title, content
@@ -919,7 +920,7 @@ func (s *Store) searchPlans(query string, limit int) ([]SearchHit, error) {
 		Title    string `db:"title"`
 		Content  string `db:"content"`
 	}
-	if err := s.db.Select(&rows, q, like, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -939,7 +940,7 @@ func (s *Store) searchPlans(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchTodos(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT ti.content, ti.status, ti.seq, t.file_name,
@@ -958,7 +959,7 @@ func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 		FileName    string `db:"file_name"`
 		DisplayName string `db:"display_name"`
 	}
-	if err := s.db.Select(&rows, q, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -978,7 +979,7 @@ func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchTasks(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT ti.item_id, ti.subject, ti.description, ti.status, tg.dir_name,
@@ -998,7 +999,7 @@ func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
 		DirName     string `db:"dir_name"`
 		DisplayName string `db:"display_name"`
 	}
-	if err := s.db.Select(&rows, q, like, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -1026,7 +1027,7 @@ func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchPasteCache(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchPasteCache(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT file_name, content, size_bytes
@@ -1039,7 +1040,7 @@ func (s *Store) searchPasteCache(query string, limit int) ([]SearchHit, error) {
 		Content   string `db:"content"`
 		SizeBytes int64  `db:"size_bytes"`
 	}
-	if err := s.db.Select(&rows, q, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -1055,7 +1056,7 @@ func (s *Store) searchPasteCache(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchSnapshots(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchSnapshots(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT file_name, content
@@ -1067,7 +1068,7 @@ func (s *Store) searchSnapshots(query string, limit int) ([]SearchHit, error) {
 		FileName string `db:"file_name"`
 		Content  string `db:"content"`
 	}
-	if err := s.db.Select(&rows, q, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -1083,7 +1084,7 @@ func (s *Store) searchSnapshots(query string, limit int) ([]SearchHit, error) {
 	return hits, nil
 }
 
-func (s *Store) searchUsageData(query string, limit int) ([]SearchHit, error) {
+func (s *Store) searchUsageData(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT session_id_text, brief_summary, underlying_goal, outcome
@@ -1097,7 +1098,7 @@ func (s *Store) searchUsageData(query string, limit int) ([]SearchHit, error) {
 		UnderlyingGoal string `db:"underlying_goal"`
 		Outcome        string `db:"outcome"`
 	}
-	if err := s.db.Select(&rows, q, like, like, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, q, like, like, limit); err != nil {
 		return nil, err
 	}
 
@@ -1203,7 +1204,7 @@ func formatBytesStore(bytes int64) string {
 }
 
 // ListProjectNames returns all project dir_name/display_name pairs for filter dropdowns.
-func (s *Store) ListProjectNames() ([]struct {
+func (s *Store) ListProjectNames(ctx context.Context) ([]struct {
 	DirName     string `db:"dir_name"`
 	DisplayName string `db:"display_name"`
 }, error,
@@ -1212,7 +1213,7 @@ func (s *Store) ListProjectNames() ([]struct {
 		DirName     string `db:"dir_name"`
 		DisplayName string `db:"display_name"`
 	}
-	err := s.db.Select(&rows, `SELECT dir_name, display_name FROM projects ORDER BY display_name`)
+	err := s.db.SelectContext(ctx, &rows, `SELECT dir_name, display_name FROM projects ORDER BY display_name`)
 	return rows, err
 }
 
@@ -1225,7 +1226,7 @@ type ToolUsageStat struct {
 
 // GetToolUsageStats aggregates tool_use_counts across all sessions and returns
 // the top tools sorted by usage count.
-func (s *Store) GetToolUsageStats(limit int) ([]ToolUsageStat, error) {
+func (s *Store) GetToolUsageStats(ctx context.Context, limit int) ([]ToolUsageStat, error) {
 	q := `
 		SELECT j.key AS name, CAST(SUM(j.value) AS INTEGER) AS count
 		FROM sessions s, json_each(s.tool_use_counts) j
@@ -1237,7 +1238,7 @@ func (s *Store) GetToolUsageStats(limit int) ([]ToolUsageStat, error) {
 	}
 
 	var stats []ToolUsageStat
-	if err := s.db.Select(&stats, q); err != nil {
+	if err := s.db.SelectContext(ctx, &stats, q); err != nil {
 		return nil, err
 	}
 
@@ -1261,9 +1262,9 @@ type ProjectStats struct {
 }
 
 // GetProjectStats returns aggregate stats for a project.
-func (s *Store) GetProjectStats(projectID int64) (ProjectStats, error) {
+func (s *Store) GetProjectStats(ctx context.Context, projectID int64) (ProjectStats, error) {
 	var st ProjectStats
-	err := s.db.Get(&st, `
+	err := s.db.GetContext(ctx, &st, `
 		SELECT
 			COUNT(*) AS session_count,
 			COALESCE(SUM(message_count), 0) AS total_messages,
@@ -1281,9 +1282,9 @@ type TokenTimelineEntry struct {
 }
 
 // GetTokenTimeline returns daily token totals from session created_at dates.
-func (s *Store) GetTokenTimeline() ([]TokenTimelineEntry, error) {
+func (s *Store) GetTokenTimeline(ctx context.Context) ([]TokenTimelineEntry, error) {
 	var entries []TokenTimelineEntry
-	err := s.db.Select(&entries, `
+	err := s.db.SelectContext(ctx, &entries, `
 		SELECT DATE(created_at) AS day, SUM(estimated_tokens) AS tokens
 		FROM sessions
 		WHERE created_at != ''
@@ -1299,9 +1300,9 @@ type ToolTimelineEntry struct {
 }
 
 // GetToolTimeline returns tool_use blocks with timestamps for a session.
-func (s *Store) GetToolTimeline(sessionID string) ([]ToolTimelineEntry, error) {
+func (s *Store) GetToolTimeline(ctx context.Context, sessionID string) ([]ToolTimelineEntry, error) {
 	var dbID int64
-	if err := s.db.Get(&dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+	if err := s.db.GetContext(ctx, &dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
 		return nil, err
 	}
 
@@ -1309,7 +1310,7 @@ func (s *Store) GetToolTimeline(sessionID string) ([]ToolTimelineEntry, error) {
 		Content   string `db:"content"`
 		Timestamp string `db:"timestamp"`
 	}
-	if err := s.db.Select(&rows, `
+	if err := s.db.SelectContext(ctx, &rows, `
 		SELECT content, timestamp FROM messages
 		WHERE session_id = ? AND role = 'assistant'
 		ORDER BY seq`, dbID); err != nil {
@@ -1338,9 +1339,9 @@ func (s *Store) GetToolTimeline(sessionID string) ([]ToolTimelineEntry, error) {
 }
 
 // GetSourceFileHash returns the stored content hash for a source file.
-func (s *Store) GetSourceFileHash(path string) (string, error) {
+func (s *Store) GetSourceFileHash(ctx context.Context, path string) (string, error) {
 	var hash string
-	err := s.db.Get(&hash, `SELECT content_hash FROM source_files WHERE path = ?`, path)
+	err := s.db.GetContext(ctx, &hash, `SELECT content_hash FROM source_files WHERE path = ?`, path)
 	if err != nil {
 		return "", err
 	}
@@ -1348,14 +1349,14 @@ func (s *Store) GetSourceFileHash(path string) (string, error) {
 }
 
 // ListSourceFilePaths returns all tracked source file paths.
-func (s *Store) ListSourceFilePaths() ([]string, error) {
+func (s *Store) ListSourceFilePaths(ctx context.Context) ([]string, error) {
 	var paths []string
-	err := s.db.Select(&paths, `SELECT path FROM source_files`)
+	err := s.db.SelectContext(ctx, &paths, `SELECT path FROM source_files`)
 	return paths, err
 }
 
 // ListTaskGroups returns all task groups with non-zero items.
-func (s *Store) ListTaskGroups() ([]model.TaskGroupEntry, error) {
+func (s *Store) ListTaskGroups(ctx context.Context) ([]model.TaskGroupEntry, error) {
 	var rows []struct {
 		DirName     string         `db:"dir_name"`
 		ItemCount   int            `db:"item_count"`
@@ -1364,7 +1365,7 @@ func (s *Store) ListTaskGroups() ([]model.TaskGroupEntry, error) {
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT tg.dir_name, tg.item_count, tg.statuses,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
@@ -1393,7 +1394,7 @@ func (s *Store) ListTaskGroups() ([]model.TaskGroupEntry, error) {
 }
 
 // GetTaskGroup returns a task group and its items.
-func (s *Store) GetTaskGroup(dirName string) (*model.TaskGroupEntry, []model.TaskItem, error) {
+func (s *Store) GetTaskGroup(ctx context.Context, dirName string) (*model.TaskGroupEntry, []model.TaskItem, error) {
 	var row struct {
 		ID          int64          `db:"id"`
 		DirName     string         `db:"dir_name"`
@@ -1403,7 +1404,7 @@ func (s *Store) GetTaskGroup(dirName string) (*model.TaskGroupEntry, []model.Tas
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
-	err := s.db.Get(&row, `
+	err := s.db.GetContext(ctx, &row, `
 		SELECT tg.id, tg.dir_name, tg.item_count, tg.statuses,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
@@ -1436,7 +1437,7 @@ func (s *Store) GetTaskGroup(dirName string) (*model.TaskGroupEntry, []model.Tas
 		Blocks      string `db:"blocks"`
 		BlockedBy   string `db:"blocked_by"`
 	}
-	err = s.db.Select(&itemRows, `
+	err = s.db.SelectContext(ctx, &itemRows, `
 		SELECT item_id, subject, description, active_form, status, blocks, blocked_by
 		FROM task_items WHERE task_group_id = ? ORDER BY seq`, row.ID)
 	if err != nil {
@@ -1462,13 +1463,13 @@ func (s *Store) GetTaskGroup(dirName string) (*model.TaskGroupEntry, []model.Tas
 }
 
 // ListPasteCache returns all paste-cache entries sorted by size desc.
-func (s *Store) ListPasteCache() ([]model.PasteCacheEntry, error) {
+func (s *Store) ListPasteCache(ctx context.Context) ([]model.PasteCacheEntry, error) {
 	var rows []struct {
 		FileName  string `db:"file_name"`
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	if err := s.db.Select(&rows, `SELECT file_name, size_bytes, SUBSTR(content, 1, 201) AS content FROM paste_cache ORDER BY size_bytes DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, size_bytes, SUBSTR(content, 1, 201) AS content FROM paste_cache ORDER BY size_bytes DESC`); err != nil {
 		return nil, err
 	}
 	entries := make([]model.PasteCacheEntry, len(rows))
@@ -1487,13 +1488,13 @@ func (s *Store) ListPasteCache() ([]model.PasteCacheEntry, error) {
 }
 
 // GetPasteCache returns a paste-cache entry and its full content.
-func (s *Store) GetPasteCache(fileNameWithoutExt string) (*model.PasteCacheEntry, string, error) {
+func (s *Store) GetPasteCache(ctx context.Context, fileNameWithoutExt string) (*model.PasteCacheEntry, string, error) {
 	var row struct {
 		FileName  string `db:"file_name"`
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	err := s.db.Get(&row,
+	err := s.db.GetContext(ctx, &row,
 		`SELECT file_name, size_bytes, content FROM paste_cache
 		 WHERE file_name = ? OR REPLACE(file_name, '.txt', '') = ?`,
 		fileNameWithoutExt+".txt", fileNameWithoutExt,
@@ -1506,7 +1507,7 @@ func (s *Store) GetPasteCache(fileNameWithoutExt string) (*model.PasteCacheEntry
 }
 
 // ListUsageFacets returns all usage facets.
-func (s *Store) ListUsageFacets() ([]model.UsageFacetEntry, error) {
+func (s *Store) ListUsageFacets(ctx context.Context) ([]model.UsageFacetEntry, error) {
 	var rows []struct {
 		SessionID      string         `db:"session_id_text"`
 		UnderlyingGoal string         `db:"underlying_goal"`
@@ -1562,7 +1563,7 @@ func (s *Store) ListUsageFacets() ([]model.UsageFacetEntry, error) {
 }
 
 // GetUsageFacet returns a single usage facet by session ID.
-func (s *Store) GetUsageFacet(sessionID string) (*model.UsageFacetEntry, error) {
+func (s *Store) GetUsageFacet(ctx context.Context, sessionID string) (*model.UsageFacetEntry, error) {
 	var row struct {
 		SessionID      string         `db:"session_id_text"`
 		UnderlyingGoal string         `db:"underlying_goal"`
@@ -1578,7 +1579,7 @@ func (s *Store) GetUsageFacet(sessionID string) (*model.UsageFacetEntry, error) 
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
-	err := s.db.Get(&row, `
+	err := s.db.GetContext(ctx, &row, `
 		SELECT uf.session_id_text, uf.underlying_goal, uf.outcome, uf.helpfulness,
 			   uf.session_type, uf.primary_success, uf.brief_summary, uf.friction_detail,
 			   uf.goal_categories, uf.satisfaction, uf.friction_counts,
@@ -1614,9 +1615,9 @@ func (s *Store) GetUsageFacet(sessionID string) (*model.UsageFacetEntry, error) 
 }
 
 // GetUsageReport returns the stored usage report HTML content.
-func (s *Store) GetUsageReport() (string, error) {
+func (s *Store) GetUsageReport(ctx context.Context) (string, error) {
 	var content string
-	err := s.db.Get(&content, `SELECT content FROM usage_report LIMIT 1`)
+	err := s.db.GetContext(ctx, &content, `SELECT content FROM usage_report LIMIT 1`)
 	if err != nil {
 		return "", err
 	}
@@ -1624,14 +1625,14 @@ func (s *Store) GetUsageReport() (string, error) {
 }
 
 // ListMemories returns all memory entries with project display names.
-func (s *Store) ListMemories() ([]model.MemoryEntry, error) {
+func (s *Store) ListMemories(ctx context.Context) ([]model.MemoryEntry, error) {
 	var rows []struct {
 		ProjectDir  string         `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 		SizeBytes   int64          `db:"size_bytes"`
 		Content     string         `db:"content"`
 	}
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT m.project_dir, p.display_name AS project_name, m.size_bytes, m.content
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id
@@ -1656,14 +1657,14 @@ func (s *Store) ListMemories() ([]model.MemoryEntry, error) {
 }
 
 // GetMemory returns a memory entry and its full content by project dir.
-func (s *Store) GetMemory(projectDir string) (*model.MemoryEntry, string, error) {
+func (s *Store) GetMemory(ctx context.Context, projectDir string) (*model.MemoryEntry, string, error) {
 	var row struct {
 		ProjectDir  string         `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 		SizeBytes   int64          `db:"size_bytes"`
 		Content     string         `db:"content"`
 	}
-	err := s.db.Get(&row, `
+	err := s.db.GetContext(ctx, &row, `
 		SELECT m.project_dir, p.display_name AS project_name, m.size_bytes, m.content
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id
@@ -1681,13 +1682,13 @@ func (s *Store) GetMemory(projectDir string) (*model.MemoryEntry, string, error)
 
 // GetSessionDBID returns the internal database ID for a session_id string.
 // It accepts an optional transaction; if tx is non-nil it queries within that tx.
-func (s *Store) GetSessionDBID(tx *sqlx.Tx, sessionID string) (int64, error) {
+func (s *Store) GetSessionDBID(ctx context.Context, tx *sqlx.Tx, sessionID string) (int64, error) {
 	var id int64
 	var err error
 	if tx != nil {
-		err = tx.Get(&id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
+		err = tx.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
 	} else {
-		err = s.db.Get(&id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
+		err = s.db.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
 	}
 	return id, err
 }
@@ -1701,7 +1702,7 @@ type CommandFilter struct {
 }
 
 // ListCommands returns bash commands across all sessions with optional filters.
-func (s *Store) ListCommands(limit, offset int, filter CommandFilter) ([]model.CommandEntry, int, error) {
+func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter CommandFilter) ([]model.CommandEntry, int, error) {
 	baseFrom := `
 		FROM commands c
 		JOIN sessions s ON c.session_id = s.id
@@ -1736,7 +1737,7 @@ func (s *Store) ListCommands(limit, offset int, filter CommandFilter) ([]model.C
 	var total int
 	countArgs := make([]any, len(args))
 	copy(countArgs, args)
-	if err := s.db.Get(&total, "SELECT COUNT(*)"+baseFrom+whereClause, countArgs...); err != nil {
+	if err := s.db.GetContext(ctx, &total, "SELECT COUNT(*)"+baseFrom+whereClause, countArgs...); err != nil {
 		return nil, 0, err
 	}
 
@@ -1747,7 +1748,7 @@ func (s *Store) ListCommands(limit, offset int, filter CommandFilter) ([]model.C
 	args = append(args, limit, offset)
 
 	var rows []model.CommandEntry
-	if err := s.db.Select(&rows, query, args...); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, 0, err
 	}
 
@@ -1756,7 +1757,7 @@ func (s *Store) ListCommands(limit, offset int, filter CommandFilter) ([]model.C
 
 // ListAllCommands returns all bash commands (no pagination) with optional filters.
 // Used for export.
-func (s *Store) ListAllCommands(filter CommandFilter) ([]model.CommandEntry, error) {
+func (s *Store) ListAllCommands(ctx context.Context, filter CommandFilter) ([]model.CommandEntry, error) {
 	baseFrom := `
 		FROM commands c
 		JOIN sessions s ON c.session_id = s.id
@@ -1792,22 +1793,22 @@ func (s *Store) ListAllCommands(filter CommandFilter) ([]model.CommandEntry, err
 		" ORDER BY c.timestamp DESC"
 
 	var rows []model.CommandEntry
-	if err := s.db.Select(&rows, query, args...); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, err
 	}
 	return rows, nil
 }
 
 // CommandCount returns the total number of commands in the database.
-func (s *Store) CommandCount() (int, error) {
+func (s *Store) CommandCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.db.Get(&count, `SELECT COUNT(*) FROM commands`)
+	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM commands`)
 	return count, err
 }
 
 // ListScanFindings returns all scan findings, optionally filtered.
 // Joins with sessions/projects to populate linking fields for message and command findings.
-func (s *Store) ListScanFindings(ruleFilter, typeFilter string, showIgnored bool) ([]model.ScanFinding, error) {
+func (s *Store) ListScanFindings(ctx context.Context, ruleFilter, typeFilter string, showIgnored bool) ([]model.ScanFinding, error) {
 	var where []string
 	var args []any
 
@@ -1846,20 +1847,20 @@ func (s *Store) ListScanFindings(ruleFilter, typeFilter string, showIgnored bool
 		whereClause + ` ORDER BY f.ignored ASC, f.rule_id, f.id`
 
 	var rows []model.ScanFinding
-	if err := s.db.Select(&rows, query, args...); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, err
 	}
 	return rows, nil
 }
 
 // GetScanStats returns aggregate counts for scan findings (excluding ignored).
-func (s *Store) GetScanStats() (model.ScanStats, error) {
+func (s *Store) GetScanStats(ctx context.Context) (model.ScanStats, error) {
 	stats := model.ScanStats{
 		FindingsByRule: make(map[string]int),
 		FindingsByType: make(map[string]int),
 	}
 
-	if err := s.db.Get(&stats.TotalFindings, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`); err != nil {
+	if err := s.db.GetContext(ctx, &stats.TotalFindings, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`); err != nil {
 		return stats, err
 	}
 
@@ -1867,7 +1868,7 @@ func (s *Store) GetScanStats() (model.ScanStats, error) {
 		RuleID string `db:"rule_id"`
 		Count  int    `db:"cnt"`
 	}
-	if err := s.db.Select(&ruleRows, `SELECT rule_id, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY rule_id ORDER BY cnt DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &ruleRows, `SELECT rule_id, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY rule_id ORDER BY cnt DESC`); err != nil {
 		return stats, err
 	}
 	for _, r := range ruleRows {
@@ -1878,7 +1879,7 @@ func (s *Store) GetScanStats() (model.ScanStats, error) {
 		SourceType string `db:"source_type"`
 		Count      int    `db:"cnt"`
 	}
-	if err := s.db.Select(&typeRows, `SELECT source_type, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY source_type ORDER BY cnt DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &typeRows, `SELECT source_type, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY source_type ORDER BY cnt DESC`); err != nil {
 		return stats, err
 	}
 	for _, r := range typeRows {
@@ -1889,15 +1890,34 @@ func (s *Store) GetScanStats() (model.ScanStats, error) {
 }
 
 // ScanFindingCount returns the total number of non-ignored scan findings.
-func (s *Store) ScanFindingCount() (int, error) {
+func (s *Store) ScanFindingCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.db.Get(&count, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`)
+	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`)
 	return count, err
 }
 
+// GetScanFinding returns a single scan finding by ID.
+func (s *Store) GetScanFinding(ctx context.Context, id int64) (*model.ScanFinding, error) {
+	var f model.ScanFinding
+	err := s.db.GetContext(ctx, &f, `
+		SELECT f.id, f.rule_id, f.description, f.source_type, f.source_id,
+			   f.match_redacted, f.line_number, f.scanned_at, f.ignored,
+			   COALESCE(p.dir_name, '') AS project_dir,
+			   COALESCE(p.display_name, '') AS project_name,
+			   COALESCE(s.session_id, '') AS session_id_text
+		FROM scan_findings f
+		LEFT JOIN sessions s ON f.source_type IN ('message','command') AND s.session_id = SUBSTR(f.source_id, 1, INSTR(f.source_id || '@', '@') - 1)
+		LEFT JOIN projects p ON s.project_id = p.id
+		WHERE f.id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
 // ToggleScanFindingIgnored toggles the ignored state of a scan finding.
-func (s *Store) ToggleScanFindingIgnored(id int64) error {
-	_, err := s.db.Exec(`UPDATE scan_findings SET ignored = CASE WHEN ignored = 0 THEN 1 ELSE 0 END WHERE id = ?`, id)
+func (s *Store) ToggleScanFindingIgnored(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE scan_findings SET ignored = CASE WHEN ignored = 0 THEN 1 ELSE 0 END WHERE id = ?`, id)
 	return err
 }
 
@@ -1912,8 +1932,8 @@ type ScanMessageRow struct {
 
 // EachMessageForScan iterates over all messages for scanning without
 // loading them all into memory at once.
-func (s *Store) EachMessageForScan(fn func(ScanMessageRow) error) error {
-	rows, err := s.db.Queryx(`
+func (s *Store) EachMessageForScan(ctx context.Context, fn func(ScanMessageRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `
 		SELECT m.id, s.session_id, m.timestamp, m.content, m.role
 		FROM messages m
 		JOIN sessions s ON m.session_id = s.id
@@ -1943,8 +1963,8 @@ type ScanCommandRow struct {
 }
 
 // EachCommandForScan iterates over all commands for scanning.
-func (s *Store) EachCommandForScan(fn func(ScanCommandRow) error) error {
-	rows, err := s.db.Queryx(`
+func (s *Store) EachCommandForScan(ctx context.Context, fn func(ScanCommandRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `
 		SELECT c.id, s.session_id, c.timestamp, c.command
 		FROM commands c
 		JOIN sessions s ON c.session_id = s.id
@@ -1972,11 +1992,11 @@ type ScanContentRow struct {
 }
 
 // EachContentForScan iterates over named content rows from a table.
-func (s *Store) EachContentForScan(table string, fn func(ScanContentRow) error) error {
+func (s *Store) EachContentForScan(ctx context.Context, table string, fn func(ScanContentRow) error) error {
 	if !allowedTables[table] {
 		return fmt.Errorf("disallowed table name: %s", table)
 	}
-	rows, err := s.db.Queryx(fmt.Sprintf(`SELECT file_name, content FROM %s`, table))
+	rows, err := s.db.QueryxContext(ctx, fmt.Sprintf(`SELECT file_name, content FROM %s`, table))
 	if err != nil {
 		return err
 	}
@@ -2000,8 +2020,8 @@ type ScanMemoryRow struct {
 }
 
 // EachMemoryForScan iterates over all memories for scanning.
-func (s *Store) EachMemoryForScan(fn func(ScanMemoryRow) error) error {
-	rows, err := s.db.Queryx(`SELECT project_dir, content FROM memories`)
+func (s *Store) EachMemoryForScan(ctx context.Context, fn func(ScanMemoryRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `SELECT project_dir, content FROM memories`)
 	if err != nil {
 		return err
 	}

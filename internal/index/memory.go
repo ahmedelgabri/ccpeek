@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -44,7 +45,7 @@ func indexMemory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 			projectID = &pid
 		}
 
-		if err := s.InsertMemory(tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
+		if err := s.InsertMemory(context.TODO(), tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
 			continue
 		}
 		count++
