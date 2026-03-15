@@ -26,10 +26,11 @@
           </div>
           <button
             class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-            data-copy="{{ .Content }}"
+            data-copy-from="next"
           >
             Copy
           </button>
+          <textarea class="hidden" aria-hidden="true">{{ .Content }}</textarea>
         </div>
         {{ if and (eq .Tool "Edit") .OldString }}
           <div class="px-4 py-2 border-b border-surface-border bg-rose-500/5">

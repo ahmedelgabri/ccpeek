@@ -1,8 +1,18 @@
-// Copy-to-clipboard: any element with a data-copy attribute copies its value on click.
+// Copy-to-clipboard: elements with data-copy or data-copy-from="next".
 document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-copy]");
+  const btn = e.target.closest("[data-copy], [data-copy-from]");
   if (!btn) return;
-  void navigator.clipboard.writeText(btn.getAttribute("data-copy")).then(() => {
+
+  let text;
+  if (btn.hasAttribute("data-copy")) {
+    text = btn.getAttribute("data-copy");
+  } else if (btn.dataset.copyFrom === "next") {
+    const source = btn.nextElementSibling;
+    text = source ? source.value || source.textContent : "";
+  }
+  if (text == null) return;
+
+  void navigator.clipboard.writeText(text).then(() => {
     const prev = btn.textContent;
     btn.textContent = "Copied";
     setTimeout(() => {

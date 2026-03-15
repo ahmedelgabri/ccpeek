@@ -246,8 +246,8 @@ func TestRedact(t *testing.T) {
 		want  string
 	}{
 		{"ab", "**"},
-		{"abcdef", "ab**ef"},
-		{"abcdefghijklm", "abcd*****jklm"},
+		{"abcdef", "******"},
+		{"abcdefghijklm", "ab*********lm"},
 		{"AKIAIOSFODNN7EXAMPLE", "AKIA************MPLE"},
 	}
 	for _, tt := range tests {

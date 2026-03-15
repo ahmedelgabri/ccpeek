@@ -248,15 +248,13 @@ func toFinding(f report.Finding, sourceType, sourceID string) model.ScanFinding 
 	}
 }
 
-// redact shows first 4 and last 4 characters, replacing the middle with ***.
+// redact masks secrets, showing only a small prefix and suffix.
 func redact(s string) string {
-	if len(s) <= 12 {
-		// Too short to meaningfully redact while showing first/last 4
-		n := len(s) / 3
-		if n < 1 {
-			return strings.Repeat("*", len(s))
-		}
-		return s[:n] + strings.Repeat("*", len(s)-2*n) + s[len(s)-n:]
+	if len(s) <= 8 {
+		return strings.Repeat("*", len(s))
+	}
+	if len(s) <= 16 {
+		return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
 	}
 	return s[:4] + strings.Repeat("*", len(s)-8) + s[len(s)-4:]
 }

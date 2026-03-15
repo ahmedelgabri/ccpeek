@@ -1264,6 +1264,16 @@ func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) scanToggleIgnore(w http.ResponseWriter, r *http.Request) {
+	// Basic CSRF check: verify the request originates from this server
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		origin = r.Header.Get("Referer")
+	}
+	if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -1276,9 +1286,9 @@ func (h *handlers) scanToggleIgnore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Redirect back to the scan page
+	// Redirect back to the scan page (validate referer is a local path)
 	referer := r.Header.Get("Referer")
-	if referer == "" {
+	if referer == "" || !strings.HasPrefix(referer, "/") {
 		referer = "/scan/"
 	}
 	http.Redirect(w, r, referer, http.StatusSeeOther)

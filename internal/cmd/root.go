@@ -80,7 +80,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dataFile), 0o700); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
 
