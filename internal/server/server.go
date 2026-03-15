@@ -30,7 +30,7 @@ func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool) 
 		go watchAndReindex(claudeDir, db)
 	}
 
-	return http.ListenAndServe(addr, requestLogger(registerRoutes(h, staticFS)))
+	return http.ListenAndServe(addr, requestLogger(securityHeaders(registerRoutes(h, staticFS))))
 }
 
 // NewHandler creates the HTTP handler without starting a listener.
@@ -48,7 +48,7 @@ func NewHandler(db *store.Store) (http.Handler, error) {
 
 	h := &handlers{tmpl: tmpl, store: db}
 
-	return registerRoutes(h, staticFS), nil
+	return securityHeaders(registerRoutes(h, staticFS)), nil
 }
 
 func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
@@ -134,6 +134,16 @@ func statusColorCode(code int) string {
 	default:
 		return "\033[32m" // green
 	}
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requestLogger(next http.Handler) http.Handler {

@@ -989,12 +989,14 @@ func (h *handlers) usageDataReport(w http.ResponseWriter, r *http.Request) {
 }
 
 // usageReportRaw serves the raw HTML for the iframe src.
+// A strict CSP sandbox prevents any script execution in the rendered content.
 func (h *handlers) usageReportRaw(w http.ResponseWriter, r *http.Request) {
 	content, err := h.store.GetUsageReport()
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(content))
 }
