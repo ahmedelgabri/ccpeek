@@ -355,10 +355,9 @@ func (s *Store) listSessionsForProject(ctx context.Context, projectID int64) ([]
 
 // SessionFilter holds optional filter/sort parameters for listing sessions.
 type SessionFilter struct {
-	Sort   string // "oldest", "messages", "tokens" (default: newest first)
-	Branch string // filter by git branch (exact match)
-	From   string // filter by created_at >= (ISO date)
-	To     string // filter by created_at <= (ISO date)
+	Sort string // "oldest", "messages", "tokens", "tools" (default: newest first)
+	From string // filter by created_at >= (ISO date)
+	To   string // filter by created_at <= (ISO date)
 }
 
 // ListSessionsFiltered returns sessions for a project with optional filters and sorting.
@@ -370,10 +369,6 @@ func (s *Store) ListSessionsFiltered(ctx context.Context, projectID int64, f Ses
 		FROM sessions WHERE project_id = ?`
 	args := []any{projectID}
 
-	if f.Branch != "" {
-		query += ` AND git_branch = ?`
-		args = append(args, f.Branch)
-	}
 	if f.From != "" {
 		query += ` AND created_at >= ?`
 		args = append(args, f.From)
@@ -440,16 +435,6 @@ func (s *Store) GetProjectID(ctx context.Context, dirName string) (int64, error)
 	var id int64
 	err := s.db.GetContext(ctx, &id, `SELECT id FROM projects WHERE dir_name = ?`, dirName)
 	return id, err
-}
-
-// ListBranches returns distinct git branches for a project.
-func (s *Store) ListBranches(ctx context.Context, projectID int64) ([]string, error) {
-	var branches []string
-	err := s.db.SelectContext(ctx, &branches, `
-		SELECT DISTINCT git_branch FROM sessions
-		WHERE project_id = ? AND git_branch != ''
-		ORDER BY git_branch`, projectID)
-	return branches, err
 }
 
 // GetSession finds a session by its session_id string, returning the session

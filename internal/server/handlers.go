@@ -262,10 +262,9 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	filter := store.SessionFilter{
-		Sort:   q.Get("sort"),
-		Branch: q.Get("branch"),
-		From:   q.Get("from"),
-		To:     q.Get("to"),
+		Sort: q.Get("sort"),
+		From: q.Get("from"),
+		To:   q.Get("to"),
 	}
 
 	sessions, err := h.store.ListSessionsFiltered(ctx, projectID, filter)
@@ -274,7 +273,6 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	branches, _ := h.store.ListBranches(ctx, projectID)
 	projectStats, _ := h.store.GetProjectStats(ctx, projectID)
 
 	project, err := h.store.GetProject(ctx, dirName)
@@ -290,9 +288,7 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 		"CurrentPath":  "/projects/",
 		"Project":      project,
 		"ProjectStats": projectStats,
-		"Branches":     branches,
 		"Sort":         filter.Sort,
-		"Branch":       filter.Branch,
 		"From":         filter.From,
 		"To":           filter.To,
 	})

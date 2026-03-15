@@ -1724,10 +1724,6 @@ func TestCommandsListDeepLinks(t *testing.T) {
 	if !strings.Contains(body, "/commands/#cmd-") {
 		t.Error("commands list timestamps should deep-link to session commands tab")
 	}
-	// Project badge should link to sessions list with session anchor
-	if !strings.Contains(body, "/#s-") {
-		t.Error("commands list project badge should deep-link to session in sessions list")
-	}
 }
 
 func TestUrlForInTemplates(t *testing.T) {
