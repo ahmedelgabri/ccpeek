@@ -330,6 +330,10 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		title = session.SessionID
 	}
 
+	headerSummary := fmt.Sprintf("%d messages", totalMsgs)
+	if session.EstimatedTokens > 0 {
+		headerSummary += fmt.Sprintf(" · ~%s tokens", formatTokens(session.EstimatedTokens))
+	}
 	renderTemplate(w, h.tmpl, "conversation.html", map[string]any{
 		"Title":         title,
 		"CurrentPath":   "/projects/",
@@ -337,6 +341,8 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		"Session":       session,
 		"ActiveTab":     "conversation",
 		"HasCodeBlocks": hasCodeBlocks(session),
+		"HeaderSummary": headerSummary,
+		"ShowExport":    true,
 		"Messages":      messages,
 		"TotalMsgs":     totalMsgs,
 		"Page":          page,
@@ -377,6 +383,7 @@ func (h *handlers) conversationTodos(w http.ResponseWriter, r *http.Request) {
 		"Session":       session,
 		"ActiveTab":     "todos",
 		"HasCodeBlocks": hasCodeBlocks(session),
+		"HeaderSummary": fmt.Sprintf("%d items", len(items)),
 		"Items":         items,
 	})
 }
@@ -412,6 +419,7 @@ func (h *handlers) conversationFileHistory(w http.ResponseWriter, r *http.Reques
 		"Session":       session,
 		"ActiveTab":     "file-history",
 		"HasCodeBlocks": hasCodeBlocks(session),
+		"HeaderSummary": fmt.Sprintf("%d file versions", len(detail.Files)),
 		"Groups":        groups,
 		"TotalFiles":    len(detail.Files),
 	})
@@ -473,6 +481,7 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 		"Session":       session,
 		"ActiveTab":     "commands",
 		"HasCodeBlocks": hasCodeBlocks(session),
+		"HeaderSummary": fmt.Sprintf("%d commands", len(commands)),
 		"Commands":      commands,
 	})
 }
@@ -551,6 +560,7 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		"Session":       session,
 		"ActiveTab":     "tools",
 		"HasCodeBlocks": hasCodeBlocks(session),
+		"HeaderSummary": fmt.Sprintf("%d tool calls", totalCalls),
 		"Stats":         stats,
 		"Calls":         calls,
 		"TotalCalls":    totalCalls,
@@ -705,6 +715,7 @@ func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
 		"Session":       session,
 		"ActiveTab":     "code",
 		"HasCodeBlocks": true,
+		"HeaderSummary": fmt.Sprintf("%d code operations", len(blocks)),
 		"Blocks":        blocks,
 		"TotalBlocks":   len(blocks),
 	})

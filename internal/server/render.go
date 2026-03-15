@@ -235,6 +235,9 @@ var funcMap = template.FuncMap{
 	"toAnchor":         toAnchor,
 	"urlFor":           urlFor,
 	"cardCSS":          cardCSS,
+	"backLink": func(href, label string) template.HTML {
+		return template.HTML(`<a href="` + template.HTMLEscapeString(href) + `" class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 transition-colors"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>` + template.HTMLEscapeString(label) + `</a>`)
+	},
 	"exportCmd": func(host, format, filterQuery string) string {
 		histFile := map[string]string{
 			"zsh":  "~/.zsh_history",
@@ -264,6 +267,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/partials/pagination.html",
 		"templates/partials/message.html",
 		"templates/partials/session_tabs.html",
+		"templates/partials/session_header.html",
 	)
 	if err != nil {
 		return nil, err
