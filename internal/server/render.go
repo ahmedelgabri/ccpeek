@@ -245,7 +245,8 @@ var funcMap = template.FuncMap{
 			"bash": " && history -r",
 			"fish": "",
 		}
-		return "curl -s 'http://" + host + "/commands/export?format=" + format + filterQuery + "' >> " + histFile[format] + reload[format]
+		u := "http://" + host + "/commands/export?format=" + format + filterQuery
+		return "curl -s '" + strings.ReplaceAll(u, "'", "'\\''") + "' >> " + histFile[format] + reload[format]
 	},
 }
 

@@ -13,6 +13,14 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
+// escapeLike escapes SQL LIKE wildcards so user input is matched literally.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // Stats holds aggregate counts for the dashboard.
 type Stats struct {
 	ProjectCount     int `db:"projectcount"`
@@ -830,7 +838,7 @@ func (s *Store) searchConversations(query string, limit int) ([]SearchHit, error
 }
 
 func (s *Store) searchCommands(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT c.command, c.timestamp, s.session_id, s.first_prompt,
 			   p.dir_name, p.display_name
@@ -869,7 +877,7 @@ func (s *Store) searchCommands(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchMemories(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT m.project_dir, m.content,
 			   COALESCE(p.display_name, m.project_dir) AS display_name
@@ -900,7 +908,7 @@ func (s *Store) searchMemories(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchPlans(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT file_name, title, content
 		FROM plans
@@ -933,7 +941,7 @@ func (s *Store) searchPlans(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT ti.content, ti.status, ti.seq, t.file_name,
 			   COALESCE(p.display_name, '') AS display_name
@@ -972,7 +980,7 @@ func (s *Store) searchTodos(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT ti.item_id, ti.subject, ti.description, ti.status, tg.dir_name,
 			   COALESCE(p.display_name, '') AS display_name
@@ -1020,7 +1028,7 @@ func (s *Store) searchTasks(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchPasteCache(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT file_name, content, size_bytes
 		FROM paste_cache
@@ -1049,7 +1057,7 @@ func (s *Store) searchPasteCache(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchSnapshots(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT file_name, content
 		FROM shell_snapshots
@@ -1077,7 +1085,7 @@ func (s *Store) searchSnapshots(query string, limit int) ([]SearchHit, error) {
 }
 
 func (s *Store) searchUsageData(query string, limit int) ([]SearchHit, error) {
-	like := "%" + query + "%"
+	like := "%" + escapeLike(query) + "%"
 	q := `
 		SELECT session_id_text, brief_summary, underlying_goal, outcome
 		FROM usage_facets
@@ -1722,8 +1730,8 @@ func (s *Store) ListCommands(limit, offset int, filter CommandFilter) ([]model.C
 		args = append(args, filter.Project)
 	}
 	if filter.Search != "" {
-		where = append(where, "c.command LIKE ?")
-		args = append(args, "%"+filter.Search+"%")
+		where = append(where, `c.command LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(filter.Search)+"%")
 	}
 	if filter.From != "" {
 		where = append(where, "c.timestamp >= ?")
@@ -1777,8 +1785,8 @@ func (s *Store) ListAllCommands(filter CommandFilter) ([]model.CommandEntry, err
 		args = append(args, filter.Project)
 	}
 	if filter.Search != "" {
-		where = append(where, "c.command LIKE ?")
-		args = append(args, "%"+filter.Search+"%")
+		where = append(where, `c.command LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(filter.Search)+"%")
 	}
 	if filter.From != "" {
 		where = append(where, "c.timestamp >= ?")
