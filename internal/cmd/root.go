@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
@@ -86,7 +87,11 @@ func run(cmd *cobra.Command, args []string) error {
 	dbPath := dataFile
 	db, err := store.Open(dbPath)
 	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+		hint := ""
+		if strings.Contains(err.Error(), "locked") {
+			hint = " (is another ccpeek instance running?)"
+		}
+		return fmt.Errorf("opening database: %w%s", err, hint)
 	}
 	defer db.Close()
 
@@ -95,6 +100,11 @@ func run(cmd *cobra.Command, args []string) error {
 		if !quiet {
 			fmt.Fprintf(os.Stderr, format, a...)
 		}
+	}
+
+	// Check if the claude data directory exists
+	if _, err := os.Stat(claudeDir); os.IsNotExist(err) && !skipIndex {
+		return fmt.Errorf("claude data directory not found: %s (is Claude Code installed?)", claudeDir)
 	}
 
 	dataChanged := false

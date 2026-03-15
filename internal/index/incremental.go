@@ -2,6 +2,7 @@ package index
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -62,6 +63,7 @@ func indexPlansFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 		}
 
 		if err := s.InsertPlan(tx, entry, string(content), src); err != nil {
+			log.Printf("skipping plan %s: %v", src, err)
 			continue
 		}
 		count++
@@ -116,6 +118,7 @@ func indexSnapshotsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 		}
 
 		if err := s.InsertShellSnapshot(tx, entry, string(content), src); err != nil {
+			log.Printf("skipping snapshot %s: %v", src, err)
 			continue
 		}
 		count++
@@ -230,13 +233,16 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
 			sessionDBID, err := s.InsertSession(tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
+				log.Printf("skipping session %s: %v", jsonlPath, err)
 				continue
 			}
 
 			if err := s.InsertMessages(tx, sessionDBID, sd.messages); err != nil {
+				log.Printf("skipping messages for %s: %v", jsonlPath, err)
 				continue
 			}
 			if err := s.InsertCommands(tx, sessionDBID, sd.messages); err != nil {
+				log.Printf("skipping commands for %s: %v", jsonlPath, err)
 				continue
 			}
 			totalSessions++
@@ -306,6 +312,7 @@ func indexTodosFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 		}
 
 		if err := s.InsertTodo(tx, entry, items, sessionDBID, src); err != nil {
+			log.Printf("skipping todo %s: %v", src, err)
 			continue
 		}
 		count++
