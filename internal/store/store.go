@@ -50,7 +50,7 @@ func (s *Store) Close() error {
 // Reset drops all data and recreates the schema. Used for full rebuild.
 func (s *Store) Reset() error {
 	tables := []string{
-		"messages_fts", "messages", "todo_items", "todos",
+		"messages_fts", "commands", "messages", "todo_items", "todos",
 		"file_versions", "file_history",
 		"task_items", "task_groups", "usage_facets", "usage_report", "paste_cache",
 		"memories", "sessions", "projects",
