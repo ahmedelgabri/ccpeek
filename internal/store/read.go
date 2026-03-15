@@ -1483,7 +1483,7 @@ func (s *Store) ListPasteCache() ([]model.PasteCacheEntry, error) {
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	if err := s.db.Select(&rows, `SELECT file_name, size_bytes, content FROM paste_cache ORDER BY size_bytes DESC`); err != nil {
+	if err := s.db.Select(&rows, `SELECT file_name, size_bytes, SUBSTR(content, 1, 201) AS content FROM paste_cache ORDER BY size_bytes DESC`); err != nil {
 		return nil, err
 	}
 	entries := make([]model.PasteCacheEntry, len(rows))

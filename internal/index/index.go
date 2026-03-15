@@ -209,8 +209,9 @@ func doIndex(claudeDir string, s *store.Store, w io.Writer) error {
 func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 	allFiles := collectSourceFiles(claudeDir)
 
-	// Find files that have changed
+	// Find files that have changed, caching hashes for later
 	var changedFiles []string
+	hashCache := make(map[string]string)
 	for _, path := range allFiles {
 		hash, err := hashFile(path)
 		if err != nil {
@@ -218,6 +219,7 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 			changedFiles = append(changedFiles, path)
 			continue
 		}
+		hashCache[path] = hash
 		storedHash, err := s.GetSourceFileHash(path)
 		if err != nil || storedHash != hash {
 			changedFiles = append(changedFiles, path)
@@ -333,11 +335,11 @@ func doIncrementalIndex(claudeDir string, s *store.Store) (bool, error) {
 		}
 	}
 
-	// Update hashes for changed files
+	// Update hashes for changed files (reuse cached hashes from detection pass)
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, path := range changedFiles {
-		hash, err := hashFile(path)
-		if err != nil {
+		hash, ok := hashCache[path]
+		if !ok {
 			continue
 		}
 		_ = s.SetSourceFileHash(tx, path, hash, now)

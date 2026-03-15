@@ -248,10 +248,3 @@ func truncStr(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

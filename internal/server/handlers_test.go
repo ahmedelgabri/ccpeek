@@ -1826,3 +1826,90 @@ func TestStaticFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestNegativeInputs(t *testing.T) {
+	handler := setupTestServer(t)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		// Invalid page numbers
+		{"negative page", "/projects/-Users-demo-code-api-server/?page=-1", 200},
+		{"zero page", "/projects/-Users-demo-code-api-server/?page=0", 200},
+		{"non-numeric page", "/projects/-Users-demo-code-api-server/?page=abc", 200},
+
+		// Path traversal attempts
+		{"path traversal in dirName", "/projects/..%2F..%2Fetc/", 404},
+		{"path traversal in sessionId", "/projects/-Users-demo-code-api-server/..%2F..%2F/", 404},
+
+		// Nonexistent resources
+		{"nonexistent project", "/projects/nonexistent-project/", 404},
+		{"nonexistent session", "/projects/-Users-demo-code-api-server/00000000-0000-0000-0000-000000000000/", 404},
+		{"nonexistent plan", "/plans/nonexistent/", 404},
+		{"nonexistent snapshot", "/shell-snapshots/nonexistent/", 404},
+
+		// SQL injection-like strings in search
+		{"sql injection in search", "/search/?q=%27+OR+1%3D1+--", 200},
+		{"sql injection in command search", "/commands/?search=%27+UNION+SELECT+*+FROM+sessions+--", 200},
+
+		// Very long query parameter
+		{"long search query", "/search/?q=" + strings.Repeat("a", 10000), 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", tt.path, nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != tt.wantStatus {
+				t.Errorf("GET %s: expected %d, got %d", tt.path, tt.wantStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestCSRFProtection(t *testing.T) {
+	handler := setupTestServer(t)
+
+	// POST from external origin should be rejected
+	r := httptest.NewRequest("POST", "/scan/1/toggle-ignore", nil)
+	r.Header.Set("Origin", "https://evil.com")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for external origin, got %d", w.Code)
+	}
+
+	// POST with no origin/referer should be allowed (same-origin browser behavior)
+	r = httptest.NewRequest("POST", "/scan/999/toggle-ignore", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	// Expect either 404 (finding not found) or 303 (redirect), not 403
+	if w.Code == http.StatusForbidden {
+		t.Error("expected non-403 for request without origin header")
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	handler := setupTestServer(t)
+
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Errorf("X-Frame-Options = %q, want %q", got, "SAMEORIGIN")
+	}
+	csp := w.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Error("Content-Security-Policy header is missing")
+	}
+	if !strings.Contains(csp, "default-src 'self'") {
+		t.Errorf("CSP missing default-src 'self': %s", csp)
+	}
+}
