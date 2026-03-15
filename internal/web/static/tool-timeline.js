@@ -43,11 +43,11 @@ function init() {
   });
 
   // Layout
-  const labelWidth = 90;
+  const labelWidth = 130;
   const laneHeight = 16;
   const laneGap = 2;
   const chartHeight = toolNames.length * (laneHeight + laneGap);
-  const chartWidth = 700;
+  const chartWidth = 1200;
   const plotWidth = chartWidth - labelWidth;
 
   // Temporal mapping: each call gets an x position based on its index
@@ -96,8 +96,7 @@ function init() {
 
   container.innerHTML =
     `<div class="overflow-x-auto">` +
-    `<svg viewBox="0 0 ${chartWidth} ${chartHeight}" class="w-full" ` +
-    `style="min-width: 400px; height: ${chartHeight}px">` +
+    `<svg viewBox="0 0 ${chartWidth} ${chartHeight}" class="w-full">` +
     stripes +
     labels +
     rects +
