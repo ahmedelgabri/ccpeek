@@ -54,8 +54,7 @@ if (wrapper && container && tooltip) {
           : count === 1
             ? "1 session"
             : count + " sessions";
-      tooltip.innerHTML =
-        "<strong>" + countLabel + "</strong><br>" + formatDate(date);
+      tooltip.textContent = countLabel + " - " + formatDate(date);
       tooltip.classList.remove("hidden");
     },
     true,

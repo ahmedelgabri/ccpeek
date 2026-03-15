@@ -25,6 +25,10 @@
           >{{ formatBytes .SizeBytes }}</span
         >
       </a>
+    {{ else }}
+      <div class="px-5 py-8 text-center text-sm text-slate-500">
+        No plans found.
+      </div>
     {{ end }}
   </div>
 {{ end }}

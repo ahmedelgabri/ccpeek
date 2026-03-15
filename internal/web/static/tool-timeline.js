@@ -1,3 +1,10 @@
+const esc = (s) =>
+  `${s}`
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
 (() => {
   const container = document.getElementById("tool-timeline");
   if (container) {
@@ -32,15 +39,15 @@
         .map((d, i) => {
           const x = i * (barWidth + 1);
           const y = lanes[d.name] * (laneHeight + 2) + 2;
-          const color = String(colorMap[d.name]);
-          return `<rect x="${x}" y="${y}" width="${barWidth}" height="${laneHeight}" rx="1" fill="${color}" opacity="0.7"><title>${d.name} - ${d.timestamp}</title></rect>`;
+          const color = `${colorMap[d.name]}`;
+          return `<rect x="${x}" y="${y}" width="${barWidth}" height="${laneHeight}" rx="1" fill="${color}" opacity="0.7"><title>${esc(d.name)} - ${esc(d.timestamp)}</title></rect>`;
         })
         .join("");
 
       const legend = toolNames
         .map((name) => {
-          const color = String(colorMap[name]);
-          return `<span class="inline-flex items-center gap-1 text-xs text-slate-500"><span class="inline-block w-2 h-2 rounded-sm" style="background:${color}"></span>${String(name)}</span>`;
+          const color = `${colorMap[name]}`;
+          return `<span class="inline-flex items-center gap-1 text-xs text-slate-500"><span class="inline-block w-2 h-2 rounded-sm" style="background:${color}"></span>${esc(name)}</span>`;
         })
         .join(" ");
 

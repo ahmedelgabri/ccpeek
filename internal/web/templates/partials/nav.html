@@ -1,6 +1,8 @@
 {{ define "nav.html" }}
   <nav
     id="nav-sidebar"
+    role="navigation"
+    aria-label="Main navigation"
     class="fixed top-0 left-0 w-60 h-screen bg-surface-card/80 backdrop-blur-xl border-r border-surface-border overflow-y-auto flex flex-col z-40 -translate-x-full lg:translate-x-0 transition-transform duration-200"
   >
     <a href="/" class="block px-5 pt-6 pb-4">
@@ -10,7 +12,7 @@
       >
     </a>
 
-    <form action="/search/" method="get" class="px-3 mb-3">
+    <form action="/search/" method="get" class="px-3 mb-3" role="search">
       <div class="relative">
         <svg
           class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500"
@@ -30,6 +32,7 @@
           name="q"
           value="{{ with .Query }}{{ . }}{{ end }}"
           placeholder="Search..."
+          aria-label="Search conversations"
           class="global-search-input w-full pl-8 pr-3 py-1.5 bg-surface/50 border border-surface-border rounded-md text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
         />
       </div>

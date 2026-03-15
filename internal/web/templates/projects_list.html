@@ -25,6 +25,10 @@
           >{{ .SessionCount }} sessions</span
         >
       </a>
+    {{ else }}
+      <div class="px-5 py-8 text-center text-sm text-slate-500">
+        No projects found. Run ccpeek to index your Claude Code data.
+      </div>
     {{ end }}
   </div>
 {{ end }}
