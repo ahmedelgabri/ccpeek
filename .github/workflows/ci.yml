@@ -14,7 +14,6 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
       - name: Install npm dependencies
         run: nix develop --command pnpm install
       - name: Check formatting
@@ -55,7 +54,6 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
       - name: Check flake
         run: nix flake check
       - name: Build package
