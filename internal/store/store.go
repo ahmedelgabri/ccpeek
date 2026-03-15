@@ -80,13 +80,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		currentVersion = 0
 	}
 
-	if currentVersion >= schemaVersion {
-		return nil
-	}
-
-	// Apply initial schema (all CREATE IF NOT EXISTS, safe to re-run)
+	// Always re-run initial schema (all CREATE IF NOT EXISTS) to
+	// recover from corrupt databases with missing tables.
 	if _, err := s.db.ExecContext(ctx, initialSchema); err != nil {
 		return fmt.Errorf("applying initial schema: %w", err)
+	}
+
+	if currentVersion >= schemaVersion {
+		return nil
 	}
 
 	// If this was a fresh database (no version set), we're now at baseline v4
