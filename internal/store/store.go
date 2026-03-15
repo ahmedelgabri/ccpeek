@@ -124,8 +124,3 @@ func (s *Store) migrate() error {
 	)
 	return err
 }
-
-// DB returns the underlying sqlx.DB for advanced queries.
-func (s *Store) DB() *sqlx.DB {
-	return s.db
-}

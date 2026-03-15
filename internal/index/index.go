@@ -133,66 +133,78 @@ func doIndex(claudeDir string, s *store.Store, w io.Writer) error {
 	}
 	defer tx.Rollback()
 
+	progress := func(label string) { fmt.Fprintf(w, "  %s...\r", label) }
+	done := func(format string, a ...any) { fmt.Fprintf(w, "  "+format+"\n", a...) }
+
+	progress("Plans")
 	planCount, err := indexPlans(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing plans: %w", err)
 	}
-	fmt.Fprintf(w, "  Plans: %d\n", planCount)
+	done("Plans: %d", planCount)
 
+	progress("Shell snapshots")
 	snapCount, err := indexShellSnapshots(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing shell snapshots: %w", err)
 	}
-	fmt.Fprintf(w, "  Shell snapshots: %d\n", snapCount)
+	done("Shell snapshots: %d", snapCount)
 
-	// Index projects first (creates sessions that todos/file-history link to)
+	progress("Projects")
 	projectCount, sessionCount, err := indexProjects(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing projects: %w", err)
 	}
-	fmt.Fprintf(w, "  Projects: %d (%d sessions)\n", projectCount, sessionCount)
+	done("Projects: %d (%d sessions)", projectCount, sessionCount)
 
+	progress("Todos")
 	todoCount, err := indexTodos(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing todos: %w", err)
 	}
-	fmt.Fprintf(w, "  Todos: %d (non-empty)\n", todoCount)
+	done("Todos: %d (non-empty)", todoCount)
 
+	progress("File history")
 	fhCount, err := indexFileHistory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing file history: %w", err)
 	}
-	fmt.Fprintf(w, "  File history: %d conversations\n", fhCount)
+	done("File history: %d conversations", fhCount)
 
+	progress("History")
 	histCount, err := indexHistory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing history: %w", err)
 	}
-	fmt.Fprintf(w, "  History: %d entries\n", histCount)
+	done("History: %d entries", histCount)
 
+	progress("Tasks")
 	taskCount, err := indexTasks(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing tasks: %w", err)
 	}
-	fmt.Fprintf(w, "  Tasks: %d groups\n", taskCount)
+	done("Tasks: %d groups", taskCount)
 
+	progress("Paste cache")
 	pasteCount, err := indexPasteCache(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing paste cache: %w", err)
 	}
-	fmt.Fprintf(w, "  Paste cache: %d entries\n", pasteCount)
+	done("Paste cache: %d entries", pasteCount)
 
+	progress("Usage data")
 	usageCount, err := indexUsageData(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing usage data: %w", err)
 	}
-	fmt.Fprintf(w, "  Usage facets: %d\n", usageCount)
+	done("Usage facets: %d", usageCount)
 
+	progress("Memories")
 	memoryCount, err := indexMemory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing memories: %w", err)
 	}
-	fmt.Fprintf(w, "  Memories: %d\n", memoryCount)
+	done("Memories: %d", memoryCount)
 
 	// Record hashes for all source files
 	recordSourceHashes(claudeDir, s, tx)

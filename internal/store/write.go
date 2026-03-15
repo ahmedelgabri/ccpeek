@@ -384,10 +384,22 @@ func (s *Store) LinkFileHistoryToSession(tx *sqlx.Tx, conversationID string, ses
 	return err
 }
 
+// allowedTables restricts which table names can be used in dynamic SQL.
+var allowedTables = map[string]bool{
+	"plans": true, "shell_snapshots": true, "history": true,
+	"paste_cache": true, "usage_facets": true, "usage_report": true,
+	"memories": true, "todos": true, "todo_items": true,
+	"file_history": true, "file_versions": true,
+	"task_groups": true, "task_items": true,
+}
+
 // DeleteBySource deletes all rows from a table where source_path matches.
-// For tables with child rows (todos→todo_items, etc.), the caller must
+// For tables with child rows (todos->todo_items, etc.), the caller must
 // delete children first.
 func (s *Store) DeleteBySource(tx *sqlx.Tx, table, sourcePath string) error {
+	if !allowedTables[table] {
+		return fmt.Errorf("disallowed table name: %s", table)
+	}
 	_, err := tx.Exec(
 		fmt.Sprintf(`DELETE FROM %s WHERE source_path = ?`, table),
 		sourcePath,
@@ -399,6 +411,11 @@ func (s *Store) DeleteBySource(tx *sqlx.Tx, table, sourcePath string) error {
 // parentTable is the parent table, parentIDCol is its PK column,
 // childTable is the child table, childFKCol is the FK column in the child.
 func (s *Store) DeleteChildrenBySource(tx *sqlx.Tx, parentTable, parentIDCol, childTable, childFKCol, sourcePath string) error {
+	for _, t := range []string{parentTable, childTable} {
+		if !allowedTables[t] {
+			return fmt.Errorf("disallowed table name: %s", t)
+		}
+	}
 	_, err := tx.Exec(
 		fmt.Sprintf(`DELETE FROM %s WHERE %s IN (SELECT %s FROM %s WHERE source_path = ?)`,
 			childTable, childFKCol, parentIDCol, parentTable),

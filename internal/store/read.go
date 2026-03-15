@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -1219,43 +1218,29 @@ func (s *Store) ListProjectNames() ([]struct {
 
 // ToolUsageStat holds an aggregate tool usage count across all sessions.
 type ToolUsageStat struct {
-	Name    string
-	Count   int
-	Percent float64
+	Name    string  `db:"name"`
+	Count   int     `db:"count"`
+	Percent float64 `db:"-"`
 }
 
 // GetToolUsageStats aggregates tool_use_counts across all sessions and returns
 // the top tools sorted by usage count.
 func (s *Store) GetToolUsageStats(limit int) ([]ToolUsageStat, error) {
-	var rows []struct {
-		ToolUseCounts string `db:"tool_use_counts"`
+	q := `
+		SELECT j.key AS name, CAST(SUM(j.value) AS INTEGER) AS count
+		FROM sessions s, json_each(s.tool_use_counts) j
+		WHERE s.tool_use_counts != '{}'
+		GROUP BY j.key
+		ORDER BY count DESC`
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
-	if err := s.db.Select(&rows, `SELECT tool_use_counts FROM sessions WHERE tool_use_counts != '{}'`); err != nil {
+
+	var stats []ToolUsageStat
+	if err := s.db.Select(&stats, q); err != nil {
 		return nil, err
 	}
 
-	totals := make(map[string]int)
-	for _, r := range rows {
-		var counts map[string]int
-		if json.Unmarshal([]byte(r.ToolUseCounts), &counts) == nil {
-			for name, count := range counts {
-				totals[name] += count
-			}
-		}
-	}
-
-	stats := make([]ToolUsageStat, 0, len(totals))
-	for name, count := range totals {
-		stats = append(stats, ToolUsageStat{Name: name, Count: count})
-	}
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].Count > stats[j].Count
-	})
-	if limit > 0 && len(stats) > limit {
-		stats = stats[:limit]
-	}
-
-	// Compute percentages relative to the top tool
 	if len(stats) > 0 {
 		maxCount := stats[0].Count
 		for i := range stats {
@@ -1914,4 +1899,121 @@ func (s *Store) ScanFindingCount() (int, error) {
 func (s *Store) ToggleScanFindingIgnored(id int64) error {
 	_, err := s.db.Exec(`UPDATE scan_findings SET ignored = CASE WHEN ignored = 0 THEN 1 ELSE 0 END WHERE id = ?`, id)
 	return err
+}
+
+// ScanMessageRow holds message data for secret scanning.
+type ScanMessageRow struct {
+	ID        int64  `db:"id"`
+	SessionID string `db:"session_id"`
+	Timestamp string `db:"timestamp"`
+	Content   string `db:"content"`
+	Role      string `db:"role"`
+}
+
+// EachMessageForScan iterates over all messages for scanning without
+// loading them all into memory at once.
+func (s *Store) EachMessageForScan(fn func(ScanMessageRow) error) error {
+	rows, err := s.db.Queryx(`
+		SELECT m.id, s.session_id, m.timestamp, m.content, m.role
+		FROM messages m
+		JOIN sessions s ON m.session_id = s.id
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanMessageRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanCommandRow holds command data for secret scanning.
+type ScanCommandRow struct {
+	ID        int64  `db:"id"`
+	SessionID string `db:"session_id"`
+	Timestamp string `db:"timestamp"`
+	Command   string `db:"command"`
+}
+
+// EachCommandForScan iterates over all commands for scanning.
+func (s *Store) EachCommandForScan(fn func(ScanCommandRow) error) error {
+	rows, err := s.db.Queryx(`
+		SELECT c.id, s.session_id, c.timestamp, c.command
+		FROM commands c
+		JOIN sessions s ON c.session_id = s.id
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanCommandRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanContentRow holds a file_name + content pair for scanning.
+type ScanContentRow struct {
+	Name    string `db:"file_name"`
+	Content string `db:"content"`
+}
+
+// EachContentForScan iterates over named content rows from a table.
+func (s *Store) EachContentForScan(table string, fn func(ScanContentRow) error) error {
+	if !allowedTables[table] {
+		return fmt.Errorf("disallowed table name: %s", table)
+	}
+	rows, err := s.db.Queryx(fmt.Sprintf(`SELECT file_name, content FROM %s`, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanContentRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanMemoryRow holds a memory entry for scanning.
+type ScanMemoryRow struct {
+	ProjectDir string `db:"project_dir"`
+	Content    string `db:"content"`
+}
+
+// EachMemoryForScan iterates over all memories for scanning.
+func (s *Store) EachMemoryForScan(fn func(ScanMemoryRow) error) error {
+	rows, err := s.db.Queryx(`SELECT project_dir, content FROM memories`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanMemoryRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }

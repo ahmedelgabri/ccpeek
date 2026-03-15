@@ -77,34 +77,14 @@ func (sc *Scanner) Run() ([]model.ScanFinding, error) {
 }
 
 func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
-	type row struct {
-		ID        int64  `db:"id"`
-		SessionID string `db:"session_id"`
-		Timestamp string `db:"timestamp"`
-		Content   string `db:"content"`
-		Role      string `db:"role"`
-	}
-
-	var rows []row
-	err := sc.store.DB().Select(&rows, `
-		SELECT m.id, s.session_id, m.timestamp, m.content, m.role
-		FROM messages m
-		JOIN sessions s ON m.session_id = s.id
-	`)
-	if err != nil {
-		return nil, err
-	}
-
 	var findings []model.ScanFinding
-	for _, r := range rows {
-		// Parse message content to get text
+	err := sc.store.EachMessageForScan(func(r store.ScanMessageRow) error {
 		msg := model.MessagePayload{Content: []byte(r.Content)}
 		text := msg.ContentText()
 		if text == "" {
-			continue
+			return nil
 		}
 
-		// Encode session ID and timestamp so SourceURL can deep-link
 		sourceID := r.SessionID
 		if r.Timestamp != "" {
 			sourceID += "@" + r.Timestamp
@@ -112,31 +92,14 @@ func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
 		for _, f := range sc.detect(text) {
 			findings = append(findings, toFinding(f, "message", sourceID))
 		}
-	}
-	return findings, nil
+		return nil
+	})
+	return findings, err
 }
 
 func (sc *Scanner) scanCommands() ([]model.ScanFinding, error) {
-	type row struct {
-		ID        int64  `db:"id"`
-		SessionID string `db:"session_id"`
-		Timestamp string `db:"timestamp"`
-		Command   string `db:"command"`
-	}
-
-	var rows []row
-	err := sc.store.DB().Select(&rows, `
-		SELECT c.id, s.session_id, c.timestamp, c.command
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
-	`)
-	if err != nil {
-		return nil, err
-	}
-
 	var findings []model.ScanFinding
-	for _, r := range rows {
-		// Encode session ID and timestamp so SourceURL can deep-link
+	err := sc.store.EachCommandForScan(func(r store.ScanCommandRow) error {
 		sourceID := r.SessionID
 		if r.Timestamp != "" {
 			sourceID += "@" + r.Timestamp
@@ -144,92 +107,53 @@ func (sc *Scanner) scanCommands() ([]model.ScanFinding, error) {
 		for _, f := range sc.detect(r.Command) {
 			findings = append(findings, toFinding(f, "command", sourceID))
 		}
-	}
-	return findings, nil
+		return nil
+	})
+	return findings, err
 }
 
 func (sc *Scanner) scanPlans() ([]model.ScanFinding, error) {
-	type row struct {
-		FileName string `db:"file_name"`
-		Content  string `db:"content"`
-	}
-
-	var rows []row
-	err := sc.store.DB().Select(&rows, `SELECT file_name, content FROM plans`)
-	if err != nil {
-		return nil, err
-	}
-
 	var findings []model.ScanFinding
-	for _, r := range rows {
+	err := sc.store.EachContentForScan("plans", func(r store.ScanContentRow) error {
 		for _, f := range sc.detect(r.Content) {
-			findings = append(findings, toFinding(f, "plan", r.FileName))
+			findings = append(findings, toFinding(f, "plan", r.Name))
 		}
-	}
-	return findings, nil
+		return nil
+	})
+	return findings, err
 }
 
 func (sc *Scanner) scanShellSnapshots() ([]model.ScanFinding, error) {
-	type row struct {
-		FileName string `db:"file_name"`
-		Content  string `db:"content"`
-	}
-
-	var rows []row
-	err := sc.store.DB().Select(&rows, `SELECT file_name, content FROM shell_snapshots`)
-	if err != nil {
-		return nil, err
-	}
-
 	var findings []model.ScanFinding
-	for _, r := range rows {
+	err := sc.store.EachContentForScan("shell_snapshots", func(r store.ScanContentRow) error {
 		for _, f := range sc.detect(r.Content) {
-			findings = append(findings, toFinding(f, "shell_snapshot", r.FileName))
+			findings = append(findings, toFinding(f, "shell_snapshot", r.Name))
 		}
-	}
-	return findings, nil
+		return nil
+	})
+	return findings, err
 }
 
 func (sc *Scanner) scanPasteCache() ([]model.ScanFinding, error) {
-	type row struct {
-		FileName string `db:"file_name"`
-		Content  string `db:"content"`
-	}
-
-	var rows []row
-	err := sc.store.DB().Select(&rows, `SELECT file_name, content FROM paste_cache`)
-	if err != nil {
-		return nil, err
-	}
-
 	var findings []model.ScanFinding
-	for _, r := range rows {
+	err := sc.store.EachContentForScan("paste_cache", func(r store.ScanContentRow) error {
 		for _, f := range sc.detect(r.Content) {
-			findings = append(findings, toFinding(f, "paste_cache", r.FileName))
+			findings = append(findings, toFinding(f, "paste_cache", r.Name))
 		}
-	}
-	return findings, nil
+		return nil
+	})
+	return findings, err
 }
 
 func (sc *Scanner) scanMemories() ([]model.ScanFinding, error) {
-	type row struct {
-		ProjectDir string `db:"project_dir"`
-		Content    string `db:"content"`
-	}
-
-	var rows []row
-	err := sc.store.DB().Select(&rows, `SELECT project_dir, content FROM memories`)
-	if err != nil {
-		return nil, err
-	}
-
 	var findings []model.ScanFinding
-	for _, r := range rows {
+	err := sc.store.EachMemoryForScan(func(r store.ScanMemoryRow) error {
 		for _, f := range sc.detect(r.Content) {
 			findings = append(findings, toFinding(f, "memory", r.ProjectDir))
 		}
-	}
-	return findings, nil
+		return nil
+	})
+	return findings, err
 }
 
 func (sc *Scanner) detect(text string) []report.Finding {

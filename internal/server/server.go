@@ -30,7 +30,9 @@ func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool, 
 	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		go watchAndReindex(claudeDir, db, watchInterval)
+		done := make(chan struct{})
+		go watchAndReindex(claudeDir, db, watchInterval, done)
+		defer close(done)
 	}
 
 	return http.ListenAndServe(addr, requestLogger(securityHeaders(registerRoutes(h, staticFS))))
@@ -99,17 +101,22 @@ type handlers struct {
 	tmpl  *templates
 }
 
-func watchAndReindex(claudeDir string, db *store.Store, interval time.Duration) {
+func watchAndReindex(claudeDir string, db *store.Store, interval time.Duration, done <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		changed, err := index.RunIncremental(claudeDir, db)
-		if err != nil {
-			log.Printf("Re-index failed: %v", err)
-			continue
-		}
-		if changed {
-			log.Println("Re-index complete.")
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			changed, err := index.RunIncremental(claudeDir, db)
+			if err != nil {
+				log.Printf("Re-index failed: %v", err)
+				continue
+			}
+			if changed {
+				log.Println("Re-index complete.")
+			}
 		}
 	}
 }
