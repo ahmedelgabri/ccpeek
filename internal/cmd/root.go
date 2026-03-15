@@ -134,9 +134,10 @@ func run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("scan failed: %w", err)
 		}
 		if len(findings) == 0 {
-			logf("  \033[32mNo secrets detected.\033[0m\n")
+			logf("  %sNo secrets detected.%s\n", colorGreen, colorReset)
 		} else {
-			logf("  \033[1;33mWARNING\033[0m \033[33m%d potential secret(s) found. Run `ccpeek scan` for details.\033[0m\n", len(findings))
+			logf("  %s%sWARNING%s %s%d potential secret(s) found. Run `ccpeek scan` for details.%s\n",
+				colorBold, colorYellow, colorReset, colorYellow, len(findings), colorReset)
 		}
 	}
 

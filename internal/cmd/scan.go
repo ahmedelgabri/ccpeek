@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
+var (
 	colorReset  = "\033[0m"
 	colorRed    = "\033[31m"
 	colorGreen  = "\033[32m"
@@ -21,6 +21,25 @@ const (
 	colorDim    = "\033[2m"
 	colorBold   = "\033[1m"
 )
+
+func init() {
+	if os.Getenv("NO_COLOR") != "" || !isTerminal(os.Stderr) {
+		colorReset = ""
+		colorRed = ""
+		colorGreen = ""
+		colorYellow = ""
+		colorDim = ""
+		colorBold = ""
+	}
+}
+
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",

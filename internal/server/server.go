@@ -5,12 +5,15 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/ahmedelgabri/ccpeek/internal/web"
 )
+
+var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
 func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool) error {
@@ -124,6 +127,9 @@ func (r *statusRecorder) WriteHeader(code int) {
 }
 
 func statusColorCode(code int) string {
+	if !logColors {
+		return ""
+	}
 	switch {
 	case code >= 500:
 		return "\033[31m" // red
@@ -134,6 +140,14 @@ func statusColorCode(code int) string {
 	default:
 		return "\033[32m" // green
 	}
+}
+
+func isTerminalFd(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -152,7 +166,11 @@ func requestLogger(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
 		elapsed := time.Since(start).Round(time.Microsecond)
-		log.Printf("\033[35m%s\033[0m %s %s%d\033[0m \033[2m%s\033[0m",
-			r.Method, r.URL.Path, statusColorCode(rec.status), rec.status, elapsed)
+		if logColors {
+			log.Printf("\033[35m%s\033[0m %s %s%d\033[0m \033[2m%s\033[0m",
+				r.Method, r.URL.Path, statusColorCode(rec.status), rec.status, elapsed)
+		} else {
+			log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, elapsed)
+		}
 	})
 }
