@@ -1,6 +1,7 @@
 package index
 
 import (
+	"io"
 	"path/filepath"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestRun(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(testdataDir, s, true); err != nil {
+	if err := Run(testdataDir, s, true, io.Discard); err != nil {
 		t.Fatal("Run failed:", err)
 	}
 

@@ -20,18 +20,19 @@ import (
 // If rebuild is true, drops all tables and recreates the schema (clean slate).
 // Otherwise deletes existing data for each source file before reinserting
 // (idempotent full index that preserves data from deleted source files).
-func Run(claudeDir string, s *store.Store, rebuild bool) error {
+// Progress output is written to w.
+func Run(claudeDir string, s *store.Store, rebuild bool, w io.Writer) error {
 	if rebuild {
 		if err := s.Reset(); err != nil {
 			return fmt.Errorf("resetting database: %w", err)
 		}
-		return doIndex(claudeDir, s)
+		return doIndex(claudeDir, s, w)
 	}
 
 	// Non-rebuild: delete existing data for all current source files,
 	// then reinsert. This is idempotent and preserves data from
 	// source files that no longer exist on disk.
-	return doCleanIndex(claudeDir, s)
+	return doCleanIndex(claudeDir, s, w)
 }
 
 // RunIncremental checks source file hashes and only re-indexes changed files.
@@ -41,7 +42,8 @@ func RunIncremental(claudeDir string, s *store.Store) (bool, error) {
 }
 
 // Prune removes DB rows whose source_path no longer exists on disk.
-func Prune(claudeDir string, s *store.Store) error {
+// Progress output is written to w.
+func Prune(claudeDir string, s *store.Store, w io.Writer) error {
 	// Read tracked paths before starting the transaction to avoid
 	// deadlock on single-connection in-memory databases.
 	tracked, err := s.ListSourceFilePaths()
@@ -87,14 +89,14 @@ func Prune(claudeDir string, s *store.Store) error {
 		}
 	}
 
-	fmt.Printf("  Pruned: %d source files\n", pruned)
+	fmt.Fprintf(w, "  Pruned: %d source files\n", pruned)
 	return tx.Commit()
 }
 
 // doCleanIndex deletes existing data for all current source files, then
 // does a full reindex. This is idempotent and safe to call on a DB that
 // already has data.
-func doCleanIndex(claudeDir string, s *store.Store) error {
+func doCleanIndex(claudeDir string, s *store.Store, w io.Writer) error {
 	tx, err := s.BeginTx()
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -120,11 +122,11 @@ func doCleanIndex(claudeDir string, s *store.Store) error {
 		return fmt.Errorf("committing cleanup: %w", err)
 	}
 
-	return doIndex(claudeDir, s)
+	return doIndex(claudeDir, s, w)
 }
 
 // doIndex does a full index of all source files (assumes clean state).
-func doIndex(claudeDir string, s *store.Store) error {
+func doIndex(claudeDir string, s *store.Store, w io.Writer) error {
 	tx, err := s.BeginTx()
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -135,62 +137,62 @@ func doIndex(claudeDir string, s *store.Store) error {
 	if err != nil {
 		return fmt.Errorf("indexing plans: %w", err)
 	}
-	fmt.Printf("  Plans: %d\n", planCount)
+	fmt.Fprintf(w, "  Plans: %d\n", planCount)
 
 	snapCount, err := indexShellSnapshots(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing shell snapshots: %w", err)
 	}
-	fmt.Printf("  Shell snapshots: %d\n", snapCount)
+	fmt.Fprintf(w, "  Shell snapshots: %d\n", snapCount)
 
 	// Index projects first (creates sessions that todos/file-history link to)
 	projectCount, sessionCount, err := indexProjects(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing projects: %w", err)
 	}
-	fmt.Printf("  Projects: %d (%d sessions)\n", projectCount, sessionCount)
+	fmt.Fprintf(w, "  Projects: %d (%d sessions)\n", projectCount, sessionCount)
 
 	todoCount, err := indexTodos(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing todos: %w", err)
 	}
-	fmt.Printf("  Todos: %d (non-empty)\n", todoCount)
+	fmt.Fprintf(w, "  Todos: %d (non-empty)\n", todoCount)
 
 	fhCount, err := indexFileHistory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing file history: %w", err)
 	}
-	fmt.Printf("  File history: %d conversations\n", fhCount)
+	fmt.Fprintf(w, "  File history: %d conversations\n", fhCount)
 
 	histCount, err := indexHistory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing history: %w", err)
 	}
-	fmt.Printf("  History: %d entries\n", histCount)
+	fmt.Fprintf(w, "  History: %d entries\n", histCount)
 
 	taskCount, err := indexTasks(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing tasks: %w", err)
 	}
-	fmt.Printf("  Tasks: %d groups\n", taskCount)
+	fmt.Fprintf(w, "  Tasks: %d groups\n", taskCount)
 
 	pasteCount, err := indexPasteCache(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing paste cache: %w", err)
 	}
-	fmt.Printf("  Paste cache: %d entries\n", pasteCount)
+	fmt.Fprintf(w, "  Paste cache: %d entries\n", pasteCount)
 
 	usageCount, err := indexUsageData(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing usage data: %w", err)
 	}
-	fmt.Printf("  Usage facets: %d\n", usageCount)
+	fmt.Fprintf(w, "  Usage facets: %d\n", usageCount)
 
 	memoryCount, err := indexMemory(claudeDir, s, tx)
 	if err != nil {
 		return fmt.Errorf("indexing memories: %w", err)
 	}
-	fmt.Printf("  Memories: %d\n", memoryCount)
+	fmt.Fprintf(w, "  Memories: %d\n", memoryCount)
 
 	// Record hashes for all source files
 	recordSourceHashes(claudeDir, s, tx)

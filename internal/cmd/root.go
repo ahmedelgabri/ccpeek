@@ -42,6 +42,7 @@ func init() {
 	rootCmd.Flags().Bool("rebuild", false, "Force full rebuild (drop all data and re-index from scratch)")
 	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
 	rootCmd.Flags().Bool("skip-scan", false, "Skip secret scanning after indexing")
+	rootCmd.Flags().BoolP("quiet", "q", false, "Suppress informational output")
 }
 
 func Execute() {
@@ -62,6 +63,7 @@ func run(cmd *cobra.Command, args []string) error {
 	rebuild, _ := cmd.Flags().GetBool("rebuild")
 	prune, _ := cmd.Flags().GetBool("prune")
 	skipScan, _ := cmd.Flags().GetBool("skip-scan")
+	quiet, _ := cmd.Flags().GetBool("quiet")
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
@@ -75,24 +77,37 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	if !skipIndex {
-		fmt.Println("Indexing", claudeDir, "->", dbPath)
-		if err := index.Run(claudeDir, db, rebuild); err != nil {
-			return fmt.Errorf("indexing failed: %w", err)
+	// logf prints to stderr unless --quiet is set
+	logf := func(format string, a ...any) {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, format, a...)
 		}
-		fmt.Println("Indexing complete.")
+	}
+
+	if !skipIndex {
+		logf("Indexing %s -> %s\n", claudeDir, dbPath)
+		if rebuild {
+			if err := index.Run(claudeDir, db, true, os.Stderr); err != nil {
+				return fmt.Errorf("indexing failed: %w", err)
+			}
+		} else {
+			if _, err := index.RunIncremental(claudeDir, db); err != nil {
+				return fmt.Errorf("indexing failed: %w", err)
+			}
+		}
+		logf("Indexing complete.\n")
 	}
 
 	if prune {
-		fmt.Println("Pruning deleted source files...")
-		if err := index.Prune(claudeDir, db); err != nil {
+		logf("Pruning deleted source files...\n")
+		if err := index.Prune(claudeDir, db, os.Stderr); err != nil {
 			return fmt.Errorf("pruning failed: %w", err)
 		}
-		fmt.Println("Pruning complete.")
+		logf("Pruning complete.\n")
 	}
 
 	if !skipScan {
-		fmt.Println("Scanning for secrets...")
+		logf("Scanning for secrets...\n")
 		scanner, err := scan.New(db)
 		if err != nil {
 			return fmt.Errorf("initializing scanner: %w", err)
@@ -102,9 +117,9 @@ func run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("scan failed: %w", err)
 		}
 		if len(findings) == 0 {
-			fmt.Printf("  \033[32mNo secrets detected.\033[0m\n")
+			logf("  \033[32mNo secrets detected.\033[0m\n")
 		} else {
-			fmt.Printf("  \033[1;33mWARNING\033[0m \033[33m%d potential secret(s) found. Run `ccpeek scan` for details.\033[0m\n", len(findings))
+			logf("  \033[1;33mWARNING\033[0m \033[33m%d potential secret(s) found. Run `ccpeek scan` for details.\033[0m\n", len(findings))
 		}
 	}
 
@@ -114,10 +129,10 @@ func run(cmd *cobra.Command, args []string) error {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
-	fmt.Println("Serving on", url)
+	logf("Serving on %s\n", url)
 
 	if watch {
-		fmt.Println("Watch mode enabled, re-indexing every 30s")
+		logf("Watch mode enabled, re-indexing every 30s\n")
 	}
 
 	if openBrowser {

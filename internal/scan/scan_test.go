@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"io"
 	"path/filepath"
 	"testing"
 
@@ -18,7 +19,7 @@ func setupTestDB(t *testing.T) *store.Store {
 	t.Cleanup(func() { db.Close() })
 
 	testdataDir := filepath.Join("..", "..", "testdata")
-	if err := index.Run(testdataDir, db, true); err != nil {
+	if err := index.Run(testdataDir, db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 	return db

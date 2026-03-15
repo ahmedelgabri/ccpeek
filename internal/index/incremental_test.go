@@ -1,6 +1,7 @@
 package index
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,7 +47,7 @@ func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 	defer s.Close()
 
 	// First full index
-	if err := Run(dir, s, false); err != nil {
+	if err := Run(dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -85,7 +86,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false); err != nil {
+	if err := Run(dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -146,7 +147,7 @@ func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false); err != nil {
+	if err := Run(dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -180,7 +181,7 @@ func TestPruneRemovesDeletedSourceData(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false); err != nil {
+	if err := Run(dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -190,7 +191,7 @@ func TestPruneRemovesDeletedSourceData(t *testing.T) {
 	}
 
 	// Prune should remove the alpha plan from DB
-	if err := Prune(dir, s); err != nil {
+	if err := Prune(dir, s, io.Discard); err != nil {
 		t.Fatal("Prune:", err)
 	}
 
@@ -211,7 +212,7 @@ func TestRebuildClearsEverything(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false); err != nil {
+	if err := Run(dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -221,7 +222,7 @@ func TestRebuildClearsEverything(t *testing.T) {
 	}
 
 	// Rebuild should only have beta (alpha is gone from disk)
-	if err := Run(dir, s, true); err != nil {
+	if err := Run(dir, s, true, io.Discard); err != nil {
 		t.Fatal("rebuild Run:", err)
 	}
 
@@ -239,7 +240,7 @@ func TestIncrementalNewFileAdded(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false); err != nil {
+	if err := Run(dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
