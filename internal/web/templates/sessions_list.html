@@ -84,6 +84,13 @@
     </button>
     <button
       type="button"
+      class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs cursor-pointer transition-colors hover:border-teal-400/50"
+      data-filter="files"
+    >
+      <span class="text-teal-400">files</span>
+    </button>
+    <button
+      type="button"
       class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs cursor-pointer transition-colors hover:border-amber-400/50"
       data-filter="commands"
     >
@@ -122,6 +129,7 @@
         class="list-row group flex items-center gap-4 px-5 py-3 transition-colors duration-150 hover:bg-surface-hover"
         data-search-keys="{{ .FirstPrompt }} {{ .SessionID }} {{ .GitBranch }}"
         data-has-todo="{{ if .TodoFileName }}1{{ end }}"
+        data-has-files="{{ if .HasFileHistory }}1{{ end }}"
         data-has-commands="{{ if .BashCommandCount }}1{{ end }}"
         data-modified="{{ .Modified }}"
       >

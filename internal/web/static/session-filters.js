@@ -21,6 +21,7 @@ function init() {
   const passesFilter = (row) => {
     for (const f of activeFilters) {
       if (f === "todo" && !row.getAttribute("data-has-todo")) return false;
+      if (f === "files" && !row.getAttribute("data-has-files")) return false;
       if (f === "commands" && !row.getAttribute("data-has-commands"))
         return false;
     }
