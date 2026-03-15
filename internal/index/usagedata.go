@@ -13,7 +13,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexUsageData(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	facetsDir := filepath.Join(claudeDir, "usage-data", "facets")
 	entries, err := os.ReadDir(facetsDir)
 	if os.IsNotExist(err) {
@@ -69,12 +69,12 @@ func indexUsageData(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) 
 		// Try to link to session via session_id
 		var sessionDBID int64
 		if raw.SessionID != "" {
-			if dbID, err := s.GetSessionDBID(context.TODO(), tx, raw.SessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(ctx, tx, raw.SessionID); err == nil {
 				sessionDBID = dbID
 			}
 		}
 
-		if err := s.InsertUsageFacet(context.TODO(), tx, entry, sessionDBID, src); err != nil {
+		if err := s.InsertUsageFacet(ctx, tx, entry, sessionDBID, src); err != nil {
 			continue
 		}
 		count++
@@ -83,7 +83,7 @@ func indexUsageData(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) 
 	// Index the report.html if it exists
 	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
 	if data, err := os.ReadFile(reportPath); err == nil {
-		_ = s.InsertUsageReport(context.TODO(), tx, string(data), reportPath)
+		_ = s.InsertUsageReport(ctx, tx, string(data), reportPath)
 	}
 
 	return count, nil

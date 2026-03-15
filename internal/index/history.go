@@ -11,7 +11,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexHistory(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	historyPath := filepath.Join(claudeDir, "history.jsonl")
 	if _, err := os.Stat(historyPath); os.IsNotExist(err) {
 		return 0, nil
@@ -23,7 +23,7 @@ func indexHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	}
 
 	for _, entry := range entries {
-		if err := s.InsertHistory(context.TODO(), tx, entry, historyPath); err != nil {
+		if err := s.InsertHistory(ctx, tx, entry, historyPath); err != nil {
 			continue
 		}
 	}

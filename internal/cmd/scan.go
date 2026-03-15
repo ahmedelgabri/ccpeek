@@ -62,6 +62,8 @@ func init() {
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
 	dataFile, _ := cmd.Flags().GetString("data-file")
 	format, _ := cmd.Flags().GetString("format")
 
@@ -69,7 +71,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported format %q: use text or json", format)
 	}
 
-	db, err := store.Open(context.TODO(), dataFile)
+	db, err := store.Open(ctx, dataFile)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -82,7 +84,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing scanner: %w", err)
 	}
 
-	findings, err := scanner.Run()
+	findings, err := scanner.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("scan failed: %w", err)
 	}

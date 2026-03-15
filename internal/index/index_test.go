@@ -19,7 +19,7 @@ func TestRun(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(testdataDir, s, true, io.Discard); err != nil {
+	if err := Run(context.Background(), testdataDir, s, true, io.Discard); err != nil {
 		t.Fatal("Run failed:", err)
 	}
 

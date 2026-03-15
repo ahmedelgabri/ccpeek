@@ -16,7 +16,7 @@ import (
 
 var fileVersionRe = regexp.MustCompile(`^(.+)@v(\d+)$`)
 
-func indexFileHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexFileHistory(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	srcDir := filepath.Join(claudeDir, "file-history")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -72,13 +72,13 @@ func indexFileHistory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error
 
 		// Try to link to session
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(context.TODO(), tx, conversationID); err == nil {
+		if dbID, err := s.GetSessionDBID(ctx, tx, conversationID); err == nil {
 			sessionDBID = dbID
 			// Also set reverse link: session -> has_file_history
-			_ = s.LinkFileHistoryToSession(context.TODO(), tx, conversationID, dbID)
+			_ = s.LinkFileHistoryToSession(ctx, tx, conversationID, dbID)
 		}
 
-		if err := s.InsertFileHistory(context.TODO(), tx, conversationID, versions, sessionDBID, convDir); err != nil {
+		if err := s.InsertFileHistory(ctx, tx, conversationID, versions, sessionDBID, convDir); err != nil {
 			continue
 		}
 		count++

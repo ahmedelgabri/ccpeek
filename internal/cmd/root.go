@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
@@ -57,6 +59,9 @@ func Execute() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	port, _ := cmd.Flags().GetInt("port")
 	claudeDir, _ := cmd.Flags().GetString("claude-dir")
 	dataFile, _ := cmd.Flags().GetString("data-file")
@@ -89,7 +94,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	dbPath := dataFile
-	db, err := store.Open(context.TODO(), dbPath)
+	db, err := store.Open(ctx, dbPath)
 	if err != nil {
 		hint := ""
 		if strings.Contains(err.Error(), "locked") {
@@ -115,12 +120,12 @@ func run(cmd *cobra.Command, args []string) error {
 	if !skipIndex {
 		logf("Indexing %s -> %s\n", claudeDir, dbPath)
 		if rebuild {
-			if err := index.Run(claudeDir, db, true, os.Stderr); err != nil {
+			if err := index.Run(ctx, claudeDir, db, true, os.Stderr); err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
 			dataChanged = true
 		} else {
-			changed, err := index.RunIncremental(claudeDir, db)
+			changed, err := index.RunIncremental(ctx, claudeDir, db)
 			if err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
@@ -131,7 +136,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if prune {
 		logf("Pruning deleted source files...\n")
-		if err := index.Prune(claudeDir, db, os.Stderr); err != nil {
+		if err := index.Prune(ctx, claudeDir, db, os.Stderr); err != nil {
 			return fmt.Errorf("pruning failed: %w", err)
 		}
 		logf("Pruning complete.\n")
@@ -143,7 +148,7 @@ func run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("initializing scanner: %w", err)
 		}
-		findings, err := scanner.Run()
+		findings, err := scanner.Run(ctx)
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
@@ -171,7 +176,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second)
+	return server.ListenAndServe(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second)
 }
 
 // dataDir returns the XDG data directory for ccpeek.

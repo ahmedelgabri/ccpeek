@@ -27,7 +27,7 @@ func setupTestServer(t *testing.T) http.Handler {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := index.Run(testdataDir, db, true, io.Discard); err != nil {
+	if err := index.Run(context.Background(), testdataDir, db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 
@@ -1380,7 +1380,7 @@ func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := index.Run(testdataDir, db, true, io.Discard); err != nil {
+	if err := index.Run(context.Background(), testdataDir, db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 

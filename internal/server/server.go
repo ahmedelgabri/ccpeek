@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -16,7 +18,7 @@ import (
 var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration) error {
+func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -30,12 +32,29 @@ func ListenAndServe(addr string, db *store.Store, claudeDir string, watch bool, 
 	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		done := make(chan struct{})
-		go watchAndReindex(claudeDir, db, watchInterval, done)
-		defer close(done)
+		go watchAndReindex(ctx, claudeDir, db, watchInterval)
 	}
 
-	return http.ListenAndServe(addr, requestLogger(securityHeaders(registerRoutes(h, staticFS))))
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: requestLogger(securityHeaders(registerRoutes(h, staticFS))),
+		BaseContext: func(_ net.Listener) context.Context {
+			return ctx
+		},
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
+
+	err = srv.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
 }
 
 // NewHandler creates the HTTP handler without starting a listener.
@@ -101,15 +120,15 @@ type handlers struct {
 	tmpl  *templates
 }
 
-func watchAndReindex(claudeDir string, db *store.Store, interval time.Duration, done <-chan struct{}) {
+func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-done:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			changed, err := index.RunIncremental(claudeDir, db)
+			changed, err := index.RunIncremental(ctx, claudeDir, db)
 			if err != nil {
 				log.Printf("Re-index failed: %v", err)
 				continue

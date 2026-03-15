@@ -21,7 +21,7 @@ import (
 // Filtered indexers: these only process files present in the changedSet.
 // They mirror the logic of the full indexers but skip unchanged files.
 
-func indexPlansFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexPlansFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	srcDir := filepath.Join(claudeDir, "plans")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -63,7 +63,7 @@ func indexPlansFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 			SizeBytes: info.Size(),
 		}
 
-		if err := s.InsertPlan(context.TODO(), tx, entry, string(content), src); err != nil {
+		if err := s.InsertPlan(ctx, tx, entry, string(content), src); err != nil {
 			log.Printf("skipping plan %s: %v", src, err)
 			continue
 		}
@@ -73,7 +73,7 @@ func indexPlansFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 	return count, nil
 }
 
-func indexSnapshotsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexSnapshotsFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	srcDir := filepath.Join(claudeDir, "shell-snapshots")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -118,7 +118,7 @@ func indexSnapshotsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 			SizeBytes: info.Size(),
 		}
 
-		if err := s.InsertShellSnapshot(context.TODO(), tx, entry, string(content), src); err != nil {
+		if err := s.InsertShellSnapshot(ctx, tx, entry, string(content), src); err != nil {
 			log.Printf("skipping snapshot %s: %v", src, err)
 			continue
 		}
@@ -128,7 +128,7 @@ func indexSnapshotsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 	return count, nil
 }
 
-func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, int, error) {
+func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, int, error) {
 	srcDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -224,7 +224,7 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 		})
 
 		// Upsert project (may already exist from a previous incremental run)
-		projectID, err := s.UpsertProject(context.TODO(), tx, dirName, displayName)
+		projectID, err := s.UpsertProject(ctx, tx, dirName, displayName)
 		if err != nil {
 			continue
 		}
@@ -232,17 +232,17 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 
 		for _, sd := range sessionsData {
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
-			sessionDBID, err := s.InsertSession(context.TODO(), tx, projectID, sd.entry, jsonlPath)
+			sessionDBID, err := s.InsertSession(ctx, tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
 				log.Printf("skipping session %s: %v", jsonlPath, err)
 				continue
 			}
 
-			if err := s.InsertMessages(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertMessages(ctx, tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping messages for %s: %v", jsonlPath, err)
 				continue
 			}
-			if err := s.InsertCommands(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping commands for %s: %v", jsonlPath, err)
 				continue
 			}
@@ -253,7 +253,7 @@ func indexProjectsFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, change
 	return projectCount, totalSessions, nil
 }
 
-func indexTodosFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexTodosFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	srcDir := filepath.Join(claudeDir, "todos")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -306,13 +306,13 @@ func indexTodosFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 		var sessionDBID int64
 		if m := todoRe.FindStringSubmatch(e.Name()); m != nil {
 			sessionID := m[1]
-			if dbID, err := s.GetSessionDBID(context.TODO(), tx, sessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(ctx, tx, sessionID); err == nil {
 				sessionDBID = dbID
-				_ = s.LinkTodoToSession(context.TODO(), tx, e.Name(), dbID)
+				_ = s.LinkTodoToSession(ctx, tx, e.Name(), dbID)
 			}
 		}
 
-		if err := s.InsertTodo(context.TODO(), tx, entry, items, sessionDBID, src); err != nil {
+		if err := s.InsertTodo(ctx, tx, entry, items, sessionDBID, src); err != nil {
 			log.Printf("skipping todo %s: %v", src, err)
 			continue
 		}
@@ -322,7 +322,7 @@ func indexTodosFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 	return count, nil
 }
 
-func indexFileHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	srcDir := filepath.Join(claudeDir, "file-history")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -381,12 +381,12 @@ func indexFileHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, cha
 		})
 
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(context.TODO(), tx, conversationID); err == nil {
+		if dbID, err := s.GetSessionDBID(ctx, tx, conversationID); err == nil {
 			sessionDBID = dbID
-			_ = s.LinkFileHistoryToSession(context.TODO(), tx, conversationID, dbID)
+			_ = s.LinkFileHistoryToSession(ctx, tx, conversationID, dbID)
 		}
 
-		if err := s.InsertFileHistory(context.TODO(), tx, conversationID, versions, sessionDBID, convDir); err != nil {
+		if err := s.InsertFileHistory(ctx, tx, conversationID, versions, sessionDBID, convDir); err != nil {
 			continue
 		}
 		count++
@@ -395,7 +395,7 @@ func indexFileHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, cha
 	return count, nil
 }
 
-func indexHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	historyPath := filepath.Join(claudeDir, "history.jsonl")
 	if !changed[historyPath] {
 		return 0, nil
@@ -411,7 +411,7 @@ func indexHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed
 	}
 
 	for _, entry := range entries {
-		if err := s.InsertHistory(context.TODO(), tx, entry, historyPath); err != nil {
+		if err := s.InsertHistory(ctx, tx, entry, historyPath); err != nil {
 			continue
 		}
 	}
@@ -419,7 +419,7 @@ func indexHistoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed
 	return len(entries), nil
 }
 
-func indexTasksFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexTasksFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	srcDir := filepath.Join(claudeDir, "tasks")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -457,11 +457,11 @@ func indexTasksFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 		}
 
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(context.TODO(), tx, e.Name()); err == nil {
+		if dbID, err := s.GetSessionDBID(ctx, tx, e.Name()); err == nil {
 			sessionDBID = dbID
 		}
 
-		if err := s.InsertTaskGroup(context.TODO(), tx, entry, items, sessionDBID, taskDir); err != nil {
+		if err := s.InsertTaskGroup(ctx, tx, entry, items, sessionDBID, taskDir); err != nil {
 			continue
 		}
 		count++
@@ -470,7 +470,7 @@ func indexTasksFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed m
 	return count, nil
 }
 
-func indexPasteCacheFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexPasteCacheFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	srcDir := filepath.Join(claudeDir, "paste-cache")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -512,7 +512,7 @@ func indexPasteCacheFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chan
 			Preview:   preview,
 		}
 
-		if err := s.InsertPasteCache(context.TODO(), tx, entry, string(content), src); err != nil {
+		if err := s.InsertPasteCache(ctx, tx, entry, string(content), src); err != nil {
 			continue
 		}
 		count++
@@ -521,7 +521,7 @@ func indexPasteCacheFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chan
 	return count, nil
 }
 
-func indexUsageDataFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	facetsDir := filepath.Join(claudeDir, "usage-data", "facets")
 	entries, err := os.ReadDir(facetsDir)
 	if os.IsNotExist(err) {
@@ -580,12 +580,12 @@ func indexUsageDataFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 
 		var sessionDBID int64
 		if raw.SessionID != "" {
-			if dbID, err := s.GetSessionDBID(context.TODO(), tx, raw.SessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(ctx, tx, raw.SessionID); err == nil {
 				sessionDBID = dbID
 			}
 		}
 
-		if err := s.InsertUsageFacet(context.TODO(), tx, entry, sessionDBID, src); err != nil {
+		if err := s.InsertUsageFacet(ctx, tx, entry, sessionDBID, src); err != nil {
 			continue
 		}
 		count++
@@ -595,14 +595,14 @@ func indexUsageDataFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, chang
 	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
 	if changed[reportPath] {
 		if data, err := os.ReadFile(reportPath); err == nil {
-			_ = s.InsertUsageReport(context.TODO(), tx, string(data), reportPath)
+			_ = s.InsertUsageReport(ctx, tx, string(data), reportPath)
 		}
 	}
 
 	return count, nil
 }
 
-func indexMemoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexMemoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
 	projDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(projDir)
 	if os.IsNotExist(err) {
@@ -640,7 +640,7 @@ func indexMemoryFiltered(claudeDir string, s *store.Store, tx *sqlx.Tx, changed 
 			projectID = &pid
 		}
 
-		if err := s.InsertMemory(context.TODO(), tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
+		if err := s.InsertMemory(ctx, tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
 			continue
 		}
 		count++

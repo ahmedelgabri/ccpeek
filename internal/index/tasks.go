@@ -14,7 +14,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexTasks(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexTasks(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	srcDir := filepath.Join(claudeDir, "tasks")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -49,11 +49,11 @@ func indexTasks(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 
 		// Try to link to session via the directory UUID
 		var sessionDBID int64
-		if dbID, err := s.GetSessionDBID(context.TODO(), tx, e.Name()); err == nil {
+		if dbID, err := s.GetSessionDBID(ctx, tx, e.Name()); err == nil {
 			sessionDBID = dbID
 		}
 
-		if err := s.InsertTaskGroup(context.TODO(), tx, entry, items, sessionDBID, taskDir); err != nil {
+		if err := s.InsertTaskGroup(ctx, tx, entry, items, sessionDBID, taskDir); err != nil {
 			continue
 		}
 		count++

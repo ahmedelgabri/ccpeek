@@ -48,7 +48,7 @@ func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 	defer s.Close()
 
 	// First full index
-	if err := Run(dir, s, false, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -61,7 +61,7 @@ func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 	}
 
 	// Incremental with no changes
-	changed, err := RunIncremental(dir, s)
+	changed, err := RunIncremental(context.Background(), dir, s)
 	if err != nil {
 		t.Fatal("RunIncremental:", err)
 	}
@@ -87,7 +87,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -110,7 +110,7 @@ func TestIncrementalReindexesChangedFiles(t *testing.T) {
 	}
 
 	// Incremental should detect the change
-	changed, err := RunIncremental(dir, s)
+	changed, err := RunIncremental(context.Background(), dir, s)
 	if err != nil {
 		t.Fatal("RunIncremental:", err)
 	}
@@ -148,7 +148,7 @@ func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -163,7 +163,7 @@ func TestIncrementalRetainsDeletedSourceData(t *testing.T) {
 	}
 
 	// Incremental should not remove the alpha plan from DB
-	_, err = RunIncremental(dir, s)
+	_, err = RunIncremental(context.Background(), dir, s)
 	if err != nil {
 		t.Fatal("RunIncremental:", err)
 	}
@@ -182,7 +182,7 @@ func TestPruneRemovesDeletedSourceData(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -192,7 +192,7 @@ func TestPruneRemovesDeletedSourceData(t *testing.T) {
 	}
 
 	// Prune should remove the alpha plan from DB
-	if err := Prune(dir, s, io.Discard); err != nil {
+	if err := Prune(context.Background(), dir, s, io.Discard); err != nil {
 		t.Fatal("Prune:", err)
 	}
 
@@ -213,7 +213,7 @@ func TestRebuildClearsEverything(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -223,7 +223,7 @@ func TestRebuildClearsEverything(t *testing.T) {
 	}
 
 	// Rebuild should only have beta (alpha is gone from disk)
-	if err := Run(dir, s, true, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, true, io.Discard); err != nil {
 		t.Fatal("rebuild Run:", err)
 	}
 
@@ -241,7 +241,7 @@ func TestIncrementalNewFileAdded(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(dir, s, false, io.Discard); err != nil {
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
 		t.Fatal("initial Run:", err)
 	}
 
@@ -254,7 +254,7 @@ func TestIncrementalNewFileAdded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := RunIncremental(dir, s)
+	changed, err := RunIncremental(context.Background(), dir, s)
 	if err != nil {
 		t.Fatal("RunIncremental:", err)
 	}

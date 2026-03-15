@@ -10,7 +10,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexMemory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexMemory(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	projDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(projDir)
 	if os.IsNotExist(err) {
@@ -45,7 +45,7 @@ func indexMemory(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 			projectID = &pid
 		}
 
-		if err := s.InsertMemory(context.TODO(), tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
+		if err := s.InsertMemory(ctx, tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
 			continue
 		}
 		count++

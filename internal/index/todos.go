@@ -20,7 +20,7 @@ var todoSessionRe = regexp.MustCompile(
 	`^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-agent-`,
 )
 
-func indexTodos(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexTodos(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 	srcDir := filepath.Join(claudeDir, "todos")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -65,14 +65,14 @@ func indexTodos(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
 		var sessionDBID int64
 		if m := todoSessionRe.FindStringSubmatch(e.Name()); m != nil {
 			sessionID := m[1]
-			if dbID, err := s.GetSessionDBID(context.TODO(), tx, sessionID); err == nil {
+			if dbID, err := s.GetSessionDBID(ctx, tx, sessionID); err == nil {
 				sessionDBID = dbID
 				// Also set reverse link: session -> todo file
-				_ = s.LinkTodoToSession(context.TODO(), tx, e.Name(), dbID)
+				_ = s.LinkTodoToSession(ctx, tx, e.Name(), dbID)
 			}
 		}
 
-		if err := s.InsertTodo(context.TODO(), tx, entry, items, sessionDBID, src); err != nil {
+		if err := s.InsertTodo(ctx, tx, entry, items, sessionDBID, src); err != nil {
 			continue
 		}
 		count++

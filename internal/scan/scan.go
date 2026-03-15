@@ -30,8 +30,8 @@ func New(s *store.Store) (*Scanner, error) {
 
 // Run scans all indexed content and stores findings in the DB.
 // It clears previous findings before scanning.
-func (sc *Scanner) Run() ([]model.ScanFinding, error) {
-	if err := sc.store.ClearScanFindings(context.TODO()); err != nil {
+func (sc *Scanner) Run(ctx context.Context) ([]model.ScanFinding, error) {
+	if err := sc.store.ClearScanFindings(ctx); err != nil {
 		return nil, fmt.Errorf("clearing old findings: %w", err)
 	}
 
@@ -39,7 +39,7 @@ func (sc *Scanner) Run() ([]model.ScanFinding, error) {
 
 	scanners := []struct {
 		name string
-		fn   func() ([]model.ScanFinding, error)
+		fn   func(context.Context) ([]model.ScanFinding, error)
 	}{
 		{"messages", sc.scanMessages},
 		{"commands", sc.scanCommands},
@@ -50,14 +50,14 @@ func (sc *Scanner) Run() ([]model.ScanFinding, error) {
 	}
 
 	for _, s := range scanners {
-		findings, err := s.fn()
+		findings, err := s.fn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("scanning %s: %w", s.name, err)
 		}
 		all = append(all, findings...)
 	}
 
-	tx, err := sc.store.BeginTx(context.TODO())
+	tx, err := sc.store.BeginTx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
@@ -65,7 +65,7 @@ func (sc *Scanner) Run() ([]model.ScanFinding, error) {
 
 	var active []model.ScanFinding
 	for _, f := range all {
-		inserted, err := sc.store.InsertScanFinding(context.TODO(), tx, f)
+		inserted, err := sc.store.InsertScanFinding(ctx, tx, f)
 		if err != nil {
 			return nil, fmt.Errorf("inserting finding: %w", err)
 		}
@@ -77,9 +77,9 @@ func (sc *Scanner) Run() ([]model.ScanFinding, error) {
 	return active, tx.Commit()
 }
 
-func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
+func (sc *Scanner) scanMessages(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
-	err := sc.store.EachMessageForScan(context.TODO(), func(r store.ScanMessageRow) error {
+	err := sc.store.EachMessageForScan(ctx, func(r store.ScanMessageRow) error {
 		msg := model.MessagePayload{Content: []byte(r.Content)}
 		text := msg.ContentText()
 		if text == "" {
@@ -98,9 +98,9 @@ func (sc *Scanner) scanMessages() ([]model.ScanFinding, error) {
 	return findings, err
 }
 
-func (sc *Scanner) scanCommands() ([]model.ScanFinding, error) {
+func (sc *Scanner) scanCommands(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
-	err := sc.store.EachCommandForScan(context.TODO(), func(r store.ScanCommandRow) error {
+	err := sc.store.EachCommandForScan(ctx, func(r store.ScanCommandRow) error {
 		sourceID := r.SessionID
 		if r.Timestamp != "" {
 			sourceID += "@" + r.Timestamp
@@ -113,9 +113,9 @@ func (sc *Scanner) scanCommands() ([]model.ScanFinding, error) {
 	return findings, err
 }
 
-func (sc *Scanner) scanPlans() ([]model.ScanFinding, error) {
+func (sc *Scanner) scanPlans(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
-	err := sc.store.EachContentForScan(context.TODO(), "plans", func(r store.ScanContentRow) error {
+	err := sc.store.EachContentForScan(ctx, "plans", func(r store.ScanContentRow) error {
 		for _, f := range sc.detect(r.Content) {
 			findings = append(findings, toFinding(f, "plan", r.Name))
 		}
@@ -124,9 +124,9 @@ func (sc *Scanner) scanPlans() ([]model.ScanFinding, error) {
 	return findings, err
 }
 
-func (sc *Scanner) scanShellSnapshots() ([]model.ScanFinding, error) {
+func (sc *Scanner) scanShellSnapshots(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
-	err := sc.store.EachContentForScan(context.TODO(), "shell_snapshots", func(r store.ScanContentRow) error {
+	err := sc.store.EachContentForScan(ctx, "shell_snapshots", func(r store.ScanContentRow) error {
 		for _, f := range sc.detect(r.Content) {
 			findings = append(findings, toFinding(f, "shell_snapshot", r.Name))
 		}
@@ -135,9 +135,9 @@ func (sc *Scanner) scanShellSnapshots() ([]model.ScanFinding, error) {
 	return findings, err
 }
 
-func (sc *Scanner) scanPasteCache() ([]model.ScanFinding, error) {
+func (sc *Scanner) scanPasteCache(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
-	err := sc.store.EachContentForScan(context.TODO(), "paste_cache", func(r store.ScanContentRow) error {
+	err := sc.store.EachContentForScan(ctx, "paste_cache", func(r store.ScanContentRow) error {
 		for _, f := range sc.detect(r.Content) {
 			findings = append(findings, toFinding(f, "paste_cache", r.Name))
 		}
@@ -146,9 +146,9 @@ func (sc *Scanner) scanPasteCache() ([]model.ScanFinding, error) {
 	return findings, err
 }
 
-func (sc *Scanner) scanMemories() ([]model.ScanFinding, error) {
+func (sc *Scanner) scanMemories(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
-	err := sc.store.EachMemoryForScan(context.TODO(), func(r store.ScanMemoryRow) error {
+	err := sc.store.EachMemoryForScan(ctx, func(r store.ScanMemoryRow) error {
 		for _, f := range sc.detect(r.Content) {
 			findings = append(findings, toFinding(f, "memory", r.ProjectDir))
 		}

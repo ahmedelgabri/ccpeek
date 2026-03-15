@@ -45,6 +45,8 @@ func init() {
 }
 
 func runExportCommands(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
 	dataFile, _ := cmd.Flags().GetString("data-file")
 	format, _ := cmd.Flags().GetString("format")
 	project, _ := cmd.Flags().GetString("project")
@@ -52,7 +54,7 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 	from, _ := cmd.Flags().GetString("from")
 	to, _ := cmd.Flags().GetString("to")
 
-	db, err := store.Open(context.TODO(), dataFile)
+	db, err := store.Open(ctx, dataFile)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -65,7 +67,7 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 		To:      to,
 	}
 
-	commands, err := db.ListAllCommands(context.TODO(), filter)
+	commands, err := db.ListAllCommands(ctx, filter)
 	if err != nil {
 		return fmt.Errorf("loading commands: %w", err)
 	}

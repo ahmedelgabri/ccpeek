@@ -20,7 +20,7 @@ func setupTestDB(t *testing.T) *store.Store {
 	t.Cleanup(func() { db.Close() })
 
 	testdataDir := filepath.Join("..", "..", "testdata")
-	if err := index.Run(testdataDir, db, true, io.Discard); err != nil {
+	if err := index.Run(context.Background(), testdataDir, db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 	return db
@@ -50,7 +50,7 @@ func TestRunOnTestData(t *testing.T) {
 		t.Fatal("New() failed:", err)
 	}
 
-	findings, err := scanner.Run()
+	findings, err := scanner.Run(context.Background())
 	if err != nil {
 		t.Fatal("Run() failed:", err)
 	}
@@ -75,13 +75,13 @@ func TestRunClearsPreviousFindings(t *testing.T) {
 	}
 
 	// Run twice — second run should replace, not accumulate
-	_, err = scanner.Run()
+	_, err = scanner.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstCount, _ := db.ScanFindingCount(context.Background())
 
-	_, err = scanner.Run()
+	_, err = scanner.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestIgnoredFindingsSurviveRescan(t *testing.T) {
 	scanner, _ := New(db)
 
 	// First scan
-	findings, _ := scanner.Run()
+	findings, _ := scanner.Run(context.Background())
 	if len(findings) == 0 {
 		t.Fatal("expected findings")
 	}
@@ -133,7 +133,7 @@ func TestIgnoredFindingsSurviveRescan(t *testing.T) {
 	db.ToggleScanFindingIgnored(context.Background(), stored[0].ID)
 
 	// Re-scan — ignored finding should persist, not duplicate
-	scanner.Run()
+	scanner.Run(context.Background())
 
 	all, _ := db.ListScanFindings(context.Background(), "", "", true)
 	if len(all) != 1 {
@@ -203,7 +203,7 @@ func TestDetectKnownSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings, err := scanner.Run()
+	findings, err := scanner.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

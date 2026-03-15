@@ -15,7 +15,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, error) {
+func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, error) {
 	srcDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -112,7 +112,7 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 		})
 
 		// Insert project
-		projectID, err := s.InsertProject(context.TODO(), tx, dirName, displayName)
+		projectID, err := s.InsertProject(ctx, tx, dirName, displayName)
 		if err != nil {
 			continue
 		}
@@ -121,15 +121,15 @@ func indexProjects(claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, err
 		// Insert sessions and their messages
 		for _, sd := range sessionsData {
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
-			sessionDBID, err := s.InsertSession(context.TODO(), tx, projectID, sd.entry, jsonlPath)
+			sessionDBID, err := s.InsertSession(ctx, tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
 				continue
 			}
 
-			if err := s.InsertMessages(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertMessages(ctx, tx, sessionDBID, sd.messages); err != nil {
 				continue
 			}
-			if err := s.InsertCommands(context.TODO(), tx, sessionDBID, sd.messages); err != nil {
+			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
 				continue
 			}
 			totalSessions++
