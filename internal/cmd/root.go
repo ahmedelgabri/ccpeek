@@ -65,6 +65,19 @@ func run(cmd *cobra.Command, args []string) error {
 	skipScan, _ := cmd.Flags().GetBool("skip-scan")
 	quiet, _ := cmd.Flags().GetBool("quiet")
 
+	// Validate mutually exclusive flags
+	if skipIndex && indexOnly {
+		return fmt.Errorf("--skip-index and --index-only are mutually exclusive")
+	}
+	if skipIndex && rebuild {
+		return fmt.Errorf("--skip-index and --rebuild are mutually exclusive")
+	}
+
+	// Validate port early to avoid failing after indexing
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
+	}
+
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
@@ -84,16 +97,20 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	dataChanged := false
 	if !skipIndex {
 		logf("Indexing %s -> %s\n", claudeDir, dbPath)
 		if rebuild {
 			if err := index.Run(claudeDir, db, true, os.Stderr); err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
+			dataChanged = true
 		} else {
-			if _, err := index.RunIncremental(claudeDir, db); err != nil {
+			changed, err := index.RunIncremental(claudeDir, db)
+			if err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
+			dataChanged = changed
 		}
 		logf("Indexing complete.\n")
 	}
@@ -106,7 +123,7 @@ func run(cmd *cobra.Command, args []string) error {
 		logf("Pruning complete.\n")
 	}
 
-	if !skipScan {
+	if !skipScan && (dataChanged || rebuild) {
 		logf("Scanning for secrets...\n")
 		scanner, err := scan.New(db)
 		if err != nil {

@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -35,11 +37,17 @@ Results are stored in the database and viewable in the web UI at /scan/.`,
 }
 
 func init() {
+	scanCmd.Flags().StringP("format", "f", "text", "Output format: text, json")
 	rootCmd.AddCommand(scanCmd)
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
 	dataFile, _ := cmd.Flags().GetString("data-file")
+	format, _ := cmd.Flags().GetString("format")
+
+	if format != "text" && format != "json" {
+		return fmt.Errorf("unsupported format %q: use text or json", format)
+	}
 
 	db, err := store.Open(dataFile)
 	if err != nil {
@@ -47,7 +55,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	fmt.Println("Scanning for secrets...")
+	fmt.Fprintln(os.Stderr, "Scanning for secrets...")
 
 	scanner, err := scan.New(db)
 	if err != nil {
@@ -59,7 +67,19 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scan failed: %w", err)
 	}
 
-	printScanResults(findings)
+	if format == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(findings); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
+	} else {
+		printScanResults(findings)
+	}
+
+	if len(findings) > 0 {
+		os.Exit(2)
+	}
 	return nil
 }
 

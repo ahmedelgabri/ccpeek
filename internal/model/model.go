@@ -258,8 +258,13 @@ type CommandEntry struct {
 }
 
 // FormatCommands writes commands to w in the given shell history format.
-// Supported formats: "zsh", "bash", "fish", "plain" (default).
+// Supported formats: "zsh", "bash", "fish", "plain".
 func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
+	switch format {
+	case "plain", "bash", "zsh", "fish":
+	default:
+		return fmt.Errorf("unsupported format %q: use plain, bash, zsh, or fish", format)
+	}
 	for _, cmd := range commands {
 		switch format {
 		case "zsh":
