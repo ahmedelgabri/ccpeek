@@ -75,6 +75,20 @@
       data-autosubmit
       title="To date"
     />
+    <button
+      type="button"
+      class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs cursor-pointer transition-colors hover:border-rose-400/50"
+      data-filter="todo"
+    >
+      <span class="text-rose-400">todo</span>
+    </button>
+    <button
+      type="button"
+      class="px-2.5 py-1 rounded-lg bg-surface-card border border-surface-border text-xs cursor-pointer transition-colors hover:border-amber-400/50"
+      data-filter="commands"
+    >
+      <span class="text-amber-400">commands</span>
+    </button>
     <div class="ml-auto flex items-center gap-2">
       <select
         name="sort"
@@ -107,6 +121,8 @@
         id="{{ toAnchor "s" .SessionID }}"
         class="list-row group flex items-center gap-4 px-5 py-3 transition-colors duration-150 hover:bg-surface-hover"
         data-search-keys="{{ .FirstPrompt }} {{ .SessionID }} {{ .GitBranch }}"
+        data-has-todo="{{ if .TodoFileName }}1{{ end }}"
+        data-has-commands="{{ if .BashCommandCount }}1{{ end }}"
         data-modified="{{ .Modified }}"
       >
         <input
