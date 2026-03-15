@@ -1,6 +1,6 @@
 {{ define "session_header" }}
   <div class="mb-4">
-    {{ backLink (urlFor "session-anchor" .Project.DirName .Session.SessionID) .Project.DisplayName }}
+    {{ backLink (urlFor "session-anchor" .Project.DirName .Session.SessionID) (shortenPath .Project.DisplayName) }}
   </div>
 
   <div class="mb-4">

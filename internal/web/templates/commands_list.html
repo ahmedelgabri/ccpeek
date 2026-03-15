@@ -122,7 +122,7 @@
           value="{{ .DirName }}"
           {{ if eq $.Project .DirName }}selected{{ end }}
         >
-          {{ .DisplayName }}
+          {{ shortenPath .DisplayName }}
         </option>
       {{ end }}
     </select>
@@ -157,7 +157,7 @@
             <a
               href="{{ urlFor "command-anchor" .ProjectDirName .SessionID .Timestamp }}"
               class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 no-underline whitespace-nowrap shrink-0 hover:bg-sky-500/20 transition-colors"
-              >{{ .ProjectDisplay }}</a
+              >{{ shortenPath .ProjectDisplay }}</a
             >
             <span
               class="text-slate-600 whitespace-nowrap tabular-nums no-underline hover:text-slate-400 transition-colors"

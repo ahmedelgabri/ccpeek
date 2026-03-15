@@ -16,7 +16,9 @@
         <div class="flex items-center gap-4">
           <span class="text-xs text-slate-600">{{ .FileCount }} files</span>
           {{ if .ProjectName }}
-            <span class="text-xs text-slate-500">{{ .ProjectName }}</span>
+            <span class="text-xs text-slate-500"
+              >{{ shortenPath .ProjectName }}</span
+            >
           {{ end }}
         </div>
       </a>

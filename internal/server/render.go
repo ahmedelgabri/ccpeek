@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
@@ -209,6 +210,21 @@ func urlFor(kind string, args ...string) string {
 	return "/"
 }
 
+// homeDir is cached at init for path shortening in templates.
+var homeDir string
+
+func init() {
+	homeDir, _ = os.UserHomeDir()
+}
+
+// shortenPath replaces the user's home directory prefix with ~/.
+func shortenPath(path string) string {
+	if homeDir != "" && strings.HasPrefix(path, homeDir) {
+		return "~" + path[len(homeDir):]
+	}
+	return path
+}
+
 var funcMap = template.FuncMap{
 	"formatBytes":      formatBytes,
 	"formatTimestamp":  formatTimestamp,
@@ -216,6 +232,7 @@ var funcMap = template.FuncMap{
 	"formatShortDate":  formatShortDate,
 	"truncate":         truncate,
 	"decodeProjectDir": model.DecodeProjectDir,
+	"shortenPath":      shortenPath,
 	"encodeProjectDir": model.EncodeProjectDir,
 	"renderMarkdown":   renderMarkdown,
 	"wrapCode":         wrapCode,

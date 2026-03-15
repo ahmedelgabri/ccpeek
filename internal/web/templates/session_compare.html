@@ -1,6 +1,6 @@
 {{ define "content" }}
   <div class="mb-4">
-    {{ backLink (urlFor "session-anchor" .Project.DirName .SessionA.SessionID) .Project.DisplayName }}
+    {{ backLink (urlFor "session-anchor" .Project.DirName .SessionA.SessionID) (shortenPath .Project.DisplayName) }}
   </div>
 
   <h1 class="text-2xl font-bold text-slate-50 mb-6">Compare Sessions</h1>

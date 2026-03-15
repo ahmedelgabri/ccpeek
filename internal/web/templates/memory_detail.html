@@ -4,9 +4,9 @@
   </div>
   <h1 class="text-2xl font-bold text-slate-50 mb-2">
     {{ if .Entry.ProjectName }}
-      {{ .Entry.ProjectName }}
+      {{ shortenPath .Entry.ProjectName }}
     {{ else }}
-      {{ .Entry.ProjectDir }}
+      {{ shortenPath .Entry.ProjectDir }}
     {{ end }}
   </h1>
   <div class="flex items-center gap-4 text-xs text-slate-500 mb-6">
