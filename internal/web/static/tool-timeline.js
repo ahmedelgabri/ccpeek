@@ -79,7 +79,7 @@ function init() {
       return (
         `<text x="${labelWidth - 6}" y="${y}" dy="0.35em" ` +
         `text-anchor="end" fill="${color}" font-size="10" font-family="ui-monospace, monospace">` +
-        `${esc(name)}</text>`
+        `${esc(name)} (${toolCounts[name]})</text>`
       );
     })
     .join("");
