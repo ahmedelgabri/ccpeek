@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @source "../templates";
+@source "../../server/render.go";
 
 @theme {
 	--color-surface: #0c0e16;

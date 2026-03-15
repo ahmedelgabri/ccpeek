@@ -235,6 +235,19 @@ var funcMap = template.FuncMap{
 	"toAnchor":         toAnchor,
 	"urlFor":           urlFor,
 	"cardCSS":          cardCSS,
+	"navItem": func(href, label, currentPath, color, svgPath string) template.HTML {
+		linkClass := "text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]"
+		iconClass := "text-slate-500"
+		if currentPath == href {
+			linkClass = "bg-white/[0.06] text-slate-100"
+			iconClass = "text-" + color + "-400"
+		}
+		return template.HTML(`<li><a href="` + template.HTMLEscapeString(href) +
+			`" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 ` + linkClass +
+			`"><svg class="w-4 h-4 shrink-0 ` + iconClass +
+			`" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="` +
+			svgPath + `"/></svg>` + template.HTMLEscapeString(label) + `</a></li>`)
+	},
 	"backLink": func(href, label string) template.HTML {
 		return template.HTML(`<a href="` + template.HTMLEscapeString(href) + `" class="inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline hover:text-slate-300 transition-colors"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>` + template.HTMLEscapeString(label) + `</a>`)
 	},
