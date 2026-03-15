@@ -1,6 +1,8 @@
 name: Release
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
 permissions:
   contents: write
@@ -9,7 +11,9 @@ jobs:
   prepare:
     name: Check Version
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      !contains(github.event.workflow_run.head_commit.message, '[skip release]')
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag_exists: ${{ steps.check_tag.outputs.exists }}
