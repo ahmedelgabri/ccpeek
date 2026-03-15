@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"testing"
@@ -420,5 +421,25 @@ func TestSourceURL(t *testing.T) {
 			t.Errorf("SourceURL() for %s/%s = %q, want %q",
 				tt.finding.SourceType, tt.finding.SourceID, got, tt.want)
 		}
+	}
+}
+
+func TestRunCancelledContext(t *testing.T) {
+	db := setupTestDB(t)
+
+	scanner, err := New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = scanner.Run(ctx)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }

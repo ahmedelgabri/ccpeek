@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"testing"
@@ -408,5 +409,56 @@ func TestDecodeProjectDir(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("DecodeProjectDir(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestRunCancelledContext(t *testing.T) {
+	testdataDir := filepath.Join("..", "..", "testdata")
+
+	s, err := store.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Cancel the context before running
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = Run(ctx, testdataDir, s, true, io.Discard)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestRunResetThenIndex(t *testing.T) {
+	testdataDir := filepath.Join("..", "..", "testdata")
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Index, then reset and re-index to verify Reset works end-to-end
+	if err := Run(ctx, testdataDir, s, true, io.Discard); err != nil {
+		t.Fatal("first Run:", err)
+	}
+	stats1, _ := s.GetStats(ctx)
+	if stats1.PlanCount == 0 {
+		t.Fatal("expected plans after first index")
+	}
+
+	// Rebuild (calls Reset internally)
+	if err := Run(ctx, testdataDir, s, true, io.Discard); err != nil {
+		t.Fatal("rebuild Run:", err)
+	}
+	stats2, _ := s.GetStats(ctx)
+	if stats2.PlanCount != stats1.PlanCount {
+		t.Errorf("plan count changed after rebuild: %d -> %d", stats1.PlanCount, stats2.PlanCount)
 	}
 }
