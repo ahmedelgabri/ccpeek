@@ -118,10 +118,10 @@ func TestFormatCommands(t *testing.T) {
 		var buf bytes.Buffer
 		_ = FormatCommands(&buf, multiCmds, "zsh")
 		out := buf.String()
-		if !strings.Contains(out, "\\\n") {
-			t.Error("zsh format should escape newlines in multi-line commands with backslash")
+		if !strings.Contains(out, "\\\\\n") {
+			t.Error("zsh format should escape newlines in multi-line commands with double backslash")
 		}
-		// Each intermediate newline gets a backslash, but the final newline (end of entry) does not
+		// Each intermediate newline gets \\, but the final newline (end of entry) does not
 		lines := strings.SplitAfter(out, "\n")
 		// Remove the trailing empty element from the split
 		if lines[len(lines)-1] == "" {
@@ -129,12 +129,12 @@ func TestFormatCommands(t *testing.T) {
 		}
 		for i, line := range lines {
 			if i < len(lines)-1 {
-				if !strings.HasSuffix(line, "\\\n") {
-					t.Errorf("intermediate line %d should end with backslash-newline, got %q", i, line)
+				if !strings.HasSuffix(line, "\\\\\n") {
+					t.Errorf("intermediate line %d should end with double-backslash-newline, got %q", i, line)
 				}
 			} else {
-				if strings.HasSuffix(line, "\\\n") {
-					t.Error("last line should not end with backslash-newline")
+				if strings.HasSuffix(line, "\\\\\n") {
+					t.Error("last line should not end with double-backslash-newline")
 				}
 			}
 		}

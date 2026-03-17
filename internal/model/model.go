@@ -269,7 +269,7 @@ func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
 		switch format {
 		case "zsh":
 			ts := parseTimestampUnix(cmd.Timestamp)
-			escaped := strings.ReplaceAll(cmd.Command, "\n", "\\\n")
+			escaped := strings.ReplaceAll(cmd.Command, "\n", "\\\\\n")
 			fmt.Fprintf(w, ": %d:0;%s\n", ts, escaped)
 		case "fish":
 			ts := parseTimestampUnix(cmd.Timestamp)
