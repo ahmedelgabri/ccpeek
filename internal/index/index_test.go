@@ -134,7 +134,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Verify messages via store
-	messages, total, err := s.GetSessionMessages(context.Background(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 0, 100)
+	messages, total, err := s.GetSessionMessages(context.Background(), "test-project", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 0, 100)
 	if err != nil {
 		t.Fatal("getting session messages:", err)
 	}

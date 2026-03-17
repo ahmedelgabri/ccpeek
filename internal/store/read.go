@@ -495,10 +495,12 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 }
 
 // GetSessionMessages returns conversation messages for a session, with pagination.
-func (s *Store) GetSessionMessages(ctx context.Context, sessionID string, offset, limit int) ([]model.ConversationMessage, int, error) {
+func (s *Store) GetSessionMessages(ctx context.Context, dirName, sessionID string, offset, limit int) ([]model.ConversationMessage, int, error) {
 	// Get the database session ID
 	var dbID int64
-	if err := s.db.GetContext(ctx, &dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+	if err := s.db.GetContext(ctx, &dbID,
+		`SELECT s.id FROM sessions s JOIN projects p ON s.project_id = p.id
+		 WHERE p.dir_name = ? AND s.session_id = ?`, dirName, sessionID); err != nil {
 		return nil, 0, err
 	}
 
@@ -544,9 +546,11 @@ func (s *Store) GetSessionMessages(ctx context.Context, sessionID string, offset
 }
 
 // GetAllSessionMessages returns all conversation messages for a session (no pagination).
-func (s *Store) GetAllSessionMessages(ctx context.Context, sessionID string) ([]model.ConversationMessage, error) {
+func (s *Store) GetAllSessionMessages(ctx context.Context, dirName, sessionID string) ([]model.ConversationMessage, error) {
 	var dbID int64
-	if err := s.db.GetContext(ctx, &dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+	if err := s.db.GetContext(ctx, &dbID,
+		`SELECT s.id FROM sessions s JOIN projects p ON s.project_id = p.id
+		 WHERE p.dir_name = ? AND s.session_id = ?`, dirName, sessionID); err != nil {
 		return nil, err
 	}
 
@@ -1285,9 +1289,11 @@ type ToolTimelineEntry struct {
 }
 
 // GetToolTimeline returns tool_use blocks with timestamps for a session.
-func (s *Store) GetToolTimeline(ctx context.Context, sessionID string) ([]ToolTimelineEntry, error) {
+func (s *Store) GetToolTimeline(ctx context.Context, dirName, sessionID string) ([]ToolTimelineEntry, error) {
 	var dbID int64
-	if err := s.db.GetContext(ctx, &dbID, `SELECT id FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+	if err := s.db.GetContext(ctx, &dbID,
+		`SELECT s.id FROM sessions s JOIN projects p ON s.project_id = p.id
+		 WHERE p.dir_name = ? AND s.session_id = ?`, dirName, sessionID); err != nil {
 		return nil, err
 	}
 
@@ -1667,13 +1673,14 @@ func (s *Store) GetMemory(ctx context.Context, projectDir string) (*model.Memory
 
 // GetSessionDBID returns the internal database ID for a session_id string.
 // It accepts an optional transaction; if tx is non-nil it queries within that tx.
+// When session_id exists in multiple projects, an arbitrary match is returned.
 func (s *Store) GetSessionDBID(ctx context.Context, tx *sqlx.Tx, sessionID string) (int64, error) {
 	var id int64
 	var err error
 	if tx != nil {
-		err = tx.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
+		err = tx.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? LIMIT 1`, sessionID)
 	} else {
-		err = s.db.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ?`, sessionID)
+		err = s.db.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? LIMIT 1`, sessionID)
 	}
 	return id, err
 }

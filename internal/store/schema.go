@@ -6,7 +6,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS sessions (
 	id                 INTEGER PRIMARY KEY,
-	session_id         TEXT NOT NULL UNIQUE,
+	session_id         TEXT NOT NULL,
 	project_id         INTEGER NOT NULL REFERENCES projects(id),
 	first_prompt       TEXT NOT NULL DEFAULT '',
 	message_count      INTEGER NOT NULL DEFAULT 0,
@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	has_file_history   INTEGER NOT NULL DEFAULT 0,
 	bash_command_count INTEGER NOT NULL DEFAULT 0,
 	tool_use_counts    TEXT NOT NULL DEFAULT '{}',
-	estimated_tokens   INTEGER NOT NULL DEFAULT 0
+	estimated_tokens   INTEGER NOT NULL DEFAULT 0,
+	UNIQUE(session_id, project_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_modified ON sessions(modified_at DESC);
@@ -211,6 +212,7 @@ var migrations = []func(tx *sqlx.Tx) error{
 	migrateV5ToV6,
 	migrateV6ToV7,
 	migrateV7ToV8,
+	migrateV8ToV9,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -287,6 +289,48 @@ func migrateV6ToV7(tx *sqlx.Tx) error {
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("creating scan_findings table: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV8ToV9 changes the sessions UNIQUE constraint from session_id alone
+// to (session_id, project_id), allowing the same session to appear in multiple projects.
+func migrateV8ToV9(tx *sqlx.Tx) error {
+	stmts := []string{
+		`CREATE TABLE sessions_new (
+			id                 INTEGER PRIMARY KEY,
+			session_id         TEXT NOT NULL,
+			project_id         INTEGER NOT NULL REFERENCES projects(id),
+			first_prompt       TEXT NOT NULL DEFAULT '',
+			message_count      INTEGER NOT NULL DEFAULT 0,
+			created_at         TEXT NOT NULL DEFAULT '',
+			modified_at        TEXT NOT NULL DEFAULT '',
+			git_branch         TEXT NOT NULL DEFAULT '',
+			project_path       TEXT NOT NULL DEFAULT '',
+			todo_file_name     TEXT NOT NULL DEFAULT '',
+			has_file_history   INTEGER NOT NULL DEFAULT 0,
+			bash_command_count INTEGER NOT NULL DEFAULT 0,
+			tool_use_counts    TEXT NOT NULL DEFAULT '{}',
+			estimated_tokens   INTEGER NOT NULL DEFAULT 0,
+			source_path        TEXT NOT NULL DEFAULT '',
+			UNIQUE(session_id, project_id)
+		)`,
+		`INSERT OR IGNORE INTO sessions_new
+			SELECT id, session_id, project_id, first_prompt, message_count,
+			       created_at, modified_at, git_branch, project_path,
+			       todo_file_name, has_file_history, bash_command_count,
+			       tool_use_counts, estimated_tokens, source_path
+			FROM sessions`,
+		`DROP TABLE sessions`,
+		`ALTER TABLE sessions_new RENAME TO sessions`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_modified ON sessions(modified_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source_path)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migrating sessions unique constraint: %w", err)
 		}
 	}
 	return nil

@@ -324,7 +324,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * pageSize
-	messages, totalMsgs, err := h.store.GetSessionMessages(ctx, session.SessionID, offset, pageSize)
+	messages, totalMsgs, err := h.store.GetSessionMessages(ctx, project.DirName, session.SessionID, offset, pageSize)
 	if err != nil {
 		http.Error(w, "loading messages: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -454,14 +454,12 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	_ = project
-
 	if session.BashCommandCount == 0 {
 		http.NotFound(w, r)
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -523,14 +521,12 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = project
-
 	if len(session.ToolUseCounts) == 0 {
 		http.NotFound(w, r)
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -572,7 +568,7 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 		title = session.SessionID
 	}
 
-	toolTimeline, _ := h.store.GetToolTimeline(ctx, session.SessionID)
+	toolTimeline, _ := h.store.GetToolTimeline(ctx, project.DirName, session.SessionID)
 
 	renderTemplate(w, h.tmpl, "conversation_tools.html", map[string]any{
 		"Title":         title + " - Tools",
@@ -597,7 +593,7 @@ func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -682,14 +678,12 @@ func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = project
-
 	if !hasCodeBlocks(session) {
 		http.NotFound(w, r)
 		return
 	}
 
-	messages, err := h.store.GetAllSessionMessages(ctx, session.SessionID)
+	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return

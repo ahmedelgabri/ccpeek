@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 func TestResetDropsAllTables(t *testing.T) {
@@ -158,6 +160,55 @@ func TestDeleteSessionCascade(t *testing.T) {
 	s.db.Get(&sessID, `SELECT session_id FROM todos WHERE file_name = 't.json'`)
 	if sessID != nil {
 		t.Errorf("todo should have NULL session_id after cascade, got %v", *sessID)
+	}
+}
+
+func TestDuplicateSessionAcrossProjects(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pid1, err := s.InsertProject(ctx, tx, "proj-a", "Project A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid2, err := s.InsertProject(ctx, tx, "proj-b", "Project B")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := model.SessionEntry{SessionID: "shared-session"}
+
+	id1, err := s.InsertSession(ctx, tx, pid1, sess, "/src/proj-a/shared-session.jsonl")
+	if err != nil {
+		t.Fatalf("insert into proj-a failed: %v", err)
+	}
+	id2, err := s.InsertSession(ctx, tx, pid2, sess, "/src/proj-b/shared-session.jsonl")
+	if err != nil {
+		t.Fatalf("insert into proj-b failed: %v", err)
+	}
+
+	if id1 == id2 {
+		t.Error("sessions in different projects should have different db IDs")
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify both sessions exist
+	var count int
+	s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM sessions WHERE session_id = 'shared-session'`)
+	if count != 2 {
+		t.Errorf("expected 2 sessions with same session_id, got %d", count)
 	}
 }
 
