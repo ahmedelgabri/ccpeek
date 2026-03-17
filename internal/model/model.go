@@ -269,8 +269,7 @@ func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
 		switch format {
 		case "zsh":
 			ts := parseTimestampUnix(cmd.Timestamp)
-			escaped := strings.ReplaceAll(cmd.Command, "\n", "\\\\\n")
-			fmt.Fprintf(w, ": %d:0;%s\n", ts, escaped)
+			fmt.Fprintf(w, ": %d:0;%s\n", ts, escapeZshMultiline(cmd.Command))
 		case "fish":
 			ts := parseTimestampUnix(cmd.Timestamp)
 			fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
@@ -297,6 +296,27 @@ func EncodeProjectDir(path string) string {
 	result := strings.ReplaceAll(path, "/.", "--")
 	result = strings.ReplaceAll(result, "/", "-")
 	return result
+}
+
+// escapeZshMultiline escapes newlines for zsh extended history format.
+// Non-empty continuation lines end with \\ and empty lines end with \.
+func escapeZshMultiline(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	var b strings.Builder
+	for i, line := range lines {
+		b.WriteString(line)
+		if i < len(lines)-1 {
+			if line == "" {
+				b.WriteString("\\\n")
+			} else {
+				b.WriteString("\\\\\n")
+			}
+		}
+	}
+	return b.String()
 }
 
 func parseTimestampUnix(ts string) int64 {

@@ -118,25 +118,25 @@ func TestFormatCommands(t *testing.T) {
 		var buf bytes.Buffer
 		_ = FormatCommands(&buf, multiCmds, "zsh")
 		out := buf.String()
+		// Non-empty continuation lines end with \\
 		if !strings.Contains(out, "\\\\\n") {
-			t.Error("zsh format should escape newlines in multi-line commands with double backslash")
+			t.Error("zsh format should escape non-empty continuation lines with double backslash")
 		}
-		// Each intermediate newline gets \\, but the final newline (end of entry) does not
-		lines := strings.SplitAfter(out, "\n")
-		// Remove the trailing empty element from the split
-		if lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
+	})
+
+	t.Run("zsh_multiline_empty_lines", func(t *testing.T) {
+		multiCmds := []CommandEntry{
+			{Command: "echo hello\n\necho world", Timestamp: "2025-01-15T10:30:00Z"},
 		}
-		for i, line := range lines {
-			if i < len(lines)-1 {
-				if !strings.HasSuffix(line, "\\\\\n") {
-					t.Errorf("intermediate line %d should end with double-backslash-newline, got %q", i, line)
-				}
-			} else {
-				if strings.HasSuffix(line, "\\\\\n") {
-					t.Error("last line should not end with double-backslash-newline")
-				}
-			}
+		var buf bytes.Buffer
+		_ = FormatCommands(&buf, multiCmds, "zsh")
+		out := buf.String()
+		// "echo hello" (non-empty) → ends with \\
+		// "" (empty) → ends with \
+		// "echo world" → last line, no continuation
+		want := ": 1736937000:0;echo hello\\\\\n\\\necho world\n"
+		if out != want {
+			t.Errorf("got %q, want %q", out, want)
 		}
 	})
 
