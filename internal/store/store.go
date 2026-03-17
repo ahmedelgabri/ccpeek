@@ -95,6 +95,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		currentVersion = 4
 	}
 
+	// Disable foreign keys so table-recreation migrations (DROP + RENAME)
+	// don't fail. Must be done outside a transaction.
+	if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("disabling foreign keys: %w", err)
+	}
+
 	// Apply sequential migrations from currentVersion to schemaVersion
 	// migrations[0] = v4→v5, migrations[1] = v5→v6, etc.
 	baseVersion := 4 // the schema version that initialSchema represents
@@ -119,8 +125,24 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
+	// Re-enable foreign keys and verify no violations were introduced
+	if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("re-enabling foreign keys: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return fmt.Errorf("checking foreign keys: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var table, rowid, parent string
+		var fkid int
+		rows.Scan(&table, &rowid, &parent, &fkid)
+		return fmt.Errorf("foreign key violation after migration: table %s row %s references %s", table, rowid, parent)
+	}
+
 	// Record final version
-	_, err := s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)`,
 		strconv.Itoa(schemaVersion),
 	)
