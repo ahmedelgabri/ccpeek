@@ -87,6 +87,9 @@ func run(cmd *cobra.Command, args []string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
 	}
+	if watchInterval <= 0 {
+		return fmt.Errorf("invalid watch interval %d: must be greater than 0", watchInterval)
+	}
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(dataFile), 0o700); err != nil {

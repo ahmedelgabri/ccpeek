@@ -141,7 +141,7 @@ func (h *handlers) plansList(w http.ResponseWriter, r *http.Request) {
 
 	plans, err := h.store.ListPlans(ctx)
 	if err != nil {
-		http.Error(w, "loading plans: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load plans", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "plans_list.html", map[string]any{
@@ -174,7 +174,7 @@ func (h *handlers) snapshotsList(w http.ResponseWriter, r *http.Request) {
 
 	snapshots, err := h.store.ListShellSnapshots(ctx)
 	if err != nil {
-		http.Error(w, "loading snapshots: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load snapshots", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "snapshots_list.html", map[string]any{
@@ -207,7 +207,7 @@ func (h *handlers) todosList(w http.ResponseWriter, r *http.Request) {
 
 	todos, err := h.store.ListTodos(ctx)
 	if err != nil {
-		http.Error(w, "loading todos: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load todos", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "todos_list.html", map[string]any{
@@ -240,7 +240,7 @@ func (h *handlers) projectsList(w http.ResponseWriter, r *http.Request) {
 
 	projects, err := h.store.ListProjects(ctx)
 	if err != nil {
-		http.Error(w, "loading projects: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load projects", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "projects_list.html", map[string]any{
@@ -269,7 +269,7 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 
 	sessions, err := h.store.ListSessionsFiltered(ctx, projectID, filter)
 	if err != nil {
-		http.Error(w, "loading sessions: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load sessions", err)
 		return
 	}
 
@@ -326,7 +326,7 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * pageSize
 	messages, totalMsgs, err := h.store.GetSessionMessages(ctx, project.DirName, session.SessionID, offset, pageSize)
 	if err != nil {
-		http.Error(w, "loading messages: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load messages", err)
 		return
 	}
 
@@ -795,7 +795,7 @@ func (h *handlers) fileHistoryList(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.store.ListFileHistory(ctx)
 	if err != nil {
-		http.Error(w, "loading file history: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load file history", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "filehistory_list.html", map[string]any{
@@ -877,7 +877,7 @@ func (h *handlers) tasksList(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := h.store.ListTaskGroups(ctx)
 	if err != nil {
-		http.Error(w, "loading tasks: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load tasks", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "tasks_list.html", map[string]any{
@@ -910,7 +910,7 @@ func (h *handlers) pasteCacheList(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.store.ListPasteCache(ctx)
 	if err != nil {
-		http.Error(w, "loading paste cache: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load paste cache", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "pastecache_list.html", map[string]any{
@@ -943,7 +943,7 @@ func (h *handlers) usageDataList(w http.ResponseWriter, r *http.Request) {
 
 	facets, err := h.store.ListUsageFacets(ctx)
 	if err != nil {
-		http.Error(w, "loading usage data: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load usage data", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "usagedata_list.html", map[string]any{
@@ -1037,7 +1037,7 @@ func (h *handlers) memoriesList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	entries, err := h.store.ListMemories(ctx)
 	if err != nil {
-		http.Error(w, "loading memories: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load memories", err)
 		return
 	}
 	renderTemplate(w, h.tmpl, "memories_list.html", map[string]any{
@@ -1091,7 +1091,7 @@ func (h *handlers) commandsList(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * pageSize
 	commands, total, err := h.store.ListCommands(ctx, pageSize, offset, filter)
 	if err != nil {
-		http.Error(w, "loading commands: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load commands", err)
 		return
 	}
 
@@ -1158,7 +1158,7 @@ func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
 
 	commands, err := h.store.ListAllCommands(ctx, filter)
 	if err != nil {
-		http.Error(w, "loading commands: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load commands", err)
 		return
 	}
 
@@ -1284,7 +1284,7 @@ func (h *handlers) scanList(w http.ResponseWriter, r *http.Request) {
 
 	findings, err := h.store.ListScanFindings(ctx, ruleFilter, typeFilter, showIgnored)
 	if err != nil {
-		http.Error(w, "loading scan findings: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "load scan findings", err)
 		return
 	}
 
@@ -1325,7 +1325,7 @@ func (h *handlers) scanToggleIgnore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.ToggleScanFindingIgnored(ctx, id); err != nil {
-		http.Error(w, "toggling ignore: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "toggle scan finding ignore state", err)
 		return
 	}
 

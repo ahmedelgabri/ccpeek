@@ -1909,4 +1909,10 @@ func TestSecurityHeaders(t *testing.T) {
 	if !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("CSP missing default-src 'self': %s", csp)
 	}
+	if strings.Contains(csp, "fonts.googleapis.com") || strings.Contains(csp, "fonts.gstatic.com") {
+		t.Errorf("CSP should not allow external Google font origins: %s", csp)
+	}
+	if strings.Contains(w.Body.String(), "fonts.googleapis.com") || strings.Contains(w.Body.String(), "fonts.gstatic.com") {
+		t.Error("layout should not reference external Google Fonts")
+	}
 }

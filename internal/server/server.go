@@ -36,8 +36,12 @@ func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir
 	}
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: requestLogger(securityHeaders(registerRoutes(h, staticFS))),
+		Addr:              addr,
+		Handler:           requestLogger(securityHeaders(registerRoutes(h, staticFS))),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
@@ -179,7 +183,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com")
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

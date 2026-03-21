@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -360,7 +361,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 func renderTemplate(w http.ResponseWriter, t *templates, name string, data any) {
 	page, ok := t.pages[name]
 	if !ok {
-		http.Error(w, "template not found: "+name, http.StatusInternalServerError)
+		serverError(w, "render page", fmt.Errorf("template not found: %s", name))
 		return
 	}
 
@@ -368,7 +369,7 @@ func renderTemplate(w http.ResponseWriter, t *templates, name string, data any) 
 	// Each page template invokes layout.html at the bottom, so we execute the
 	// page file itself (which triggers layout.html → content).
 	if err := page.ExecuteTemplate(&buf, name, data); err != nil {
-		http.Error(w, "template error: "+err.Error(), http.StatusInternalServerError)
+		serverError(w, "render page", err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
