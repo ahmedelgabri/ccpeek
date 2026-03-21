@@ -2,6 +2,10 @@ css_input := "internal/web/src/app.css"
 css_output := "internal/web/static/style.css"
 binary := "cmd/ccpeek/ccpeek"
 
+# Default: list available recipes
+default:
+    @just --list
+
 css:
     pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --minify
 
