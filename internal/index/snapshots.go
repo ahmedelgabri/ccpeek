@@ -16,7 +16,7 @@ import (
 
 var snapshotTimestampRe = regexp.MustCompile(`snapshot-\w+-(\d+)-`)
 
-func indexShellSnapshots(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexShellSnapshots(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "shell-snapshots")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -35,11 +35,17 @@ func indexShellSnapshots(ctx context.Context, claudeDir string, s *store.Store, 
 		src := filepath.Join(srcDir, e.Name())
 		info, err := e.Info()
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("shell_snapshot", src, err.Error())
+			}
 			continue
 		}
 
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("shell_snapshot", src, err.Error())
+			}
 			continue
 		}
 
@@ -58,6 +64,9 @@ func indexShellSnapshots(ctx context.Context, claudeDir string, s *store.Store, 
 		}
 
 		if err := s.InsertShellSnapshot(ctx, tx, entry, string(content), src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("shell_snapshot", src, err.Error())
+			}
 			continue
 		}
 		count++

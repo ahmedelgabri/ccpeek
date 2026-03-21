@@ -15,7 +15,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, error) {
+func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, int, error) {
 	srcDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -40,12 +40,17 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 		var sessionsIndex model.SessionsIndex
 		indexPath := filepath.Join(projectDir, "sessions-index.json")
 		if data, err := os.ReadFile(indexPath); err == nil {
-			_ = json.Unmarshal(data, &sessionsIndex)
+			if err := json.Unmarshal(data, &sessionsIndex); err != nil && rec != nil {
+				rec.ParseFailure("session_index", indexPath, 0, err.Error())
+			}
 		}
 
 		// Find JSONL session files
 		files, err := os.ReadDir(projectDir)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("project", projectDir, err.Error())
+			}
 			continue
 		}
 
@@ -64,8 +69,11 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			sessionID := strings.TrimSuffix(f.Name(), ".jsonl")
 			jsonlPath := filepath.Join(projectDir, f.Name())
 
-			lines, err := readJSONL[model.RawJSONLLine](jsonlPath)
+			lines, err := readJSONL[model.RawJSONLLine](jsonlPath, "session", rec)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 
@@ -119,6 +127,9 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 		// Insert project
 		projectID, err := s.InsertProject(ctx, tx, dirName, displayName)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("project", projectDir, err.Error())
+			}
 			continue
 		}
 		projectCount++
@@ -128,13 +139,24 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
 			sessionDBID, err := s.InsertSession(ctx, tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 
 			if err := s.InsertMessages(ctx, tx, sessionDBID, sd.messages); err != nil {
+				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
+				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 			totalSessions++

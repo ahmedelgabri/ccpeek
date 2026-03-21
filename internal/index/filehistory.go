@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,7 +17,7 @@ import (
 
 var fileVersionRe = regexp.MustCompile(`^(.+)@v(\d+)$`)
 
-func indexFileHistory(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexFileHistory(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "file-history")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -36,6 +37,9 @@ func indexFileHistory(ctx context.Context, claudeDir string, s *store.Store, tx 
 		convDir := filepath.Join(srcDir, conversationID)
 		files, err := os.ReadDir(convDir)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("file_history", convDir, err.Error())
+			}
 			continue
 		}
 
@@ -52,6 +56,9 @@ func indexFileHistory(ctx context.Context, claudeDir string, s *store.Store, tx 
 
 			content, err := os.ReadFile(filepath.Join(convDir, f.Name()))
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("file_history", filepath.Join(convDir, f.Name()), err.Error())
+				}
 				continue
 			}
 
@@ -75,10 +82,17 @@ func indexFileHistory(ctx context.Context, claudeDir string, s *store.Store, tx 
 		if dbID, err := s.GetSessionDBID(ctx, tx, conversationID); err == nil {
 			sessionDBID = dbID
 			// Also set reverse link: session -> has_file_history
-			_ = s.LinkFileHistoryToSession(ctx, tx, conversationID, dbID)
+			if err := s.LinkFileHistoryToSession(ctx, tx, conversationID, dbID); err != nil && rec != nil {
+				rec.UnresolvedLink("file_history", convDir, fmt.Sprintf("linking to session %s: %v", conversationID, err))
+			}
+		} else if rec != nil {
+			rec.UnresolvedLink("file_history", convDir, fmt.Sprintf("session %s not found: %v", conversationID, err))
 		}
 
 		if err := s.InsertFileHistory(ctx, tx, conversationID, versions, sessionDBID, convDir); err != nil {
+			if rec != nil {
+				rec.SkippedFile("file_history", convDir, err.Error())
+			}
 			continue
 		}
 		count++

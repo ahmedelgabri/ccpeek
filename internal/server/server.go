@@ -126,9 +126,19 @@ type handlers struct {
 }
 
 func reindexAndMaybeScan(ctx context.Context, claudeDir string, db *store.Store, rescan bool) (bool, error) {
+	beforeRunID, _ := latestIngestRunID(ctx, db)
 	changed, err := index.RunIncremental(ctx, claudeDir, db)
-	if err != nil || !changed || !rescan {
+	if err != nil {
 		return changed, err
+	}
+	if changed {
+		if err := db.EnsureFilePermissions(); err != nil {
+			return changed, fmt.Errorf("tightening database permissions: %w", err)
+		}
+	}
+	logLatestIngestWarnings(ctx, db, beforeRunID)
+	if !changed || !rescan {
+		return changed, nil
 	}
 
 	scanner, err := scan.New(db)
@@ -138,7 +148,27 @@ func reindexAndMaybeScan(ctx context.Context, claudeDir string, db *store.Store,
 	if _, err := scanner.Run(ctx); err != nil {
 		return changed, fmt.Errorf("scan failed: %w", err)
 	}
+	if err := db.EnsureFilePermissions(); err != nil {
+		return changed, fmt.Errorf("tightening database permissions: %w", err)
+	}
 	return changed, nil
+}
+
+func latestIngestRunID(ctx context.Context, db *store.Store) (int64, error) {
+	run, err := db.GetLatestIngestRun(ctx)
+	if err != nil || run == nil {
+		return 0, err
+	}
+	return run.ID, nil
+}
+
+func logLatestIngestWarnings(ctx context.Context, db *store.Store, previousID int64) {
+	run, err := db.GetLatestIngestRun(ctx)
+	if err != nil || run == nil || run.ID == previousID || run.WarningCount == 0 {
+		return
+	}
+	log.Printf("Ingest completed with %d diagnostic(s): %d skipped file(s), %d skipped row(s), %d parse failure(s), %d unresolved link(s). Run `ccpeek ingest --run-id %d` for details.",
+		run.WarningCount, run.SkippedFiles, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks, run.ID)
 }
 
 func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration, rescan bool) {

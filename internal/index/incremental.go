@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ import (
 // Filtered indexers: these only process files present in the changedSet.
 // They mirror the logic of the full indexers but skip unchanged files.
 
-func indexPlansFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexPlansFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "plans")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -44,11 +45,17 @@ func indexPlansFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("plan", src, err.Error())
+			}
 			continue
 		}
 
 		info, err := e.Info()
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("plan", src, err.Error())
+			}
 			continue
 		}
 
@@ -65,6 +72,9 @@ func indexPlansFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 
 		if err := s.InsertPlan(ctx, tx, entry, string(content), src); err != nil {
 			log.Printf("skipping plan %s: %v", src, err)
+			if rec != nil {
+				rec.SkippedFile("plan", src, err.Error())
+			}
 			continue
 		}
 		count++
@@ -73,7 +83,7 @@ func indexPlansFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 	return count, nil
 }
 
-func indexSnapshotsFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexSnapshotsFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "shell-snapshots")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -96,11 +106,17 @@ func indexSnapshotsFiltered(ctx context.Context, claudeDir string, s *store.Stor
 
 		info, err := e.Info()
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("shell_snapshot", src, err.Error())
+			}
 			continue
 		}
 
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("shell_snapshot", src, err.Error())
+			}
 			continue
 		}
 
@@ -120,6 +136,9 @@ func indexSnapshotsFiltered(ctx context.Context, claudeDir string, s *store.Stor
 
 		if err := s.InsertShellSnapshot(ctx, tx, entry, string(content), src); err != nil {
 			log.Printf("skipping snapshot %s: %v", src, err)
+			if rec != nil {
+				rec.SkippedFile("shell_snapshot", src, err.Error())
+			}
 			continue
 		}
 		count++
@@ -128,7 +147,7 @@ func indexSnapshotsFiltered(ctx context.Context, claudeDir string, s *store.Stor
 	return count, nil
 }
 
-func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, int, error) {
+func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, int, error) {
 	srcDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -153,12 +172,17 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 		var sessionsIndex model.SessionsIndex
 		indexPath := filepath.Join(projectDir, "sessions-index.json")
 		if data, err := os.ReadFile(indexPath); err == nil {
-			_ = json.Unmarshal(data, &sessionsIndex)
+			if err := json.Unmarshal(data, &sessionsIndex); err != nil && rec != nil {
+				rec.ParseFailure("session_index", indexPath, 0, err.Error())
+			}
 		}
 
 		// Find changed JSONL session files in this project
 		files, err := os.ReadDir(projectDir)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("project", projectDir, err.Error())
+			}
 			continue
 		}
 
@@ -179,8 +203,11 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 			}
 
 			sessionID := strings.TrimSuffix(f.Name(), ".jsonl")
-			lines, err := readJSONL[model.RawJSONLLine](jsonlPath)
+			lines, err := readJSONL[model.RawJSONLLine](jsonlPath, "session", rec)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 
@@ -231,6 +258,9 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 		// Upsert project (may already exist from a previous incremental run)
 		projectID, err := s.UpsertProject(ctx, tx, dirName, displayName, hasTrustedDisplay)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("project", projectDir, err.Error())
+			}
 			continue
 		}
 		projectCount++
@@ -240,15 +270,26 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 			sessionDBID, err := s.InsertSession(ctx, tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
 				log.Printf("skipping session %s: %v", jsonlPath, err)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 
 			if err := s.InsertMessages(ctx, tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping messages for %s: %v", jsonlPath, err)
+				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping commands for %s: %v", jsonlPath, err)
+				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 			totalSessions++
@@ -258,7 +299,7 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 	return projectCount, totalSessions, nil
 }
 
-func indexTodosFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexTodosFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "todos")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -286,11 +327,17 @@ func indexTodosFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("todo", src, err.Error())
+			}
 			continue
 		}
 
 		var items []model.TodoItem
 		if err := json.Unmarshal(content, &items); err != nil {
+			if rec != nil {
+				rec.ParseFailure("todo", src, 0, err.Error())
+			}
 			continue
 		}
 		if len(items) == 0 {
@@ -313,12 +360,19 @@ func indexTodosFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 			sessionID := m[1]
 			if dbID, err := s.GetSessionDBID(ctx, tx, sessionID); err == nil {
 				sessionDBID = dbID
-				_ = s.LinkTodoToSession(ctx, tx, e.Name(), dbID)
+				if err := s.LinkTodoToSession(ctx, tx, e.Name(), dbID); err != nil && rec != nil {
+					rec.UnresolvedLink("todo", src, fmt.Sprintf("linking to session %s: %v", sessionID, err))
+				}
+			} else if rec != nil {
+				rec.UnresolvedLink("todo", src, fmt.Sprintf("session %s not found: %v", sessionID, err))
 			}
 		}
 
 		if err := s.InsertTodo(ctx, tx, entry, items, sessionDBID, src); err != nil {
 			log.Printf("skipping todo %s: %v", src, err)
+			if rec != nil {
+				rec.SkippedFile("todo", src, err.Error())
+			}
 			continue
 		}
 		count++
@@ -327,7 +381,7 @@ func indexTodosFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 	return count, nil
 }
 
-func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "file-history")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -351,6 +405,9 @@ func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.St
 		conversationID := e.Name()
 		files, err := os.ReadDir(convDir)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("file_history", convDir, err.Error())
+			}
 			continue
 		}
 
@@ -365,8 +422,12 @@ func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.St
 				continue
 			}
 
-			content, err := os.ReadFile(filepath.Join(convDir, f.Name()))
+			path := filepath.Join(convDir, f.Name())
+			content, err := os.ReadFile(path)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("file_history", path, err.Error())
+				}
 				continue
 			}
 
@@ -388,10 +449,17 @@ func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.St
 		var sessionDBID int64
 		if dbID, err := s.GetSessionDBID(ctx, tx, conversationID); err == nil {
 			sessionDBID = dbID
-			_ = s.LinkFileHistoryToSession(ctx, tx, conversationID, dbID)
+			if err := s.LinkFileHistoryToSession(ctx, tx, conversationID, dbID); err != nil && rec != nil {
+				rec.UnresolvedLink("file_history", convDir, fmt.Sprintf("linking to session %s: %v", conversationID, err))
+			}
+		} else if rec != nil {
+			rec.UnresolvedLink("file_history", convDir, fmt.Sprintf("session %s not found: %v", conversationID, err))
 		}
 
 		if err := s.InsertFileHistory(ctx, tx, conversationID, versions, sessionDBID, convDir); err != nil {
+			if rec != nil {
+				rec.SkippedFile("file_history", convDir, err.Error())
+			}
 			continue
 		}
 		count++
@@ -400,7 +468,7 @@ func indexFileHistoryFiltered(ctx context.Context, claudeDir string, s *store.St
 	return count, nil
 }
 
-func indexHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	historyPath := filepath.Join(claudeDir, "history.jsonl")
 	if !changed[historyPath] {
 		return 0, nil
@@ -410,13 +478,19 @@ func indexHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store,
 		return 0, nil
 	}
 
-	entries, err := readJSONL[model.HistoryEntry](historyPath)
+	entries, err := readJSONL[model.HistoryEntry](historyPath, "history", rec)
 	if err != nil {
+		if rec != nil {
+			rec.SkippedFile("history", historyPath, err.Error())
+		}
 		return 0, err
 	}
 
-	for _, entry := range entries {
+	for i, entry := range entries {
 		if err := s.InsertHistory(ctx, tx, entry, historyPath); err != nil {
+			if rec != nil {
+				rec.SkippedRow("history", historyPath, i+1, err.Error())
+			}
 			continue
 		}
 	}
@@ -424,7 +498,7 @@ func indexHistoryFiltered(ctx context.Context, claudeDir string, s *store.Store,
 	return len(entries), nil
 }
 
-func indexTasksFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexTasksFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "tasks")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -445,8 +519,11 @@ func indexTasksFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 			continue
 		}
 
-		items, err := readTaskItems(taskDir)
+		items, err := readTaskItems(taskDir, rec)
 		if err != nil || len(items) == 0 {
+			if err != nil && rec != nil {
+				rec.SkippedFile("task", taskDir, err.Error())
+			}
 			continue
 		}
 
@@ -464,9 +541,14 @@ func indexTasksFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 		var sessionDBID int64
 		if dbID, err := s.GetSessionDBID(ctx, tx, e.Name()); err == nil {
 			sessionDBID = dbID
+		} else if rec != nil {
+			rec.UnresolvedLink("task", taskDir, fmt.Sprintf("session %s not found: %v", e.Name(), err))
 		}
 
 		if err := s.InsertTaskGroup(ctx, tx, entry, items, sessionDBID, taskDir); err != nil {
+			if rec != nil {
+				rec.SkippedFile("task", taskDir, err.Error())
+			}
 			continue
 		}
 		count++
@@ -475,7 +557,7 @@ func indexTasksFiltered(ctx context.Context, claudeDir string, s *store.Store, t
 	return count, nil
 }
 
-func indexPasteCacheFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexPasteCacheFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "paste-cache")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -498,11 +580,17 @@ func indexPasteCacheFiltered(ctx context.Context, claudeDir string, s *store.Sto
 
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("paste_cache", src, err.Error())
+			}
 			continue
 		}
 
 		info, err := e.Info()
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("paste_cache", src, err.Error())
+			}
 			continue
 		}
 
@@ -518,6 +606,9 @@ func indexPasteCacheFiltered(ctx context.Context, claudeDir string, s *store.Sto
 		}
 
 		if err := s.InsertPasteCache(ctx, tx, entry, string(content), src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("paste_cache", src, err.Error())
+			}
 			continue
 		}
 		count++
@@ -526,7 +617,7 @@ func indexPasteCacheFiltered(ctx context.Context, claudeDir string, s *store.Sto
 	return count, nil
 }
 
-func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	facetsDir := filepath.Join(claudeDir, "usage-data", "facets")
 	entries, err := os.ReadDir(facetsDir)
 	if os.IsNotExist(err) {
@@ -549,6 +640,9 @@ func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Stor
 
 		data, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("usage_facet", src, err.Error())
+			}
 			continue
 		}
 
@@ -566,6 +660,9 @@ func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Stor
 			SessionID      string         `json:"session_id"`
 		}
 		if err := json.Unmarshal(data, &raw); err != nil {
+			if rec != nil {
+				rec.ParseFailure("usage_facet", src, 0, err.Error())
+			}
 			continue
 		}
 
@@ -587,10 +684,15 @@ func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Stor
 		if raw.SessionID != "" {
 			if dbID, err := s.GetSessionDBID(ctx, tx, raw.SessionID); err == nil {
 				sessionDBID = dbID
+			} else if rec != nil {
+				rec.UnresolvedLink("usage_facet", src, fmt.Sprintf("session %s not found: %v", raw.SessionID, err))
 			}
 		}
 
 		if err := s.InsertUsageFacet(ctx, tx, entry, sessionDBID, src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("usage_facet", src, err.Error())
+			}
 			continue
 		}
 		count++
@@ -600,14 +702,18 @@ func indexUsageDataFiltered(ctx context.Context, claudeDir string, s *store.Stor
 	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
 	if changed[reportPath] {
 		if data, err := os.ReadFile(reportPath); err == nil {
-			_ = s.InsertUsageReport(ctx, tx, string(data), reportPath)
+			if err := s.InsertUsageReport(ctx, tx, string(data), reportPath); err != nil && rec != nil {
+				rec.SkippedFile("usage_report", reportPath, err.Error())
+			}
+		} else if err != nil && !os.IsNotExist(err) && rec != nil {
+			rec.SkippedFile("usage_report", reportPath, err.Error())
 		}
 	}
 
 	return count, nil
 }
 
-func indexMemoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool) (int, error) {
+func indexMemoryFiltered(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, changed map[string]bool, rec *ingestRecorder) (int, error) {
 	projDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(projDir)
 	if os.IsNotExist(err) {
@@ -630,22 +736,33 @@ func indexMemoryFiltered(ctx context.Context, claudeDir string, s *store.Store, 
 
 		content, err := os.ReadFile(memPath)
 		if err != nil {
+			if rec != nil && !os.IsNotExist(err) {
+				rec.SkippedFile("memory", memPath, err.Error())
+			}
 			continue
 		}
 
 		info, err := os.Stat(memPath)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("memory", memPath, err.Error())
+			}
 			continue
 		}
 
 		var projectID *int64
 		var pid int64
-		err = tx.Get(&pid, `SELECT id FROM projects WHERE dir_name = ?`, e.Name())
+		err = tx.GetContext(ctx, &pid, `SELECT id FROM projects WHERE dir_name = ?`, e.Name())
 		if err == nil {
 			projectID = &pid
+		} else if rec != nil {
+			rec.UnresolvedLink("memory", memPath, fmt.Sprintf("project %s not found: %v", e.Name(), err))
 		}
 
 		if err := s.InsertMemory(ctx, tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
+			if rec != nil {
+				rec.SkippedFile("memory", memPath, err.Error())
+			}
 			continue
 		}
 		count++

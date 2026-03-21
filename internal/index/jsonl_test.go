@@ -13,7 +13,7 @@ func TestReadJSONL_EmptyFile(t *testing.T) {
 	os.WriteFile(path, []byte{}, 0o644)
 
 	type row struct{ Name string }
-	items, err := readJSONL[row](path)
+	items, err := readJSONL[row](path, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ not json
 	os.WriteFile(path, []byte(content), 0o644)
 
 	type row struct{ Name string }
-	items, err := readJSONL[row](path)
+	items, err := readJSONL[row](path, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestReadJSONL_BlankLines(t *testing.T) {
 	os.WriteFile(path, []byte(content), 0o644)
 
 	type row struct{ Name string }
-	items, err := readJSONL[row](path)
+	items, err := readJSONL[row](path, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestReadJSONL_LongLine(t *testing.T) {
 	os.WriteFile(path, []byte(content), 0o644)
 
 	type row struct{ Name string }
-	items, err := readJSONL[row](path)
+	items, err := readJSONL[row](path, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestReadJSONL_LongLine(t *testing.T) {
 }
 
 func TestReadJSONL_NonexistentFile(t *testing.T) {
-	_, err := readJSONL[struct{}]("/nonexistent/path.jsonl")
+	_, err := readJSONL[struct{}]("/nonexistent/path.jsonl", "test", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}

@@ -15,7 +15,7 @@ import (
 
 var headingRe = regexp.MustCompile(`(?m)^#\s+(.+)`)
 
-func indexPlans(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexPlans(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "plans")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -34,11 +34,17 @@ func indexPlans(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 		src := filepath.Join(srcDir, e.Name())
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("plan", src, err.Error())
+			}
 			continue
 		}
 
 		info, err := e.Info()
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("plan", src, err.Error())
+			}
 			continue
 		}
 
@@ -54,6 +60,9 @@ func indexPlans(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 		}
 
 		if err := s.InsertPlan(ctx, tx, entry, string(content), src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("plan", src, err.Error())
+			}
 			continue
 		}
 		count++

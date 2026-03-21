@@ -12,7 +12,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexPasteCache(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexPasteCache(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "paste-cache")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -31,11 +31,17 @@ func indexPasteCache(ctx context.Context, claudeDir string, s *store.Store, tx *
 		src := filepath.Join(srcDir, e.Name())
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("paste_cache", src, err.Error())
+			}
 			continue
 		}
 
 		info, err := e.Info()
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("paste_cache", src, err.Error())
+			}
 			continue
 		}
 
@@ -51,6 +57,9 @@ func indexPasteCache(ctx context.Context, claudeDir string, s *store.Store, tx *
 		}
 
 		if err := s.InsertPasteCache(ctx, tx, entry, string(content), src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("paste_cache", src, err.Error())
+			}
 			continue
 		}
 		count++
