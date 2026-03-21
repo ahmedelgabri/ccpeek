@@ -7,7 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 10
+const schemaVersion = 11
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -57,6 +57,23 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text_content);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+	id              INTEGER PRIMARY KEY,
+	session_id      INTEGER NOT NULL REFERENCES sessions(id),
+	seq             INTEGER NOT NULL,
+	timestamp       TEXT NOT NULL DEFAULT '',
+	tool_name       TEXT NOT NULL DEFAULT '',
+	tool_kind       TEXT NOT NULL DEFAULT '',
+	input_json      TEXT NOT NULL DEFAULT '{}',
+	result_text     TEXT NOT NULL DEFAULT '',
+	file_path       TEXT NOT NULL DEFAULT '',
+	searchable_text TEXT NOT NULL DEFAULT '',
+	UNIQUE(session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_kind ON tool_calls(tool_kind, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name);
 
 CREATE TABLE IF NOT EXISTS plans (
 	id         INTEGER PRIMARY KEY,
@@ -248,6 +265,7 @@ var migrations = []func(ctx context.Context, tx *sqlx.Tx) error{
 	migrateV7ToV8,
 	migrateV8ToV9,
 	migrateV9ToV10,
+	migrateV10ToV11,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -430,6 +448,34 @@ func migrateV9ToV10(ctx context.Context, tx *sqlx.Tx) error {
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("creating ingest diagnostics tables: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV10ToV11 adds normalized tool call rows.
+func migrateV10ToV11(ctx context.Context, tx *sqlx.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS tool_calls (
+			id              INTEGER PRIMARY KEY,
+			session_id      INTEGER NOT NULL REFERENCES sessions(id),
+			seq             INTEGER NOT NULL,
+			timestamp       TEXT NOT NULL DEFAULT '',
+			tool_name       TEXT NOT NULL DEFAULT '',
+			tool_kind       TEXT NOT NULL DEFAULT '',
+			input_json      TEXT NOT NULL DEFAULT '{}',
+			result_text     TEXT NOT NULL DEFAULT '',
+			file_path       TEXT NOT NULL DEFAULT '',
+			searchable_text TEXT NOT NULL DEFAULT '',
+			UNIQUE(session_id, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, seq)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_calls_kind ON tool_calls(tool_kind, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("creating tool_calls table: %w", err)
 		}
 	}
 	return nil

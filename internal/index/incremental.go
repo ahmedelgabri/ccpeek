@@ -284,6 +284,14 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 				}
 				continue
 			}
+			if err := s.InsertToolCalls(ctx, tx, sessionDBID, sd.messages); err != nil {
+				log.Printf("skipping tool calls for %s: %v", jsonlPath, err)
+				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
+				continue
+			}
 			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
 				log.Printf("skipping commands for %s: %v", jsonlPath, err)
 				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)

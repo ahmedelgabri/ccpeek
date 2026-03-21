@@ -464,6 +464,10 @@ func (s *Store) DeleteSessionCascade(ctx context.Context, tx *sqlx.Tx, sourcePat
 		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sid); err != nil {
 			return fmt.Errorf("deleting messages for session %d: %w", sid, err)
 		}
+		// Delete tool calls
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tool_calls WHERE session_id = ?`, sid); err != nil {
+			return fmt.Errorf("deleting tool calls for session %d: %w", sid, err)
+		}
 		// Delete commands
 		if _, err := tx.ExecContext(ctx, `DELETE FROM commands WHERE session_id = ?`, sid); err != nil {
 			return fmt.Errorf("deleting commands for session %d: %w", sid, err)

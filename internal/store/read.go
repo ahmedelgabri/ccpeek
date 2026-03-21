@@ -52,7 +52,7 @@ func (s *Store) GetStats(ctx context.Context) (Stats, error) {
 			(SELECT COUNT(*) FROM paste_cache) AS pastecachecount,
 			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount,
 			(SELECT COUNT(*) FROM memories) AS memorycount,
-			(SELECT COUNT(*) FROM commands) AS commandcount,
+			(SELECT COUNT(*) FROM tool_calls WHERE tool_kind = 'shell') AS commandcount,
 			(SELECT COUNT(*) FROM scan_findings WHERE ignored = 0) AS scanfindingcount`)
 	return st, err
 }
@@ -829,13 +829,14 @@ func (s *Store) searchConversations(ctx context.Context, query string, limit int
 func (s *Store) searchCommands(ctx context.Context, query string, limit int) ([]SearchHit, error) {
 	like := "%" + escapeLike(query) + "%"
 	q := `
-		SELECT c.command, c.timestamp, s.session_id, s.first_prompt,
+		SELECT COALESCE(json_extract(tc.input_json, '$.command'), '') AS command,
+			   tc.timestamp, s.session_id, s.first_prompt,
 			   p.dir_name, p.display_name
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
+		FROM tool_calls tc
+		JOIN sessions s ON tc.session_id = s.id
 		JOIN projects p ON s.project_id = p.id
-		WHERE c.command LIKE ? ESCAPE '\'
-		ORDER BY c.timestamp DESC LIMIT ?`
+		WHERE tc.tool_kind = 'shell' AND json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'
+		ORDER BY tc.timestamp DESC, tc.seq DESC LIMIT ?`
 
 	var rows []struct {
 		Command        string `db:"command"`
@@ -1213,15 +1214,14 @@ type ToolUsageStat struct {
 	Percent float64 `db:"-"`
 }
 
-// GetToolUsageStats aggregates tool_use_counts across all sessions and returns
+// GetToolUsageStats aggregates normalized tool calls across all sessions and returns
 // the top tools sorted by usage count.
 func (s *Store) GetToolUsageStats(ctx context.Context, limit int) ([]ToolUsageStat, error) {
 	q := `
-		SELECT j.key AS name, CAST(SUM(j.value) AS INTEGER) AS count
-		FROM sessions s, json_each(s.tool_use_counts) j
-		WHERE s.tool_use_counts != '{}'
-		GROUP BY j.key
-		ORDER BY count DESC`
+		SELECT tool_name AS name, COUNT(*) AS count
+		FROM tool_calls
+		GROUP BY tool_name
+		ORDER BY count DESC, name`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -1288,45 +1288,17 @@ type ToolTimelineEntry struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// GetToolTimeline returns tool_use blocks with timestamps for a session.
+// GetToolTimeline returns normalized tool calls with timestamps for a session.
 func (s *Store) GetToolTimeline(ctx context.Context, dirName, sessionID string) ([]ToolTimelineEntry, error) {
-	var dbID int64
-	if err := s.db.GetContext(ctx, &dbID,
-		`SELECT s.id FROM sessions s JOIN projects p ON s.project_id = p.id
-		 WHERE p.dir_name = ? AND s.session_id = ?`, dirName, sessionID); err != nil {
-		return nil, err
-	}
-
-	var rows []struct {
-		Content   string `db:"content"`
-		Timestamp string `db:"timestamp"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, `
-		SELECT content, timestamp FROM messages
-		WHERE session_id = ? AND role = 'assistant'
-		ORDER BY seq`, dbID); err != nil {
-		return nil, err
-	}
-
 	var entries []ToolTimelineEntry
-	for _, r := range rows {
-		// Parse content blocks to find tool_use entries
-		var blocks []struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-		}
-		if json.Unmarshal([]byte(r.Content), &blocks) == nil {
-			for _, b := range blocks {
-				if b.Type == "tool_use" && b.Name != "" {
-					entries = append(entries, ToolTimelineEntry{
-						Name:      b.Name,
-						Timestamp: r.Timestamp,
-					})
-				}
-			}
-		}
-	}
-	return entries, nil
+	err := s.db.SelectContext(ctx, &entries, `
+		SELECT tc.tool_name AS name, tc.timestamp
+		FROM tool_calls tc
+		JOIN sessions s ON tc.session_id = s.id
+		JOIN projects p ON s.project_id = p.id
+		WHERE p.dir_name = ? AND s.session_id = ?
+		ORDER BY tc.seq`, dirName, sessionID)
+	return entries, err
 }
 
 // GetSourceFileHash returns the stored content hash for a source file.
@@ -1696,36 +1668,33 @@ type CommandFilter struct {
 // ListCommands returns bash commands across all sessions with optional filters.
 func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter CommandFilter) ([]model.CommandEntry, int, error) {
 	baseFrom := `
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
+		FROM tool_calls tc
+		JOIN sessions s ON tc.session_id = s.id
 		JOIN projects p ON s.project_id = p.id`
 
 	var where []string
 	var args []any
+	where = append(where, "tc.tool_kind = 'shell'")
 
 	if filter.Project != "" {
 		where = append(where, "p.dir_name = ?")
 		args = append(args, filter.Project)
 	}
 	if filter.Search != "" {
-		where = append(where, `c.command LIKE ? ESCAPE '\'`)
+		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(filter.Search)+"%")
 	}
 	if filter.From != "" {
-		where = append(where, "c.timestamp >= ?")
+		where = append(where, "tc.timestamp >= ?")
 		args = append(args, filter.From)
 	}
 	if filter.To != "" {
-		where = append(where, "c.timestamp <= ?")
+		where = append(where, "tc.timestamp <= ?")
 		args = append(args, filter.To+"T23:59:59Z")
 	}
 
-	whereClause := ""
-	if len(where) > 0 {
-		whereClause = " WHERE " + strings.Join(where, " AND ")
-	}
+	whereClause := " WHERE " + strings.Join(where, " AND ")
 
-	// Count total
 	var total int
 	countArgs := make([]any, len(args))
 	copy(countArgs, args)
@@ -1733,10 +1702,14 @@ func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter Comm
 		return nil, 0, err
 	}
 
-	// Fetch page
-	query := "SELECT c.command, c.timestamp, s.session_id, s.first_prompt, p.dir_name, p.display_name" +
-		baseFrom + whereClause +
-		" ORDER BY c.timestamp DESC LIMIT ? OFFSET ?"
+	query := `SELECT
+			COALESCE(json_extract(tc.input_json, '$.command'), '') AS command,
+			tc.timestamp,
+			s.session_id,
+			s.first_prompt,
+			p.dir_name,
+			p.display_name` + baseFrom + whereClause +
+		" ORDER BY tc.timestamp DESC, tc.seq DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
 	var rows []model.CommandEntry
@@ -1751,38 +1724,41 @@ func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter Comm
 // Used for export.
 func (s *Store) ListAllCommands(ctx context.Context, filter CommandFilter) ([]model.CommandEntry, error) {
 	baseFrom := `
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
+		FROM tool_calls tc
+		JOIN sessions s ON tc.session_id = s.id
 		JOIN projects p ON s.project_id = p.id`
 
 	var where []string
 	var args []any
+	where = append(where, "tc.tool_kind = 'shell'")
 
 	if filter.Project != "" {
 		where = append(where, "p.dir_name = ?")
 		args = append(args, filter.Project)
 	}
 	if filter.Search != "" {
-		where = append(where, `c.command LIKE ? ESCAPE '\'`)
+		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(filter.Search)+"%")
 	}
 	if filter.From != "" {
-		where = append(where, "c.timestamp >= ?")
+		where = append(where, "tc.timestamp >= ?")
 		args = append(args, filter.From)
 	}
 	if filter.To != "" {
-		where = append(where, "c.timestamp <= ?")
+		where = append(where, "tc.timestamp <= ?")
 		args = append(args, filter.To+"T23:59:59Z")
 	}
 
-	whereClause := ""
-	if len(where) > 0 {
-		whereClause = " WHERE " + strings.Join(where, " AND ")
-	}
+	whereClause := " WHERE " + strings.Join(where, " AND ")
 
-	query := "SELECT c.command, c.timestamp, s.session_id, s.first_prompt, p.dir_name, p.display_name" +
-		baseFrom + whereClause +
-		" ORDER BY c.timestamp DESC"
+	query := `SELECT
+			COALESCE(json_extract(tc.input_json, '$.command'), '') AS command,
+			tc.timestamp,
+			s.session_id,
+			s.first_prompt,
+			p.dir_name,
+			p.display_name` + baseFrom + whereClause +
+		" ORDER BY tc.timestamp DESC, tc.seq DESC"
 
 	var rows []model.CommandEntry
 	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
@@ -1794,7 +1770,7 @@ func (s *Store) ListAllCommands(ctx context.Context, filter CommandFilter) ([]mo
 // CommandCount returns the total number of commands in the database.
 func (s *Store) CommandCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM commands`)
+	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM tool_calls WHERE tool_kind = 'shell'`)
 	return count, err
 }
 

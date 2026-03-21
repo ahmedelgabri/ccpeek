@@ -152,6 +152,13 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 				}
 				continue
 			}
+			if err := s.InsertToolCalls(ctx, tx, sessionDBID, sd.messages); err != nil {
+				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
+				continue
+			}
 			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
 				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
 				if rec != nil {

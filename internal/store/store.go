@@ -84,7 +84,7 @@ func (s *Store) EnsureFilePermissions() error {
 // Reset drops all data and recreates the schema. Used for full rebuild.
 func (s *Store) Reset(ctx context.Context) error {
 	tables := []string{
-		"messages_fts", "commands", "messages", "todo_items", "todos",
+		"messages_fts", "tool_calls", "commands", "messages", "todo_items", "todos",
 		"file_versions", "file_history",
 		"task_items", "task_groups", "usage_facets", "usage_report", "paste_cache",
 		"memories", "sessions", "projects",
@@ -121,7 +121,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	if currentVersion >= schemaVersion {
-		return nil
+		return s.backfillToolCalls(ctx)
 	}
 
 	// If this was a fresh database (no version set), we're now at baseline v4
@@ -180,5 +180,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)`,
 		strconv.Itoa(schemaVersion),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if err := s.backfillToolCalls(ctx); err != nil {
+		return fmt.Errorf("backfilling tool calls: %w", err)
+	}
+
+	return nil
 }
