@@ -88,6 +88,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("scan failed: %w", err)
 	}
+	if err := db.EnsureFilePermissions(); err != nil {
+		return fmt.Errorf("tightening database permissions: %w", err)
+	}
 
 	if format == "json" {
 		enc := json.NewEncoder(os.Stdout)

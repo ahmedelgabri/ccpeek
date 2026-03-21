@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
 	"github.com/ahmedelgabri/ccpeek/internal/server"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
@@ -121,6 +122,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	dataChanged := false
 	if !skipIndex {
+		beforeRunID, _ := latestIngestRunID(ctx, db)
 		logf("Indexing %s -> %s\n", claudeDir, dbPath)
 		if rebuild {
 			if err := index.Run(ctx, claudeDir, db, true, os.Stderr); err != nil {
@@ -134,13 +136,26 @@ func run(cmd *cobra.Command, args []string) error {
 			}
 			dataChanged = changed
 		}
+		if err := db.EnsureFilePermissions(); err != nil {
+			return fmt.Errorf("tightening database permissions: %w", err)
+		}
+		if run, err := ingestRunAfter(ctx, db, beforeRunID); err == nil {
+			logIngestWarnings(logf, run)
+		}
 		logf("Indexing complete.\n")
 	}
 
 	if prune {
+		beforeRunID, _ := latestIngestRunID(ctx, db)
 		logf("Pruning deleted source files...\n")
 		if err := index.Prune(ctx, claudeDir, db, os.Stderr); err != nil {
 			return fmt.Errorf("pruning failed: %w", err)
+		}
+		if err := db.EnsureFilePermissions(); err != nil {
+			return fmt.Errorf("tightening database permissions: %w", err)
+		}
+		if run, err := ingestRunAfter(ctx, db, beforeRunID); err == nil {
+			logIngestWarnings(logf, run)
 		}
 		logf("Pruning complete.\n")
 	}
@@ -154,6 +169,9 @@ func run(cmd *cobra.Command, args []string) error {
 		findings, err := scanner.Run(ctx)
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
+		}
+		if err := db.EnsureFilePermissions(); err != nil {
+			return fmt.Errorf("tightening database permissions: %w", err)
 		}
 		if len(findings) == 0 {
 			logf("  %sNo secrets detected.%s\n", colorGreen, colorReset)
@@ -180,6 +198,31 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	return server.ListenAndServe(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second, !skipScan)
+}
+
+func latestIngestRunID(ctx context.Context, db *store.Store) (int64, error) {
+	run, err := db.GetLatestIngestRun(ctx)
+	if err != nil || run == nil {
+		return 0, err
+	}
+	return run.ID, nil
+}
+
+func ingestRunAfter(ctx context.Context, db *store.Store, previousID int64) (*model.IngestRun, error) {
+	run, err := db.GetLatestIngestRun(ctx)
+	if err != nil || run == nil || run.ID == previousID {
+		return nil, err
+	}
+	return run, nil
+}
+
+func logIngestWarnings(logf func(string, ...any), run *model.IngestRun) {
+	if run == nil || run.WarningCount == 0 {
+		return
+	}
+	logf("  %s%sWARNING%s %sIngest completed with %d diagnostic(s): %d skipped file(s), %d skipped row(s), %d parse failure(s), %d unresolved link(s). Run `ccpeek ingest --latest` for details.%s\n",
+		colorBold, colorYellow, colorReset, colorYellow,
+		run.WarningCount, run.SkippedFiles, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks, colorReset)
 }
 
 // dataDir returns the XDG data directory for ccpeek.
