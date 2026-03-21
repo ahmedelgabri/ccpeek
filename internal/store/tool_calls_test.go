@@ -21,7 +21,7 @@ func TestBackfillToolCallsFromMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, err := s.InsertProject(ctx, tx, "proj", "Project")
+	projectID, err := s.InsertProject(ctx, tx, "proj", "Project", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestListCommandsUsesToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, err := s.InsertProject(ctx, tx, "proj", "Project")
+	projectID, err := s.InsertProject(ctx, tx, "proj", "Project", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -122,8 +122,9 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 			entriesForDisplay = append(entriesForDisplay, sd.entry)
 		}
 		displayName, hasTrustedDisplay := projectDisplayName(dirName, entriesForDisplay)
+		canonicalPath := projectCanonicalPath(entriesForDisplay)
 
-		projectID, err := s.UpsertProject(ctx, tx, dirName, displayName, hasTrustedDisplay)
+		projectID, err := s.UpsertProject(ctx, tx, dirName, displayName, canonicalPath, hasTrustedDisplay)
 		if err != nil {
 			if rec != nil {
 				rec.SkippedFile("project", projectDir, err.Error())

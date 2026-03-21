@@ -34,10 +34,14 @@ func (s *Store) InsertShellSnapshot(ctx context.Context, tx *sqlx.Tx, snap model
 }
 
 // InsertProject inserts a project and returns its database ID.
-func (s *Store) InsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName string) (int64, error) {
+func (s *Store) InsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName, canonicalPath string) (int64, error) {
+	if displayName == "" {
+		displayName = dirName
+	}
+
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)`,
-		dirName, displayName,
+		`INSERT INTO projects (dir_name, display_name, canonical_path) VALUES (?, ?, ?)`,
+		dirName, displayName, canonicalPath,
 	)
 	if err != nil {
 		return 0, err
@@ -47,7 +51,7 @@ func (s *Store) InsertProject(ctx context.Context, tx *sqlx.Tx, dirName, display
 
 // UpsertProject inserts or updates a project and returns its database ID.
 // If updateDisplayName is false, an existing project's display_name is preserved.
-func (s *Store) UpsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName string, updateDisplayName bool) (int64, error) {
+func (s *Store) UpsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName, canonicalPath string, updateDisplayName bool) (int64, error) {
 	if displayName == "" {
 		displayName = dirName
 	}
@@ -55,15 +59,24 @@ func (s *Store) UpsertProject(ctx context.Context, tx *sqlx.Tx, dirName, display
 	var err error
 	if updateDisplayName {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)
-			 ON CONFLICT(dir_name) DO UPDATE SET display_name = excluded.display_name`,
-			dirName, displayName,
+			`INSERT INTO projects (dir_name, display_name, canonical_path) VALUES (?, ?, ?)
+			 ON CONFLICT(dir_name) DO UPDATE SET
+			 	display_name = excluded.display_name,
+			 	canonical_path = CASE
+			 		WHEN excluded.canonical_path <> '' THEN excluded.canonical_path
+			 		ELSE projects.canonical_path
+			 	END`,
+			dirName, displayName, canonicalPath,
 		)
 	} else {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)
-			 ON CONFLICT(dir_name) DO NOTHING`,
-			dirName, displayName,
+			`INSERT INTO projects (dir_name, display_name, canonical_path) VALUES (?, ?, ?)
+			 ON CONFLICT(dir_name) DO UPDATE SET
+			 	canonical_path = CASE
+			 		WHEN excluded.canonical_path <> '' THEN excluded.canonical_path
+			 		ELSE projects.canonical_path
+			 	END`,
+			dirName, displayName, canonicalPath,
 		)
 	}
 	if err != nil {

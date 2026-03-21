@@ -22,7 +22,7 @@ func TestRunScansAdditionalSourceTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projectID, err := db.InsertProject(ctx, tx, "test-project", "test-project")
+	projectID, err := db.InsertProject(ctx, tx, "test-project", "test-project", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestRunFailedRescanPreservesExistingFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, _ := db.InsertProject(context.Background(), tx, "test-proj", "Test")
+	projectID, _ := db.InsertProject(context.Background(), tx, "test-proj", "Test", "")
 	sess := model.SessionEntry{SessionID: "s1", FirstPrompt: "test", MessageCount: 1, Created: "2025-01-01T00:00:00Z", Modified: "2025-01-01T00:00:00Z"}
 	sessionDBID, _ := db.InsertSession(context.Background(), tx, projectID, sess, "")
 	messages := []model.ConversationMessage{{

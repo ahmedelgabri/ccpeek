@@ -7,7 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 11
+const schemaVersion = 12
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -17,9 +17,10 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 CREATE TABLE IF NOT EXISTS projects (
-	id           INTEGER PRIMARY KEY,
-	dir_name     TEXT NOT NULL UNIQUE,
-	display_name TEXT NOT NULL
+	id             INTEGER PRIMARY KEY,
+	dir_name       TEXT NOT NULL UNIQUE,
+	display_name   TEXT NOT NULL,
+	canonical_path TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -266,6 +267,7 @@ var migrations = []func(ctx context.Context, tx *sqlx.Tx) error{
 	migrateV8ToV9,
 	migrateV9ToV10,
 	migrateV10ToV11,
+	migrateV11ToV12,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -477,6 +479,37 @@ func migrateV10ToV11(ctx context.Context, tx *sqlx.Tx) error {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("creating tool_calls table: %w", err)
 		}
+	}
+	return nil
+}
+
+// migrateV11ToV12 adds a canonical project path field and backfills it from sessions.
+func migrateV11ToV12(ctx context.Context, tx *sqlx.Tx) error {
+	var hasCol int
+	if err := tx.GetContext(ctx, &hasCol, `SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'canonical_path'`); err != nil {
+		return fmt.Errorf("checking projects.canonical_path: %w", err)
+	}
+	if hasCol == 0 {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN canonical_path TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("adding projects.canonical_path: %w", err)
+		}
+	}
+
+	_, err := tx.ExecContext(ctx, `
+		UPDATE projects
+		SET canonical_path = COALESCE(
+			NULLIF((
+				SELECT s.project_path
+				FROM sessions s
+				WHERE s.project_id = projects.id AND s.project_path <> ''
+				ORDER BY s.modified_at DESC, s.id DESC
+				LIMIT 1
+			), ''),
+			CASE WHEN display_name <> dir_name THEN display_name ELSE '' END
+		)
+		WHERE canonical_path = ''`)
+	if err != nil {
+		return fmt.Errorf("backfilling projects.canonical_path: %w", err)
 	}
 	return nil
 }

@@ -123,9 +123,10 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			entriesForDisplay = append(entriesForDisplay, sd.entry)
 		}
 		displayName, _ := projectDisplayName(dirName, entriesForDisplay)
+		canonicalPath := projectCanonicalPath(entriesForDisplay)
 
 		// Insert project
-		projectID, err := s.InsertProject(ctx, tx, dirName, displayName)
+		projectID, err := s.InsertProject(ctx, tx, dirName, displayName, canonicalPath)
 		if err != nil {
 			if rec != nil {
 				rec.SkippedFile("project", projectDir, err.Error())
@@ -174,12 +175,19 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 }
 
 func projectDisplayName(dirName string, sessions []model.SessionEntry) (string, bool) {
-	for _, s := range sessions {
-		if p := strings.TrimSpace(s.ProjectPath); p != "" {
-			return p, true
-		}
+	if p := projectCanonicalPath(sessions); p != "" {
+		return p, true
 	}
 	return dirName, false
+}
+
+func projectCanonicalPath(sessions []model.SessionEntry) string {
+	for _, s := range sessions {
+		if p := strings.TrimSpace(s.ProjectPath); p != "" {
+			return p
+		}
+	}
+	return ""
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {

@@ -220,11 +220,12 @@ func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.
 // avoiding N+1 queries.
 func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) {
 	var projRows []struct {
-		ID          int64  `db:"id"`
-		DirName     string `db:"dir_name"`
-		DisplayName string `db:"display_name"`
+		ID            int64  `db:"id"`
+		DirName       string `db:"dir_name"`
+		DisplayName   string `db:"display_name"`
+		CanonicalPath string `db:"canonical_path"`
 	}
-	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name, canonical_path FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
 		return nil, err
 	}
 
@@ -277,10 +278,11 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 	for i, pr := range projRows {
 		sessions := sessMap[pr.ID]
 		projects[i] = model.ProjectEntry{
-			DirName:      pr.DirName,
-			DisplayName:  pr.DisplayName,
-			SessionCount: len(sessions),
-			Sessions:     sessions,
+			DirName:       pr.DirName,
+			DisplayName:   pr.DisplayName,
+			CanonicalPath: pr.CanonicalPath,
+			SessionCount:  len(sessions),
+			Sessions:      sessions,
 		}
 	}
 	return projects, nil
@@ -289,11 +291,12 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 // GetProject returns a single project with its sessions.
 func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectEntry, error) {
 	var pr struct {
-		ID          int64  `db:"id"`
-		DirName     string `db:"dir_name"`
-		DisplayName string `db:"display_name"`
+		ID            int64  `db:"id"`
+		DirName       string `db:"dir_name"`
+		DisplayName   string `db:"display_name"`
+		CanonicalPath string `db:"canonical_path"`
 	}
-	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name FROM projects WHERE dir_name = ?`, dirName); err != nil {
+	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name, canonical_path FROM projects WHERE dir_name = ?`, dirName); err != nil {
 		return nil, err
 	}
 	sessions, err := s.listSessionsForProject(ctx, pr.ID)
@@ -301,10 +304,11 @@ func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectE
 		return nil, err
 	}
 	return &model.ProjectEntry{
-		DirName:      pr.DirName,
-		DisplayName:  pr.DisplayName,
-		SessionCount: len(sessions),
-		Sessions:     sessions,
+		DirName:       pr.DirName,
+		DisplayName:   pr.DisplayName,
+		CanonicalPath: pr.CanonicalPath,
+		SessionCount:  len(sessions),
+		Sessions:      sessions,
 	}, nil
 }
 
@@ -441,8 +445,9 @@ func (s *Store) GetProjectID(ctx context.Context, dirName string) (int64, error)
 func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*model.ProjectEntry, *model.SessionEntry, error) {
 	var row struct {
 		// Project fields
-		ProjectDirName     string `db:"dir_name"`
-		ProjectDisplayName string `db:"display_name"`
+		ProjectDirName       string `db:"dir_name"`
+		ProjectDisplayName   string `db:"display_name"`
+		ProjectCanonicalPath string `db:"canonical_path"`
 		// Session fields
 		SessionID        string `db:"session_id"`
 		FirstPrompt      string `db:"first_prompt"`
@@ -458,7 +463,7 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 		EstimatedTokens  int    `db:"estimated_tokens"`
 	}
 	err := s.db.GetContext(ctx, &row, `
-		SELECT p.dir_name, p.display_name,
+		SELECT p.dir_name, p.display_name, p.canonical_path,
 			   s.session_id, s.first_prompt, s.message_count, s.created_at, s.modified_at,
 			   s.git_branch, s.project_path, s.todo_file_name, s.has_file_history,
 			   s.bash_command_count, s.tool_use_counts, s.estimated_tokens
@@ -473,8 +478,9 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 	_ = json.Unmarshal([]byte(row.ToolUseCounts), &toolCounts)
 
 	project := &model.ProjectEntry{
-		DirName:     row.ProjectDirName,
-		DisplayName: row.ProjectDisplayName,
+		DirName:       row.ProjectDirName,
+		DisplayName:   row.ProjectDisplayName,
+		CanonicalPath: row.ProjectCanonicalPath,
 	}
 	session := &model.SessionEntry{
 		SessionID:        row.SessionID,
@@ -591,6 +597,9 @@ func (s *Store) ListHistory(ctx context.Context, limit int) ([]model.HistoryEntr
 	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC LIMIT ?`, limit); err != nil {
 		return nil, err
 	}
+	if err := s.enrichHistoryEntries(ctx, entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
 }
 
@@ -600,7 +609,88 @@ func (s *Store) ListAllHistory(ctx context.Context) ([]model.HistoryEntry, error
 	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC`); err != nil {
 		return nil, err
 	}
+	if err := s.enrichHistoryEntries(ctx, entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
+}
+
+func (s *Store) enrichHistoryEntries(ctx context.Context, entries []model.HistoryEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	var projects []struct {
+		DirName       string `db:"dir_name"`
+		DisplayName   string `db:"display_name"`
+		CanonicalPath string `db:"canonical_path"`
+	}
+	if err := s.db.SelectContext(ctx, &projects, `SELECT dir_name, display_name, canonical_path FROM projects`); err != nil {
+		return err
+	}
+
+	byDir := make(map[string]struct {
+		DisplayName   string
+		CanonicalPath string
+	}, len(projects))
+	byCanonical := make(map[string]struct {
+		DirName       string
+		DisplayName   string
+		CanonicalPath string
+	}, len(projects))
+	for _, p := range projects {
+		byDir[p.DirName] = struct {
+			DisplayName   string
+			CanonicalPath string
+		}{
+			DisplayName:   p.DisplayName,
+			CanonicalPath: p.CanonicalPath,
+		}
+		if p.CanonicalPath != "" {
+			byCanonical[p.CanonicalPath] = struct {
+				DirName       string
+				DisplayName   string
+				CanonicalPath string
+			}{
+				DirName:       p.DirName,
+				DisplayName:   p.DisplayName,
+				CanonicalPath: p.CanonicalPath,
+			}
+		}
+	}
+
+	for i := range entries {
+		raw := strings.TrimSpace(entries[i].Project)
+		if raw == "" {
+			continue
+		}
+		entries[i].ProjectDisplay = raw
+
+		if p, ok := byCanonical[raw]; ok {
+			entries[i].ProjectDirName = p.DirName
+			entries[i].ProjectDisplay = p.CanonicalPath
+			continue
+		}
+		if p, ok := byDir[raw]; ok {
+			entries[i].ProjectDirName = raw
+			if p.CanonicalPath != "" {
+				entries[i].ProjectDisplay = p.CanonicalPath
+			} else if p.DisplayName != "" {
+				entries[i].ProjectDisplay = p.DisplayName
+			}
+			continue
+		}
+
+		encoded := model.EncodeProjectDir(raw)
+		if p, ok := byDir[encoded]; ok {
+			entries[i].ProjectDirName = encoded
+			if p.CanonicalPath != "" {
+				entries[i].ProjectDisplay = p.CanonicalPath
+			}
+		}
+	}
+
+	return nil
 }
 
 // HeatmapDayCounts holds a date and its activity count.

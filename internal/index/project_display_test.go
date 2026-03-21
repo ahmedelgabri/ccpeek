@@ -52,6 +52,9 @@ func TestProjectDisplayNameUsesProjectPathWhenAvailable(t *testing.T) {
 	if project.DisplayName != "/Users/me/my-project" {
 		t.Fatalf("expected display name to use projectPath, got %q", project.DisplayName)
 	}
+	if project.CanonicalPath != "/Users/me/my-project" {
+		t.Fatalf("expected canonical path to use projectPath, got %q", project.CanonicalPath)
+	}
 }
 
 func TestProjectDisplayNameFallsBackToRawDirName(t *testing.T) {
@@ -82,5 +85,8 @@ func TestProjectDisplayNameFallsBackToRawDirName(t *testing.T) {
 	}
 	if project.DisplayName != "my-project" {
 		t.Fatalf("expected raw dir name fallback, got %q", project.DisplayName)
+	}
+	if project.CanonicalPath != "" {
+		t.Fatalf("expected empty canonical path fallback, got %q", project.CanonicalPath)
 	}
 }

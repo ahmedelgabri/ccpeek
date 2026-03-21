@@ -105,7 +105,7 @@ func TestIgnoredFindingsSurviveRescan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, _ := db.InsertProject(context.Background(), tx, "test-proj", "Test")
+	projectID, _ := db.InsertProject(context.Background(), tx, "test-proj", "Test", "")
 	sess := model.SessionEntry{
 		SessionID: "s1", FirstPrompt: "test", MessageCount: 1,
 		Created: "2025-01-01T00:00:00Z", Modified: "2025-01-01T00:00:00Z",
@@ -164,7 +164,7 @@ func TestDetectKnownSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projectID, err := db.InsertProject(context.Background(), tx, "test-project", "Test Project")
+	projectID, err := db.InsertProject(context.Background(), tx, "test-project", "Test Project", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -218,6 +218,35 @@ func TestRun(t *testing.T) {
 		}
 	}
 
+	var foundResolvedCanonical bool
+	var foundResolvedEncoded bool
+	for _, h := range history {
+		switch h.Project {
+		case "/Users/demo/code/web-app":
+			if h.ProjectDirName != "-Users-demo-code-web-app" {
+				t.Fatalf("expected canonical history project dir %q, got %q", "-Users-demo-code-web-app", h.ProjectDirName)
+			}
+			if h.ProjectDisplay != "/Users/demo/code/web-app" {
+				t.Fatalf("expected canonical history project display %q, got %q", "/Users/demo/code/web-app", h.ProjectDisplay)
+			}
+			foundResolvedCanonical = true
+		case "test/project":
+			if h.ProjectDirName != "test-project" {
+				t.Fatalf("expected encoded history project dir %q, got %q", "test-project", h.ProjectDirName)
+			}
+			if h.ProjectDisplay != "test/project" {
+				t.Fatalf("expected encoded history project display %q, got %q", "test/project", h.ProjectDisplay)
+			}
+			foundResolvedEncoded = true
+		}
+	}
+	if !foundResolvedCanonical {
+		t.Fatal("expected history to resolve canonical project paths")
+	}
+	if !foundResolvedEncoded {
+		t.Fatal("expected history to resolve encoded project directory links")
+	}
+
 	// Verify plan content
 	_, planContent, err := s.GetPlan(context.Background(), "test-plan")
 	if err != nil {

@@ -43,10 +43,11 @@ type TodoEntry struct {
 }
 
 type ProjectEntry struct {
-	DirName      string         `json:"dirName"`
-	DisplayName  string         `json:"displayName"`
-	SessionCount int            `json:"sessionCount"`
-	Sessions     []SessionEntry `json:"sessions"`
+	DirName       string         `json:"dirName"`
+	DisplayName   string         `json:"displayName"`
+	CanonicalPath string         `json:"canonicalPath,omitempty"`
+	SessionCount  int            `json:"sessionCount"`
+	Sessions      []SessionEntry `json:"sessions"`
 }
 
 type SessionEntry struct {
@@ -72,9 +73,11 @@ type FileHistoryEntry struct {
 }
 
 type HistoryEntry struct {
-	Display   string `json:"display" db:"display"`
-	Timestamp int64  `json:"timestamp" db:"timestamp"`
-	Project   string `json:"project" db:"project"`
+	Display        string `json:"display" db:"display"`
+	Timestamp      int64  `json:"timestamp" db:"timestamp"`
+	Project        string `json:"project" db:"project"`
+	ProjectDirName string `json:"projectDirName,omitempty"`
+	ProjectDisplay string `json:"projectDisplay,omitempty"`
 }
 
 // ConversationMessage represents a single message in a session JSONL.

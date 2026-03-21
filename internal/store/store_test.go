@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
+
+	"github.com/jmoiron/sqlx"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
@@ -83,6 +86,70 @@ func TestMigrateRecoversMissingTables(t *testing.T) {
 	var count int
 	if err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM messages`); err != nil {
 		t.Fatal("messages table not recovered:", err)
+	}
+}
+
+func TestMigrateBackfillsProjectCanonicalPath(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ccpeek.db")
+
+	db, err := sqlx.Open("sqlite3", path+"?_foreign_keys=on")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stmts := []string{
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta (key, value) VALUES ('schema_version', '11')`,
+		`CREATE TABLE projects (
+			id INTEGER PRIMARY KEY,
+			dir_name TEXT NOT NULL UNIQUE,
+			display_name TEXT NOT NULL
+		)`,
+		`CREATE TABLE sessions (
+			id INTEGER PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
+			first_prompt TEXT NOT NULL DEFAULT '',
+			message_count INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT '',
+			modified_at TEXT NOT NULL DEFAULT '',
+			git_branch TEXT NOT NULL DEFAULT '',
+			project_path TEXT NOT NULL DEFAULT '',
+			todo_file_name TEXT NOT NULL DEFAULT '',
+			has_file_history INTEGER NOT NULL DEFAULT 0,
+			bash_command_count INTEGER NOT NULL DEFAULT 0,
+			tool_use_counts TEXT NOT NULL DEFAULT '{}',
+			estimated_tokens INTEGER NOT NULL DEFAULT 0,
+			source_path TEXT NOT NULL DEFAULT '',
+			UNIQUE(session_id, project_id)
+		)`,
+		`INSERT INTO projects (id, dir_name, display_name) VALUES (1, '-Users-me-my-project', '-Users-me-my-project')`,
+		`INSERT INTO sessions (session_id, project_id, modified_at, project_path, source_path)
+		 VALUES ('sess-1', 1, '2024-01-02T00:00:00Z', '/Users/me/my-project', '/src/sess-1.jsonl')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			db.Close()
+			t.Fatalf("seed old schema: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	project, err := s.GetProject(ctx, "-Users-me-my-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.CanonicalPath != "/Users/me/my-project" {
+		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
 	}
 }
 
@@ -176,11 +243,11 @@ func TestDuplicateSessionAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pid1, err := s.InsertProject(ctx, tx, "proj-a", "Project A")
+	pid1, err := s.InsertProject(ctx, tx, "proj-a", "Project A", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid2, err := s.InsertProject(ctx, tx, "proj-b", "Project B")
+	pid2, err := s.InsertProject(ctx, tx, "proj-b", "Project B", "")
 	if err != nil {
 		t.Fatal(err)
 	}
