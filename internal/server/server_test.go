@@ -20,7 +20,7 @@ func TestListenAndServeGracefulShutdown(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- ListenAndServe(ctx, "127.0.0.1:0", db, t.TempDir(), false, 30*time.Second)
+		errCh <- ListenAndServe(ctx, "127.0.0.1:0", db, t.TempDir(), false, 30*time.Second, false)
 	}()
 
 	// Give the server a moment to start
@@ -50,7 +50,7 @@ func TestListenAndServeContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err = ListenAndServe(ctx, "127.0.0.1:0", db, t.TempDir(), false, 30*time.Second)
+	err = ListenAndServe(ctx, "127.0.0.1:0", db, t.TempDir(), false, 30*time.Second, false)
 	// Should return nil (ErrServerClosed is treated as clean shutdown)
 	if err != nil && err != http.ErrServerClosed {
 		t.Fatalf("expected nil or ErrServerClosed, got: %v", err)

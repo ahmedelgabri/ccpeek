@@ -2029,3 +2029,148 @@ func (s *Store) EachMemoryForScan(ctx context.Context, fn func(ScanMemoryRow) er
 	}
 	return rows.Err()
 }
+
+// ScanTodoRow holds a todo item for scanning.
+type ScanTodoRow struct {
+	FileName string `db:"file_name"`
+	Seq      int    `db:"seq"`
+	Content  string `db:"content"`
+}
+
+// EachTodoForScan iterates over all todo items for scanning.
+func (s *Store) EachTodoForScan(ctx context.Context, fn func(ScanTodoRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `
+		SELECT t.file_name, ti.seq, ti.content
+		FROM todo_items ti
+		JOIN todos t ON ti.todo_id = t.id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanTodoRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanTaskRow holds a task item for scanning.
+type ScanTaskRow struct {
+	DirName     string `db:"dir_name"`
+	ItemID      string `db:"item_id"`
+	Subject     string `db:"subject"`
+	Description string `db:"description"`
+}
+
+// EachTaskForScan iterates over all task items for scanning.
+func (s *Store) EachTaskForScan(ctx context.Context, fn func(ScanTaskRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `
+		SELECT tg.dir_name, ti.item_id, ti.subject, ti.description
+		FROM task_items ti
+		JOIN task_groups tg ON ti.task_group_id = tg.id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanTaskRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanFileVersionRow holds a file-history version for scanning.
+type ScanFileVersionRow struct {
+	ConversationID string `db:"conversation_id"`
+	Content        string `db:"content"`
+}
+
+// EachFileVersionForScan iterates over all file-history versions for scanning.
+func (s *Store) EachFileVersionForScan(ctx context.Context, fn func(ScanFileVersionRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `
+		SELECT fh.conversation_id, fv.content
+		FROM file_versions fv
+		JOIN file_history fh ON fv.file_history_id = fh.id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanFileVersionRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanUsageFacetRow holds a usage facet for scanning.
+type ScanUsageFacetRow struct {
+	SessionID      string `db:"session_id_text"`
+	UnderlyingGoal string `db:"underlying_goal"`
+	Outcome        string `db:"outcome"`
+	Helpfulness    string `db:"helpfulness"`
+	SessionType    string `db:"session_type"`
+	PrimarySuccess string `db:"primary_success"`
+	BriefSummary   string `db:"brief_summary"`
+	FrictionDetail string `db:"friction_detail"`
+}
+
+// EachUsageFacetForScan iterates over all usage facets for scanning.
+func (s *Store) EachUsageFacetForScan(ctx context.Context, fn func(ScanUsageFacetRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `
+		SELECT session_id_text, underlying_goal, outcome, helpfulness,
+		       session_type, primary_success, brief_summary, friction_detail
+		FROM usage_facets`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanUsageFacetRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ScanUsageReportRow holds the usage report HTML content for scanning.
+type ScanUsageReportRow struct {
+	Content string `db:"content"`
+}
+
+// EachUsageReportForScan iterates over the usage report for scanning.
+func (s *Store) EachUsageReportForScan(ctx context.Context, fn func(ScanUsageReportRow) error) error {
+	rows, err := s.db.QueryxContext(ctx, `SELECT content FROM usage_report`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ScanUsageReportRow
+		if err := rows.StructScan(&r); err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
+	"github.com/ahmedelgabri/ccpeek/internal/scan"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/ahmedelgabri/ccpeek/internal/web"
 )
@@ -18,7 +19,7 @@ import (
 var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration) error {
+func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -32,7 +33,7 @@ func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir
 	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		go watchAndReindex(ctx, claudeDir, db, watchInterval)
+		go watchAndReindex(ctx, claudeDir, db, watchInterval, rescanOnWatch)
 	}
 
 	srv := &http.Server{
@@ -124,7 +125,23 @@ type handlers struct {
 	tmpl  *templates
 }
 
-func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration) {
+func reindexAndMaybeScan(ctx context.Context, claudeDir string, db *store.Store, rescan bool) (bool, error) {
+	changed, err := index.RunIncremental(ctx, claudeDir, db)
+	if err != nil || !changed || !rescan {
+		return changed, err
+	}
+
+	scanner, err := scan.New(db)
+	if err != nil {
+		return changed, fmt.Errorf("initializing scanner: %w", err)
+	}
+	if _, err := scanner.Run(ctx); err != nil {
+		return changed, fmt.Errorf("scan failed: %w", err)
+	}
+	return changed, nil
+}
+
+func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration, rescan bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -132,13 +149,16 @@ func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, int
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			changed, err := index.RunIncremental(ctx, claudeDir, db)
+			changed, err := reindexAndMaybeScan(ctx, claudeDir, db, rescan)
 			if err != nil {
-				log.Printf("Re-index failed: %v", err)
+				log.Printf("Re-index/scan failed: %v", err)
 				continue
 			}
 			if changed {
 				log.Println("Re-index complete.")
+				if rescan {
+					log.Println("Secret scan complete.")
+				}
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,6 +117,40 @@ func (m *MessagePayload) ContentText() string {
 	return ""
 }
 
+// SearchText returns text suitable for search/scan indexing.
+// Unlike ContentText, it includes tool_result text and text extracted
+// from tool_use inputs.
+func (m *MessagePayload) SearchText() string {
+	var s string
+	if err := json.Unmarshal(m.Content, &s); err == nil {
+		return s
+	}
+
+	var blocks []ContentBlock
+	if err := json.Unmarshal(m.Content, &blocks); err == nil {
+		parts := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			switch b.Type {
+			case "text":
+				if t := strings.TrimSpace(b.Text); t != "" {
+					parts = append(parts, t)
+				}
+			case "tool_result":
+				if t := strings.TrimSpace(b.ToolResultText()); t != "" {
+					parts = append(parts, t)
+				}
+			case "tool_use":
+				if t := strings.TrimSpace(b.ToolInputText()); t != "" {
+					parts = append(parts, t)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	return ""
+}
+
 // ContentBlocks returns the content parsed as a slice of ContentBlock.
 // Returns nil if content is a plain string.
 func (m *MessagePayload) ContentBlocks() []ContentBlock {
@@ -141,6 +176,44 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+}
+
+// ToolInputText extracts text-bearing string values from a tool_use input.
+func (b *ContentBlock) ToolInputText() string {
+	if b.Input == nil {
+		return ""
+	}
+
+	var value any
+	if err := json.Unmarshal(b.Input, &value); err != nil {
+		return ""
+	}
+
+	var parts []string
+	collectJSONStrings(value, &parts)
+	return strings.Join(parts, "\n")
+}
+
+func collectJSONStrings(v any, parts *[]string) {
+	switch x := v.(type) {
+	case string:
+		if strings.TrimSpace(x) != "" {
+			*parts = append(*parts, x)
+		}
+	case []any:
+		for _, item := range x {
+			collectJSONStrings(item, parts)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			collectJSONStrings(x[k], parts)
+		}
+	}
 }
 
 // ToolResultText extracts plain text from a tool_result content field,
@@ -333,7 +406,7 @@ type ScanFinding struct {
 	ID             int64  `json:"id" db:"id"`
 	RuleID         string `json:"ruleId" db:"rule_id"`
 	Description    string `json:"description" db:"description"`
-	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, shell_snapshot, paste_cache, memory
+	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, shell_snapshot, paste_cache, memory, todo, task, file_history, usage_facet, usage_report
 	SourceID       string `json:"sourceId" db:"source_id"`     // identifies the record within source_type
 	MatchRedacted  string `json:"matchRedacted" db:"match_redacted"`
 	Line           int    `json:"line" db:"line_number"`
@@ -394,6 +467,26 @@ func (f *ScanFinding) SourceURL() string {
 		return "/paste-cache/" + name + "/"
 	case "memory":
 		return "/memories/" + f.SourceID + "/"
+	case "todo":
+		name, anchor := splitSourceFragment(f.SourceID)
+		url := "/todos/" + strings.TrimSuffix(name, ".json") + "/"
+		if anchor != "" {
+			url += "#" + anchor
+		}
+		return url
+	case "task":
+		dir, anchor := splitSourceFragment(f.SourceID)
+		url := "/tasks/" + dir + "/"
+		if anchor != "" {
+			url += "#" + anchor
+		}
+		return url
+	case "file_history":
+		return "/file-history/" + f.SourceID + "/"
+	case "usage_facet":
+		return "/usage-data/" + f.SourceID + "/"
+	case "usage_report":
+		return "/usage-data/report/"
 	}
 	return ""
 }
@@ -402,6 +495,14 @@ func (f *ScanFinding) SourceURL() string {
 // If no "@" is present, returns the whole string as sessionID with empty timestamp.
 func splitSourceID(s string) (sessionID, timestamp string) {
 	if i := strings.LastIndex(s, "@"); i > 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// splitSourceFragment splits "id#fragment" into its parts.
+func splitSourceFragment(s string) (id, fragment string) {
+	if i := strings.LastIndex(s, "#"); i > 0 {
 		return s[:i], s[i+1:]
 	}
 	return s, ""

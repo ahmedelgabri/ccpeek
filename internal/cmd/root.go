@@ -179,7 +179,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second)
+	return server.ListenAndServe(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second, !skipScan)
 }
 
 // dataDir returns the XDG data directory for ccpeek.

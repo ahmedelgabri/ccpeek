@@ -127,8 +127,8 @@ func (s *Store) InsertMessages(ctx context.Context, tx *sqlx.Tx, dbSessionID int
 			return fmt.Errorf("inserting message %d: %w", i, err)
 		}
 
-		// Populate FTS with extracted text
-		textContent := m.Message.ContentText()
+		// Populate FTS with extracted searchable text
+		textContent := m.Message.SearchText()
 		if textContent != "" {
 			msgID, _ := res.LastInsertId()
 			if _, err := ftsStmt.ExecContext(ctx, msgID, textContent); err != nil {
@@ -568,7 +568,7 @@ func (s *Store) RepopulateFTS(ctx context.Context, tx *sqlx.Tx) error {
 
 		msg := model.MessagePayload{}
 		msg.Content = []byte(contentJSON)
-		text := msg.ContentText()
+		text := msg.SearchText()
 		if text != "" {
 			if _, err := stmt.ExecContext(ctx, id, text); err != nil {
 				return err
