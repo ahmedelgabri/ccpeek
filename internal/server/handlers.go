@@ -454,36 +454,11 @@ func (h *handlers) conversationCommands(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if session.BashCommandCount == 0 {
+
+	commands, err := h.store.GetSessionCommands(ctx, project.DirName, session.SessionID)
+	if err != nil || len(commands) == 0 {
 		http.NotFound(w, r)
 		return
-	}
-
-	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	var commands []bashCommand
-	for _, m := range messages {
-		if m.Message.Role != "assistant" {
-			continue
-		}
-		for _, b := range m.Message.ContentBlocks() {
-			if b.Type != "tool_use" || b.Name != "Bash" {
-				continue
-			}
-			var input struct {
-				Command string `json:"command"`
-			}
-			if json.Unmarshal(b.Input, &input) == nil && input.Command != "" {
-				commands = append(commands, bashCommand{
-					Command:   input.Command,
-					Timestamp: m.Timestamp,
-				})
-			}
-		}
 	}
 
 	title := session.FirstPrompt
@@ -521,46 +496,21 @@ func (h *handlers) conversationTools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if len(session.ToolUseCounts) == 0 {
+
+	calls, err := h.store.GetSessionToolCalls(ctx, project.DirName, session.SessionID)
+	if err != nil || len(calls) == 0 {
 		http.NotFound(w, r)
 		return
 	}
-
-	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
+	stats, err := h.store.GetSessionToolStats(ctx, project.DirName, session.SessionID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	var calls []toolCall
-	for _, m := range messages {
-		if m.Message.Role != "assistant" {
-			continue
-		}
-		for _, b := range m.Message.ContentBlocks() {
-			if b.Type != "tool_use" || b.Name == "" {
-				continue
-			}
-			detail := extractToolDetail(b)
-			calls = append(calls, toolCall{
-				Name:      b.Name,
-				Detail:    detail,
-				Timestamp: m.Timestamp,
-			})
-		}
-	}
-
-	var stats []toolStat
-	for name, count := range session.ToolUseCounts {
-		stats = append(stats, toolStat{Name: name, Count: count})
-	}
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].Count > stats[j].Count
-	})
-
 	totalCalls := 0
-	for _, s := range stats {
-		totalCalls += s.Count
+	for _, stat := range stats {
+		totalCalls += stat.Count
 	}
 
 	title := session.FirstPrompt
@@ -678,48 +628,11 @@ func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !hasCodeBlocks(session) {
+
+	blocks, err := h.store.GetSessionCodeOperations(ctx, project.DirName, session.SessionID)
+	if err != nil || len(blocks) == 0 {
 		http.NotFound(w, r)
 		return
-	}
-
-	messages, err := h.store.GetAllSessionMessages(ctx, project.DirName, session.SessionID)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	var blocks []codeBlock
-	for _, m := range messages {
-		if m.Message.Role != "assistant" {
-			continue
-		}
-		for _, b := range m.Message.ContentBlocks() {
-			if b.Type != "tool_use" || (b.Name != "Write" && b.Name != "Edit") {
-				continue
-			}
-			var input struct {
-				FilePath  string `json:"file_path"`
-				Content   string `json:"content"`
-				OldString string `json:"old_string"`
-				NewString string `json:"new_string"`
-			}
-			if json.Unmarshal(b.Input, &input) != nil || input.FilePath == "" {
-				continue
-			}
-			cb := codeBlock{
-				Tool:      b.Name,
-				FilePath:  input.FilePath,
-				Timestamp: m.Timestamp,
-			}
-			if b.Name == "Write" {
-				cb.Content = input.Content
-			} else {
-				cb.Content = input.NewString
-				cb.OldString = input.OldString
-			}
-			blocks = append(blocks, cb)
-		}
 	}
 
 	title := session.FirstPrompt
