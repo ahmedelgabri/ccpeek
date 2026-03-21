@@ -157,7 +157,7 @@ func TestDeleteSessionCascade(t *testing.T) {
 	}
 	// Todo should be unlinked (session_id = NULL) but still exist
 	var sessID *int64
-	s.db.Get(&sessID, `SELECT session_id FROM todos WHERE file_name = 't.json'`)
+	s.db.GetContext(ctx, &sessID, `SELECT session_id FROM todos WHERE file_name = 't.json'`)
 	if sessID != nil {
 		t.Errorf("todo should have NULL session_id after cascade, got %v", *sessID)
 	}

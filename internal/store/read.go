@@ -1514,7 +1514,7 @@ func (s *Store) ListUsageFacets(ctx context.Context) ([]model.UsageFacetEntry, e
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT uf.session_id_text, uf.underlying_goal, uf.outcome, uf.helpfulness,
 			   uf.session_type, uf.primary_success, uf.brief_summary, uf.friction_detail,
 			   uf.goal_categories, uf.satisfaction, uf.friction_counts,

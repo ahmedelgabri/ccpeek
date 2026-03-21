@@ -521,6 +521,39 @@ type ScanStats struct {
 	FindingsByType map[string]int `json:"findingsByType"`
 }
 
+// IngestRun records the outcome of an indexing or pruning run.
+type IngestRun struct {
+	ID              int64  `json:"id" db:"id"`
+	Mode            string `json:"mode" db:"mode"`
+	Status          string `json:"status" db:"status"`
+	ClaudeDir       string `json:"claudeDir" db:"claude_dir"`
+	StartedAt       string `json:"startedAt" db:"started_at"`
+	FinishedAt      string `json:"finishedAt" db:"finished_at"`
+	DurationMS      int64  `json:"durationMs" db:"duration_ms"`
+	FilesSeen       int    `json:"filesSeen" db:"files_seen"`
+	FilesChanged    int    `json:"filesChanged" db:"files_changed"`
+	RecordsIndexed  int    `json:"recordsIndexed" db:"records_indexed"`
+	SkippedFiles    int    `json:"skippedFiles" db:"skipped_files"`
+	SkippedRows     int    `json:"skippedRows" db:"skipped_rows"`
+	ParseFailures   int    `json:"parseFailures" db:"parse_failures"`
+	UnresolvedLinks int    `json:"unresolvedLinks" db:"unresolved_links"`
+	WarningCount    int    `json:"warningCount" db:"warning_count"`
+	ErrorMessage    string `json:"errorMessage,omitempty" db:"error_message"`
+}
+
+// IngestIssue records a non-fatal issue encountered during ingest.
+type IngestIssue struct {
+	ID         int64  `json:"id" db:"id"`
+	RunID      int64  `json:"runId" db:"run_id"`
+	Severity   string `json:"severity" db:"severity"`
+	Category   string `json:"category" db:"category"`
+	SourceType string `json:"sourceType" db:"source_type"`
+	SourcePath string `json:"sourcePath" db:"source_path"`
+	LineNumber int    `json:"lineNumber,omitempty" db:"line_number"`
+	Detail     string `json:"detail" db:"detail"`
+	CreatedAt  string `json:"createdAt" db:"created_at"`
+}
+
 // RawJSONLLine is the shape of raw lines from Claude's conversation JSONL files.
 type RawJSONLLine struct {
 	Type      string          `json:"type"`

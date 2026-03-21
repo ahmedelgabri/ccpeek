@@ -1,12 +1,13 @@
 package store
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 9
+const schemaVersion = 10
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -203,21 +204,55 @@ CREATE TABLE IF NOT EXISTS source_files (
 	content_hash TEXT NOT NULL DEFAULT '',
 	indexed_at   TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS ingest_runs (
+	id               INTEGER PRIMARY KEY,
+	mode             TEXT NOT NULL DEFAULT '',
+	status           TEXT NOT NULL DEFAULT '',
+	claude_dir       TEXT NOT NULL DEFAULT '',
+	started_at       TEXT NOT NULL DEFAULT '',
+	finished_at      TEXT NOT NULL DEFAULT '',
+	duration_ms      INTEGER NOT NULL DEFAULT 0,
+	files_seen       INTEGER NOT NULL DEFAULT 0,
+	files_changed    INTEGER NOT NULL DEFAULT 0,
+	records_indexed  INTEGER NOT NULL DEFAULT 0,
+	skipped_files    INTEGER NOT NULL DEFAULT 0,
+	skipped_rows     INTEGER NOT NULL DEFAULT 0,
+	parse_failures   INTEGER NOT NULL DEFAULT 0,
+	unresolved_links INTEGER NOT NULL DEFAULT 0,
+	warning_count    INTEGER NOT NULL DEFAULT 0,
+	error_message    TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_runs_started ON ingest_runs(started_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS ingest_issues (
+	id          INTEGER PRIMARY KEY,
+	run_id      INTEGER NOT NULL REFERENCES ingest_runs(id),
+	severity    TEXT NOT NULL DEFAULT '',
+	category    TEXT NOT NULL DEFAULT '',
+	source_type TEXT NOT NULL DEFAULT '',
+	source_path TEXT NOT NULL DEFAULT '',
+	line_number INTEGER NOT NULL DEFAULT 0,
+	detail      TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_issues_run ON ingest_issues(run_id, id);
 `
 
 // migrations is a list of migration functions applied sequentially.
 // Index 0 = v4→v5: add source_path + content_hash for incremental indexing.
-var migrations = []func(tx *sqlx.Tx) error{
+var migrations = []func(ctx context.Context, tx *sqlx.Tx) error{
 	migrateV4ToV5,
 	migrateV5ToV6,
 	migrateV6ToV7,
 	migrateV7ToV8,
 	migrateV8ToV9,
+	migrateV9ToV10,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
 // mtime_ns with content_hash in source_files.
-func migrateV4ToV5(tx *sqlx.Tx) error {
+func migrateV4ToV5(ctx context.Context, tx *sqlx.Tx) error {
 	// Tables that get source_path for per-file tracking
 	tables := []string{
 		"plans", "shell_snapshots", "sessions", "todos",
@@ -226,11 +261,11 @@ func migrateV4ToV5(tx *sqlx.Tx) error {
 	}
 	for _, t := range tables {
 		col := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN source_path TEXT NOT NULL DEFAULT ''`, t)
-		if _, err := tx.Exec(col); err != nil {
+		if _, err := tx.ExecContext(ctx, col); err != nil {
 			return fmt.Errorf("adding source_path to %s: %w", t, err)
 		}
 		idx := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_source ON %s(source_path)`, t, t)
-		if _, err := tx.Exec(idx); err != nil {
+		if _, err := tx.ExecContext(ctx, idx); err != nil {
 			return fmt.Errorf("creating source_path index on %s: %w", t, err)
 		}
 	}
@@ -250,7 +285,7 @@ func migrateV4ToV5(tx *sqlx.Tx) error {
 		`ALTER TABLE source_files_new RENAME TO source_files`,
 	}
 	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrating source_files: %w", err)
 		}
 	}
@@ -259,19 +294,19 @@ func migrateV4ToV5(tx *sqlx.Tx) error {
 }
 
 // migrateV7ToV8 adds the ignored column to scan_findings.
-func migrateV7ToV8(tx *sqlx.Tx) error {
+func migrateV7ToV8(ctx context.Context, tx *sqlx.Tx) error {
 	// Column may already exist if the table was created with the full initial schema
 	var hasCol int
-	err := tx.Get(&hasCol, `SELECT COUNT(*) FROM pragma_table_info('scan_findings') WHERE name = 'ignored'`)
+	err := tx.GetContext(ctx, &hasCol, `SELECT COUNT(*) FROM pragma_table_info('scan_findings') WHERE name = 'ignored'`)
 	if err != nil || hasCol > 0 {
 		return nil
 	}
-	_, err = tx.Exec(`ALTER TABLE scan_findings ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`)
+	_, err = tx.ExecContext(ctx, `ALTER TABLE scan_findings ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`)
 	return err
 }
 
 // migrateV6ToV7 adds the scan_findings table for secret scanning.
-func migrateV6ToV7(tx *sqlx.Tx) error {
+func migrateV6ToV7(ctx context.Context, tx *sqlx.Tx) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS scan_findings (
 			id             INTEGER PRIMARY KEY,
@@ -287,7 +322,7 @@ func migrateV6ToV7(tx *sqlx.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_scan_findings_type ON scan_findings(source_type)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("creating scan_findings table: %w", err)
 		}
 	}
@@ -296,7 +331,7 @@ func migrateV6ToV7(tx *sqlx.Tx) error {
 
 // migrateV8ToV9 changes the sessions UNIQUE constraint from session_id alone
 // to (session_id, project_id), allowing the same session to appear in multiple projects.
-func migrateV8ToV9(tx *sqlx.Tx) error {
+func migrateV8ToV9(ctx context.Context, tx *sqlx.Tx) error {
 	stmts := []string{
 		`CREATE TABLE sessions_new (
 			id                 INTEGER PRIMARY KEY,
@@ -329,7 +364,7 @@ func migrateV8ToV9(tx *sqlx.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source_path)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrating sessions unique constraint: %w", err)
 		}
 	}
@@ -337,7 +372,7 @@ func migrateV8ToV9(tx *sqlx.Tx) error {
 }
 
 // migrateV5ToV6 adds the commands table for global bash command browsing.
-func migrateV5ToV6(tx *sqlx.Tx) error {
+func migrateV5ToV6(ctx context.Context, tx *sqlx.Tx) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS commands (
 			id         INTEGER PRIMARY KEY,
@@ -350,8 +385,51 @@ func migrateV5ToV6(tx *sqlx.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_commands_ts ON commands(timestamp DESC)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("creating commands table: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV9ToV10 adds ingest run history and per-run diagnostics.
+func migrateV9ToV10(ctx context.Context, tx *sqlx.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS ingest_runs (
+			id               INTEGER PRIMARY KEY,
+			mode             TEXT NOT NULL DEFAULT '',
+			status           TEXT NOT NULL DEFAULT '',
+			claude_dir       TEXT NOT NULL DEFAULT '',
+			started_at       TEXT NOT NULL DEFAULT '',
+			finished_at      TEXT NOT NULL DEFAULT '',
+			duration_ms      INTEGER NOT NULL DEFAULT 0,
+			files_seen       INTEGER NOT NULL DEFAULT 0,
+			files_changed    INTEGER NOT NULL DEFAULT 0,
+			records_indexed  INTEGER NOT NULL DEFAULT 0,
+			skipped_files    INTEGER NOT NULL DEFAULT 0,
+			skipped_rows     INTEGER NOT NULL DEFAULT 0,
+			parse_failures   INTEGER NOT NULL DEFAULT 0,
+			unresolved_links INTEGER NOT NULL DEFAULT 0,
+			warning_count    INTEGER NOT NULL DEFAULT 0,
+			error_message    TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ingest_runs_started ON ingest_runs(started_at DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS ingest_issues (
+			id          INTEGER PRIMARY KEY,
+			run_id      INTEGER NOT NULL REFERENCES ingest_runs(id),
+			severity    TEXT NOT NULL DEFAULT '',
+			category    TEXT NOT NULL DEFAULT '',
+			source_type TEXT NOT NULL DEFAULT '',
+			source_path TEXT NOT NULL DEFAULT '',
+			line_number INTEGER NOT NULL DEFAULT 0,
+			detail      TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ingest_issues_run ON ingest_issues(run_id, id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("creating ingest diagnostics tables: %w", err)
 		}
 	}
 	return nil
