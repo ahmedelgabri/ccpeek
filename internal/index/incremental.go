@@ -148,7 +148,6 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 
 		dirName := e.Name()
 		projectDir := filepath.Join(srcDir, dirName)
-		displayName := model.DecodeProjectDir(dirName)
 
 		// Read sessions-index.json if available
 		var sessionsIndex model.SessionsIndex
@@ -223,8 +222,14 @@ func indexProjectsFiltered(ctx context.Context, claudeDir string, s *store.Store
 			return ti.After(tj)
 		})
 
+		entriesForDisplay := make([]model.SessionEntry, 0, len(sessionsData))
+		for _, sd := range sessionsData {
+			entriesForDisplay = append(entriesForDisplay, sd.entry)
+		}
+		displayName, hasTrustedDisplay := projectDisplayName(dirName, entriesForDisplay)
+
 		// Upsert project (may already exist from a previous incremental run)
-		projectID, err := s.UpsertProject(ctx, tx, dirName, displayName)
+		projectID, err := s.UpsertProject(ctx, tx, dirName, displayName, hasTrustedDisplay)
 		if err != nil {
 			continue
 		}

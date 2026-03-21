@@ -166,7 +166,7 @@ func TestTodosList(t *testing.T) {
 	if !strings.Contains(body, "3 items") {
 		t.Error("todos list missing item count")
 	}
-	if !strings.Contains(body, "test/project") {
+	if !strings.Contains(body, "test-project") {
 		t.Error("todos list missing project name context")
 	}
 }
@@ -766,7 +766,7 @@ func TestFileHistoryList(t *testing.T) {
 	if !strings.Contains(body, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
 		t.Error("file history list missing conversation ID")
 	}
-	if !strings.Contains(body, "test/project") {
+	if !strings.Contains(body, "test-project") {
 		t.Error("file history list missing project name context")
 	}
 }

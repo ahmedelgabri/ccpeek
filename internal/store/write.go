@@ -46,12 +46,26 @@ func (s *Store) InsertProject(ctx context.Context, tx *sqlx.Tx, dirName, display
 }
 
 // UpsertProject inserts or updates a project and returns its database ID.
-func (s *Store) UpsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName string) (int64, error) {
-	_, err := tx.ExecContext(ctx,
-		`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)
-		 ON CONFLICT(dir_name) DO UPDATE SET display_name = excluded.display_name`,
-		dirName, displayName,
-	)
+// If updateDisplayName is false, an existing project's display_name is preserved.
+func (s *Store) UpsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName string, updateDisplayName bool) (int64, error) {
+	if displayName == "" {
+		displayName = dirName
+	}
+
+	var err error
+	if updateDisplayName {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)
+			 ON CONFLICT(dir_name) DO UPDATE SET display_name = excluded.display_name`,
+			dirName, displayName,
+		)
+	} else {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO projects (dir_name, display_name) VALUES (?, ?)
+			 ON CONFLICT(dir_name) DO NOTHING`,
+			dirName, displayName,
+		)
+	}
 	if err != nil {
 		return 0, err
 	}

@@ -35,7 +35,6 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 
 		dirName := e.Name()
 		projectDir := filepath.Join(srcDir, dirName)
-		displayName := model.DecodeProjectDir(dirName)
 
 		// Read sessions-index.json if available
 		var sessionsIndex model.SessionsIndex
@@ -111,6 +110,12 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			return ti.After(tj)
 		})
 
+		entriesForDisplay := make([]model.SessionEntry, 0, len(sessionsData))
+		for _, sd := range sessionsData {
+			entriesForDisplay = append(entriesForDisplay, sd.entry)
+		}
+		displayName, _ := projectDisplayName(dirName, entriesForDisplay)
+
 		// Insert project
 		projectID, err := s.InsertProject(ctx, tx, dirName, displayName)
 		if err != nil {
@@ -137,6 +142,15 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 	}
 
 	return projectCount, totalSessions, nil
+}
+
+func projectDisplayName(dirName string, sessions []model.SessionEntry) (string, bool) {
+	for _, s := range sessions {
+		if p := strings.TrimSpace(s.ProjectPath); p != "" {
+			return p, true
+		}
+	}
+	return dirName, false
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
