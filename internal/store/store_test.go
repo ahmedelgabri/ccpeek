@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,6 +35,153 @@ func assertSchemaVersion(t *testing.T, s *Store, want int) {
 	}
 	if got != want {
 		t.Fatalf("expected schema version %d, got %d", want, got)
+	}
+}
+
+type migrationFixtureMatrixCase struct {
+	fixture         string
+	projectDirName  string
+	canonicalPath   string
+	toolCallCount   int
+	toolResultText  string
+	commands        []string
+	searchDocCounts map[string]int
+}
+
+func openMigratedFixture(t *testing.T, fixture string) *Store {
+	t.Helper()
+
+	s, err := Open(context.Background(), copyMigrationFixture(t, fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSchemaVersion(t, s, schemaVersion)
+	return s
+}
+
+func assertMigrationFixtureMatrixCase(t *testing.T, tc migrationFixtureMatrixCase) *Store {
+	t.Helper()
+
+	s := openMigratedFixture(t, tc.fixture)
+	assertProjectCanonicalPath(t, s, tc.projectDirName, tc.canonicalPath)
+	if tc.toolCallCount >= 0 {
+		assertToolCallCount(t, s, tc.toolCallCount)
+	}
+	if tc.toolResultText != "" {
+		assertFirstToolResultText(t, s, tc.toolResultText)
+	}
+	if tc.commands != nil {
+		assertListedCommands(t, s, tc.commands...)
+	}
+	for groupType, want := range tc.searchDocCounts {
+		assertSearchDocumentCount(t, s, groupType, want)
+	}
+	return s
+}
+
+func assertProjectCanonicalPath(t *testing.T, s *Store, dirName, want string) {
+	t.Helper()
+
+	project, err := s.GetProject(context.Background(), dirName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.CanonicalPath != want {
+		t.Fatalf("expected canonical path %q for %s, got %q", want, dirName, project.CanonicalPath)
+	}
+}
+
+func assertToolCallCount(t *testing.T, s *Store, want int) {
+	t.Helper()
+
+	var got int
+	if err := s.db.GetContext(context.Background(), &got, `SELECT COUNT(*) FROM tool_calls`); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("expected %d tool calls after fixture migration, got %d", want, got)
+	}
+}
+
+func assertFirstToolResultText(t *testing.T, s *Store, want string) {
+	t.Helper()
+
+	var got string
+	if err := s.db.GetContext(context.Background(), &got, `SELECT result_text FROM tool_calls LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("expected first tool result text %q, got %q", want, got)
+	}
+}
+
+func assertListedCommands(t *testing.T, s *Store, want ...string) {
+	t.Helper()
+
+	commands, total, err := s.ListCommands(context.Background(), len(want)+10, 0, CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != len(want) {
+		t.Fatalf("expected %d commands after fixture migration, got %d", len(want), total)
+	}
+	if len(commands) != len(want) {
+		t.Fatalf("expected %d listed commands, got %d", len(want), len(commands))
+	}
+	for i, wantCommand := range want {
+		if commands[i].Command != wantCommand {
+			t.Fatalf("expected command %d to be %q, got %q", i, wantCommand, commands[i].Command)
+		}
+	}
+}
+
+func assertSearchDocumentCount(t *testing.T, s *Store, groupType string, want int) {
+	t.Helper()
+
+	var got int
+	if err := s.db.GetContext(context.Background(), &got, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, groupType); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("expected %d search documents for %s, got %d", want, groupType, got)
+	}
+}
+
+func assertTableExists(t *testing.T, s *Store, table string) {
+	t.Helper()
+
+	var count int
+	if err := s.db.GetContext(context.Background(), &count, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected table %s to exist", table)
+	}
+}
+
+func assertColumnExists(t *testing.T, s *Store, table, column string) {
+	t.Helper()
+
+	var count int
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, table)
+	if err := s.db.GetContext(context.Background(), &count, query, column); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected column %s.%s to exist", table, column)
+	}
+}
+
+func assertColumnMissing(t *testing.T, s *Store, table, column string) {
+	t.Helper()
+
+	var count int
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, table)
+	if err := s.db.GetContext(context.Background(), &count, query, column); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected column %s.%s to be absent", table, column)
 	}
 }
 
@@ -117,96 +265,33 @@ func TestMigrateRecoversMissingTables(t *testing.T) {
 }
 
 func TestMigrateFixtureBackfillsDerivedData(t *testing.T) {
-	ctx := context.Background()
-	path := copyMigrationFixture(t, "v10-derived-data.db")
-
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
+		fixture:        "v10-derived-data.db",
+		projectDirName: "-Users-me-my-project",
+		canonicalPath:  "/Users/me/my-project",
+		toolCallCount:  1,
+		toolResultText: "ok",
+		commands:       []string{"echo hi"},
+		searchDocCounts: map[string]int{
+			searchGroupCommands:      1,
+			searchGroupConversations: 2,
+		},
+	})
 	defer s.Close()
-
-	assertSchemaVersion(t, s, schemaVersion)
-
-	project, err := s.GetProject(ctx, "-Users-me-my-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if project.CanonicalPath != "/Users/me/my-project" {
-		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
-	}
-
-	var toolCallCount int
-	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
-		t.Fatal(err)
-	}
-	if toolCallCount != 1 {
-		t.Fatalf("expected 1 tool call after fixture migration, got %d", toolCallCount)
-	}
-
-	var resultText string
-	if err := s.db.GetContext(ctx, &resultText, `SELECT result_text FROM tool_calls LIMIT 1`); err != nil {
-		t.Fatal(err)
-	}
-	if resultText != "ok" {
-		t.Fatalf("expected backfilled tool result text %q, got %q", "ok", resultText)
-	}
-
-	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 {
-		t.Fatalf("expected 1 command after fixture migration, got %d", total)
-	}
-	if len(commands) != 1 || commands[0].Command != "echo hi" {
-		t.Fatalf("unexpected migrated commands: %+v", commands)
-	}
-
-	var conversationDocs int
-	if err := s.db.GetContext(ctx, &conversationDocs, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, searchGroupConversations); err != nil {
-		t.Fatal(err)
-	}
-	if conversationDocs < 1 {
-		t.Fatalf("expected conversation search documents after fixture migration, got %d", conversationDocs)
-	}
-
-	var commandDocs int
-	if err := s.db.GetContext(ctx, &commandDocs, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, searchGroupCommands); err != nil {
-		t.Fatal(err)
-	}
-	if commandDocs != 1 {
-		t.Fatalf("expected 1 command search document after fixture migration, got %d", commandDocs)
-	}
 }
 
 func TestMigrateFixturePreservesEarliestSupportedData(t *testing.T) {
 	ctx := context.Background()
-	path := copyMigrationFixture(t, "v4-earliest-supported.db")
-
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
+		fixture:        "v4-earliest-supported.db",
+		projectDirName: "-Users-me-earliest-project",
+		canonicalPath:  "/Users/me/earliest-project",
+		toolCallCount:  1,
+		commands:       []string{"echo earliest"},
+	})
 	defer s.Close()
 
-	assertSchemaVersion(t, s, schemaVersion)
-
-	project, err := s.GetProject(ctx, "-Users-me-earliest-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if project.CanonicalPath != "/Users/me/earliest-project" {
-		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
-	}
-
-	var hasSourcePath int
-	if err := s.db.GetContext(ctx, &hasSourcePath, `SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'source_path'`); err != nil {
-		t.Fatal(err)
-	}
-	if hasSourcePath != 1 {
-		t.Fatalf("expected sessions.source_path column after migration, got %d matches", hasSourcePath)
-	}
+	assertColumnExists(t, s, "sessions", "source_path")
 
 	var sourcePath string
 	if err := s.db.GetContext(ctx, &sourcePath, `SELECT source_path FROM sessions WHERE id = 1`); err != nil {
@@ -216,21 +301,8 @@ func TestMigrateFixturePreservesEarliestSupportedData(t *testing.T) {
 		t.Fatalf("expected migrated sessions.source_path default to be empty, got %q", sourcePath)
 	}
 
-	var hasContentHash int
-	if err := s.db.GetContext(ctx, &hasContentHash, `SELECT COUNT(*) FROM pragma_table_info('source_files') WHERE name = 'content_hash'`); err != nil {
-		t.Fatal(err)
-	}
-	if hasContentHash != 1 {
-		t.Fatalf("expected source_files.content_hash column after migration, got %d matches", hasContentHash)
-	}
-
-	var hasMtimeNS int
-	if err := s.db.GetContext(ctx, &hasMtimeNS, `SELECT COUNT(*) FROM pragma_table_info('source_files') WHERE name = 'mtime_ns'`); err != nil {
-		t.Fatal(err)
-	}
-	if hasMtimeNS != 0 {
-		t.Fatalf("expected source_files.mtime_ns column to be removed, got %d matches", hasMtimeNS)
-	}
+	assertColumnExists(t, s, "source_files", "content_hash")
+	assertColumnMissing(t, s, "source_files", "mtime_ns")
 
 	var sourceFile struct {
 		ContentHash string `db:"content_hash"`
@@ -245,54 +317,23 @@ func TestMigrateFixturePreservesEarliestSupportedData(t *testing.T) {
 	if sourceFile.IndexedAt != "2024-01-01T00:00:10Z" {
 		t.Fatalf("expected source_files.indexed_at to be preserved, got %q", sourceFile.IndexedAt)
 	}
-
-	var toolCallCount int
-	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
-		t.Fatal(err)
-	}
-	if toolCallCount != 1 {
-		t.Fatalf("expected 1 tool call after earliest fixture migration, got %d", toolCallCount)
-	}
-
-	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 {
-		t.Fatalf("expected 1 command after earliest fixture migration, got %d", total)
-	}
-	if len(commands) != 1 || commands[0].Command != "echo earliest" {
-		t.Fatalf("unexpected migrated commands from earliest fixture: %+v", commands)
-	}
 }
 
 func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
 	ctx := context.Background()
-	path := copyMigrationFixture(t, "v7-legacy-sessions-and-scan-findings.db")
-
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
+		fixture:        "v7-legacy-sessions-and-scan-findings.db",
+		projectDirName: "-Users-me-legacy-project",
+		canonicalPath:  "/Users/me/legacy-project",
+		toolCallCount:  1,
+		commands:       []string{"echo legacy"},
+		searchDocCounts: map[string]int{
+			searchGroupCommands: 1,
+		},
+	})
 	defer s.Close()
 
-	assertSchemaVersion(t, s, schemaVersion)
-
-	project, err := s.GetProject(ctx, "-Users-me-legacy-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if project.CanonicalPath != "/Users/me/legacy-project" {
-		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
-	}
-
-	var hasIgnored int
-	if err := s.db.GetContext(ctx, &hasIgnored, `SELECT COUNT(*) FROM pragma_table_info('scan_findings') WHERE name = 'ignored'`); err != nil {
-		t.Fatal(err)
-	}
-	if hasIgnored != 1 {
-		t.Fatalf("expected scan_findings.ignored column after migration, got %d matches", hasIgnored)
-	}
+	assertColumnExists(t, s, "scan_findings", "ignored")
 
 	var ignored int
 	if err := s.db.GetContext(ctx, &ignored, `SELECT ignored FROM scan_findings WHERE id = 1`); err != nil {
@@ -300,33 +341,6 @@ func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
 	}
 	if ignored != 0 {
 		t.Fatalf("expected migrated scan finding ignored=0, got %d", ignored)
-	}
-
-	var toolCallCount int
-	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
-		t.Fatal(err)
-	}
-	if toolCallCount != 1 {
-		t.Fatalf("expected 1 tool call after legacy fixture migration, got %d", toolCallCount)
-	}
-
-	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 {
-		t.Fatalf("expected 1 command after legacy fixture migration, got %d", total)
-	}
-	if len(commands) != 1 || commands[0].Command != "echo legacy" {
-		t.Fatalf("unexpected migrated commands from legacy fixture: %+v", commands)
-	}
-
-	var commandDocs int
-	if err := s.db.GetContext(ctx, &commandDocs, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, searchGroupCommands); err != nil {
-		t.Fatal(err)
-	}
-	if commandDocs != 1 {
-		t.Fatalf("expected 1 command search document after legacy fixture migration, got %d", commandDocs)
 	}
 
 	tx, err := s.BeginTx(ctx)
@@ -356,34 +370,14 @@ func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
 
 func TestMigrateFixtureRelaxesLegacySessionUniqueness(t *testing.T) {
 	ctx := context.Background()
-	path := copyMigrationFixture(t, "v8-session-uniqueness.db")
-
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
+		fixture:        "v8-session-uniqueness.db",
+		projectDirName: "-Users-me-v8-project",
+		canonicalPath:  "/Users/me/v8-project",
+		toolCallCount:  1,
+		commands:       []string{"echo v8"},
+	})
 	defer s.Close()
-
-	assertSchemaVersion(t, s, schemaVersion)
-
-	project, err := s.GetProject(ctx, "-Users-me-v8-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if project.CanonicalPath != "/Users/me/v8-project" {
-		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
-	}
-
-	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 {
-		t.Fatalf("expected 1 command after v8 fixture migration, got %d", total)
-	}
-	if len(commands) != 1 || commands[0].Command != "echo v8" {
-		t.Fatalf("unexpected migrated commands from v8 fixture: %+v", commands)
-	}
 
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
@@ -480,6 +474,11 @@ func TestMigrateFixtureDeleteActionsAndCascadeCleanup(t *testing.T) {
 	defer s.Close()
 
 	assertSchemaVersion(t, s, schemaVersion)
+	assertTableExists(t, s, "messages")
+	assertTableExists(t, s, "tool_calls")
+	assertTableExists(t, s, "commands")
+	assertTableExists(t, s, "todos")
+	assertTableExists(t, s, "ingest_issues")
 
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
