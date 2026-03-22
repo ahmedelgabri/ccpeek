@@ -10,6 +10,7 @@ Regenerate them with:
 rm -f internal/store/testdata/migrations/*.db
 sqlite3 internal/store/testdata/migrations/v4-earliest-supported.db < internal/store/testdata/migrations/v4-earliest-supported.sql
 sqlite3 internal/store/testdata/migrations/v7-legacy-sessions-and-scan-findings.db < internal/store/testdata/migrations/v7-legacy-sessions-and-scan-findings.sql
+sqlite3 internal/store/testdata/migrations/v8-session-uniqueness.db < internal/store/testdata/migrations/v8-session-uniqueness.sql
 sqlite3 internal/store/testdata/migrations/v10-derived-data.db < internal/store/testdata/migrations/v10-derived-data.sql
 sqlite3 internal/store/testdata/migrations/v13-delete-actions.db < internal/store/testdata/migrations/v13-delete-actions.sql
 ```

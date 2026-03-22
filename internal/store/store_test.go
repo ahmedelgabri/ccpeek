@@ -354,6 +354,74 @@ func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
 	}
 }
 
+func TestMigrateFixtureRelaxesLegacySessionUniqueness(t *testing.T) {
+	ctx := context.Background()
+	path := copyMigrationFixture(t, "v8-session-uniqueness.db")
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	assertSchemaVersion(t, s, schemaVersion)
+
+	project, err := s.GetProject(ctx, "-Users-me-v8-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.CanonicalPath != "/Users/me/v8-project" {
+		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
+	}
+
+	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 command after v8 fixture migration, got %d", total)
+	}
+	if len(commands) != 1 || commands[0].Command != "echo v8" {
+		t.Fatalf("unexpected migrated commands from v8 fixture: %+v", commands)
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := s.InsertProject(ctx, tx, "v8-project-copy", "V8 Project Copy", "/Users/me/v8-project-copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InsertSession(ctx, tx, projectID, model.SessionEntry{SessionID: "shared-session"}, "/src/v8-project-copy/shared-session.jsonl")
+	if err != nil {
+		t.Fatalf("expected duplicate session id across projects to succeed after v8 migration: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err = s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InsertSession(ctx, tx, 1, model.SessionEntry{SessionID: "shared-session"}, "/src/v8-project/shared-session-again.jsonl")
+	if err == nil {
+		t.Fatal("expected duplicate session id within the same project to fail after v8 migration")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	var sessionCount int
+	if err := s.db.GetContext(ctx, &sessionCount, `SELECT COUNT(*) FROM sessions WHERE session_id = 'shared-session'`); err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 2 {
+		t.Fatalf("expected 2 sessions with migrated per-project uniqueness, got %d", sessionCount)
+	}
+}
+
 func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")
