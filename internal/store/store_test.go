@@ -2,13 +2,40 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/jmoiron/sqlx"
-
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
+
+func copyMigrationFixture(t *testing.T, name string) string {
+	t.Helper()
+
+	src := filepath.Join("testdata", "migrations", name)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", src, err)
+	}
+
+	dst := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		t.Fatalf("write temp fixture copy %s: %v", dst, err)
+	}
+	return dst
+}
+
+func assertSchemaVersion(t *testing.T, s *Store, want int) {
+	t.Helper()
+
+	var got int
+	if err := s.db.GetContext(context.Background(), &got, `SELECT value FROM meta WHERE key = 'schema_version'`); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected schema version %d, got %d", want, got)
+	}
+}
 
 func TestResetDropsAllTables(t *testing.T) {
 	ctx := context.Background()
@@ -89,54 +116,9 @@ func TestMigrateRecoversMissingTables(t *testing.T) {
 	}
 }
 
-func TestMigrateBackfillsProjectCanonicalPath(t *testing.T) {
+func TestMigrateFixtureBackfillsDerivedData(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "ccpeek.db")
-
-	db, err := sqlx.Open("sqlite3", path+"?_foreign_keys=on")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stmts := []string{
-		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-		`INSERT INTO meta (key, value) VALUES ('schema_version', '11')`,
-		`CREATE TABLE projects (
-			id INTEGER PRIMARY KEY,
-			dir_name TEXT NOT NULL UNIQUE,
-			display_name TEXT NOT NULL
-		)`,
-		`CREATE TABLE sessions (
-			id INTEGER PRIMARY KEY,
-			session_id TEXT NOT NULL,
-			project_id INTEGER NOT NULL,
-			first_prompt TEXT NOT NULL DEFAULT '',
-			message_count INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL DEFAULT '',
-			modified_at TEXT NOT NULL DEFAULT '',
-			git_branch TEXT NOT NULL DEFAULT '',
-			project_path TEXT NOT NULL DEFAULT '',
-			todo_file_name TEXT NOT NULL DEFAULT '',
-			has_file_history INTEGER NOT NULL DEFAULT 0,
-			bash_command_count INTEGER NOT NULL DEFAULT 0,
-			tool_use_counts TEXT NOT NULL DEFAULT '{}',
-			estimated_tokens INTEGER NOT NULL DEFAULT 0,
-			source_path TEXT NOT NULL DEFAULT '',
-			UNIQUE(session_id, project_id)
-		)`,
-		`INSERT INTO projects (id, dir_name, display_name) VALUES (1, '-Users-me-my-project', '-Users-me-my-project')`,
-		`INSERT INTO sessions (session_id, project_id, modified_at, project_path, source_path)
-		 VALUES ('sess-1', 1, '2024-01-02T00:00:00Z', '/Users/me/my-project', '/src/sess-1.jsonl')`,
-	}
-	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			db.Close()
-			t.Fatalf("seed old schema: %v", err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	path := copyMigrationFixture(t, "v10-derived-data.db")
 
 	s, err := Open(ctx, path)
 	if err != nil {
@@ -144,12 +126,57 @@ func TestMigrateBackfillsProjectCanonicalPath(t *testing.T) {
 	}
 	defer s.Close()
 
+	assertSchemaVersion(t, s, schemaVersion)
+
 	project, err := s.GetProject(ctx, "-Users-me-my-project")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if project.CanonicalPath != "/Users/me/my-project" {
 		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
+	}
+
+	var toolCallCount int
+	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 1 {
+		t.Fatalf("expected 1 tool call after fixture migration, got %d", toolCallCount)
+	}
+
+	var resultText string
+	if err := s.db.GetContext(ctx, &resultText, `SELECT result_text FROM tool_calls LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
+	if resultText != "ok" {
+		t.Fatalf("expected backfilled tool result text %q, got %q", "ok", resultText)
+	}
+
+	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 command after fixture migration, got %d", total)
+	}
+	if len(commands) != 1 || commands[0].Command != "echo hi" {
+		t.Fatalf("unexpected migrated commands: %+v", commands)
+	}
+
+	var conversationDocs int
+	if err := s.db.GetContext(ctx, &conversationDocs, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, searchGroupConversations); err != nil {
+		t.Fatal(err)
+	}
+	if conversationDocs < 1 {
+		t.Fatalf("expected conversation search documents after fixture migration, got %d", conversationDocs)
+	}
+
+	var commandDocs int
+	if err := s.db.GetContext(ctx, &commandDocs, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, searchGroupCommands); err != nil {
+		t.Fatal(err)
+	}
+	if commandDocs != 1 {
+		t.Fatalf("expected 1 command search document after fixture migration, got %d", commandDocs)
 	}
 }
 
@@ -200,78 +227,17 @@ func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
 	}
 }
 
-func TestMigrateDeleteActionsAndCascadeCleanup(t *testing.T) {
+func TestMigrateFixtureDeleteActionsAndCascadeCleanup(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "ccpeek-migrate-fk.db")
-
-	db, err := sqlx.Open("sqlite3", path+"?_foreign_keys=on")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stmts := []string{
-		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-		`INSERT INTO meta (key, value) VALUES ('schema_version', '13')`,
-		`CREATE TABLE projects (
-			id INTEGER PRIMARY KEY,
-			dir_name TEXT NOT NULL UNIQUE,
-			display_name TEXT NOT NULL,
-			canonical_path TEXT NOT NULL DEFAULT ''
-		)`,
-		`CREATE TABLE sessions (
-			id INTEGER PRIMARY KEY,
-			session_id TEXT NOT NULL,
-			project_id INTEGER NOT NULL REFERENCES projects(id),
-			first_prompt TEXT NOT NULL DEFAULT '',
-			message_count INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL DEFAULT '',
-			modified_at TEXT NOT NULL DEFAULT '',
-			git_branch TEXT NOT NULL DEFAULT '',
-			project_path TEXT NOT NULL DEFAULT '',
-			todo_file_name TEXT NOT NULL DEFAULT '',
-			has_file_history INTEGER NOT NULL DEFAULT 0,
-			bash_command_count INTEGER NOT NULL DEFAULT 0,
-			tool_use_counts TEXT NOT NULL DEFAULT '{}',
-			estimated_tokens INTEGER NOT NULL DEFAULT 0,
-			source_path TEXT NOT NULL DEFAULT '',
-			UNIQUE(session_id, project_id)
-		)`,
-		`CREATE TABLE todos (
-			id INTEGER PRIMARY KEY,
-			file_name TEXT NOT NULL UNIQUE,
-			session_id INTEGER REFERENCES sessions(id),
-			item_count INTEGER NOT NULL DEFAULT 0,
-			statuses TEXT NOT NULL DEFAULT '{}',
-			source_path TEXT NOT NULL DEFAULT ''
-		)`,
-		`CREATE TABLE todo_items (
-			id INTEGER PRIMARY KEY,
-			todo_id INTEGER NOT NULL REFERENCES todos(id),
-			seq INTEGER NOT NULL,
-			content TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT '',
-			active_form TEXT NOT NULL DEFAULT ''
-		)`,
-		`INSERT INTO projects (id, dir_name, display_name) VALUES (1, 'proj', 'Project')`,
-		`INSERT INTO sessions (id, session_id, project_id, source_path) VALUES (1, 'sess-1', 1, '/src/sess-1.jsonl')`,
-		`INSERT INTO todos (id, file_name, session_id, item_count, statuses, source_path) VALUES (1, 'todo.json', 1, 1, '{}', '/src/todo.json')`,
-		`INSERT INTO todo_items (id, todo_id, seq, content, status, active_form) VALUES (1, 1, 0, 'fix bug', 'pending', 'Fix bug')`,
-	}
-	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			db.Close()
-			t.Fatalf("seed v13 schema: %v", err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	path := copyMigrationFixture(t, "v13-delete-actions.db")
 
 	s, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
+
+	assertSchemaVersion(t, s, schemaVersion)
 
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
@@ -282,6 +248,30 @@ func TestMigrateDeleteActionsAndCascadeCleanup(t *testing.T) {
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
+	}
+
+	var messageCount int
+	if err := s.db.GetContext(ctx, &messageCount, `SELECT COUNT(*) FROM messages`); err != nil {
+		t.Fatal(err)
+	}
+	if messageCount != 0 {
+		t.Fatalf("expected migrated ON DELETE CASCADE on messages.session_id, got %d rows", messageCount)
+	}
+
+	var toolCallCount int
+	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 0 {
+		t.Fatalf("expected migrated ON DELETE CASCADE on tool_calls.session_id, got %d rows", toolCallCount)
+	}
+
+	var commandCount int
+	if err := s.db.GetContext(ctx, &commandCount, `SELECT COUNT(*) FROM commands`); err != nil {
+		t.Fatal(err)
+	}
+	if commandCount != 0 {
+		t.Fatalf("expected migrated ON DELETE CASCADE on commands.session_id, got %d rows", commandCount)
 	}
 
 	var sessionID *int64
@@ -296,6 +286,25 @@ func TestMigrateDeleteActionsAndCascadeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ingest_runs WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var ingestIssueCount int
+	if err := s.db.GetContext(ctx, &ingestIssueCount, `SELECT COUNT(*) FROM ingest_issues`); err != nil {
+		t.Fatal(err)
+	}
+	if ingestIssueCount != 0 {
+		t.Fatalf("expected migrated ON DELETE CASCADE on ingest_issues.run_id, got %d rows", ingestIssueCount)
+	}
+
+	tx, err = s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM todos WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
@@ -303,12 +312,12 @@ func TestMigrateDeleteActionsAndCascadeCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var count int
-	if err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM todo_items WHERE todo_id = 1`); err != nil {
+	var todoItemCount int
+	if err := s.db.GetContext(ctx, &todoItemCount, `SELECT COUNT(*) FROM todo_items WHERE todo_id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("expected migrated ON DELETE CASCADE on todo_items.todo_id, got %d rows", count)
+	if todoItemCount != 0 {
+		t.Fatalf("expected migrated ON DELETE CASCADE on todo_items.todo_id, got %d rows", todoItemCount)
 	}
 }
 
