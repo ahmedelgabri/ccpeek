@@ -7,11 +7,11 @@ They are intentionally small, but they model real historical schema shapes close
 Regenerate them with:
 
 ```sh
-rm -f internal/store/testdata/migrations/*.db
-sqlite3 internal/store/testdata/migrations/v4-earliest-supported.db < internal/store/testdata/migrations/v4-earliest-supported.sql
-sqlite3 internal/store/testdata/migrations/v5-source-path-and-plan-data.db < internal/store/testdata/migrations/v5-source-path-and-plan-data.sql
-sqlite3 internal/store/testdata/migrations/v7-legacy-sessions-and-scan-findings.db < internal/store/testdata/migrations/v7-legacy-sessions-and-scan-findings.sql
-sqlite3 internal/store/testdata/migrations/v8-session-uniqueness.db < internal/store/testdata/migrations/v8-session-uniqueness.sql
-sqlite3 internal/store/testdata/migrations/v10-derived-data.db < internal/store/testdata/migrations/v10-derived-data.sql
-sqlite3 internal/store/testdata/migrations/v13-delete-actions.db < internal/store/testdata/migrations/v13-delete-actions.sql
+just regen-migration-fixtures
+```
+
+Or run the script directly:
+
+```sh
+./scripts/regenerate-migration-fixtures.sh
 ```
