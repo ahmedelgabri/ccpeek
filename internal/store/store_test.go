@@ -180,6 +180,92 @@ func TestMigrateFixtureBackfillsDerivedData(t *testing.T) {
 	}
 }
 
+func TestMigrateFixturePreservesEarliestSupportedData(t *testing.T) {
+	ctx := context.Background()
+	path := copyMigrationFixture(t, "v4-earliest-supported.db")
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	assertSchemaVersion(t, s, schemaVersion)
+
+	project, err := s.GetProject(ctx, "-Users-me-earliest-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.CanonicalPath != "/Users/me/earliest-project" {
+		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
+	}
+
+	var hasSourcePath int
+	if err := s.db.GetContext(ctx, &hasSourcePath, `SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'source_path'`); err != nil {
+		t.Fatal(err)
+	}
+	if hasSourcePath != 1 {
+		t.Fatalf("expected sessions.source_path column after migration, got %d matches", hasSourcePath)
+	}
+
+	var sourcePath string
+	if err := s.db.GetContext(ctx, &sourcePath, `SELECT source_path FROM sessions WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if sourcePath != "" {
+		t.Fatalf("expected migrated sessions.source_path default to be empty, got %q", sourcePath)
+	}
+
+	var hasContentHash int
+	if err := s.db.GetContext(ctx, &hasContentHash, `SELECT COUNT(*) FROM pragma_table_info('source_files') WHERE name = 'content_hash'`); err != nil {
+		t.Fatal(err)
+	}
+	if hasContentHash != 1 {
+		t.Fatalf("expected source_files.content_hash column after migration, got %d matches", hasContentHash)
+	}
+
+	var hasMtimeNS int
+	if err := s.db.GetContext(ctx, &hasMtimeNS, `SELECT COUNT(*) FROM pragma_table_info('source_files') WHERE name = 'mtime_ns'`); err != nil {
+		t.Fatal(err)
+	}
+	if hasMtimeNS != 0 {
+		t.Fatalf("expected source_files.mtime_ns column to be removed, got %d matches", hasMtimeNS)
+	}
+
+	var sourceFile struct {
+		ContentHash string `db:"content_hash"`
+		IndexedAt   string `db:"indexed_at"`
+	}
+	if err := s.db.GetContext(ctx, &sourceFile, `SELECT content_hash, indexed_at FROM source_files WHERE path = ?`, "/src/earliest-session.jsonl"); err != nil {
+		t.Fatal(err)
+	}
+	if sourceFile.ContentHash != "" {
+		t.Fatalf("expected migrated source_files.content_hash to default empty, got %q", sourceFile.ContentHash)
+	}
+	if sourceFile.IndexedAt != "2024-01-01T00:00:10Z" {
+		t.Fatalf("expected source_files.indexed_at to be preserved, got %q", sourceFile.IndexedAt)
+	}
+
+	var toolCallCount int
+	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 1 {
+		t.Fatalf("expected 1 tool call after earliest fixture migration, got %d", toolCallCount)
+	}
+
+	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 command after earliest fixture migration, got %d", total)
+	}
+	if len(commands) != 1 || commands[0].Command != "echo earliest" {
+		t.Fatalf("unexpected migrated commands from earliest fixture: %+v", commands)
+	}
+}
+
 func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
 	ctx := context.Background()
 	path := copyMigrationFixture(t, "v7-legacy-sessions-and-scan-findings.db")
