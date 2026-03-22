@@ -44,19 +44,6 @@ func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter Comm
 	return rows, total, nil
 }
 
-// ListAllCommands returns all bash commands (no pagination) with optional filters.
-// Used for export.
-func (s *Store) ListAllCommands(ctx context.Context, filter CommandFilter) ([]model.CommandEntry, error) {
-	var rows []model.CommandEntry
-	if err := s.EachCommand(ctx, filter, func(entry model.CommandEntry) error {
-		rows = append(rows, entry)
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
 // CommandCount returns the total number of commands in the database.
 func (s *Store) CommandCount(ctx context.Context) (int, error) {
 	var count int

@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -146,22 +147,7 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 				continue
 			}
 
-			if err := s.InsertMessages(ctx, tx, sessionDBID, sd.messages); err != nil {
-				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
-				if rec != nil {
-					rec.SkippedFile("session", jsonlPath, err.Error())
-				}
-				continue
-			}
-			if err := s.InsertToolCalls(ctx, tx, sessionDBID, sd.messages); err != nil {
-				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
-				if rec != nil {
-					rec.SkippedFile("session", jsonlPath, err.Error())
-				}
-				continue
-			}
-			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
-				_ = s.DeleteSessionCascade(ctx, tx, jsonlPath)
+			if err := insertSessionArtifacts(ctx, s, tx, sessionDBID, jsonlPath, sd.messages); err != nil {
 				if rec != nil {
 					rec.SkippedFile("session", jsonlPath, err.Error())
 				}
@@ -188,6 +174,22 @@ func projectCanonicalPath(sessions []model.SessionEntry) string {
 		}
 	}
 	return ""
+}
+
+func insertSessionArtifacts(ctx context.Context, s *store.Store, tx *sqlx.Tx, sessionDBID int64, sourcePath string, messages []model.ConversationMessage) error {
+	if err := s.InsertMessages(ctx, tx, sessionDBID, messages); err != nil {
+		_ = s.DeleteSessionCascade(ctx, tx, sourcePath)
+		return fmt.Errorf("insert messages: %w", err)
+	}
+	if err := s.InsertToolCalls(ctx, tx, sessionDBID, messages); err != nil {
+		_ = s.DeleteSessionCascade(ctx, tx, sourcePath)
+		return fmt.Errorf("insert tool calls: %w", err)
+	}
+	if err := s.InsertCommands(ctx, tx, sessionDBID, messages); err != nil {
+		_ = s.DeleteSessionCascade(ctx, tx, sourcePath)
+		return fmt.Errorf("insert commands: %w", err)
+	}
+	return nil
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
