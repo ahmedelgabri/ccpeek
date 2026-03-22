@@ -2,8 +2,7 @@ package cmd
 
 import (
 	"context"
-	"io"
-	"os"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,13 +12,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestRunIngestLatestShowsDiagnostics(t *testing.T) {
+func seedIngestDB(t *testing.T) string {
+	t.Helper()
+
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
 	db, err := store.Open(ctx, dataFile)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	run := &model.IngestRun{
 		Mode:            "incremental",
 		Status:          "partial",
@@ -52,45 +54,128 @@ func TestRunIngestLatestShowsDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	return dataFile
+}
+
+func newIngestTestCommand(dataFile string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")
 	cmd.Flags().String("format", "text", "")
 	cmd.Flags().Int("limit", 10, "")
-	cmd.Flags().Bool("latest", true, "")
+	cmd.Flags().Bool("latest", false, "")
 	cmd.Flags().Int64("run-id", 0, "")
+	return cmd
+}
 
-	output := captureStdout(t, func() {
-		if err := runIngest(cmd, nil); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if !strings.Contains(output, "Run ") || !strings.Contains(output, "Diagnostics:") {
-		t.Fatalf("expected ingest detail output, got:\n%s", output)
+func TestRunIngestLatestShowsDiagnostics(t *testing.T) {
+	dataFile := seedIngestDB(t)
+	cmd := newIngestTestCommand(dataFile)
+	if err := cmd.Flags().Set("latest", "true"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(output, "parse_failure") {
-		t.Fatalf("expected parse_failure in output, got:\n%s", output)
+
+	stdout, stderr := captureOutputPair(t, func() error {
+		return runIngest(cmd, nil)
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if !strings.Contains(stdout, "Run ") || !strings.Contains(stdout, "Diagnostics:") {
+		t.Fatalf("expected ingest detail output, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "parse_failure") {
+		t.Fatalf("expected parse_failure in output, got:\n%s", stdout)
 	}
 }
 
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
+func TestRunIngestLatestJSONShowsDetails(t *testing.T) {
+	dataFile := seedIngestDB(t)
+	cmd := newIngestTestCommand(dataFile)
+	if err := cmd.Flags().Set("latest", "true"); err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
-	defer func() {
-		os.Stdout = oldStdout
-	}()
+	if err := cmd.Flags().Set("format", "json"); err != nil {
+		t.Fatal(err)
+	}
 
-	fn()
-	if err := w.Close(); err != nil {
+	stdout, stderr := captureOutputPair(t, func() error {
+		return runIngest(cmd, nil)
+	})
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+
+	var payload struct {
+		Run    *model.IngestRun    `json:"run"`
+		Issues []model.IngestIssue `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("expected valid json output, got error %v and output %q", err, stdout)
+	}
+	if payload.Run == nil || payload.Run.Status != "partial" {
+		t.Fatalf("expected partial ingest run in payload, got %+v", payload.Run)
+	}
+	if len(payload.Issues) != 1 || payload.Issues[0].Category != "parse_failure" {
+		t.Fatalf("unexpected issues payload: %+v", payload.Issues)
+	}
+}
+
+func TestRunIngestRejectsInvalidFormat(t *testing.T) {
+	cmd := newIngestTestCommand(filepath.Join(t.TempDir(), "ccpeek.db"))
+	if err := cmd.Flags().Set("format", "wat"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := io.ReadAll(r)
+
+	err := runIngest(cmd, nil)
+	if err == nil {
+		t.Fatal("expected invalid format error")
+	}
+	if !strings.Contains(err.Error(), "unsupported format") {
+		t.Fatalf("expected unsupported format error, got %v", err)
+	}
+}
+
+func TestRunIngestRejectsLatestAndRunID(t *testing.T) {
+	cmd := newIngestTestCommand(filepath.Join(t.TempDir(), "ccpeek.db"))
+	if err := cmd.Flags().Set("latest", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("run-id", "12"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runIngest(cmd, nil)
+	if err == nil {
+		t.Fatal("expected mutually exclusive flag error")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive flag error, got %v", err)
+	}
+}
+
+func TestRunIngestLatestWithNoRunsShowsMessage(t *testing.T) {
+	ctx := context.Background()
+	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
+	db, err := store.Open(ctx, dataFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(out)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newIngestTestCommand(dataFile)
+	if err := cmd.Flags().Set("latest", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr := captureOutputPair(t, func() error {
+		return runIngest(cmd, nil)
+	})
+	if stdout != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "No ingest runs found.") {
+		t.Fatalf("expected no-runs message, got %q", stderr)
+	}
 }
