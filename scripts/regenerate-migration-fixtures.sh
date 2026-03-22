@@ -12,7 +12,8 @@ for sql in \
   v7-legacy-sessions-and-scan-findings.sql \
   v8-session-uniqueness.sql \
   v10-derived-data.sql \
-  v13-delete-actions.sql
+  v13-delete-actions.sql \
+  v14-damaged-derived-tables.sql
 
 do
   db=${sql%.sql}.db

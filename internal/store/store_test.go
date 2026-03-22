@@ -516,6 +516,36 @@ func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
 	}
 }
 
+func TestOpenRecoversDamagedVersionedDerivedTables(t *testing.T) {
+	ctx := context.Background()
+	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
+		fixture:        "v14-damaged-derived-tables.db",
+		projectDirName: "-Users-me-damaged-project",
+		canonicalPath:  "/Users/me/damaged-project",
+		toolCallCount:  1,
+		toolResultText: "damaged ok",
+		commands:       []string{"echo damaged"},
+		searchDocCounts: map[string]int{
+			searchGroupCommands:      1,
+			searchGroupConversations: 2,
+			searchGroupPlans:         1,
+		},
+	})
+	defer s.Close()
+
+	assertTableExists(t, s, "commands")
+	assertTableExists(t, s, "tool_calls")
+	assertTableExists(t, s, "search_documents_fts")
+
+	var legacyCommandRows int
+	if err := s.db.GetContext(ctx, &legacyCommandRows, `SELECT COUNT(*) FROM commands`); err != nil {
+		t.Fatal(err)
+	}
+	if legacyCommandRows != 0 {
+		t.Fatalf("expected recreated legacy commands table to remain empty, got %d rows", legacyCommandRows)
+	}
+}
+
 func TestMigrateFixtureDeleteActionsAndCascadeCleanup(t *testing.T) {
 	ctx := context.Background()
 	path := copyMigrationFixture(t, "v13-delete-actions.db")
