@@ -3,8 +3,10 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 fixture_dir="$repo_root/internal/store/testdata/migrations"
+out_dir=${1:-$fixture_dir}
 
-rm -f "$fixture_dir"/*.db
+mkdir -p "$out_dir"
+rm -f "$out_dir"/*.db
 
 for sql in \
   v4-earliest-supported.sql \
@@ -17,5 +19,5 @@ for sql in \
 
 do
   db=${sql%.sql}.db
-  sqlite3 "$fixture_dir/$db" < "$fixture_dir/$sql"
+  sqlite3 "$out_dir/$db" < "$fixture_dir/$sql"
 done

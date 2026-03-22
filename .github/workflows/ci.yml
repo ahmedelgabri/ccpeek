@@ -23,6 +23,8 @@ jobs:
         run: nix develop --command just staticcheck
       - name: Govulncheck
         run: nix develop --command just govulncheck
+      - name: Check migration fixtures
+        run: nix develop --command just check-migration-fixtures
       - name: Lint JS
         run: nix develop --command just lint
 

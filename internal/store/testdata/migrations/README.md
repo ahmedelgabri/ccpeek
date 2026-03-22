@@ -10,8 +10,15 @@ Regenerate them with:
 just regen-migration-fixtures
 ```
 
-Or run the script directly:
+Check that committed fixtures are in sync with their SQL sources:
+
+```sh
+just check-migration-fixtures
+```
+
+Or run the scripts directly:
 
 ```sh
 ./scripts/regenerate-migration-fixtures.sh
+./scripts/check-migration-fixtures.sh
 ```

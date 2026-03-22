@@ -50,5 +50,8 @@ test: test-unit test-e2e
 regen-migration-fixtures:
     ./scripts/regenerate-migration-fixtures.sh
 
+check-migration-fixtures:
+    ./scripts/check-migration-fixtures.sh
+
 clean:
     rm -f {{binary}} {{css_output}}

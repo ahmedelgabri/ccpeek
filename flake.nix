@@ -123,6 +123,7 @@
             nodejs
             oxlint
             pnpm
+            sqlite # sqlite3 for migration fixture tooling
             tsx
             typescript
           ];
