@@ -195,12 +195,3 @@ func humanize(s string) string {
 	}
 	return strings.Join(words, " ")
 }
-
-// totalSessions sums session counts across projects.
-func totalSessions(projects []struct{ SessionCount int }) int {
-	total := 0
-	for _, p := range projects {
-		total += p.SessionCount
-	}
-	return total
-}

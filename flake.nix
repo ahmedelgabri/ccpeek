@@ -111,11 +111,12 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
-            go-tools # staticcheck, etc...
+            go-tools # includes staticcheck
             gofumpt
             gomodifytags
             gopls
             gotools # goimports
+            govulncheck
             just
             lefthook
             nixd

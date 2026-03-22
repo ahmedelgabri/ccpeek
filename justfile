@@ -21,6 +21,12 @@ dev: css
 vet:
     CGO_ENABLED=1 go vet -tags sqlite_fts5 ./...
 
+staticcheck:
+    staticcheck -tags sqlite_fts5 ./...
+
+govulncheck:
+    govulncheck -tags sqlite_fts5 ./...
+
 lint:
     pnpm exec oxlint --type-aware --type-check
 
@@ -32,6 +38,9 @@ format-check:
 
 test-unit: css
     CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
+
+test-race: css
+    CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./...
 
 test-e2e: css
     pnpm exec playwright test --config=playwright-go.config.ts
