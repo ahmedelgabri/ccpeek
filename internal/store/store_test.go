@@ -319,6 +319,59 @@ func TestMigrateFixturePreservesEarliestSupportedData(t *testing.T) {
 	}
 }
 
+func TestMigrateFixturePreservesV5SourcePathAndPlanData(t *testing.T) {
+	ctx := context.Background()
+	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
+		fixture:        "v5-source-path-and-plan-data.db",
+		projectDirName: "-Users-me-v5-project",
+		canonicalPath:  "/Users/me/v5-project",
+		toolCallCount:  1,
+		toolResultText: "v5 ok",
+		commands:       []string{"echo v5"},
+		searchDocCounts: map[string]int{
+			searchGroupCommands: 1,
+			searchGroupPlans:    1,
+		},
+	})
+	defer s.Close()
+
+	assertTableExists(t, s, "commands")
+	assertTableExists(t, s, "scan_findings")
+	assertColumnExists(t, s, "scan_findings", "ignored")
+	assertColumnExists(t, s, "sessions", "source_path")
+	assertColumnExists(t, s, "plans", "source_path")
+
+	var sessionSourcePath string
+	if err := s.db.GetContext(ctx, &sessionSourcePath, `SELECT source_path FROM sessions WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if sessionSourcePath != "/src/v5-session.jsonl" {
+		t.Fatalf("expected sessions.source_path to be preserved, got %q", sessionSourcePath)
+	}
+
+	var plan struct {
+		Title      string `db:"title"`
+		SourcePath string `db:"source_path"`
+	}
+	if err := s.db.GetContext(ctx, &plan, `SELECT title, source_path FROM plans WHERE file_name = ?`, "v5-plan.md"); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Title != "V5 Plan" {
+		t.Fatalf("expected plan title to be preserved, got %q", plan.Title)
+	}
+	if plan.SourcePath != "/src/v5-plan.md" {
+		t.Fatalf("expected plans.source_path to be preserved, got %q", plan.SourcePath)
+	}
+
+	var contentHash string
+	if err := s.db.GetContext(ctx, &contentHash, `SELECT content_hash FROM source_files WHERE path = ?`, "/src/v5-session.jsonl"); err != nil {
+		t.Fatal(err)
+	}
+	if contentHash != "v5-hash" {
+		t.Fatalf("expected source_files.content_hash to be preserved, got %q", contentHash)
+	}
+}
+
 func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
 	ctx := context.Background()
 	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{
