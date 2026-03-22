@@ -180,6 +180,94 @@ func TestMigrateFixtureBackfillsDerivedData(t *testing.T) {
 	}
 }
 
+func TestMigrateFixtureUpgradesLegacySessionsAndScanFindings(t *testing.T) {
+	ctx := context.Background()
+	path := copyMigrationFixture(t, "v7-legacy-sessions-and-scan-findings.db")
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	assertSchemaVersion(t, s, schemaVersion)
+
+	project, err := s.GetProject(ctx, "-Users-me-legacy-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.CanonicalPath != "/Users/me/legacy-project" {
+		t.Fatalf("expected canonical path to be backfilled, got %q", project.CanonicalPath)
+	}
+
+	var hasIgnored int
+	if err := s.db.GetContext(ctx, &hasIgnored, `SELECT COUNT(*) FROM pragma_table_info('scan_findings') WHERE name = 'ignored'`); err != nil {
+		t.Fatal(err)
+	}
+	if hasIgnored != 1 {
+		t.Fatalf("expected scan_findings.ignored column after migration, got %d matches", hasIgnored)
+	}
+
+	var ignored int
+	if err := s.db.GetContext(ctx, &ignored, `SELECT ignored FROM scan_findings WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if ignored != 0 {
+		t.Fatalf("expected migrated scan finding ignored=0, got %d", ignored)
+	}
+
+	var toolCallCount int
+	if err := s.db.GetContext(ctx, &toolCallCount, `SELECT COUNT(*) FROM tool_calls`); err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 1 {
+		t.Fatalf("expected 1 tool call after legacy fixture migration, got %d", toolCallCount)
+	}
+
+	commands, total, err := s.ListCommands(ctx, 10, 0, CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 command after legacy fixture migration, got %d", total)
+	}
+	if len(commands) != 1 || commands[0].Command != "echo legacy" {
+		t.Fatalf("unexpected migrated commands from legacy fixture: %+v", commands)
+	}
+
+	var commandDocs int
+	if err := s.db.GetContext(ctx, &commandDocs, `SELECT COUNT(*) FROM search_documents_fts WHERE group_type = ?`, searchGroupCommands); err != nil {
+		t.Fatal(err)
+	}
+	if commandDocs != 1 {
+		t.Fatalf("expected 1 command search document after legacy fixture migration, got %d", commandDocs)
+	}
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := s.InsertProject(ctx, tx, "legacy-project-copy", "Legacy Project Copy", "/Users/me/legacy-project-copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InsertSession(ctx, tx, projectID, model.SessionEntry{SessionID: "legacy-session"}, "/src/legacy-project-copy/legacy-session.jsonl")
+	if err != nil {
+		t.Fatalf("expected duplicate session id across projects to succeed after migration: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var sessionCount int
+	if err := s.db.GetContext(ctx, &sessionCount, `SELECT COUNT(*) FROM sessions WHERE session_id = 'legacy-session'`); err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 2 {
+		t.Fatalf("expected 2 sessions with migrated duplicate session_id support, got %d", sessionCount)
+	}
+}
+
 func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")
