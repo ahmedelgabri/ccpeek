@@ -1,10 +1,10 @@
 package server
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
@@ -95,14 +95,10 @@ func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
 		format = "plain"
 	}
 
-	commands, err := h.store.ListAllCommands(ctx, filter)
-	if err != nil {
-		serverError(w, "load commands", err)
+	if err := model.ValidateCommandFormat(format); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	var buf strings.Builder
-	_ = model.FormatCommands(&buf, commands, format)
 
 	filename := "commands." + format + ".txt"
 	if format == "fish" {
@@ -110,5 +106,17 @@ func (h *handlers) commandsExport(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	w.Write([]byte(buf.String()))
+
+	wroteAny := false
+	err := h.store.EachCommand(ctx, filter, func(entry model.CommandEntry) error {
+		wroteAny = true
+		return model.WriteCommand(w, entry, format)
+	})
+	if err != nil {
+		if !wroteAny {
+			serverError(w, "load commands", err)
+		} else {
+			log.Printf("commandsExport: stream failed: %v", err)
+		}
+	}
 }

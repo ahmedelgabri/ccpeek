@@ -333,24 +333,46 @@ type CommandEntry struct {
 	ProjectDisplay string `json:"projectDisplay" db:"display_name"`
 }
 
-// FormatCommands writes commands to w in the given shell history format.
-// Supported formats: "zsh", "bash", "fish", "plain".
-func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
+// ValidateCommandFormat validates a shell-history export format.
+func ValidateCommandFormat(format string) error {
 	switch format {
 	case "plain", "bash", "zsh", "fish":
+		return nil
 	default:
 		return fmt.Errorf("unsupported format %q: use plain, bash, zsh, or fish", format)
 	}
+}
+
+// WriteCommand writes a single command in the given shell history format.
+func WriteCommand(w io.Writer, cmd CommandEntry, format string) error {
+	if err := ValidateCommandFormat(format); err != nil {
+		return err
+	}
+
+	switch format {
+	case "zsh":
+		ts := parseTimestampUnix(cmd.Timestamp)
+		_, err := fmt.Fprintf(w, ": %d:0;%s\n", ts, escapeZshMultiline(cmd.Command))
+		return err
+	case "fish":
+		ts := parseTimestampUnix(cmd.Timestamp)
+		_, err := fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
+		return err
+	default: // "plain" or "bash"
+		_, err := fmt.Fprintf(w, "%s\n", cmd.Command)
+		return err
+	}
+}
+
+// FormatCommands writes commands to w in the given shell history format.
+// Supported formats: "zsh", "bash", "fish", "plain".
+func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
+	if err := ValidateCommandFormat(format); err != nil {
+		return err
+	}
 	for _, cmd := range commands {
-		switch format {
-		case "zsh":
-			ts := parseTimestampUnix(cmd.Timestamp)
-			fmt.Fprintf(w, ": %d:0;%s\n", ts, escapeZshMultiline(cmd.Command))
-		case "fish":
-			ts := parseTimestampUnix(cmd.Timestamp)
-			fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
-		default: // "plain" or "bash"
-			fmt.Fprintf(w, "%s\n", cmd.Command)
+		if err := WriteCommand(w, cmd, format); err != nil {
+			return err
 		}
 	}
 	return nil

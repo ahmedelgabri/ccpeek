@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
@@ -17,33 +16,8 @@ type CommandFilter struct {
 
 // ListCommands returns bash commands across all sessions with optional filters.
 func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter CommandFilter) ([]model.CommandEntry, int, error) {
-	baseFrom := `
-		FROM tool_calls tc
-		JOIN sessions s ON tc.session_id = s.id
-		JOIN projects p ON s.project_id = p.id`
-
-	var where []string
-	var args []any
-	where = append(where, "tc.tool_kind = 'shell'")
-
-	if filter.Project != "" {
-		where = append(where, "p.dir_name = ?")
-		args = append(args, filter.Project)
-	}
-	if filter.Search != "" {
-		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(filter.Search)+"%")
-	}
-	if filter.From != "" {
-		where = append(where, "tc.timestamp >= ?")
-		args = append(args, filter.From)
-	}
-	if filter.To != "" {
-		where = append(where, "tc.timestamp <= ?")
-		args = append(args, filter.To+"T23:59:59Z")
-	}
-
-	whereClause := " WHERE " + strings.Join(where, " AND ")
+	baseFrom := commandBaseFrom()
+	whereClause, args := commandWhereClause(filter)
 
 	var total int
 	countArgs := make([]any, len(args))
@@ -73,45 +47,11 @@ func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter Comm
 // ListAllCommands returns all bash commands (no pagination) with optional filters.
 // Used for export.
 func (s *Store) ListAllCommands(ctx context.Context, filter CommandFilter) ([]model.CommandEntry, error) {
-	baseFrom := `
-		FROM tool_calls tc
-		JOIN sessions s ON tc.session_id = s.id
-		JOIN projects p ON s.project_id = p.id`
-
-	var where []string
-	var args []any
-	where = append(where, "tc.tool_kind = 'shell'")
-
-	if filter.Project != "" {
-		where = append(where, "p.dir_name = ?")
-		args = append(args, filter.Project)
-	}
-	if filter.Search != "" {
-		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(filter.Search)+"%")
-	}
-	if filter.From != "" {
-		where = append(where, "tc.timestamp >= ?")
-		args = append(args, filter.From)
-	}
-	if filter.To != "" {
-		where = append(where, "tc.timestamp <= ?")
-		args = append(args, filter.To+"T23:59:59Z")
-	}
-
-	whereClause := " WHERE " + strings.Join(where, " AND ")
-
-	query := `SELECT
-			COALESCE(json_extract(tc.input_json, '$.command'), '') AS command,
-			tc.timestamp,
-			s.session_id,
-			s.first_prompt,
-			p.dir_name,
-			p.display_name` + baseFrom + whereClause +
-		" ORDER BY tc.timestamp DESC, tc.seq DESC"
-
 	var rows []model.CommandEntry
-	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
+	if err := s.EachCommand(ctx, filter, func(entry model.CommandEntry) error {
+		rows = append(rows, entry)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return rows, nil

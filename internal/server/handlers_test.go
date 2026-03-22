@@ -1369,6 +1369,20 @@ func TestCommandsExportFish(t *testing.T) {
 	}
 }
 
+func TestCommandsExportInvalidFormat(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/export?format=wat", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "unsupported format") {
+		t.Error("invalid export should explain unsupported format")
+	}
+}
+
 func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 
