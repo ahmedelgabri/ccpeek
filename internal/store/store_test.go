@@ -153,6 +153,53 @@ func TestMigrateBackfillsProjectCanonicalPath(t *testing.T) {
 	}
 }
 
+func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertPlan(ctx, tx, model.PlanEntry{FileName: "alpha.md", Title: "Alpha Architecture", SizeBytes: 12}, "Step one", "/src/alpha.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.backfillSearchIndex(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := s.SearchAll(ctx, "Architecture", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) == 0 {
+		t.Fatal("expected search groups after backfill")
+	}
+
+	foundPlan := false
+	for _, g := range groups {
+		if g.Type != "Plans" {
+			continue
+		}
+		if len(g.Hits) == 0 {
+			t.Fatal("expected plan hits after backfill")
+		}
+		foundPlan = true
+		break
+	}
+	if !foundPlan {
+		t.Fatal("expected Plans group after backfill")
+	}
+}
+
 func TestDeleteSessionCascade(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")

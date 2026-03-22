@@ -84,7 +84,7 @@ func (s *Store) EnsureFilePermissions() error {
 // Reset drops all data and recreates the schema. Used for full rebuild.
 func (s *Store) Reset(ctx context.Context) error {
 	tables := []string{
-		"messages_fts", "tool_calls", "commands", "messages", "todo_items", "todos",
+		"messages_fts", "search_documents_fts", "tool_calls", "commands", "messages", "todo_items", "todos",
 		"file_versions", "file_history",
 		"task_items", "task_groups", "usage_facets", "usage_report", "paste_cache",
 		"memories", "sessions", "projects",
@@ -121,7 +121,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	if currentVersion >= schemaVersion {
-		return s.backfillToolCalls(ctx)
+		if err := s.backfillToolCalls(ctx); err != nil {
+			return err
+		}
+		return s.backfillSearchIndex(ctx)
 	}
 
 	// If this was a fresh database (no version set), we're now at baseline v4
@@ -186,6 +189,9 @@ func (s *Store) migrate(ctx context.Context) error {
 
 	if err := s.backfillToolCalls(ctx); err != nil {
 		return fmt.Errorf("backfilling tool calls: %w", err)
+	}
+	if err := s.backfillSearchIndex(ctx); err != nil {
+		return fmt.Errorf("backfilling search index: %w", err)
 	}
 
 	return nil

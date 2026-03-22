@@ -110,6 +110,12 @@ func doPrune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 		if err := s.RepopulateFTS(ctx, tx); err != nil {
 			return fmt.Errorf("repopulating FTS: %w", err)
 		}
+		if err := s.RebuildSearchIndex(ctx, tx); err != nil {
+			return fmt.Errorf("rebuilding search index: %w", err)
+		}
+		if err := s.RepopulateSearchIndex(ctx, tx); err != nil {
+			return fmt.Errorf("repopulating search index: %w", err)
+		}
 	}
 
 	fmt.Fprintf(w, "  Pruned: %d source files\n", pruned)
@@ -275,6 +281,13 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 	rec.AddIndexed(memoryCount)
 	done("Memories: %d", memoryCount)
 
+	if err := s.RebuildSearchIndex(ctx, tx); err != nil {
+		return fmt.Errorf("rebuilding search index: %w", err)
+	}
+	if err := s.RepopulateSearchIndex(ctx, tx); err != nil {
+		return fmt.Errorf("repopulating search index: %w", err)
+	}
+
 	// Record hashes for all source files
 	recordSourceHashes(ctx, claudeDir, s, tx, rec)
 
@@ -426,6 +439,12 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store, r
 		if err := s.RepopulateFTS(ctx, tx); err != nil {
 			return false, fmt.Errorf("repopulating FTS: %w", err)
 		}
+	}
+	if err := s.RebuildSearchIndex(ctx, tx); err != nil {
+		return false, fmt.Errorf("rebuilding search index: %w", err)
+	}
+	if err := s.RepopulateSearchIndex(ctx, tx); err != nil {
+		return false, fmt.Errorf("repopulating search index: %w", err)
 	}
 
 	// Update hashes for changed files (reuse cached hashes from detection pass)

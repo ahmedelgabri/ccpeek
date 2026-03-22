@@ -7,7 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 12
+const schemaVersion = 13
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -58,6 +58,13 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text_content);
+CREATE VIRTUAL TABLE IF NOT EXISTS search_documents_fts USING fts5(
+	group_type UNINDEXED,
+	title UNINDEXED,
+	subtitle UNINDEXED,
+	url UNINDEXED,
+	text_content
+);
 
 CREATE TABLE IF NOT EXISTS tool_calls (
 	id              INTEGER PRIMARY KEY,
@@ -268,6 +275,7 @@ var migrations = []func(ctx context.Context, tx *sqlx.Tx) error{
 	migrateV9ToV10,
 	migrateV10ToV11,
 	migrateV11ToV12,
+	migrateV12ToV13,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -510,6 +518,21 @@ func migrateV11ToV12(ctx context.Context, tx *sqlx.Tx) error {
 		WHERE canonical_path = ''`)
 	if err != nil {
 		return fmt.Errorf("backfilling projects.canonical_path: %w", err)
+	}
+	return nil
+}
+
+// migrateV12ToV13 adds a unified cross-domain FTS search index.
+func migrateV12ToV13(ctx context.Context, tx *sqlx.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS search_documents_fts USING fts5(
+		group_type UNINDEXED,
+		title UNINDEXED,
+		subtitle UNINDEXED,
+		url UNINDEXED,
+		text_content
+	)`)
+	if err != nil {
+		return fmt.Errorf("creating search_documents_fts: %w", err)
 	}
 	return nil
 }
