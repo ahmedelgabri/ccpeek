@@ -422,8 +422,6 @@ var allowedTables = map[string]bool{
 }
 
 // DeleteBySource deletes all rows from a table where source_path matches.
-// For tables with child rows (todos->todo_items, etc.), the caller must
-// delete children first.
 func (s *Store) DeleteBySource(ctx context.Context, tx *sqlx.Tx, table, sourcePath string) error {
 	if !allowedTables[table] {
 		return fmt.Errorf("disallowed table name: %s", table)
@@ -435,75 +433,20 @@ func (s *Store) DeleteBySource(ctx context.Context, tx *sqlx.Tx, table, sourcePa
 	return err
 }
 
-// DeleteChildrenBySource deletes child rows whose parent has a given source_path.
-// parentTable is the parent table, parentIDCol is its PK column,
-// childTable is the child table, childFKCol is the FK column in the child.
-func (s *Store) DeleteChildrenBySource(ctx context.Context, tx *sqlx.Tx, parentTable, parentIDCol, childTable, childFKCol, sourcePath string) error {
-	for _, t := range []string{parentTable, childTable} {
-		if !allowedTables[t] {
-			return fmt.Errorf("disallowed table name: %s", t)
-		}
-	}
-	_, err := tx.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM %s WHERE %s IN (SELECT %s FROM %s WHERE source_path = ?)`,
-			childTable, childFKCol, parentIDCol, parentTable),
-		sourcePath,
-	)
-	return err
-}
-
-// DeleteSessionCascade deletes sessions and their messages/FTS for a given source_path.
-// Also clears session linkage on todos and file_history that reference deleted sessions.
+// DeleteSessionCascade deletes sessions and their message FTS rows for a given source_path.
+// Child rows and nullable links are handled by foreign key ON DELETE actions.
 func (s *Store) DeleteSessionCascade(ctx context.Context, tx *sqlx.Tx, sourcePath string) error {
-	// Collect session IDs being deleted
-	var sessionIDs []int64
-	if err := tx.SelectContext(ctx, &sessionIDs,
-		`SELECT id FROM sessions WHERE source_path = ?`, sourcePath); err != nil {
-		return err
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM messages_fts
+		WHERE rowid IN (
+			SELECT m.id
+			FROM messages m
+			JOIN sessions s ON m.session_id = s.id
+			WHERE s.source_path = ?
+		)`, sourcePath); err != nil {
+		return fmt.Errorf("deleting FTS for source %s: %w", sourcePath, err)
 	}
 
-	if len(sessionIDs) == 0 {
-		return nil
-	}
-
-	for _, sid := range sessionIDs {
-		// Delete FTS entries for these messages
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_id = ?)`, sid,
-		); err != nil {
-			return fmt.Errorf("deleting FTS for session %d: %w", sid, err)
-		}
-		// Delete messages
-		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sid); err != nil {
-			return fmt.Errorf("deleting messages for session %d: %w", sid, err)
-		}
-		// Delete tool calls
-		if _, err := tx.ExecContext(ctx, `DELETE FROM tool_calls WHERE session_id = ?`, sid); err != nil {
-			return fmt.Errorf("deleting tool calls for session %d: %w", sid, err)
-		}
-		// Delete commands
-		if _, err := tx.ExecContext(ctx, `DELETE FROM commands WHERE session_id = ?`, sid); err != nil {
-			return fmt.Errorf("deleting commands for session %d: %w", sid, err)
-		}
-		// Unlink todos (set session_id to NULL, keep the todo)
-		if _, err := tx.ExecContext(ctx, `UPDATE todos SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
-			return fmt.Errorf("unlinking todos for session %d: %w", sid, err)
-		}
-		// Unlink file_history
-		if _, err := tx.ExecContext(ctx, `UPDATE file_history SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
-			return fmt.Errorf("unlinking file_history for session %d: %w", sid, err)
-		}
-		// Unlink task_groups
-		if _, err := tx.ExecContext(ctx, `UPDATE task_groups SET session_id = NULL WHERE session_id = ?`, sid); err != nil {
-			return fmt.Errorf("unlinking task_groups for session %d: %w", sid, err)
-		}
-		// Unlink usage_facets
-		if _, err := tx.ExecContext(ctx, `UPDATE usage_facets SET db_session_id = NULL WHERE db_session_id = ?`, sid); err != nil {
-			return fmt.Errorf("unlinking usage_facets for session %d: %w", sid, err)
-		}
-	}
-
-	// Delete the sessions themselves
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE source_path = ?`, sourcePath); err != nil {
 		return err
 	}

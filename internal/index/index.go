@@ -471,33 +471,10 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store, r
 
 // deleteSourceData removes all indexed data originating from a source file.
 func deleteSourceData(ctx context.Context, tx *sqlx.Tx, s *store.Store, sourcePath string) error {
-	// Sessions require cascade handling (messages, FTS, unlinking)
 	if err := s.DeleteSessionCascade(ctx, tx, sourcePath); err != nil {
 		return err
 	}
-	// Todos: delete items first, then todos
-	if err := s.DeleteChildrenBySource(ctx, tx, "todos", "id", "todo_items", "todo_id", sourcePath); err != nil {
-		return err
-	}
-	if err := s.DeleteBySource(ctx, tx, "todos", sourcePath); err != nil {
-		return err
-	}
-	// File history: delete versions first, then entries
-	if err := s.DeleteChildrenBySource(ctx, tx, "file_history", "id", "file_versions", "file_history_id", sourcePath); err != nil {
-		return err
-	}
-	if err := s.DeleteBySource(ctx, tx, "file_history", sourcePath); err != nil {
-		return err
-	}
-	// Task groups: delete items first, then groups
-	if err := s.DeleteChildrenBySource(ctx, tx, "task_groups", "id", "task_items", "task_group_id", sourcePath); err != nil {
-		return err
-	}
-	if err := s.DeleteBySource(ctx, tx, "task_groups", sourcePath); err != nil {
-		return err
-	}
-	// Simple tables (no children)
-	for _, table := range []string{"plans", "shell_snapshots", "history", "paste_cache", "usage_facets", "usage_report", "memories"} {
+	for _, table := range []string{"todos", "file_history", "task_groups", "plans", "shell_snapshots", "history", "paste_cache", "usage_facets", "usage_report", "memories"} {
 		if err := s.DeleteBySource(ctx, tx, table, sourcePath); err != nil {
 			return err
 		}

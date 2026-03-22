@@ -200,6 +200,118 @@ func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
 	}
 }
 
+func TestMigrateDeleteActionsAndCascadeCleanup(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ccpeek-migrate-fk.db")
+
+	db, err := sqlx.Open("sqlite3", path+"?_foreign_keys=on")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stmts := []string{
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta (key, value) VALUES ('schema_version', '13')`,
+		`CREATE TABLE projects (
+			id INTEGER PRIMARY KEY,
+			dir_name TEXT NOT NULL UNIQUE,
+			display_name TEXT NOT NULL,
+			canonical_path TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE sessions (
+			id INTEGER PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			project_id INTEGER NOT NULL REFERENCES projects(id),
+			first_prompt TEXT NOT NULL DEFAULT '',
+			message_count INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT '',
+			modified_at TEXT NOT NULL DEFAULT '',
+			git_branch TEXT NOT NULL DEFAULT '',
+			project_path TEXT NOT NULL DEFAULT '',
+			todo_file_name TEXT NOT NULL DEFAULT '',
+			has_file_history INTEGER NOT NULL DEFAULT 0,
+			bash_command_count INTEGER NOT NULL DEFAULT 0,
+			tool_use_counts TEXT NOT NULL DEFAULT '{}',
+			estimated_tokens INTEGER NOT NULL DEFAULT 0,
+			source_path TEXT NOT NULL DEFAULT '',
+			UNIQUE(session_id, project_id)
+		)`,
+		`CREATE TABLE todos (
+			id INTEGER PRIMARY KEY,
+			file_name TEXT NOT NULL UNIQUE,
+			session_id INTEGER REFERENCES sessions(id),
+			item_count INTEGER NOT NULL DEFAULT 0,
+			statuses TEXT NOT NULL DEFAULT '{}',
+			source_path TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE todo_items (
+			id INTEGER PRIMARY KEY,
+			todo_id INTEGER NOT NULL REFERENCES todos(id),
+			seq INTEGER NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			active_form TEXT NOT NULL DEFAULT ''
+		)`,
+		`INSERT INTO projects (id, dir_name, display_name) VALUES (1, 'proj', 'Project')`,
+		`INSERT INTO sessions (id, session_id, project_id, source_path) VALUES (1, 'sess-1', 1, '/src/sess-1.jsonl')`,
+		`INSERT INTO todos (id, file_name, session_id, item_count, statuses, source_path) VALUES (1, 'todo.json', 1, 1, '{}', '/src/todo.json')`,
+		`INSERT INTO todo_items (id, todo_id, seq, content, status, active_form) VALUES (1, 1, 0, 'fix bug', 'pending', 'Fix bug')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			db.Close()
+			t.Fatalf("seed v13 schema: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var sessionID *int64
+	if err := s.db.GetContext(ctx, &sessionID, `SELECT session_id FROM todos WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != nil {
+		t.Fatalf("expected migrated ON DELETE SET NULL on todos.session_id, got %v", *sessionID)
+	}
+
+	tx, err = s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM todos WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM todo_items WHERE todo_id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected migrated ON DELETE CASCADE on todo_items.todo_id, got %d rows", count)
+	}
+}
+
 func TestDeleteSessionCascade(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")
@@ -230,6 +342,10 @@ func TestDeleteSessionCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO commands (session_id, seq, command, timestamp) VALUES (1, 0, 'ls', '2025-01-01')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO tool_calls (session_id, seq, tool_name, tool_kind, input_json) VALUES (1, 0, 'Bash', 'shell', '{}')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,6 +384,11 @@ func TestDeleteSessionCascade(t *testing.T) {
 	s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM commands`)
 	if count != 0 {
 		t.Errorf("expected 0 commands, got %d", count)
+	}
+	// Tool calls should be gone
+	s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM tool_calls`)
+	if count != 0 {
+		t.Errorf("expected 0 tool_calls, got %d", count)
 	}
 	// Todo should be unlinked (session_id = NULL) but still exist
 	var sessID *int64
