@@ -27,7 +27,7 @@ func setupTestServer(t *testing.T) http.Handler {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := index.Run(context.Background(), testdataDir, db, true, io.Discard); err != nil {
+	if err := index.Run(context.Background(), testdataDir, "", db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 
@@ -531,6 +531,105 @@ func TestConversationExport(t *testing.T) {
 	}
 	if !strings.Contains(body, "## Assistant") {
 		t.Error("export missing Assistant heading")
+	}
+}
+
+func setupMetadataOnlyCursorServer(t *testing.T) http.Handler {
+	t.Helper()
+	ctx := context.Background()
+
+	db, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal("opening store:", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	tx, err := db.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedAt := time.Now().UTC().UnixMilli()
+	projectID, err := db.InsertProjectWithMeta(ctx, tx, "cursor-sqlite-global-composer", "Cursor Composer", "", model.SourceCursor, updatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.InsertSession(ctx, tx, projectID, model.SessionEntry{
+		SessionID:    "cursor-meta-1",
+		FirstPrompt:  "Cursor metadata-only fixture",
+		MessageCount: 4,
+		Created:      "2026-01-01T10:00:00Z",
+		Modified:     "2026-01-01T10:05:00Z",
+		MetadataOnly: true,
+		ModelName:    "gpt-4.1",
+		Source:       model.SourceCursor,
+	}, "/tmp/state.vscdb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	handler, err := NewHandler(db)
+	if err != nil {
+		t.Fatal("NewHandler failed:", err)
+	}
+	return handler
+}
+
+func TestConversationMetadataOnlySessionView(t *testing.T) {
+	handler := setupMetadataOnlyCursorServer(t)
+
+	req := httptest.NewRequest("GET", "/projects/cursor-sqlite-global-composer/cursor-meta-1/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "This session is metadata-only.") {
+		t.Fatal("metadata-only conversation warning missing")
+	}
+	if strings.Contains(body, "No messages available for this session.") {
+		t.Fatal("metadata-only session should render dedicated warning, not empty-session fallback")
+	}
+}
+
+func TestConversationExportMetadataOnlySession(t *testing.T) {
+	handler := setupMetadataOnlyCursorServer(t)
+
+	req := httptest.NewRequest("GET", "/projects/cursor-sqlite-global-composer/cursor-meta-1/export.md", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/markdown") {
+		t.Fatalf("expected markdown export content type, got %q", ct)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "This session is metadata-only. Full transcript content is not available from this source.") {
+		t.Fatal("metadata-only export warning missing")
+	}
+	if !strings.Contains(body, "**Model:** gpt-4.1") {
+		t.Fatal("metadata-only export should include model metadata")
+	}
+}
+
+func TestSearchShowsMetadataOnlyContractNotice(t *testing.T) {
+	handler := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/search/?q=hello", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Metadata-only sessions are excluded from transcript body search and export.") {
+		t.Fatal("search page should display metadata-only behavior contract")
 	}
 }
 
@@ -1448,7 +1547,7 @@ func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := index.Run(context.Background(), testdataDir, db, true, io.Discard); err != nil {
+	if err := index.Run(context.Background(), testdataDir, "", db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 

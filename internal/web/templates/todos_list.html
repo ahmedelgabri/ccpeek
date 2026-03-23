@@ -15,7 +15,11 @@
             >{{ .FileName | trimSuffix ".json" }}</span
           >
           <div class="flex items-center gap-3 mt-1">
+            {{ sourceBadge .Source }}
             <span class="text-xs text-slate-600">{{ .ItemCount }} items</span>
+            {{ if .UpdatedAt }}
+              <span class="text-xs text-slate-600">{{ formatTimestamp .UpdatedAt }}</span>
+            {{ end }}
             {{ if .ProjectName }}
               <span class="text-xs text-slate-500"
                 >{{ shortenPath .ProjectName }}</span

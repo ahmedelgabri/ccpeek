@@ -3,9 +3,12 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 )
 
 // formatBytes formats a file size to a human-readable string.
@@ -194,4 +197,30 @@ func humanize(s string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+func sourceLabel(source string) string {
+	switch source {
+	case model.SourceCursor:
+		return "Cursor"
+	case "", model.SourceClaudeCode:
+		return "Claude Code"
+	default:
+		return source
+	}
+}
+
+func sourceBadge(source string) template.HTML {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
+	label := sourceLabel(source)
+	base := "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+	switch source {
+	case model.SourceCursor:
+		return template.HTML(`<span class="` + base + ` bg-sky-500/15 text-sky-300">` + template.HTMLEscapeString(label) + `</span>`)
+	default:
+		return template.HTML(`<span class="` + base + ` bg-violet-500/15 text-violet-300">` + template.HTMLEscapeString(label) + `</span>`)
+	}
 }

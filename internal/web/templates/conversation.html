@@ -3,12 +3,26 @@
 
   {{ template "pagination" . }}
 
-
-  <div class="space-y-3 my-6">
-    {{ range .Messages }}
-      {{ template "message" . }}
-    {{ end }}
-  </div>
+  {{ if .MetadataOnly }}
+    <div
+      class="my-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+    >
+      This session is metadata-only. Full transcript content is not available
+      from this source.
+    </div>
+  {{ else if eq (len .Messages) 0 }}
+    <div
+      class="my-6 rounded-xl border border-surface-border bg-surface-card px-4 py-3 text-sm text-slate-400"
+    >
+      No messages available for this session.
+    </div>
+  {{ else }}
+    <div class="space-y-3 my-6">
+      {{ range .Messages }}
+        {{ template "message" . }}
+      {{ end }}
+    </div>
+  {{ end }}
 
   {{ template "pagination" . }}
 {{ end }}

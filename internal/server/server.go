@@ -19,7 +19,12 @@ import (
 var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool) error {
+func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir, cursorDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool) error {
+	return ListenAndServeWithOptions(ctx, addr, db, claudeDir, cursorDir, watch, watchInterval, rescanOnWatch, index.DefaultRunOptions)
+}
+
+// ListenAndServeWithOptions starts the HTTP server with indexing options.
+func ListenAndServeWithOptions(ctx context.Context, addr string, db *store.Store, claudeDir, cursorDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool, opts index.RunOptions) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -33,7 +38,7 @@ func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir
 	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		go watchAndReindex(ctx, claudeDir, db, watchInterval, rescanOnWatch)
+		go watchAndReindex(ctx, claudeDir, cursorDir, db, watchInterval, rescanOnWatch, opts)
 	}
 
 	srv := &http.Server{
@@ -125,9 +130,9 @@ type handlers struct {
 	tmpl  *templates
 }
 
-func reindexAndMaybeScan(ctx context.Context, claudeDir string, db *store.Store, rescan bool) (bool, error) {
+func reindexAndMaybeScan(ctx context.Context, claudeDir, cursorDir string, db *store.Store, rescan bool, opts index.RunOptions) (bool, error) {
 	beforeRunID, _ := latestIngestRunID(ctx, db)
-	changed, err := index.RunIncremental(ctx, claudeDir, db)
+	changed, err := index.RunIncrementalWithOptions(ctx, claudeDir, cursorDir, db, opts)
 	if err != nil {
 		return changed, err
 	}
@@ -171,7 +176,7 @@ func logLatestIngestWarnings(ctx context.Context, db *store.Store, previousID in
 		run.WarningCount, run.SkippedFiles, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks, run.ID)
 }
 
-func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration, rescan bool) {
+func watchAndReindex(ctx context.Context, claudeDir, cursorDir string, db *store.Store, interval time.Duration, rescan bool, opts index.RunOptions) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -179,7 +184,7 @@ func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, int
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			changed, err := reindexAndMaybeScan(ctx, claudeDir, db, rescan)
+			changed, err := reindexAndMaybeScan(ctx, claudeDir, cursorDir, db, rescan, opts)
 			if err != nil {
 				log.Printf("Re-index/scan failed: %v", err)
 				continue

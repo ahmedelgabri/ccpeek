@@ -1,7 +1,8 @@
 {{ define "content" }}
   <div class="mb-4">{{ backLink "/projects/" "Projects" }}</div>
-  <h1 class="text-2xl font-bold text-slate-50 mb-1">
-    {{ shortenPath .Project.DisplayName }}
+  <h1 class="text-2xl font-bold text-slate-50 mb-1 flex items-center gap-2">
+    <span>{{ shortenPath .Project.DisplayName }}</span>
+    {{ sourceBadge .Project.Source }}
   </h1>
   <div
     class="flex flex-wrap gap-6 text-sm text-slate-400 mb-6 bg-surface-card border border-surface-border rounded-xl px-5 py-3"
@@ -157,10 +158,22 @@
                 >{{ .GitBranch }}</span
               >
             {{ end }}
+            {{ sourceBadge .Source }}
             <span class="text-xs text-slate-600">{{ .MessageCount }} msgs</span>
             {{ if .EstimatedTokens }}
               <span class="text-xs text-slate-600"
                 >~{{ formatTokens .EstimatedTokens }} tokens</span
+              >
+            {{ end }}
+            {{ if .MetadataOnly }}
+              <span
+                class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300"
+                >metadata-only</span
+              >
+            {{ end }}
+            {{ if .ModelName }}
+              <span class="text-xs text-slate-500 font-mono"
+                >{{ .ModelName }}</span
               >
             {{ end }}
             {{ if .TodoFileName }}

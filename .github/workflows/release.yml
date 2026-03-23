@@ -197,7 +197,7 @@ jobs:
 
           cat > homebrew-ccpeek/Formula/ccpeek.rb << EOF
           class Ccpeek < Formula
-            desc "Explore your Claude Code history"
+            desc "Explore your AI coding history"
             homepage "https://github.com/ahmedelgabri/ccpeek"
             version "${VERSION}"
             license "MIT"

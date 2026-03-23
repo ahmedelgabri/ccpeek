@@ -165,18 +165,14 @@
             <span class="text-slate-400 truncate flex-1 min-w-0"
               >{{ truncate .Display 120 }}</span
             >
-            <span
-              class="text-xs text-slate-600 whitespace-nowrap shrink-0 font-mono"
-              >{{ if .ProjectDisplay }}
-                {{ .ProjectDisplay }}
-              {{ else }}
-                {{ .Project }}
-              {{ end }}</span
+            <span class="text-xs text-slate-600 whitespace-nowrap shrink-0 font-mono flex items-center gap-2"
+              >{{ if .ProjectDisplay }}{{ .ProjectDisplay }}{{ else }}{{ .Project }}{{ end }} {{ sourceBadge .Source }}</span
             >
           </a>
-        {{ else }}
-          <div
-            class="flex items-baseline gap-4 px-5 py-3 text-sm {{ if $i }}
+        {{ else if .ProjectDir }}
+          <a
+            href="{{ urlFor "project" .ProjectDir }}"
+            class="flex items-baseline gap-4 px-5 py-3 text-sm no-underline transition-colors duration-150 hover:bg-surface-hover {{ if $i }}
               border-t border-surface-border
             {{ end }}"
           >
@@ -187,15 +183,28 @@
             <span class="text-slate-400 truncate flex-1 min-w-0"
               >{{ truncate .Display 120 }}</span
             >
-            <span
-              class="text-xs text-slate-600 whitespace-nowrap shrink-0 font-mono"
-              >{{ if .ProjectDisplay }}
-                {{ .ProjectDisplay }}
-              {{ else }}
-                {{ .Project }}
-              {{ end }}</span
+            <span class="text-xs text-slate-600 whitespace-nowrap shrink-0 font-mono flex items-center gap-2"
+              >{{ if .ProjectDisplay }}{{ .ProjectDisplay }}{{ else }}{{ .Project }}{{ end }} {{ sourceBadge .Source }}</span
             >
-          </div>
+          </a>
+        {{ else }}
+          <a
+            href="{{ urlFor "project" (encodeProjectDir .Project) }}"
+            class="flex items-baseline gap-4 px-5 py-3 text-sm no-underline transition-colors duration-150 hover:bg-surface-hover {{ if $i }}
+              border-t border-surface-border
+            {{ end }}"
+          >
+            <span
+              class="text-xs text-slate-600 whitespace-nowrap tabular-nums font-mono"
+              >{{ formatShortDate .Timestamp }}</span
+            >
+            <span class="text-slate-400 truncate flex-1 min-w-0"
+              >{{ truncate .Display 120 }}</span
+            >
+            <span class="text-xs text-slate-600 whitespace-nowrap shrink-0 font-mono flex items-center gap-2"
+              >{{ if .ProjectDisplay }}{{ .ProjectDisplay }}{{ else }}{{ .Project }}{{ end }} {{ sourceBadge .Source }}</span
+            >
+          </a>
         {{ end }}
       {{ end }}
     </div>

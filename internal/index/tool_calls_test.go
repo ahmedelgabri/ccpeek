@@ -18,7 +18,7 @@ func TestIndexedToolCallQueries(t *testing.T) {
 	defer s.Close()
 
 	testdataDir := filepath.Join("..", "..", "testdata")
-	if err := Run(ctx, testdataDir, s, true, io.Discard); err != nil {
+	if err := Run(ctx, testdataDir, "", s, true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 

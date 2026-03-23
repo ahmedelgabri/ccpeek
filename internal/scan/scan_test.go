@@ -21,7 +21,7 @@ func setupTestDB(t *testing.T) *store.Store {
 	t.Cleanup(func() { db.Close() })
 
 	testdataDir := filepath.Join("..", "..", "testdata")
-	if err := index.Run(context.Background(), testdataDir, db, true, io.Discard); err != nil {
+	if err := index.Run(context.Background(), testdataDir, "", db, true, io.Discard); err != nil {
 		t.Fatal("index failed:", err)
 	}
 	return db

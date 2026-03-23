@@ -17,31 +17,50 @@ func (s *Store) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
 
 // InsertPlan inserts a plan entry with its content.
 func (s *Store) InsertPlan(ctx context.Context, tx *sqlx.Tx, p model.PlanEntry, content, sourcePath string) error {
+	source := p.Source
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO plans (file_name, title, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?)`,
-		p.FileName, p.Title, p.SizeBytes, content, sourcePath,
+		`INSERT INTO plans (file_name, title, size_bytes, content, updated_at_ms, source, source_path) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.FileName, p.Title, p.SizeBytes, content, p.UpdatedAt, source, sourcePath,
 	)
 	return err
 }
 
 // InsertShellSnapshot inserts a shell snapshot entry with its content.
 func (s *Store) InsertShellSnapshot(ctx context.Context, tx *sqlx.Tx, snap model.ShellSnapshotEntry, content, sourcePath string) error {
+	source := snap.Source
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
+	kind := snap.Kind
+	if kind == "" {
+		kind = "shell"
+	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO shell_snapshots (file_name, timestamp, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?)`,
-		snap.FileName, snap.Timestamp, snap.SizeBytes, content, sourcePath,
+		`INSERT INTO shell_snapshots (file_name, timestamp, size_bytes, content, kind, project_path, commit_hash, detail_file, source, source_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		snap.FileName, snap.Timestamp, snap.SizeBytes, content, kind, snap.ProjectPath, snap.CommitHash, snap.DetailFile, source, sourcePath,
 	)
 	return err
 }
 
 // InsertProject inserts a project and returns its database ID.
 func (s *Store) InsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName, canonicalPath string) (int64, error) {
+	return s.InsertProjectWithMeta(ctx, tx, dirName, displayName, canonicalPath, model.SourceClaudeCode, 0)
+}
+
+// InsertProjectWithMeta inserts a project with source/updated metadata and returns its ID.
+func (s *Store) InsertProjectWithMeta(ctx context.Context, tx *sqlx.Tx, dirName, displayName, canonicalPath, source string, updatedAt int64) (int64, error) {
 	if displayName == "" {
 		displayName = dirName
 	}
-
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO projects (dir_name, display_name, canonical_path) VALUES (?, ?, ?)`,
-		dirName, displayName, canonicalPath,
+		`INSERT INTO projects (dir_name, display_name, canonical_path, source, updated_at_ms) VALUES (?, ?, ?, ?, ?)`,
+		dirName, displayName, canonicalPath, source, updatedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -50,33 +69,44 @@ func (s *Store) InsertProject(ctx context.Context, tx *sqlx.Tx, dirName, display
 }
 
 // UpsertProject inserts or updates a project and returns its database ID.
-// If updateDisplayName is false, an existing project's display_name is preserved.
 func (s *Store) UpsertProject(ctx context.Context, tx *sqlx.Tx, dirName, displayName, canonicalPath string, updateDisplayName bool) (int64, error) {
+	return s.UpsertProjectWithMeta(ctx, tx, dirName, displayName, canonicalPath, model.SourceClaudeCode, 0, updateDisplayName)
+}
+
+// UpsertProjectWithMeta inserts or updates a project with source/updated metadata and returns its ID.
+// If updateDisplayName is false, an existing project's display_name is preserved.
+func (s *Store) UpsertProjectWithMeta(ctx context.Context, tx *sqlx.Tx, dirName, displayName, canonicalPath, source string, updatedAt int64, updateDisplayName bool) (int64, error) {
 	if displayName == "" {
 		displayName = dirName
 	}
-
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
 	var err error
 	if updateDisplayName {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO projects (dir_name, display_name, canonical_path) VALUES (?, ?, ?)
+			`INSERT INTO projects (dir_name, display_name, canonical_path, source, updated_at_ms) VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(dir_name) DO UPDATE SET
 			 	display_name = excluded.display_name,
 			 	canonical_path = CASE
 			 		WHEN excluded.canonical_path <> '' THEN excluded.canonical_path
 			 		ELSE projects.canonical_path
-			 	END`,
-			dirName, displayName, canonicalPath,
+			 	END,
+			 	source = excluded.source,
+			 	updated_at_ms = MAX(projects.updated_at_ms, excluded.updated_at_ms)`,
+			dirName, displayName, canonicalPath, source, updatedAt,
 		)
 	} else {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO projects (dir_name, display_name, canonical_path) VALUES (?, ?, ?)
+			`INSERT INTO projects (dir_name, display_name, canonical_path, source, updated_at_ms) VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(dir_name) DO UPDATE SET
 			 	canonical_path = CASE
 			 		WHEN excluded.canonical_path <> '' THEN excluded.canonical_path
 			 		ELSE projects.canonical_path
-			 	END`,
-			dirName, displayName, canonicalPath,
+			 	END,
+			 	source = excluded.source,
+			 	updated_at_ms = MAX(projects.updated_at_ms, excluded.updated_at_ms)`,
+			dirName, displayName, canonicalPath, source, updatedAt,
 		)
 	}
 	if err != nil {
@@ -93,15 +123,23 @@ func (s *Store) InsertSession(ctx context.Context, tx *sqlx.Tx, projectID int64,
 	if err != nil {
 		toolJSON = []byte("{}")
 	}
+	source := sess.Source
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
+	metadataOnly := 0
+	if sess.MetadataOnly {
+		metadataOnly = 1
+	}
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO sessions (session_id, project_id, first_prompt, message_count,
 		 created_at, modified_at, git_branch, project_path,
-		 bash_command_count, tool_use_counts, estimated_tokens, source_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 bash_command_count, tool_use_counts, estimated_tokens, metadata_only, model_name, source, source_path)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, projectID, sess.FirstPrompt, sess.MessageCount,
 		sess.Created, sess.Modified, sess.GitBranch, sess.ProjectPath,
-		sess.BashCommandCount, string(toolJSON), sess.EstimatedTokens, sourcePath,
+		sess.BashCommandCount, string(toolJSON), sess.EstimatedTokens, metadataOnly, sess.ModelName, source, sourcePath,
 	)
 	if err != nil {
 		return 0, err
@@ -155,8 +193,10 @@ func (s *Store) InsertMessages(ctx context.Context, tx *sqlx.Tx, dbSessionID int
 
 // InsertCommands inserts extracted bash commands for a session.
 func (s *Store) InsertCommands(ctx context.Context, tx *sqlx.Tx, dbSessionID int64, messages []model.ConversationMessage) error {
+	source := model.SourceClaudeCode
+	_ = tx.GetContext(ctx, &source, `SELECT source FROM sessions WHERE id = ?`, dbSessionID)
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO commands (session_id, seq, command, timestamp) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO commands (session_id, seq, command, timestamp, source) VALUES (?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		return fmt.Errorf("preparing command insert: %w", err)
@@ -176,7 +216,7 @@ func (s *Store) InsertCommands(ctx context.Context, tx *sqlx.Tx, dbSessionID int
 				Command string `json:"command"`
 			}
 			if json.Unmarshal(b.Input, &input) == nil && input.Command != "" {
-				if _, err := stmt.ExecContext(ctx, dbSessionID, seq, input.Command, m.Timestamp); err != nil {
+				if _, err := stmt.ExecContext(ctx, dbSessionID, seq, input.Command, m.Timestamp, source); err != nil {
 					return fmt.Errorf("inserting command %d: %w", seq, err)
 				}
 				seq++
@@ -197,10 +237,14 @@ func (s *Store) InsertTodo(ctx context.Context, tx *sqlx.Tx, entry model.TodoEnt
 	if sessionDBID > 0 {
 		sessID = sessionDBID
 	}
+	source := entry.Source
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO todos (file_name, session_id, item_count, statuses, source_path) VALUES (?, ?, ?, ?, ?)`,
-		entry.FileName, sessID, entry.ItemCount, string(statusJSON), sourcePath,
+		`INSERT INTO todos (file_name, session_id, item_count, statuses, updated_at_ms, source, source_path) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		entry.FileName, sessID, entry.ItemCount, string(statusJSON), entry.UpdatedAt, source, sourcePath,
 	)
 	if err != nil {
 		return err
@@ -228,14 +272,22 @@ func (s *Store) InsertTodo(ctx context.Context, tx *sqlx.Tx, entry model.TodoEnt
 // InsertFileHistory inserts a file history entry and its versions.
 // sessionDBID can be 0 for unlinked entries.
 func (s *Store) InsertFileHistory(ctx context.Context, tx *sqlx.Tx, conversationID string, versions []model.FileVersionInfo, sessionDBID int64, sourcePath string) error {
+	return s.InsertFileHistoryWithMeta(ctx, tx, conversationID, versions, sessionDBID, 0, model.SourceClaudeCode, sourcePath)
+}
+
+// InsertFileHistoryWithMeta inserts a file history entry with source/recency metadata.
+func (s *Store) InsertFileHistoryWithMeta(ctx context.Context, tx *sqlx.Tx, conversationID string, versions []model.FileVersionInfo, sessionDBID int64, updatedAt int64, source, sourcePath string) error {
 	var sessID any
 	if sessionDBID > 0 {
 		sessID = sessionDBID
 	}
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO file_history (conversation_id, session_id, file_count, source_path) VALUES (?, ?, ?, ?)`,
-		conversationID, sessID, len(versions), sourcePath,
+		`INSERT INTO file_history (conversation_id, session_id, file_count, updated_at_ms, source, source_path) VALUES (?, ?, ?, ?, ?, ?)`,
+		conversationID, sessID, len(versions), updatedAt, source, sourcePath,
 	)
 	if err != nil {
 		return err
@@ -244,7 +296,7 @@ func (s *Store) InsertFileHistory(ctx context.Context, tx *sqlx.Tx, conversation
 	fhID, _ := res.LastInsertId()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO file_versions (file_history_id, hash, version, content) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO file_versions (file_history_id, hash, version, content, file_path, change_kind, patch, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		return err
@@ -252,7 +304,7 @@ func (s *Store) InsertFileHistory(ctx context.Context, tx *sqlx.Tx, conversation
 	defer stmt.Close()
 
 	for _, v := range versions {
-		if _, err := stmt.ExecContext(ctx, fhID, v.Hash, v.Version, v.Content); err != nil {
+		if _, err := stmt.ExecContext(ctx, fhID, v.Hash, v.Version, v.Content, v.FilePath, v.ChangeKind, v.Patch, v.Timestamp); err != nil {
 			return err
 		}
 	}
@@ -262,9 +314,13 @@ func (s *Store) InsertFileHistory(ctx context.Context, tx *sqlx.Tx, conversation
 
 // InsertHistory inserts a history timeline entry.
 func (s *Store) InsertHistory(ctx context.Context, tx *sqlx.Tx, entry model.HistoryEntry, sourcePath string) error {
+	source := entry.Source
+	if source == "" {
+		source = model.SourceClaudeCode
+	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO history (display, timestamp, project, source_path) VALUES (?, ?, ?, ?)`,
-		entry.Display, entry.Timestamp, entry.Project, sourcePath,
+		`INSERT INTO history (display, timestamp, project, project_dir, source, source_path) VALUES (?, ?, ?, ?, ?, ?)`,
+		entry.Display, entry.Timestamp, entry.Project, entry.ProjectDir, source, sourcePath,
 	)
 	return err
 }
@@ -327,8 +383,8 @@ func (s *Store) InsertMemory(ctx context.Context, tx *sqlx.Tx, projectDir, fileN
 		pid = *projectID
 	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO memories (project_dir, file_name, project_id, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?, ?)`,
-		projectDir, fileName, pid, sizeBytes, content, sourcePath,
+		`INSERT INTO memories (project_dir, file_name, project_id, size_bytes, content, source, source_path) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		projectDir, fileName, pid, sizeBytes, content, model.SourceClaudeCode, sourcePath,
 	)
 	return err
 }

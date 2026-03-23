@@ -101,10 +101,17 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * pageSize
-	messages, totalMsgs, err := h.store.GetSessionMessages(ctx, project.DirName, session.SessionID, offset, pageSize)
-	if err != nil {
-		serverError(w, "load messages", err)
-		return
+	var (
+		messages  []model.ConversationMessage
+		totalMsgs int
+		err       error
+	)
+	if !session.MetadataOnly {
+		messages, totalMsgs, err = h.store.GetSessionMessages(ctx, project.DirName, session.SessionID, offset, pageSize)
+		if err != nil {
+			serverError(w, "load messages", err)
+			return
+		}
 	}
 
 	totalPages := (totalMsgs + pageSize - 1) / pageSize
@@ -121,7 +128,9 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	headerSummary := fmt.Sprintf("%d messages", totalMsgs)
-	if session.EstimatedTokens > 0 {
+	if session.MetadataOnly {
+		headerSummary = "Metadata only session"
+	} else if session.EstimatedTokens > 0 {
 		headerSummary += fmt.Sprintf(" · ~%s tokens", formatTokens(session.EstimatedTokens))
 	}
 	renderTemplate(w, h.tmpl, "conversation.html", map[string]any{
@@ -132,7 +141,8 @@ func (h *handlers) conversation(w http.ResponseWriter, r *http.Request) {
 		"ActiveTab":     "conversation",
 		"HasCodeBlocks": hasCodeBlocks(session),
 		"HeaderSummary": headerSummary,
-		"ShowExport":    true,
+		"ShowExport":    !session.MetadataOnly,
+		"MetadataOnly":  session.MetadataOnly,
 		"Messages":      messages,
 		"TotalMsgs":     totalMsgs,
 		"Page":          page,
@@ -301,6 +311,30 @@ func (h *handlers) conversationExport(w http.ResponseWriter, r *http.Request) {
 
 	project, session, ok := h.lookupSession(w, r)
 	if !ok {
+		return
+	}
+
+	if session.MetadataOnly {
+		var buf strings.Builder
+		title := session.FirstPrompt
+		if title == "" {
+			title = session.SessionID
+		}
+		buf.WriteString("# " + title + "\n\n")
+		buf.WriteString("This session is metadata-only. Full transcript content is not available from this source.\n\n")
+		if session.Created != "" {
+			buf.WriteString("**Created:** " + session.Created + "\n")
+		}
+		if session.Modified != "" {
+			buf.WriteString("**Updated:** " + session.Modified + "\n")
+		}
+		if session.ModelName != "" {
+			buf.WriteString("**Model:** " + session.ModelName + "\n")
+		}
+		filename := session.SessionID + ".md"
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+		w.Write([]byte(buf.String()))
 		return
 	}
 

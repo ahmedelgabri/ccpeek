@@ -39,7 +39,7 @@ func TestRunRecordsParseFailuresAndUnresolvedLinks(t *testing.T) {
 	}
 	defer db.Close()
 
-	if err := Run(ctx, root, db, false, io.Discard); err != nil {
+	if err := Run(ctx, root, "", db, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 

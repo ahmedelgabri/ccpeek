@@ -6,9 +6,9 @@ Previously, ccpeek rebuilt the entire SQLite database from scratch on every
 startup and every watch-mode tick. This was wasteful for large `~/.claude`
 directories and meant data from deleted source files was silently lost.
 
-This change introduces true per-file incremental indexing with content hash
-comparison, data retention for deleted sources, and a proper schema migration
-system.
+This change introduces true per-source incremental indexing with source
+fingerprinting, data retention for deleted sources, and a proper schema
+migration system.
 
 ## Changes
 
@@ -26,7 +26,7 @@ system.
 
 ### Per-file incremental indexing (`internal/index/index.go`, `incremental.go`)
 
-- Each source file is hashed (SHA-256) and compared against the stored hash
+- Each source path is fingerprinted and compared against the stored fingerprint
 - Only files with changed content are re-indexed (old data deleted, new data
   inserted)
 - Data from source files that have been deleted from disk is preserved by
@@ -34,6 +34,8 @@ system.
 - FTS index is rebuilt from scratch when any session files change
 - Directories (task groups, file history conversations) are hashed by combining
   all child file names and contents
+- Cursor SQLite `state.vscdb` sources use metadata fingerprinting (`size + mtime`)
+  to avoid full-file hashing on each incremental cycle
 
 ### Source path tracking (`internal/store/write.go`)
 

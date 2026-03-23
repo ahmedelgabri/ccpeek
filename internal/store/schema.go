@@ -7,7 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 15
+const schemaVersion = 16
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -280,6 +280,7 @@ var migrations = []func(ctx context.Context, tx *sqlx.Tx) error{
 	migrateV12ToV13,
 	migrateV13ToV14,
 	migrateV14ToV15,
+	migrateV15ToV16,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -811,6 +812,75 @@ func migrateV14ToV15(ctx context.Context, tx *sqlx.Tx) error {
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrating memories file_name: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV15ToV16 adds mixed-source/Cursor metadata columns.
+func migrateV15ToV16(ctx context.Context, tx *sqlx.Tx) error {
+	type col struct {
+		table string
+		name  string
+		def   string
+	}
+	cols := []col{
+		{"projects", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"projects", "updated_at_ms", "INTEGER NOT NULL DEFAULT 0"},
+		{"plans", "updated_at_ms", "INTEGER NOT NULL DEFAULT 0"},
+		{"plans", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"shell_snapshots", "kind", "TEXT NOT NULL DEFAULT 'shell'"},
+		{"shell_snapshots", "project_path", "TEXT NOT NULL DEFAULT ''"},
+		{"shell_snapshots", "commit_hash", "TEXT NOT NULL DEFAULT ''"},
+		{"shell_snapshots", "detail_file", "TEXT NOT NULL DEFAULT ''"},
+		{"shell_snapshots", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"todos", "updated_at_ms", "INTEGER NOT NULL DEFAULT 0"},
+		{"todos", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"file_history", "updated_at_ms", "INTEGER NOT NULL DEFAULT 0"},
+		{"file_history", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"file_versions", "file_path", "TEXT NOT NULL DEFAULT ''"},
+		{"file_versions", "change_kind", "TEXT NOT NULL DEFAULT ''"},
+		{"file_versions", "patch", "TEXT NOT NULL DEFAULT ''"},
+		{"file_versions", "timestamp", "TEXT NOT NULL DEFAULT ''"},
+		{"history", "project_dir", "TEXT NOT NULL DEFAULT ''"},
+		{"history", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"sessions", "metadata_only", "INTEGER NOT NULL DEFAULT 0"},
+		{"sessions", "model_name", "TEXT NOT NULL DEFAULT ''"},
+		{"sessions", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"commands", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+		{"memories", "source", "TEXT NOT NULL DEFAULT 'claude-code'"},
+	}
+	for _, c := range cols {
+		var count int
+		q := fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, c.table)
+		if err := tx.GetContext(ctx, &count, q, c.name); err != nil {
+			return fmt.Errorf("checking %s.%s: %w", c.table, c.name, err)
+		}
+		if count > 0 {
+			continue
+		}
+		stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, c.table, c.name, c.def)
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("adding %s.%s: %w", c.table, c.name, err)
+		}
+	}
+
+	// Best-effort normalization for pre-existing rows.
+	stmts := []string{
+		`UPDATE projects SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE plans SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE shell_snapshots SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE todos SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE file_history SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE sessions SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE commands SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE memories SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE history SET source = 'claude-code' WHERE TRIM(source) = ''`,
+		`UPDATE history SET project_dir = project WHERE project_dir = '' AND project <> ''`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("backfilling v16 metadata: %w", err)
 		}
 	}
 	return nil

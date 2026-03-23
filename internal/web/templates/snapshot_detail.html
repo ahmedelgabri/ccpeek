@@ -1,11 +1,21 @@
 {{ define "content" }}
   <div class="mb-4">{{ backLink "/shell-snapshots/" "Shell Snapshots" }}</div>
-  <h1 class="text-2xl font-bold text-slate-50 font-mono mb-6">
-    {{ .Snapshot.FileName }}
+  <h1 class="text-2xl font-bold text-slate-50 font-mono mb-3 flex items-center gap-2">
+    <span>{{ .Snapshot.FileName }}</span>
+    {{ sourceBadge .Snapshot.Source }}
   </h1>
-  <div
-    class="code-block rounded-xl overflow-hidden border border-surface-border text-xs"
-  >
+  {{ if .WorkspaceDetail }}
+    <div class="mb-4 text-sm text-slate-400 space-y-1">
+      <div><span class="text-slate-500">Kind:</span> {{ .Snapshot.Kind }}</div>
+      {{ if .WorkspaceDetail.ProjectPath }}
+        <div><span class="text-slate-500">Project:</span> {{ .WorkspaceDetail.ProjectPath }}</div>
+      {{ end }}
+      {{ if .WorkspaceDetail.CommitHash }}
+        <div><span class="text-slate-500">Commit:</span> <span class="font-mono">{{ .WorkspaceDetail.CommitHash }}</span></div>
+      {{ end }}
+    </div>
+  {{ end }}
+  <div class="code-block rounded-xl overflow-hidden border border-surface-border text-xs">
     {{ .Content }}
   </div>
 {{ end }}

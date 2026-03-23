@@ -17,21 +17,45 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-// Run performs indexing of claudeDir into the store.
+// RunOptions controls optional index behaviors for expensive/optional sources.
+type RunOptions struct {
+	IncludeCursorSQLite  bool
+	MaxCursorSQLiteBytes int64
+}
+
+// DefaultRunOptions enables all sources, including Cursor SQLite.
+var DefaultRunOptions = RunOptions{
+	IncludeCursorSQLite: true,
+}
+
+func normalizeRunOptions(opts RunOptions) RunOptions {
+	if opts.MaxCursorSQLiteBytes < 0 {
+		opts.MaxCursorSQLiteBytes = 0
+	}
+	return opts
+}
+
+// Run performs indexing of claudeDir/cursorDir into the store.
 // If rebuild is true, drops all tables and recreates the schema (clean slate).
 // Otherwise deletes existing data for each source file before reinserting
 // (idempotent full index that preserves data from deleted source files).
 // Progress output is written to w.
-func Run(ctx context.Context, claudeDir string, s *store.Store, rebuild bool, w io.Writer) error {
+func Run(ctx context.Context, claudeDir, cursorDir string, s *store.Store, rebuild bool, w io.Writer) error {
+	return RunWithOptions(ctx, claudeDir, cursorDir, s, rebuild, w, DefaultRunOptions)
+}
+
+// RunWithOptions is Run with optional source toggles.
+func RunWithOptions(ctx context.Context, claudeDir, cursorDir string, s *store.Store, rebuild bool, w io.Writer, opts RunOptions) error {
+	opts = normalizeRunOptions(opts)
 	rec := newIngestRecorder("full", claudeDir)
-	files := collectSourceFiles(claudeDir)
+	files := collectSourceFiles(claudeDir, cursorDir)
 	rec.SetFilesSeen(len(files))
 	rec.SetFilesChanged(len(files))
 
 	var err error
 	if rebuild {
 		if err = s.Reset(ctx); err == nil {
-			err = doIndex(ctx, claudeDir, s, w, rec)
+			err = doIndex(ctx, claudeDir, cursorDir, s, w, rec, opts)
 		} else {
 			err = fmt.Errorf("resetting database: %w", err)
 		}
@@ -39,16 +63,22 @@ func Run(ctx context.Context, claudeDir string, s *store.Store, rebuild bool, w 
 		// Non-rebuild: delete existing data for all current source files,
 		// then reinsert. This is idempotent and preserves data from
 		// source files that no longer exist on disk.
-		err = doCleanIndex(ctx, claudeDir, s, w, rec)
+		err = doCleanIndex(ctx, claudeDir, cursorDir, s, w, rec, opts)
 	}
 	return persistIngestRun(ctx, s, rec, err, true)
 }
 
 // RunIncremental checks source file hashes and only re-indexes changed files.
 // Returns true if any files were re-indexed.
-func RunIncremental(ctx context.Context, claudeDir string, s *store.Store) (bool, error) {
+func RunIncremental(ctx context.Context, claudeDir, cursorDir string, s *store.Store) (bool, error) {
+	return RunIncrementalWithOptions(ctx, claudeDir, cursorDir, s, DefaultRunOptions)
+}
+
+// RunIncrementalWithOptions is RunIncremental with optional source toggles.
+func RunIncrementalWithOptions(ctx context.Context, claudeDir, cursorDir string, s *store.Store, opts RunOptions) (bool, error) {
+	opts = normalizeRunOptions(opts)
 	rec := newIngestRecorder("incremental", claudeDir)
-	changed, err := doIncrementalIndex(ctx, claudeDir, s, rec)
+	changed, err := doIncrementalIndex(ctx, claudeDir, cursorDir, s, rec, opts)
 	if persistErr := persistIngestRun(ctx, s, rec, err, false); persistErr != nil {
 		return changed, persistErr
 	}
@@ -57,13 +87,13 @@ func RunIncremental(ctx context.Context, claudeDir string, s *store.Store) (bool
 
 // Prune removes DB rows whose source_path no longer exists on disk.
 // Progress output is written to w.
-func Prune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) error {
+func Prune(ctx context.Context, claudeDir, cursorDir string, s *store.Store, w io.Writer) error {
 	rec := newIngestRecorder("prune", claudeDir)
-	err := doPrune(ctx, claudeDir, s, w, rec)
+	err := doPrune(ctx, claudeDir, cursorDir, s, w, rec)
 	return persistIngestRun(ctx, s, rec, err, true)
 }
 
-func doPrune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
+func doPrune(ctx context.Context, claudeDir, cursorDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
 	// Read tracked paths before starting the transaction to avoid
 	// deadlock on single-connection in-memory databases.
 	tracked, err := s.ListSourceFilePaths(ctx)
@@ -79,7 +109,7 @@ func doPrune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 	defer tx.Rollback()
 
 	currentFiles := make(map[string]bool)
-	for _, p := range collectSourceFiles(claudeDir) {
+	for _, p := range collectSourceFiles(claudeDir, cursorDir) {
 		currentFiles[p] = true
 	}
 
@@ -125,7 +155,7 @@ func doPrune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 // doCleanIndex deletes existing data for all current source files, then
 // does a full reindex. This is idempotent and safe to call on a DB that
 // already has data.
-func doCleanIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
+func doCleanIndex(ctx context.Context, claudeDir, cursorDir string, s *store.Store, w io.Writer, rec *ingestRecorder, opts RunOptions) error {
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -133,7 +163,7 @@ func doCleanIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Wr
 	defer tx.Rollback()
 
 	// Delete existing data for all current source files
-	for _, path := range collectSourceFiles(claudeDir) {
+	for _, path := range collectSourceFiles(claudeDir, cursorDir) {
 		if err := deleteSourceData(ctx, tx, s, path); err != nil {
 			return fmt.Errorf("cleaning %s: %w", path, err)
 		}
@@ -151,11 +181,11 @@ func doCleanIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Wr
 		return fmt.Errorf("committing cleanup: %w", err)
 	}
 
-	return doIndex(ctx, claudeDir, s, w, rec)
+	return doIndex(ctx, claudeDir, cursorDir, s, w, rec, opts)
 }
 
 // doIndex does a full index of all source files (assumes clean state).
-func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
+func doIndex(ctx context.Context, claudeDir, cursorDir string, s *store.Store, w io.Writer, rec *ingestRecorder, opts RunOptions) error {
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -281,6 +311,87 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 	rec.AddIndexed(memoryCount)
 	done("Memories: %d", memoryCount)
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	progress("Cursor projects")
+	cursorProjects, cursorSessions, err := indexCursorProjects(ctx, cursorDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing cursor projects: %w", err)
+	}
+	rec.AddIndexed(cursorProjects + cursorSessions)
+	done("Cursor projects: %d (%d sessions)", cursorProjects, cursorSessions)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	progress("Cursor plans")
+	cursorPlans, cursorTodos, err := indexCursorPlans(ctx, cursorDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing cursor plans: %w", err)
+	}
+	rec.AddIndexed(cursorPlans + cursorTodos)
+	done("Cursor plans: %d, todos: %d", cursorPlans, cursorTodos)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	progress("Cursor file history")
+	cursorFH, err := indexCursorFileHistory(ctx, cursorDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing cursor file history: %w", err)
+	}
+	rec.AddIndexed(cursorFH)
+	done("Cursor file history: %d conversations", cursorFH)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	progress("Cursor snapshots")
+	cursorSnaps, err := indexCursorSnapshots(ctx, cursorDir, s, tx)
+	if err != nil {
+		return fmt.Errorf("indexing cursor snapshots: %w", err)
+	}
+	rec.AddIndexed(cursorSnaps)
+	done("Cursor snapshots: %d", cursorSnaps)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	cursorSQLiteProjects, cursorSQLiteSessions := 0, 0
+	if opts.IncludeCursorSQLite {
+		progress("Cursor sqlite sessions")
+		cursorSQLiteProjects, cursorSQLiteSessions, err = indexCursorSQLite(ctx, cursorDir, s, tx, opts)
+		if err != nil {
+			return fmt.Errorf("indexing cursor sqlite sessions: %w", err)
+		}
+		rec.AddIndexed(cursorSQLiteProjects + cursorSQLiteSessions)
+		done("Cursor sqlite sessions: %d projects (%d sessions)", cursorSQLiteProjects, cursorSQLiteSessions)
+	} else {
+		done("Cursor sqlite sessions: skipped (disabled)")
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if opts.IncludeCursorSQLite {
+		progress("Cursor sqlite file history")
+		cursorSQLiteFH, err := indexCursorSQLiteFileHistory(ctx, cursorDir, s, tx, opts)
+		if err != nil {
+			return fmt.Errorf("indexing cursor sqlite file history: %w", err)
+		}
+		rec.AddIndexed(cursorSQLiteFH)
+		done("Cursor sqlite file history: %d conversations", cursorSQLiteFH)
+	} else {
+		done("Cursor sqlite file history: skipped (disabled)")
+	}
+
 	if err := s.RebuildSearchIndex(ctx, tx); err != nil {
 		return fmt.Errorf("rebuilding search index: %w", err)
 	}
@@ -289,7 +400,7 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 	}
 
 	// Record hashes for all source files
-	recordSourceHashes(ctx, claudeDir, s, tx, rec)
+	recordSourceHashes(ctx, claudeDir, cursorDir, s, tx, rec, opts)
 
 	// Set generated timestamp
 	if err := s.SetMeta(ctx, tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
@@ -299,18 +410,18 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer,
 	return tx.Commit()
 }
 
-// doIncrementalIndex hashes each source file and only re-indexes changed ones.
-func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store, rec *ingestRecorder) (bool, error) {
-	allFiles := collectSourceFiles(claudeDir)
+// doIncrementalIndex fingerprints each source file and only re-indexes changed ones.
+func doIncrementalIndex(ctx context.Context, claudeDir, cursorDir string, s *store.Store, rec *ingestRecorder, opts RunOptions) (bool, error) {
+	allFiles := collectSourceFiles(claudeDir, cursorDir)
 	rec.SetFilesSeen(len(allFiles))
 
 	// Find files that have changed, caching hashes for later
 	var changedFiles []string
 	hashCache := make(map[string]string)
 	for _, path := range allFiles {
-		hash, err := hashFile(path)
+		hash, err := sourceFingerprint(path, opts)
 		if err != nil {
-			// Can't hash — treat as changed
+			// Can't fingerprint — treat as changed.
 			changedFiles = append(changedFiles, path)
 			continue
 		}
@@ -424,6 +535,52 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store, r
 	reindexed += memoryCount
 	rec.AddIndexed(memoryCount)
 
+	cursorProjectCount, cursorSessionCount, err := indexCursorProjectsFiltered(ctx, cursorDir, s, tx, changedSet)
+	if err != nil {
+		return false, fmt.Errorf("indexing cursor projects: %w", err)
+	}
+	reindexed += cursorProjectCount + cursorSessionCount
+	if cursorSessionCount > 0 {
+		sessionsChanged = true
+	}
+
+	cursorPlanCount, cursorTodoCount, err := indexCursorPlansFiltered(ctx, cursorDir, s, tx, changedSet)
+	if err != nil {
+		return false, fmt.Errorf("indexing cursor plans: %w", err)
+	}
+	reindexed += cursorPlanCount + cursorTodoCount
+
+	cursorFHCount, err := indexCursorFileHistoryFiltered(ctx, cursorDir, s, tx, changedSet)
+	if err != nil {
+		return false, fmt.Errorf("indexing cursor file history: %w", err)
+	}
+	reindexed += cursorFHCount
+
+	cursorSnapCount, err := indexCursorSnapshotsFiltered(ctx, cursorDir, s, tx, changedSet)
+	if err != nil {
+		return false, fmt.Errorf("indexing cursor snapshots: %w", err)
+	}
+	reindexed += cursorSnapCount
+
+	if opts.IncludeCursorSQLite {
+		cursorSQLiteProjects, cursorSQLiteSessions, err := indexCursorSQLiteFiltered(ctx, cursorDir, s, tx, changedSet, opts)
+		if err != nil {
+			return false, fmt.Errorf("indexing cursor sqlite sessions: %w", err)
+		}
+		reindexed += cursorSQLiteProjects + cursorSQLiteSessions
+		if cursorSQLiteSessions > 0 {
+			sessionsChanged = true
+		}
+	}
+
+	if opts.IncludeCursorSQLite {
+		cursorSQLiteFH, err := indexCursorSQLiteFileHistoryFiltered(ctx, cursorDir, s, tx, changedSet, opts)
+		if err != nil {
+			return false, fmt.Errorf("indexing cursor sqlite file history: %w", err)
+		}
+		reindexed += cursorSQLiteFH
+	}
+
 	// Clean up orphaned projects (projects with no sessions left)
 	if sessionsChanged {
 		if err := s.PruneOrphanedProjects(ctx, tx); err != nil {
@@ -482,9 +639,34 @@ func deleteSourceData(ctx context.Context, tx *sqlx.Tx, s *store.Store, sourcePa
 	return nil
 }
 
-// isSessionFile returns true if the path looks like a .jsonl session file.
+// isSessionFile returns true if the path looks like a session-bearing source.
 func isSessionFile(path string) bool {
-	return strings.HasSuffix(path, ".jsonl") && strings.Contains(path, "/projects/")
+	if strings.HasSuffix(path, ".jsonl") && strings.Contains(path, "/projects/") {
+		return true
+	}
+	if strings.HasSuffix(path, ".jsonl") && strings.Contains(path, "/agent-transcripts/") {
+		return true
+	}
+	return strings.HasSuffix(path, "state.vscdb")
+}
+
+func sourceFingerprint(path string, opts RunOptions) (string, error) {
+	if strings.HasSuffix(path, "state.vscdb") {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		mode := "indexed"
+		if !cursorSQLiteDBAllowed(path, opts) {
+			mode = "skipped"
+		}
+		return fmt.Sprintf("sqlite-meta:%s:%d:%d", mode, info.Size(), info.ModTime().UTC().UnixNano()), nil
+	}
+	hash, err := hashFile(path)
+	if err == nil {
+		return hash, nil
+	}
+	return hashDir(path)
 }
 
 // hashFile computes the SHA-256 hash of a file's contents.
@@ -530,19 +712,15 @@ func hashDir(dir string) (string, error) {
 }
 
 // recordSourceHashes saves the content hash for all source files.
-func recordSourceHashes(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) {
+func recordSourceHashes(ctx context.Context, claudeDir, cursorDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder, opts RunOptions) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, path := range collectSourceFiles(claudeDir) {
-		hash, err := hashFile(path)
+	for _, path := range collectSourceFiles(claudeDir, cursorDir) {
+		hash, err := sourceFingerprint(path, opts)
 		if err != nil {
-			// For directories (tasks, file-history), use hashDir
-			hash, err = hashDir(path)
-			if err != nil {
-				if rec != nil {
-					rec.SkippedFile("source_file", path, err.Error())
-				}
-				continue
+			if rec != nil {
+				rec.SkippedFile("source_file", path, err.Error())
 			}
+			continue
 		}
 		if err := s.SetSourceFileHash(ctx, tx, path, hash, now); err != nil && rec != nil {
 			rec.SkippedFile("source_file", path, err.Error())
@@ -551,7 +729,7 @@ func recordSourceHashes(ctx context.Context, claudeDir string, s *store.Store, t
 }
 
 // collectSourceFiles returns all indexable source file paths.
-func collectSourceFiles(claudeDir string) []string {
+func collectSourceFiles(claudeDir, cursorDir string) []string {
 	var paths []string
 
 	// JSONL session files and MEMORY.md files
@@ -609,6 +787,8 @@ func collectSourceFiles(claudeDir string) []string {
 	// File history (directories)
 	addFileHistoryDirPaths(&paths, claudeDir)
 
+	addCursorSourceFiles(&paths, cursorDir)
+
 	return paths
 }
 
@@ -648,6 +828,72 @@ func addFileHistoryDirPaths(paths *[]string, claudeDir string) {
 	for _, e := range entries {
 		if e.IsDir() {
 			*paths = append(*paths, filepath.Join(srcDir, e.Name()))
+		}
+	}
+}
+
+func addCursorSourceFiles(paths *[]string, cursorDir string) {
+	if cursorDir == "" {
+		return
+	}
+
+	// Cursor transcript JSONL files
+	cursorProjects := filepath.Join(cursorDir, "projects")
+	if projectEntries, err := os.ReadDir(cursorProjects); err == nil {
+		for _, p := range projectEntries {
+			if !p.IsDir() {
+				continue
+			}
+			transcriptsDir := filepath.Join(cursorProjects, p.Name(), "agent-transcripts")
+			if entries, err := os.ReadDir(transcriptsDir); err == nil {
+				for _, e := range entries {
+					if e.IsDir() {
+						candidate := filepath.Join(transcriptsDir, e.Name(), e.Name()+".jsonl")
+						if _, err := os.Stat(candidate); err == nil {
+							*paths = append(*paths, candidate)
+						}
+						continue
+					}
+					if strings.HasSuffix(e.Name(), ".jsonl") {
+						*paths = append(*paths, filepath.Join(transcriptsDir, e.Name()))
+					}
+				}
+			}
+		}
+	}
+
+	// Cursor plans
+	addDir(paths, filepath.Join(cursorDir, "plans"), ".md")
+
+	// Cursor snapshots (track each snapshot repository directory)
+	snapshotRoot := filepath.Join(cursorDir, "snapshots")
+	if entries, err := os.ReadDir(snapshotRoot); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				*paths = append(*paths, filepath.Join(snapshotRoot, e.Name()))
+			}
+		}
+	}
+
+	// Cursor sqlite databases
+	appDir := findCursorAppDir(cursorDir)
+	if appDir == "" {
+		return
+	}
+	globalDB := filepath.Join(appDir, "User", "globalStorage", "state.vscdb")
+	if _, err := os.Stat(globalDB); err == nil {
+		*paths = append(*paths, globalDB)
+	}
+	workspaceStorage := filepath.Join(appDir, "User", "workspaceStorage")
+	if entries, err := os.ReadDir(workspaceStorage); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() || e.Name() == "ext-dev" {
+				continue
+			}
+			dbPath := filepath.Join(workspaceStorage, e.Name(), "state.vscdb")
+			if _, err := os.Stat(dbPath); err == nil {
+				*paths = append(*paths, dbPath)
+			}
 		}
 	}
 }

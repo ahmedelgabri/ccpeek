@@ -56,19 +56,27 @@ func (s *Store) GetStats(ctx context.Context) (Stats, error) {
 	return st, err
 }
 
-// ListPlans returns all plans ordered by file name.
+// ListPlans returns all plans ordered by recency.
 func (s *Store) ListPlans(ctx context.Context) ([]model.PlanEntry, error) {
 	var rows []struct {
 		FileName  string `db:"file_name"`
 		Title     string `db:"title"`
 		SizeBytes int64  `db:"size_bytes"`
+		UpdatedAt int64  `db:"updated_at_ms"`
+		Source    string `db:"source"`
 	}
-	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, title, size_bytes FROM plans ORDER BY file_name`); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, title, size_bytes, updated_at_ms, source FROM plans ORDER BY updated_at_ms DESC, file_name ASC`); err != nil {
 		return nil, err
 	}
 	plans := make([]model.PlanEntry, len(rows))
 	for i, r := range rows {
-		plans[i] = model.PlanEntry{FileName: r.FileName, Title: r.Title, SizeBytes: r.SizeBytes}
+		plans[i] = model.PlanEntry{
+			FileName:  r.FileName,
+			Title:     r.Title,
+			SizeBytes: r.SizeBytes,
+			UpdatedAt: r.UpdatedAt,
+			Source:    r.Source,
+		}
 	}
 	return plans, nil
 }
@@ -79,33 +87,55 @@ func (s *Store) GetPlan(ctx context.Context, fileNameWithoutExt string) (*model.
 		FileName  string `db:"file_name"`
 		Title     string `db:"title"`
 		SizeBytes int64  `db:"size_bytes"`
+		UpdatedAt int64  `db:"updated_at_ms"`
+		Source    string `db:"source"`
 		Content   string `db:"content"`
 	}
 	err := s.db.GetContext(ctx, &row,
-		`SELECT file_name, title, size_bytes, content FROM plans
+		`SELECT file_name, title, size_bytes, updated_at_ms, source, content FROM plans
 		 WHERE file_name = ? OR REPLACE(file_name, '.md', '') = ?`,
 		fileNameWithoutExt+".md", fileNameWithoutExt,
 	)
 	if err != nil {
 		return nil, "", err
 	}
-	entry := &model.PlanEntry{FileName: row.FileName, Title: row.Title, SizeBytes: row.SizeBytes}
+	entry := &model.PlanEntry{
+		FileName:  row.FileName,
+		Title:     row.Title,
+		SizeBytes: row.SizeBytes,
+		UpdatedAt: row.UpdatedAt,
+		Source:    row.Source,
+	}
 	return entry, row.Content, nil
 }
 
 // ListShellSnapshots returns all snapshots sorted newest first.
 func (s *Store) ListShellSnapshots(ctx context.Context) ([]model.ShellSnapshotEntry, error) {
 	var rows []struct {
-		FileName  string `db:"file_name"`
-		Timestamp int64  `db:"timestamp"`
-		SizeBytes int64  `db:"size_bytes"`
+		FileName    string `db:"file_name"`
+		Timestamp   int64  `db:"timestamp"`
+		SizeBytes   int64  `db:"size_bytes"`
+		Kind        string `db:"kind"`
+		ProjectPath string `db:"project_path"`
+		CommitHash  string `db:"commit_hash"`
+		DetailFile  string `db:"detail_file"`
+		Source      string `db:"source"`
 	}
-	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, timestamp, size_bytes FROM shell_snapshots ORDER BY timestamp DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &rows, `SELECT file_name, timestamp, size_bytes, kind, project_path, commit_hash, detail_file, source FROM shell_snapshots ORDER BY timestamp DESC`); err != nil {
 		return nil, err
 	}
 	snaps := make([]model.ShellSnapshotEntry, len(rows))
 	for i, r := range rows {
-		snaps[i] = model.ShellSnapshotEntry{FileName: r.FileName, Timestamp: r.Timestamp, SizeBytes: r.SizeBytes}
+		snaps[i] = model.ShellSnapshotEntry{
+			FileName:    r.FileName,
+			Timestamp:   r.Timestamp,
+			SizeBytes:   r.SizeBytes,
+			Kind:        r.Kind,
+			ProjectPath: r.ProjectPath,
+			CommitHash:  r.CommitHash,
+			DetailFile:  r.DetailFile,
+			Source:      r.Source,
+		}
 	}
 	return snaps, nil
 }
@@ -113,20 +143,34 @@ func (s *Store) ListShellSnapshots(ctx context.Context) ([]model.ShellSnapshotEn
 // GetShellSnapshot returns a snapshot entry and its content.
 func (s *Store) GetShellSnapshot(ctx context.Context, fileNameWithoutExt string) (*model.ShellSnapshotEntry, string, error) {
 	var row struct {
-		FileName  string `db:"file_name"`
-		Timestamp int64  `db:"timestamp"`
-		SizeBytes int64  `db:"size_bytes"`
-		Content   string `db:"content"`
+		FileName    string `db:"file_name"`
+		Timestamp   int64  `db:"timestamp"`
+		SizeBytes   int64  `db:"size_bytes"`
+		Kind        string `db:"kind"`
+		ProjectPath string `db:"project_path"`
+		CommitHash  string `db:"commit_hash"`
+		DetailFile  string `db:"detail_file"`
+		Source      string `db:"source"`
+		Content     string `db:"content"`
 	}
 	err := s.db.GetContext(ctx, &row,
-		`SELECT file_name, timestamp, size_bytes, content FROM shell_snapshots
+		`SELECT file_name, timestamp, size_bytes, kind, project_path, commit_hash, detail_file, source, content FROM shell_snapshots
 		 WHERE file_name = ? OR REPLACE(file_name, '.sh', '') = ?`,
 		fileNameWithoutExt+".sh", fileNameWithoutExt,
 	)
 	if err != nil {
 		return nil, "", err
 	}
-	entry := &model.ShellSnapshotEntry{FileName: row.FileName, Timestamp: row.Timestamp, SizeBytes: row.SizeBytes}
+	entry := &model.ShellSnapshotEntry{
+		FileName:    row.FileName,
+		Timestamp:   row.Timestamp,
+		SizeBytes:   row.SizeBytes,
+		Kind:        row.Kind,
+		ProjectPath: row.ProjectPath,
+		CommitHash:  row.CommitHash,
+		DetailFile:  row.DetailFile,
+		Source:      row.Source,
+	}
 	return entry, row.Content, nil
 }
 
@@ -136,19 +180,21 @@ func (s *Store) ListTodos(ctx context.Context) ([]model.TodoEntry, error) {
 		FileName    string         `db:"file_name"`
 		ItemCount   int            `db:"item_count"`
 		Statuses    string         `db:"statuses"`
+		UpdatedAt   int64          `db:"updated_at_ms"`
+		Source      string         `db:"source"`
 		SessionID   sql.NullString `db:"session_id_text"`
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
 	err := s.db.SelectContext(ctx, &rows, `
-		SELECT t.file_name, t.item_count, t.statuses,
+		SELECT t.file_name, t.item_count, t.statuses, t.updated_at_ms, t.source,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
 			   p.display_name AS project_name
 		FROM todos t
 		LEFT JOIN sessions s ON t.session_id = s.id
 		LEFT JOIN projects p ON s.project_id = p.id
-		ORDER BY t.file_name`)
+		ORDER BY t.updated_at_ms DESC, t.file_name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -160,9 +206,11 @@ func (s *Store) ListTodos(ctx context.Context) ([]model.TodoEntry, error) {
 			FileName:    r.FileName,
 			ItemCount:   r.ItemCount,
 			Statuses:    statuses,
+			UpdatedAt:   r.UpdatedAt,
 			SessionID:   r.SessionID.String,
 			ProjectDir:  r.ProjectDir.String,
 			ProjectName: r.ProjectName.String,
+			Source:      r.Source,
 		}
 	}
 	return todos, nil
@@ -175,12 +223,14 @@ func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.
 		FileName    string         `db:"file_name"`
 		ItemCount   int            `db:"item_count"`
 		Statuses    string         `db:"statuses"`
+		UpdatedAt   int64          `db:"updated_at_ms"`
+		Source      string         `db:"source"`
 		SessionID   sql.NullString `db:"session_id_text"`
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
 	err := s.db.GetContext(ctx, &todoRow, `
-		SELECT t.id, t.file_name, t.item_count, t.statuses,
+		SELECT t.id, t.file_name, t.item_count, t.statuses, t.updated_at_ms, t.source,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
 			   p.display_name AS project_name
@@ -200,9 +250,11 @@ func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.
 		FileName:    todoRow.FileName,
 		ItemCount:   todoRow.ItemCount,
 		Statuses:    statuses,
+		UpdatedAt:   todoRow.UpdatedAt,
 		SessionID:   todoRow.SessionID.String,
 		ProjectDir:  todoRow.ProjectDir.String,
 		ProjectName: todoRow.ProjectName.String,
+		Source:      todoRow.Source,
 	}
 
 	var items []model.TodoItem
@@ -215,17 +267,19 @@ func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.
 	return entry, items, nil
 }
 
-// ListProjects returns all projects with their sessions (sorted by session count desc).
+// ListProjects returns all projects with their sessions (sorted by recency).
 // Uses a single query to load all sessions and groups them by project in Go,
 // avoiding N+1 queries.
 func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) {
 	var projRows []struct {
-		ID            int64  `db:"id"`
-		DirName       string `db:"dir_name"`
-		DisplayName   string `db:"display_name"`
+		ID          int64  `db:"id"`
+		DirName     string `db:"dir_name"`
+		DisplayName string `db:"display_name"`
 		CanonicalPath string `db:"canonical_path"`
+		UpdatedAt   int64  `db:"updated_at_ms"`
+		Source      string `db:"source"`
 	}
-	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name, canonical_path FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name, canonical_path, updated_at_ms, source FROM projects ORDER BY updated_at_ms DESC, (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC, display_name ASC`); err != nil {
 		return nil, err
 	}
 
@@ -244,11 +298,14 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 		BashCommandCount int    `db:"bash_command_count"`
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
+		MetadataOnly     int    `db:"metadata_only"`
+		ModelName        string `db:"model_name"`
+		Source           string `db:"source"`
 	}
 	if err := s.db.SelectContext(ctx, &allSessRows, `
 		SELECT project_id, session_id, first_prompt, message_count, created_at, modified_at,
 			   git_branch, project_path, todo_file_name, has_file_history,
-			   bash_command_count, tool_use_counts, estimated_tokens
+			   bash_command_count, tool_use_counts, estimated_tokens, metadata_only, model_name, source
 		FROM sessions ORDER BY modified_at DESC`); err != nil {
 		return nil, err
 	}
@@ -271,6 +328,9 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 			BashCommandCount: r.BashCommandCount,
 			ToolUseCounts:    toolCounts,
 			EstimatedTokens:  r.EstimatedTokens,
+			MetadataOnly:     r.MetadataOnly != 0,
+			ModelName:        r.ModelName,
+			Source:           r.Source,
 		})
 	}
 
@@ -278,11 +338,13 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 	for i, pr := range projRows {
 		sessions := sessMap[pr.ID]
 		projects[i] = model.ProjectEntry{
-			DirName:       pr.DirName,
-			DisplayName:   pr.DisplayName,
+			DirName:      pr.DirName,
+			DisplayName:  pr.DisplayName,
 			CanonicalPath: pr.CanonicalPath,
-			SessionCount:  len(sessions),
-			Sessions:      sessions,
+			SessionCount: len(sessions),
+			UpdatedAt:    pr.UpdatedAt,
+			Sessions:     sessions,
+			Source:       pr.Source,
 		}
 	}
 	return projects, nil
@@ -291,12 +353,14 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 // GetProject returns a single project with its sessions.
 func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectEntry, error) {
 	var pr struct {
-		ID            int64  `db:"id"`
-		DirName       string `db:"dir_name"`
-		DisplayName   string `db:"display_name"`
+		ID          int64  `db:"id"`
+		DirName     string `db:"dir_name"`
+		DisplayName string `db:"display_name"`
 		CanonicalPath string `db:"canonical_path"`
+		UpdatedAt   int64  `db:"updated_at_ms"`
+		Source      string `db:"source"`
 	}
-	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name, canonical_path FROM projects WHERE dir_name = ?`, dirName); err != nil {
+	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name, canonical_path, updated_at_ms, source FROM projects WHERE dir_name = ?`, dirName); err != nil {
 		return nil, err
 	}
 	sessions, err := s.listSessionsForProject(ctx, pr.ID)
@@ -304,11 +368,13 @@ func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectE
 		return nil, err
 	}
 	return &model.ProjectEntry{
-		DirName:       pr.DirName,
-		DisplayName:   pr.DisplayName,
+		DirName:      pr.DirName,
+		DisplayName:  pr.DisplayName,
 		CanonicalPath: pr.CanonicalPath,
-		SessionCount:  len(sessions),
-		Sessions:      sessions,
+		SessionCount: len(sessions),
+		UpdatedAt:    pr.UpdatedAt,
+		Sessions:     sessions,
+		Source:       pr.Source,
 	}, nil
 }
 
@@ -326,11 +392,14 @@ func (s *Store) listSessionsForProject(ctx context.Context, projectID int64) ([]
 		BashCommandCount int    `db:"bash_command_count"`
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
+		MetadataOnly     int    `db:"metadata_only"`
+		ModelName        string `db:"model_name"`
+		Source           string `db:"source"`
 	}
 	if err := s.db.SelectContext(ctx, &rows, `
 		SELECT session_id, first_prompt, message_count, created_at, modified_at,
 			   git_branch, project_path, todo_file_name, has_file_history,
-			   bash_command_count, tool_use_counts, estimated_tokens
+			   bash_command_count, tool_use_counts, estimated_tokens, metadata_only, model_name, source
 		FROM sessions WHERE project_id = ? ORDER BY modified_at DESC`, projectID); err != nil {
 		return nil, err
 	}
@@ -351,6 +420,9 @@ func (s *Store) listSessionsForProject(ctx context.Context, projectID int64) ([]
 			BashCommandCount: r.BashCommandCount,
 			ToolUseCounts:    toolCounts,
 			EstimatedTokens:  r.EstimatedTokens,
+			MetadataOnly:     r.MetadataOnly != 0,
+			ModelName:        r.ModelName,
+			Source:           r.Source,
 		}
 	}
 	return sessions, nil
@@ -368,7 +440,7 @@ func (s *Store) ListSessionsFiltered(ctx context.Context, projectID int64, f Ses
 	query := `
 		SELECT session_id, first_prompt, message_count, created_at, modified_at,
 			   git_branch, project_path, todo_file_name, has_file_history,
-			   bash_command_count, tool_use_counts, estimated_tokens
+			   bash_command_count, tool_use_counts, estimated_tokens, metadata_only, model_name, source
 		FROM sessions WHERE project_id = ?`
 	args := []any{projectID}
 
@@ -407,6 +479,9 @@ func (s *Store) ListSessionsFiltered(ctx context.Context, projectID int64, f Ses
 		BashCommandCount int    `db:"bash_command_count"`
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
+		MetadataOnly     int    `db:"metadata_only"`
+		ModelName        string `db:"model_name"`
+		Source           string `db:"source"`
 	}
 	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, err
@@ -428,6 +503,9 @@ func (s *Store) ListSessionsFiltered(ctx context.Context, projectID int64, f Ses
 			BashCommandCount: r.BashCommandCount,
 			ToolUseCounts:    toolCounts,
 			EstimatedTokens:  r.EstimatedTokens,
+			MetadataOnly:     r.MetadataOnly != 0,
+			ModelName:        r.ModelName,
+			Source:           r.Source,
 		}
 	}
 	return sessions, nil
@@ -445,9 +523,11 @@ func (s *Store) GetProjectID(ctx context.Context, dirName string) (int64, error)
 func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*model.ProjectEntry, *model.SessionEntry, error) {
 	var row struct {
 		// Project fields
-		ProjectDirName       string `db:"dir_name"`
-		ProjectDisplayName   string `db:"display_name"`
+		ProjectDirName     string `db:"dir_name"`
+		ProjectDisplayName string `db:"display_name"`
 		ProjectCanonicalPath string `db:"canonical_path"`
+		ProjectUpdatedAt   int64  `db:"project_updated_at_ms"`
+		ProjectSource      string `db:"project_source"`
 		// Session fields
 		SessionID        string `db:"session_id"`
 		FirstPrompt      string `db:"first_prompt"`
@@ -461,12 +541,15 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 		BashCommandCount int    `db:"bash_command_count"`
 		ToolUseCounts    string `db:"tool_use_counts"`
 		EstimatedTokens  int    `db:"estimated_tokens"`
+		MetadataOnly     int    `db:"metadata_only"`
+		ModelName        string `db:"model_name"`
+		Source           string `db:"source"`
 	}
 	err := s.db.GetContext(ctx, &row, `
-		SELECT p.dir_name, p.display_name, p.canonical_path,
+		SELECT p.dir_name, p.display_name, p.canonical_path, p.updated_at_ms AS project_updated_at_ms, p.source AS project_source,
 			   s.session_id, s.first_prompt, s.message_count, s.created_at, s.modified_at,
 			   s.git_branch, s.project_path, s.todo_file_name, s.has_file_history,
-			   s.bash_command_count, s.tool_use_counts, s.estimated_tokens
+			   s.bash_command_count, s.tool_use_counts, s.estimated_tokens, s.metadata_only, s.model_name, s.source
 		FROM sessions s
 		JOIN projects p ON s.project_id = p.id
 		WHERE p.dir_name = ? AND s.session_id = ?`, dirName, sessionID)
@@ -478,9 +561,11 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 	_ = json.Unmarshal([]byte(row.ToolUseCounts), &toolCounts)
 
 	project := &model.ProjectEntry{
-		DirName:       row.ProjectDirName,
-		DisplayName:   row.ProjectDisplayName,
+		DirName:     row.ProjectDirName,
+		DisplayName: row.ProjectDisplayName,
 		CanonicalPath: row.ProjectCanonicalPath,
+		UpdatedAt:   row.ProjectUpdatedAt,
+		Source:      row.ProjectSource,
 	}
 	session := &model.SessionEntry{
 		SessionID:        row.SessionID,
@@ -495,6 +580,9 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 		BashCommandCount: row.BashCommandCount,
 		ToolUseCounts:    toolCounts,
 		EstimatedTokens:  row.EstimatedTokens,
+		MetadataOnly:     row.MetadataOnly != 0,
+		ModelName:        row.ModelName,
+		Source:           row.Source,
 	}
 	return project, session, nil
 }
@@ -594,7 +682,7 @@ func (s *Store) GetAllSessionMessages(ctx context.Context, dirName, sessionID st
 // ListHistory returns history entries sorted newest first, with a limit.
 func (s *Store) ListHistory(ctx context.Context, limit int) ([]model.HistoryEntry, error) {
 	var entries []model.HistoryEntry
-	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC LIMIT ?`, limit); err != nil {
+	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project, project_dir, source FROM history ORDER BY timestamp DESC LIMIT ?`, limit); err != nil {
 		return nil, err
 	}
 	if err := s.enrichHistoryEntries(ctx, entries); err != nil {
@@ -606,7 +694,7 @@ func (s *Store) ListHistory(ctx context.Context, limit int) ([]model.HistoryEntr
 // ListAllHistory returns all history entries sorted newest first.
 func (s *Store) ListAllHistory(ctx context.Context) ([]model.HistoryEntry, error) {
 	var entries []model.HistoryEntry
-	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project, project_dir, source FROM history ORDER BY timestamp DESC`); err != nil {
 		return nil, err
 	}
 	if err := s.enrichHistoryEntries(ctx, entries); err != nil {
@@ -715,22 +803,24 @@ func (s *Store) HistoryDayCounts(ctx context.Context) (map[string]int, error) {
 	return counts, nil
 }
 
-// ListFileHistory returns file history entries sorted by file count desc.
+// ListFileHistory returns file history entries sorted by recency.
 func (s *Store) ListFileHistory(ctx context.Context) ([]model.FileHistoryEntry, error) {
 	var rows []struct {
 		ConversationID string         `db:"conversation_id"`
 		FileCount      int            `db:"file_count"`
+		UpdatedAt      int64          `db:"updated_at_ms"`
+		Source         string         `db:"source"`
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
 	err := s.db.SelectContext(ctx, &rows, `
-		SELECT fh.conversation_id, fh.file_count,
+		SELECT fh.conversation_id, fh.file_count, fh.updated_at_ms, fh.source,
 			   p.dir_name AS project_dir,
 			   p.display_name AS project_name
 		FROM file_history fh
 		LEFT JOIN sessions s ON fh.session_id = s.id
 		LEFT JOIN projects p ON s.project_id = p.id
-		ORDER BY fh.file_count DESC`)
+		ORDER BY fh.updated_at_ms DESC, fh.file_count DESC, fh.conversation_id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -739,8 +829,10 @@ func (s *Store) ListFileHistory(ctx context.Context) ([]model.FileHistoryEntry, 
 		entries[i] = model.FileHistoryEntry{
 			ConversationID: r.ConversationID,
 			FileCount:      r.FileCount,
+			UpdatedAt:      r.UpdatedAt,
 			ProjectDir:     r.ProjectDir.String,
 			ProjectName:    r.ProjectName.String,
+			Source:         r.Source,
 		}
 	}
 	return entries, nil
@@ -752,11 +844,13 @@ func (s *Store) GetFileHistory(ctx context.Context, conversationID string) (*mod
 		ID             int64          `db:"id"`
 		ConversationID string         `db:"conversation_id"`
 		FileCount      int            `db:"file_count"`
+		UpdatedAt      int64          `db:"updated_at_ms"`
+		Source         string         `db:"source"`
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
 	err := s.db.GetContext(ctx, &fhRow, `
-		SELECT fh.id, fh.conversation_id, fh.file_count,
+		SELECT fh.id, fh.conversation_id, fh.file_count, fh.updated_at_ms, fh.source,
 			   p.dir_name AS project_dir,
 			   p.display_name AS project_name
 		FROM file_history fh
@@ -770,13 +864,15 @@ func (s *Store) GetFileHistory(ctx context.Context, conversationID string) (*mod
 	entry := &model.FileHistoryEntry{
 		ConversationID: fhRow.ConversationID,
 		FileCount:      fhRow.FileCount,
+		UpdatedAt:      fhRow.UpdatedAt,
 		ProjectDir:     fhRow.ProjectDir.String,
 		ProjectName:    fhRow.ProjectName.String,
+		Source:         fhRow.Source,
 	}
 
 	var versions []model.FileVersionInfo
 	err = s.db.SelectContext(ctx, &versions, `
-		SELECT hash, version, content FROM file_versions
+		SELECT hash, version, content, file_path, change_kind, patch, timestamp FROM file_versions
 		WHERE file_history_id = ? ORDER BY hash, version`, fhRow.ID)
 	if err != nil {
 		return entry, nil, err
@@ -1190,10 +1286,11 @@ func (s *Store) ListMemories(ctx context.Context) ([]model.MemoryEntry, error) {
 		FileName    string         `db:"file_name"`
 		ProjectName sql.NullString `db:"project_name"`
 		SizeBytes   int64          `db:"size_bytes"`
+		Source      string         `db:"source"`
 		Content     string         `db:"content"`
 	}
 	err := s.db.SelectContext(ctx, &rows, `
-		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.content
+		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.source, m.content
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id
 		ORDER BY p.display_name, m.project_dir, m.file_name`)
@@ -1212,6 +1309,7 @@ func (s *Store) ListMemories(ctx context.Context) ([]model.MemoryEntry, error) {
 			ProjectName: r.ProjectName.String,
 			SizeBytes:   r.SizeBytes,
 			Preview:     preview,
+			Source:      r.Source,
 		}
 	}
 	return entries, nil
@@ -1225,10 +1323,11 @@ func (s *Store) GetMemory(ctx context.Context, projectDir, fileName string) (*mo
 		FileName    string         `db:"file_name"`
 		ProjectName sql.NullString `db:"project_name"`
 		SizeBytes   int64          `db:"size_bytes"`
+		Source      string         `db:"source"`
 		Content     string         `db:"content"`
 	}
 	err := s.db.GetContext(ctx, &row, `
-		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.content
+		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.source, m.content
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id
 		WHERE m.project_dir = ? AND m.file_name = ?`,
@@ -1241,20 +1340,36 @@ func (s *Store) GetMemory(ctx context.Context, projectDir, fileName string) (*mo
 		FileName:    row.FileName,
 		ProjectName: row.ProjectName.String,
 		SizeBytes:   row.SizeBytes,
+		Source:      row.Source,
 	}
 	return entry, row.Content, nil
 }
 
 // GetSessionDBID returns the internal database ID for a session_id string.
 // It accepts an optional transaction; if tx is non-nil it queries within that tx.
-// When session_id exists in multiple projects, an arbitrary match is returned.
+// When session_id exists in multiple projects, the newest modified session is returned.
 func (s *Store) GetSessionDBID(ctx context.Context, tx *sqlx.Tx, sessionID string) (int64, error) {
 	var id int64
 	var err error
 	if tx != nil {
-		err = tx.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? LIMIT 1`, sessionID)
+		err = tx.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? ORDER BY modified_at DESC LIMIT 1`, sessionID)
 	} else {
-		err = s.db.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? LIMIT 1`, sessionID)
+		err = s.db.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? ORDER BY modified_at DESC LIMIT 1`, sessionID)
 	}
 	return id, err
+}
+
+// GetSessionDBIDForProject returns the DB session id scoped to a project dir.
+func (s *Store) GetSessionDBIDForProject(ctx context.Context, tx *sqlx.Tx, projectDir, sessionID string) (int64, error) {
+	var id int64
+	q := `SELECT s.id
+		FROM sessions s
+		JOIN projects p ON s.project_id = p.id
+		WHERE p.dir_name = ? AND s.session_id = ?
+		ORDER BY s.modified_at DESC
+		LIMIT 1`
+	if tx != nil {
+		return id, tx.GetContext(ctx, &id, q, projectDir, sessionID)
+	}
+	return id, s.db.GetContext(ctx, &id, q, projectDir, sessionID)
 }

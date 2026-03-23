@@ -1,5 +1,5 @@
 {
-  description = "ccpeek - Explore your Claude Code history";
+  description = "ccpeek - Explore your AI coding history";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -78,7 +78,7 @@
             meta = {
               mainProgram = "ccpeek";
               homepage = "https://github.com/ahmedelgabri/ccpeek";
-              description = "Explore your Claude Code history";
+              description = "Explore your AI coding history";
               license = lib.licenses.mit;
               platforms = lib.platforms.unix;
             };

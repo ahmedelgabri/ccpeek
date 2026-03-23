@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const (
+	SourceClaudeCode = "claude-code"
+	SourceCursor     = "cursor"
+)
+
 // IndexData is the top-level metadata written to index.json.
 type IndexData struct {
 	GeneratedAt    string               `json:"generatedAt"`
@@ -26,29 +31,40 @@ type PlanEntry struct {
 	FileName  string `json:"fileName"`
 	Title     string `json:"title"`
 	SizeBytes int64  `json:"sizeBytes"`
+	UpdatedAt int64  `json:"updatedAtMs,omitempty"`
+	Source    string `json:"source,omitempty"`
 }
 
 type ShellSnapshotEntry struct {
-	FileName  string `json:"fileName"`
-	Timestamp int64  `json:"timestamp"`
-	SizeBytes int64  `json:"sizeBytes"`
+	FileName    string `json:"fileName"`
+	Timestamp   int64  `json:"timestamp"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	Kind        string `json:"kind,omitempty"`
+	ProjectPath string `json:"projectPath,omitempty"`
+	CommitHash  string `json:"commitHash,omitempty"`
+	DetailFile  string `json:"detailFile,omitempty"`
+	Source      string `json:"source,omitempty"`
 }
 
 type TodoEntry struct {
 	FileName    string         `json:"fileName"`
 	ItemCount   int            `json:"itemCount"`
 	Statuses    map[string]int `json:"statuses"`
+	UpdatedAt   int64          `json:"updatedAtMs,omitempty"`
 	SessionID   string         `json:"sessionId,omitempty"`
 	ProjectDir  string         `json:"projectDir,omitempty"`
 	ProjectName string         `json:"projectName,omitempty"`
+	Source      string         `json:"source,omitempty"`
 }
 
 type ProjectEntry struct {
-	DirName       string         `json:"dirName"`
-	DisplayName   string         `json:"displayName"`
+	DirName      string         `json:"dirName"`
+	DisplayName  string         `json:"displayName"`
 	CanonicalPath string         `json:"canonicalPath,omitempty"`
-	SessionCount  int            `json:"sessionCount"`
-	Sessions      []SessionEntry `json:"sessions"`
+	SessionCount int            `json:"sessionCount"`
+	UpdatedAt    int64          `json:"updatedAtMs,omitempty"`
+	Sessions     []SessionEntry `json:"sessions"`
+	Source       string         `json:"source,omitempty"`
 }
 
 type SessionEntry struct {
@@ -57,20 +73,25 @@ type SessionEntry struct {
 	MessageCount     int            `json:"messageCount"`
 	Created          string         `json:"created"`
 	Modified         string         `json:"modified"`
+	MetadataOnly     bool           `json:"metadataOnly,omitempty"`
 	GitBranch        string         `json:"gitBranch,omitempty"`
+	ModelName        string         `json:"modelName,omitempty"`
 	ProjectPath      string         `json:"projectPath,omitempty"`
 	TodoFileName     string         `json:"todoFileName,omitempty"`
 	HasFileHistory   bool           `json:"hasFileHistory,omitempty"`
 	BashCommandCount int            `json:"bashCommandCount,omitempty"`
 	ToolUseCounts    map[string]int `json:"toolUseCounts,omitempty"`
 	EstimatedTokens  int            `json:"estimatedTokens,omitempty"`
+	Source           string         `json:"source,omitempty"`
 }
 
 type FileHistoryEntry struct {
 	ConversationID string `json:"conversationId"`
 	FileCount      int    `json:"fileCount"`
+	UpdatedAt      int64  `json:"updatedAtMs,omitempty"`
 	ProjectDir     string `json:"projectDir,omitempty"`
 	ProjectName    string `json:"projectName,omitempty"`
+	Source         string `json:"source,omitempty"`
 }
 
 type HistoryEntry struct {
@@ -79,6 +100,8 @@ type HistoryEntry struct {
 	Project        string `json:"project" db:"project"`
 	ProjectDirName string `json:"projectDirName,omitempty"`
 	ProjectDisplay string `json:"projectDisplay,omitempty"`
+	ProjectDir string `json:"projectDir,omitempty" db:"project_dir"`
+	Source     string `json:"source,omitempty" db:"source"`
 }
 
 // ConversationMessage represents a single message in a session JSONL.
@@ -254,9 +277,24 @@ func (b *ContentBlock) ToolResultText() string {
 
 // TodoItem represents a single item in a todo list file.
 type TodoItem struct {
+	ID         string `json:"id,omitempty" db:"item_id"`
 	Content    string `json:"content" db:"content"`
 	Status     string `json:"status" db:"status"`
 	ActiveForm string `json:"activeForm,omitempty" db:"activeform"`
+}
+
+// CursorPlanFrontmatter is the YAML frontmatter in Cursor .plan.md files.
+type CursorPlanFrontmatter struct {
+	Name      string     `yaml:"name" json:"name"`
+	Overview  string     `yaml:"overview" json:"overview"`
+	Todos     []TodoItem `yaml:"todos" json:"todos"`
+	IsProject bool       `yaml:"isProject" json:"isProject"`
+}
+
+// CursorTranscriptLine is the shape of lines from Cursor agent-transcript JSONL files.
+type CursorTranscriptLine struct {
+	Role    string          `json:"role"`
+	Message *MessagePayload `json:"message,omitempty"`
 }
 
 // FileHistoryDetail is the detail data for a single conversation's file history.
@@ -266,9 +304,13 @@ type FileHistoryDetail struct {
 }
 
 type FileVersionInfo struct {
-	Hash    string `json:"hash" db:"hash"`
-	Version int    `json:"version" db:"version"`
-	Content string `json:"content" db:"content"`
+	Hash       string `json:"hash" db:"hash"`
+	Version    int    `json:"version" db:"version"`
+	Content    string `json:"content" db:"content"`
+	FilePath   string `json:"filePath,omitempty" db:"file_path"`
+	ChangeKind string `json:"changeKind,omitempty" db:"change_kind"`
+	Patch      string `json:"patch,omitempty" db:"patch"`
+	Timestamp  string `json:"timestamp,omitempty" db:"timestamp"`
 }
 
 // TaskGroupEntry represents a task group directory under ~/.claude/tasks/.
@@ -306,6 +348,7 @@ type MemoryEntry struct {
 	ProjectName string `json:"projectName"`
 	SizeBytes   int64  `json:"sizeBytes"`
 	Preview     string `json:"preview"`
+	Source      string `json:"source,omitempty"`
 }
 
 // NormalizeMemoryFileName ensures a memory file name ends with .md.
@@ -367,6 +410,24 @@ type CommandEntry struct {
 	FirstPrompt    string `json:"firstPrompt" db:"first_prompt"`
 	ProjectDirName string `json:"projectDirName" db:"dir_name"`
 	ProjectDisplay string `json:"projectDisplay" db:"display_name"`
+	Source         string `json:"source,omitempty" db:"source"`
+}
+
+type WorkspaceSnapshotFile struct {
+	Path   string `json:"path"`
+	Status string `json:"status,omitempty"`
+}
+
+type WorkspaceSnapshotDetail struct {
+	SnapshotID        string                  `json:"snapshotId"`
+	RepositoryPath    string                  `json:"repositoryPath,omitempty"`
+	ProjectPath       string                  `json:"projectPath,omitempty"`
+	CommitHash        string                  `json:"commitHash,omitempty"`
+	ParentCommitHash  string                  `json:"parentCommitHash,omitempty"`
+	CommitMessage     string                  `json:"commitMessage,omitempty"`
+	CommitTimestampMs int64                   `json:"commitTimestampMs,omitempty"`
+	Files             []WorkspaceSnapshotFile `json:"files,omitempty"`
+	DiffPreview       string                  `json:"diffPreview,omitempty"`
 }
 
 // ValidateCommandFormat validates a shell-history export format.

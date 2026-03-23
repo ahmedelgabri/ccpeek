@@ -20,7 +20,7 @@ func TestRun(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(context.Background(), testdataDir, s, true, io.Discard); err != nil {
+	if err := Run(context.Background(), testdataDir, "", s, true, io.Discard); err != nil {
 		t.Fatal("Run failed:", err)
 	}
 
@@ -489,7 +489,7 @@ func TestRunCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err = Run(ctx, testdataDir, s, true, io.Discard)
+	err = Run(ctx, testdataDir, "", s, true, io.Discard)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -509,7 +509,7 @@ func TestRunResetThenIndex(t *testing.T) {
 	defer s.Close()
 
 	// Index, then reset and re-index to verify Reset works end-to-end
-	if err := Run(ctx, testdataDir, s, true, io.Discard); err != nil {
+	if err := Run(ctx, testdataDir, "", s, true, io.Discard); err != nil {
 		t.Fatal("first Run:", err)
 	}
 	stats1, _ := s.GetStats(ctx)
@@ -518,7 +518,7 @@ func TestRunResetThenIndex(t *testing.T) {
 	}
 
 	// Rebuild (calls Reset internally)
-	if err := Run(ctx, testdataDir, s, true, io.Discard); err != nil {
+	if err := Run(ctx, testdataDir, "", s, true, io.Discard); err != nil {
 		t.Fatal("rebuild Run:", err)
 	}
 	stats2, _ := s.GetStats(ctx)

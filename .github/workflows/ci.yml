@@ -97,6 +97,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: E2E tests
         run: just test-e2e
+      - name: E2E tests (Cursor mixed fixture)
+        run: just test-e2e-cursor
 
   build:
     name: Build (Nix)

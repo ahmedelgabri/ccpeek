@@ -23,8 +23,9 @@
       </a>
     {{ end }}
   </div>
-  <h1 class="text-2xl font-bold text-slate-50 font-mono mb-1">
-    {{ .ConversationID }}
+  <h1 class="text-2xl font-bold text-slate-50 font-mono mb-1 flex items-center gap-2">
+    <span>{{ .ConversationID }}</span>
+    {{ sourceBadge .Entry.Source }}
   </h1>
   <p class="text-sm text-slate-500 mb-6">{{ .TotalFiles }} file versions</p>
 

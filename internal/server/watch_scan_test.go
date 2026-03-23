@@ -29,7 +29,7 @@ func TestReindexAndMaybeScanRunsScanWhenRequested(t *testing.T) {
 	}
 	defer db.Close()
 
-	if err := index.Run(ctx, root, db, true, io.Discard); err != nil {
+	if err := index.Run(ctx, root, "", db, true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.ClearScanFindings(ctx); err != nil {
@@ -39,7 +39,7 @@ func TestReindexAndMaybeScanRunsScanWhenRequested(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := reindexAndMaybeScan(ctx, root, db, true)
+	changed, err := reindexAndMaybeScan(ctx, root, "", db, true, index.DefaultRunOptions)
 	if err != nil {
 		t.Fatal(err)
 	}

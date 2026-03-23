@@ -1,8 +1,8 @@
 # CCPeek
 
-Explore your Claude Code history. A local web app that indexes and browses your
-Claude Code conversations, plans, todos, tasks, shell snapshots, file history,
-paste cache, usage data, memories, and commands.
+Explore your AI coding history. A local web app that indexes and browses Claude
+Code and Cursor conversations, plans, todos, snapshots, file history, commands,
+plus Claude-specific data sources (tasks, paste cache, usage data, memories).
 
 https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
 
@@ -45,7 +45,7 @@ Archives include shell completions and man pages.
 ## Usage
 
 ```sh
-# Index ~/.claude and start the web UI
+# Index ~/.claude and ~/.cursor and start the web UI
 ccpeek
 
 # Open browser automatically
@@ -57,28 +57,40 @@ ccpeek --port 8080
 # Skip re-indexing on subsequent runs
 ccpeek --skip-index
 
+# Disable Cursor SQLite indexing (fastest Cursor mode)
+ccpeek --cursor-sqlite=false
+
+# Keep Cursor SQLite enabled, but skip very large DB files (>2048 MB)
+ccpeek --cursor-sqlite-max-db-size-mb 2048
+
 # Index only (no server)
 ccpeek --index-only
 ```
 
-The server reads Claude Code data from `~/.claude`, writes an index to
+The server reads Claude Code data from `~/.claude` and Cursor data from
+`~/.cursor`, writes an index to
 `~/.local/share/ccpeek/ccpeek.db` (respects `$XDG_DATA_HOME`), and serves the
 web UI at `http://localhost:3000`.
 
 ### Flags
 
-| Flag           | Default                           | Description                                        |
-| -------------- | --------------------------------- | -------------------------------------------------- |
-| `-p`, `--port` | `3000`                            | Server port                                        |
-| `--claude-dir` | `~/.claude`                       | Source directory (Claude data)                     |
-| `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | SQLite database file path                          |
-| `--skip-index` | `false`                           | Skip indexing, serve existing data                 |
-| `--index-only` | `false`                           | Index and exit                                     |
-| `--open`       | `false`                           | Open browser after starting                        |
-| `--watch`      | `false`                           | Re-index periodically while serving                |
-| `--rebuild`    | `false`                           | Force full rebuild (drop all data and re-index)    |
-| `--prune`      | `false`                           | Remove data from source files that no longer exist |
-| `--skip-scan`  | `false`                           | Skip secret scanning after indexing                |
+| Flag                             | Default                           | Description                                                     |
+| -------------------------------- | --------------------------------- | --------------------------------------------------------------- |
+| `-p`, `--port`                   | `3000`                            | Server port                                                     |
+| `--claude-dir`                   | `~/.claude`                       | Source directory (Claude data)                                  |
+| `--cursor-dir`                   | `~/.cursor`                       | Source directory (Cursor data)                                  |
+| `--cursor-sqlite`                | `true`                            | Include Cursor SQLite metadata/file-history indexing            |
+| `--cursor-sqlite-max-db-size-mb` | `0`                               | Skip Cursor SQLite DB files larger than this MB (0 = unlimited) |
+| `--data-file`                    | `~/.local/share/ccpeek/ccpeek.db` | SQLite database file path                                       |
+| `--skip-index`                   | `false`                           | Skip indexing, serve existing data                              |
+| `--index-only`                   | `false`                           | Index and exit                                                  |
+| `--open`                         | `false`                           | Open browser after starting                                     |
+| `--watch`                        | `false`                           | Re-index periodically while serving                             |
+| `--watch-interval`               | `30`                              | Re-index interval in seconds                                    |
+| `--rebuild`                      | `false`                           | Force full rebuild (drop all data and re-index)                 |
+| `--prune`                        | `false`                           | Remove data from source files that no longer exist              |
+| `--skip-scan`                    | `false`                           | Skip secret scanning after indexing                             |
+| `-q`, `--quiet`                  | `false`                           | Suppress informational output                                   |
 
 ### Shell completions
 
@@ -130,17 +142,39 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 
 ## What it indexes
 
-- **Projects** - Conversations grouped by project directory
-- **Plans** - Markdown plan files from Claude sessions
-- **Shell Snapshots** - Shell environment captures
+- **Projects** - Conversations grouped by project directory across Claude and Cursor
+- **Plans** - Markdown plan files from Claude and Cursor (`.plan.md`) sessions
+- **Shell Snapshots** - Claude shell captures plus Cursor workspace snapshot entries
 - **Commands** - Bash commands extracted from sessions
-- **Todos** - Task lists from Claude sessions
+- **Todos** - Task lists from Claude and Cursor plan frontmatter
 - **Tasks** - Task groups from Claude sessions
-- **File History** - File backups from conversations
+- **File History** - Claude backups plus Cursor transcript/SQLite-derived entries
 - **Paste Cache** - Pasted content from sessions
 - **Usage Data** - Session usage insights and reports
 - **Memories** - Project-level MEMORY.md context files
 - **Secret Scan** - Detects leaked secrets across all indexed data
+
+## Cursor parity and limitations
+
+- Cursor JSONL sessions are indexed with full transcript support.
+- Cursor SQLite history is indexed in metadata-first mode for some sessions;
+  those sessions are marked `metadata-only` in the UI and exports.
+- Cursor has no native equivalents for Claude `tasks`, `paste-cache`,
+  `usage-data`, or `MEMORY.md`; those pages remain Claude-centric.
+- Cursor workspace snapshots are Git repository snapshots, not shell captures.
+- Metadata-only sessions are excluded from transcript body search.
+
+See `docs/cursor-parity-migration.md` for migration guidance, performance notes,
+and operator expectations.
+
+### Cursor SQLite operability notes
+
+- Cursor SQLite indexing can be expensive on very large Cursor stores.
+- Use `--cursor-sqlite=false` to disable Cursor SQLite indexing while still
+  indexing Cursor JSONL/plans/snapshots.
+- Use `--cursor-sqlite-max-db-size-mb <N>` to skip only oversized SQLite files.
+- Incremental indexing fingerprints SQLite DB files by metadata (size + mtime),
+  avoiding full content hashing on each run.
 
 ## Development
 
@@ -164,6 +198,9 @@ just test-unit
 
 # Run e2e tests only
 just test-e2e
+
+# Run Cursor mixed-source e2e lane (small deterministic fixture)
+just test-e2e-cursor
 
 # Lint
 just lint

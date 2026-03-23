@@ -18,11 +18,11 @@
         class="list-row group flex items-baseline justify-between gap-4 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
         data-search-keys="{{ .Title }} {{ .FileName }}"
       >
-        <span class="text-sm text-slate-200 truncate group-hover:text-slate-50"
-          >{{ .Title }}</span
+        <span class="text-sm text-slate-200 truncate group-hover:text-slate-50 flex items-center gap-2"
+          ><span>{{ .Title }}</span>{{ sourceBadge .Source }}</span
         >
-        <span class="text-xs text-slate-500 whitespace-nowrap"
-          >{{ formatBytes .SizeBytes }}</span
+        <span class="text-xs text-slate-500 whitespace-nowrap flex items-center gap-3"
+          >{{ if .UpdatedAt }}{{ formatTimestamp .UpdatedAt }}{{ end }} {{ formatBytes .SizeBytes }}</span
         >
       </a>
     {{ else }}

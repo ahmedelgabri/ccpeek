@@ -256,6 +256,8 @@ var funcMap = template.FuncMap{
 	"toAnchor":         toAnchor,
 	"urlFor":           urlFor,
 	"cardCSS":          cardCSS,
+	"sourceBadge":      sourceBadge,
+	"sourceLabel":      sourceLabel,
 	"navItem": func(href, label, currentPath, color, svgPath string) template.HTML {
 		linkClass := "text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]"
 		iconClass := "text-slate-500"

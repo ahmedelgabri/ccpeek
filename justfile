@@ -45,6 +45,9 @@ test-race: css
 test-e2e: css
     pnpm exec playwright test --config=playwright-go.config.ts
 
+test-e2e-cursor: css
+    pnpm exec playwright test --config=playwright-go-cursor.config.ts
+
 test: test-unit test-e2e
 
 regen-migration-fixtures:

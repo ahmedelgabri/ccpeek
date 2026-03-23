@@ -24,7 +24,7 @@ var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:           "ccpeek",
-	Short:         "Explore your Claude Code history",
+	Short:         "Explore your AI coding history",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Version:       Version,
@@ -38,6 +38,9 @@ func init() {
 	}
 
 	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Path to Claude Code data directory")
+	rootCmd.PersistentFlags().String("cursor-dir", filepath.Join(home, ".cursor"), "Path to Cursor data directory")
+	rootCmd.PersistentFlags().Bool("cursor-sqlite", true, "Index Cursor SQLite metadata/file history (can be expensive on large stores)")
+	rootCmd.PersistentFlags().Int("cursor-sqlite-max-db-size-mb", 0, "Skip Cursor SQLite DB files larger than this size in MB (0 disables size limit)")
 	rootCmd.PersistentFlags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "SQLite database file path")
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
@@ -65,6 +68,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 	port, _ := cmd.Flags().GetInt("port")
 	claudeDir, _ := cmd.Flags().GetString("claude-dir")
+	cursorDir, _ := cmd.Flags().GetString("cursor-dir")
+	cursorSQLiteEnabled, _ := cmd.Flags().GetBool("cursor-sqlite")
+	cursorSQLiteMaxDBMB, _ := cmd.Flags().GetInt("cursor-sqlite-max-db-size-mb")
 	dataFile, _ := cmd.Flags().GetString("data-file")
 	skipIndex, _ := cmd.Flags().GetBool("skip-index")
 	indexOnly, _ := cmd.Flags().GetBool("index-only")
@@ -115,6 +121,12 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	indexOpts := index.DefaultRunOptions
+	indexOpts.IncludeCursorSQLite = cursorSQLiteEnabled
+	if cursorSQLiteMaxDBMB > 0 {
+		indexOpts.MaxCursorSQLiteBytes = int64(cursorSQLiteMaxDBMB) * 1024 * 1024
+	}
+
 	// Check if the claude data directory exists
 	if _, err := os.Stat(claudeDir); os.IsNotExist(err) && !skipIndex {
 		return fmt.Errorf("claude data directory not found: %s (is Claude Code installed?)", claudeDir)
@@ -123,14 +135,19 @@ func run(cmd *cobra.Command, args []string) error {
 	dataChanged := false
 	if !skipIndex {
 		beforeRunID, _ := latestIngestRunID(ctx, db)
-		logf("Indexing %s -> %s\n", claudeDir, dbPath)
+		logf("Indexing Claude (%s) + Cursor (%s) -> %s\n", claudeDir, cursorDir, dbPath)
+		if !cursorSQLiteEnabled {
+			logf("  Cursor SQLite indexing disabled (--cursor-sqlite=false)\n")
+		} else if cursorSQLiteMaxDBMB > 0 {
+			logf("  Cursor SQLite DB size limit: %d MB (--cursor-sqlite-max-db-size-mb)\n", cursorSQLiteMaxDBMB)
+		}
 		if rebuild {
-			if err := index.Run(ctx, claudeDir, db, true, os.Stderr); err != nil {
+			if err := index.RunWithOptions(ctx, claudeDir, cursorDir, db, true, os.Stderr, indexOpts); err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
 			dataChanged = true
 		} else {
-			changed, err := index.RunIncremental(ctx, claudeDir, db)
+			changed, err := index.RunIncrementalWithOptions(ctx, claudeDir, cursorDir, db, indexOpts)
 			if err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
@@ -148,7 +165,7 @@ func run(cmd *cobra.Command, args []string) error {
 	if prune {
 		beforeRunID, _ := latestIngestRunID(ctx, db)
 		logf("Pruning deleted source files...\n")
-		if err := index.Prune(ctx, claudeDir, db, os.Stderr); err != nil {
+		if err := index.Prune(ctx, claudeDir, cursorDir, db, os.Stderr); err != nil {
 			return fmt.Errorf("pruning failed: %w", err)
 		}
 		if err := db.EnsureFilePermissions(); err != nil {
@@ -197,7 +214,17 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second, !skipScan)
+	return server.ListenAndServeWithOptions(
+		ctx,
+		addr,
+		db,
+		claudeDir,
+		cursorDir,
+		watch,
+		time.Duration(watchInterval)*time.Second,
+		!skipScan,
+		indexOpts,
+	)
 }
 
 func latestIngestRunID(ctx context.Context, db *store.Store) (int64, error) {

@@ -4,12 +4,15 @@
   </div>
 
   <div class="mb-4">
-    <h1 class="text-2xl font-bold text-slate-50 mb-2">
-      {{ if .Session.FirstPrompt }}
-        {{ .Session.FirstPrompt }}
-      {{ else }}
-        {{ .Session.SessionID }}
-      {{ end }}
+    <h1 class="text-2xl font-bold text-slate-50 mb-2 flex items-center gap-2">
+      <span>
+        {{ if .Session.FirstPrompt }}
+          {{ .Session.FirstPrompt }}
+        {{ else }}
+          {{ .Session.SessionID }}
+        {{ end }}
+      </span>
+      {{ sourceBadge .Session.Source }}
     </h1>
     <div class="flex flex-wrap items-center gap-3 text-sm text-slate-400 mt-1">
       {{ if .Session.Created }}
@@ -23,6 +26,14 @@
       {{ end }}
       {{ if .HeaderSummary }}
         <span>{{ .HeaderSummary }}</span>
+      {{ end }}
+      {{ if .Session.ModelName }}
+        <span class="font-mono text-xs text-slate-500">{{ .Session.ModelName }}</span>
+      {{ end }}
+      {{ if .Session.MetadataOnly }}
+        <span class="inline-flex items-center rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-200"
+          >metadata-only</span
+        >
       {{ end }}
       {{ if .ShowExport }}
         <a

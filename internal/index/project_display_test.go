@@ -41,7 +41,7 @@ func TestProjectDisplayNameUsesProjectPathWhenAvailable(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(context.Background(), root, s, true, io.Discard); err != nil {
+	if err := Run(context.Background(), root, "", s, true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestProjectDisplayNameFallsBackToRawDirName(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := Run(context.Background(), root, s, true, io.Discard); err != nil {
+	if err := Run(context.Background(), root, "", s, true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 
