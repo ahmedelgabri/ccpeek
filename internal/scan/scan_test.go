@@ -407,8 +407,16 @@ func TestSourceURL(t *testing.T) {
 			"/paste-cache/clip/",
 		},
 		{
-			model.ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj"},
-			"/memories/-Users-demo-proj/",
+			model.ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/MEMORY.md"},
+			"/memories/-Users-demo-proj/MEMORY/",
+		},
+		{
+			model.ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/conventions.md"},
+			"/memories/-Users-demo-proj/conventions/",
+		},
+		{
+			model.ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/team notes.v2.md"},
+			"/memories/-Users-demo-proj/team%20notes.v2/",
 		},
 		{
 			model.ScanFinding{SourceType: "message", SourceID: "sess-123"},

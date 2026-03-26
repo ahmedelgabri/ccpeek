@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -543,6 +544,62 @@ func TestOpenRecoversDamagedVersionedDerivedTables(t *testing.T) {
 	}
 	if legacyCommandRows != 0 {
 		t.Fatalf("expected recreated legacy commands table to remain empty, got %d rows", legacyCommandRows)
+	}
+}
+
+func TestMigrateV14ToV15RecoversDamagedMemoriesTableWithSourcePath(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v14-damaged-memories.db")
+
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '14')`); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	assertSchemaVersion(t, s, schemaVersion)
+	assertTableExists(t, s, "memories")
+	assertColumnExists(t, s, "memories", "file_name")
+	assertColumnExists(t, s, "memories", "source_path")
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.InsertMemory(ctx, tx, "test-project", "team notes.v2.md", nil, 42, "# hi", "/tmp/team notes.v2.md"); err != nil {
+		t.Fatalf("InsertMemory after migration recovery failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, content, err := s.GetMemory(ctx, "test-project", "team notes.v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.FileName != "team notes.v2.md" {
+		t.Fatalf("expected recovered file_name to round-trip, got %q", entry.FileName)
+	}
+	if content != "# hi" {
+		t.Fatalf("expected recovered memory content to round-trip, got %q", content)
 	}
 }
 

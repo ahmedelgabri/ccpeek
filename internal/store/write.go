@@ -320,15 +320,15 @@ func (s *Store) InsertPasteCache(ctx context.Context, tx *sqlx.Tx, entry model.P
 	return err
 }
 
-// InsertMemory inserts a MEMORY.md entry. projectID can be nil for unlinked memories.
-func (s *Store) InsertMemory(ctx context.Context, tx *sqlx.Tx, projectDir string, projectID *int64, sizeBytes int64, content, sourcePath string) error {
+// InsertMemory inserts a memory .md entry. projectID can be nil for unlinked memories.
+func (s *Store) InsertMemory(ctx context.Context, tx *sqlx.Tx, projectDir, fileName string, projectID *int64, sizeBytes int64, content, sourcePath string) error {
 	var pid any
 	if projectID != nil {
 		pid = *projectID
 	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO memories (project_dir, project_id, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?)`,
-		projectDir, pid, sizeBytes, content, sourcePath,
+		`INSERT INTO memories (project_dir, file_name, project_id, size_bytes, content, source_path) VALUES (?, ?, ?, ?, ?, ?)`,
+		projectDir, fileName, pid, sizeBytes, content, sourcePath,
 	)
 	return err
 }

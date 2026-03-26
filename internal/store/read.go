@@ -1187,15 +1187,16 @@ func (s *Store) GetUsageReport(ctx context.Context) (string, error) {
 func (s *Store) ListMemories(ctx context.Context) ([]model.MemoryEntry, error) {
 	var rows []struct {
 		ProjectDir  string         `db:"project_dir"`
+		FileName    string         `db:"file_name"`
 		ProjectName sql.NullString `db:"project_name"`
 		SizeBytes   int64          `db:"size_bytes"`
 		Content     string         `db:"content"`
 	}
 	err := s.db.SelectContext(ctx, &rows, `
-		SELECT m.project_dir, p.display_name AS project_name, m.size_bytes, m.content
+		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.content
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id
-		ORDER BY p.display_name, m.project_dir`)
+		ORDER BY p.display_name, m.project_dir, m.file_name`)
 	if err != nil {
 		return nil, err
 	}
@@ -1207,6 +1208,7 @@ func (s *Store) ListMemories(ctx context.Context) ([]model.MemoryEntry, error) {
 		}
 		entries[i] = model.MemoryEntry{
 			ProjectDir:  r.ProjectDir,
+			FileName:    r.FileName,
 			ProjectName: r.ProjectName.String,
 			SizeBytes:   r.SizeBytes,
 			Preview:     preview,
@@ -1215,24 +1217,28 @@ func (s *Store) ListMemories(ctx context.Context) ([]model.MemoryEntry, error) {
 	return entries, nil
 }
 
-// GetMemory returns a memory entry and its full content by project dir.
-func (s *Store) GetMemory(ctx context.Context, projectDir string) (*model.MemoryEntry, string, error) {
+// GetMemory returns a memory entry and its full content by project dir and file name.
+func (s *Store) GetMemory(ctx context.Context, projectDir, fileName string) (*model.MemoryEntry, string, error) {
+	normalizedFileName := model.NormalizeMemoryFileName(fileName)
 	var row struct {
 		ProjectDir  string         `db:"project_dir"`
+		FileName    string         `db:"file_name"`
 		ProjectName sql.NullString `db:"project_name"`
 		SizeBytes   int64          `db:"size_bytes"`
 		Content     string         `db:"content"`
 	}
 	err := s.db.GetContext(ctx, &row, `
-		SELECT m.project_dir, p.display_name AS project_name, m.size_bytes, m.content
+		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.content
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id
-		WHERE m.project_dir = ?`, projectDir)
+		WHERE m.project_dir = ? AND m.file_name = ?`,
+		projectDir, normalizedFileName)
 	if err != nil {
 		return nil, "", err
 	}
 	entry := &model.MemoryEntry{
 		ProjectDir:  row.ProjectDir,
+		FileName:    row.FileName,
 		ProjectName: row.ProjectName.String,
 		SizeBytes:   row.SizeBytes,
 	}

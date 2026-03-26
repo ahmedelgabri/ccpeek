@@ -250,9 +250,19 @@ func TestSourceURL(t *testing.T) {
 			"/paste-cache/clip/",
 		},
 		{
-			"memory",
+			"memory with file",
+			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/MEMORY.md"},
+			"/memories/-Users-demo-proj/MEMORY/",
+		},
+		{
+			"memory with escaped file name",
+			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/team notes.v2.md"},
+			"/memories/-Users-demo-proj/team%20notes.v2/",
+		},
+		{
+			"memory legacy (no slash)",
 			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj"},
-			"/memories/-Users-demo-proj/",
+			"/memories/-Users-demo-proj/MEMORY/",
 		},
 		{
 			"unknown type",

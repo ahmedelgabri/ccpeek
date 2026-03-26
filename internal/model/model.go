@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -298,12 +299,47 @@ type PasteCacheEntry struct {
 	Preview   string `json:"preview"`
 }
 
-// MemoryEntry represents a project's MEMORY.md file.
+// MemoryEntry represents a .md file inside a project's memory folder.
 type MemoryEntry struct {
 	ProjectDir  string `json:"projectDir"`
+	FileName    string `json:"fileName"`
 	ProjectName string `json:"projectName"`
 	SizeBytes   int64  `json:"sizeBytes"`
 	Preview     string `json:"preview"`
+}
+
+// NormalizeMemoryFileName ensures a memory file name ends with .md.
+func NormalizeMemoryFileName(fileName string) string {
+	if fileName == "" {
+		return ""
+	}
+	if strings.HasSuffix(fileName, ".md") {
+		return fileName
+	}
+	return fileName + ".md"
+}
+
+// MemoryFileSlug returns a route slug for a memory file (without .md).
+func MemoryFileSlug(fileName string) string {
+	return strings.TrimSuffix(NormalizeMemoryFileName(fileName), ".md")
+}
+
+// MemorySourceID builds the canonical scan/search source ID for a memory file.
+func MemorySourceID(projectDir, fileName string) string {
+	name := NormalizeMemoryFileName(fileName)
+	if name == "" {
+		return projectDir
+	}
+	return projectDir + "/" + name
+}
+
+// MemoryURL returns the canonical detail URL for a memory file.
+func MemoryURL(projectDir, fileName string) string {
+	slug := MemoryFileSlug(fileName)
+	if slug == "" {
+		return "/memories/" + url.PathEscape(projectDir) + "/"
+	}
+	return "/memories/" + url.PathEscape(projectDir) + "/" + url.PathEscape(slug) + "/"
 }
 
 // UsageFacetEntry represents a usage-data facet for a session.
@@ -491,7 +527,12 @@ func (f *ScanFinding) SourceURL() string {
 		}
 		return "/paste-cache/" + name + "/"
 	case "memory":
-		return "/memories/" + f.SourceID + "/"
+		// SourceID is usually "projectDir/fileName" (e.g. "-Users-proj/MEMORY.md").
+		if i := strings.Index(f.SourceID, "/"); i > 0 {
+			return MemoryURL(f.SourceID[:i], f.SourceID[i+1:])
+		}
+		// Legacy findings without a file name map to the default MEMORY.md file.
+		return MemoryURL(f.SourceID, "MEMORY.md")
 	case "todo":
 		name, anchor := splitSourceFragment(f.SourceID)
 		url := "/todos/" + strings.TrimSuffix(name, ".json") + "/"

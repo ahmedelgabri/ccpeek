@@ -8,6 +8,7 @@
     {{ else }}
       {{ shortenPath .Entry.ProjectDir }}
     {{ end }}
+    <span class="text-slate-500 text-lg font-normal ml-1">/ {{ .Entry.FileName }}</span>
   </h1>
   <div class="flex items-center gap-4 text-xs text-slate-500 mb-6">
     <span>{{ formatBytes .Entry.SizeBytes }}</span>

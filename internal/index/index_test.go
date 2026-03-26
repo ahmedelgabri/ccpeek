@@ -385,8 +385,8 @@ func TestRun(t *testing.T) {
 	if stats.UsageFacetCount != 2 {
 		t.Errorf("expected UsageFacetCount=2, got %d", stats.UsageFacetCount)
 	}
-	if stats.MemoryCount != 1 {
-		t.Errorf("expected MemoryCount=1, got %d", stats.MemoryCount)
+	if stats.MemoryCount != 3 {
+		t.Errorf("expected MemoryCount=3, got %d", stats.MemoryCount)
 	}
 
 	// Memories
@@ -394,11 +394,13 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatal("listing memories:", err)
 	}
-	if len(memories) != 1 {
-		t.Errorf("expected 1 memory entry, got %d", len(memories))
+	if len(memories) != 3 {
+		t.Errorf("expected 3 memory entries, got %d", len(memories))
 	}
-	if len(memories) > 0 {
-		mem := memories[0]
+	// Verify both files are present (sorted by file_name)
+	fileNames := map[string]bool{}
+	for _, mem := range memories {
+		fileNames[mem.FileName] = true
 		if mem.ProjectDir != "test-project" {
 			t.Errorf("expected memory ProjectDir 'test-project', got %q", mem.ProjectDir)
 		}
@@ -406,11 +408,20 @@ func TestRun(t *testing.T) {
 			t.Error("expected memory to have a linked project name")
 		}
 	}
+	if !fileNames["MEMORY.md"] {
+		t.Error("expected MEMORY.md in memory entries")
+	}
+	if !fileNames["conventions.md"] {
+		t.Error("expected conventions.md in memory entries")
+	}
+	if !fileNames["team notes.v2.md"] {
+		t.Error("expected team notes.v2.md in memory entries")
+	}
 
-	// Memory detail
-	memEntry, memContent, err := s.GetMemory(context.Background(), "test-project")
+	// Memory detail - MEMORY.md
+	memEntry, memContent, err := s.GetMemory(context.Background(), "test-project", "MEMORY")
 	if err != nil {
-		t.Fatal("getting memory:", err)
+		t.Fatal("getting memory MEMORY.md:", err)
 	}
 	if memEntry.ProjectDir != "test-project" {
 		t.Errorf("expected memory ProjectDir 'test-project', got %q", memEntry.ProjectDir)
@@ -420,6 +431,30 @@ func TestRun(t *testing.T) {
 	}
 	if memEntry.SizeBytes == 0 {
 		t.Error("memory SizeBytes should be non-zero")
+	}
+
+	// Memory detail - conventions.md
+	convEntry, convContent, err := s.GetMemory(context.Background(), "test-project", "conventions")
+	if err != nil {
+		t.Fatal("getting memory conventions.md:", err)
+	}
+	if convEntry.FileName != "conventions.md" {
+		t.Errorf("expected FileName 'conventions.md', got %q", convEntry.FileName)
+	}
+	if convContent == "" {
+		t.Error("conventions.md content is empty")
+	}
+
+	// Memory detail - team notes.v2.md
+	teamEntry, teamContent, err := s.GetMemory(context.Background(), "test-project", "team notes.v2")
+	if err != nil {
+		t.Fatal("getting memory team notes.v2.md:", err)
+	}
+	if teamEntry.FileName != "team notes.v2.md" {
+		t.Errorf("expected FileName 'team notes.v2.md', got %q", teamEntry.FileName)
+	}
+	if teamContent == "" {
+		t.Error("team notes.v2.md content is empty")
 	}
 }
 

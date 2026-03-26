@@ -189,7 +189,7 @@ func (s *Store) populateCommandSearchIndex(ctx context.Context, tx *sqlx.Tx, stm
 
 func (s *Store) populateMemorySearchIndex(ctx context.Context, tx *sqlx.Tx, stmt *sql.Stmt) error {
 	rows, err := tx.QueryxContext(ctx, `
-		SELECT m.project_dir, m.content,
+		SELECT m.project_dir, m.file_name, m.content,
 		       COALESCE(p.display_name, m.project_dir) AS display_name
 		FROM memories m
 		LEFT JOIN projects p ON m.project_id = p.id`)
@@ -201,13 +201,20 @@ func (s *Store) populateMemorySearchIndex(ctx context.Context, tx *sqlx.Tx, stmt
 	for rows.Next() {
 		var r struct {
 			ProjectDir  string `db:"project_dir"`
+			FileName    string `db:"file_name"`
 			Content     string `db:"content"`
 			DisplayName string `db:"display_name"`
 		}
 		if err := rows.StructScan(&r); err != nil {
 			return err
 		}
-		if err := insertSearchDocument(ctx, stmt, searchGroupMemories, r.DisplayName, "MEMORY.md", "/memories/"+r.ProjectDir+"/", r.Content); err != nil {
+		title := r.DisplayName
+		if title != "" {
+			title += " / " + r.FileName
+		} else {
+			title = r.FileName
+		}
+		if err := insertSearchDocument(ctx, stmt, searchGroupMemories, title, "Memory file", model.MemoryURL(r.ProjectDir, r.FileName), r.Content); err != nil {
 			return err
 		}
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const schemaVersion = 14
+const schemaVersion = 15
 
 // initialSchema is migration 0 → 1: the baseline schema (v4 equivalent).
 const initialSchema = `
@@ -194,10 +194,12 @@ CREATE TABLE IF NOT EXISTS usage_report (
 
 CREATE TABLE IF NOT EXISTS memories (
 	id          INTEGER PRIMARY KEY,
-	project_dir TEXT NOT NULL UNIQUE,
+	project_dir TEXT NOT NULL,
+	file_name   TEXT NOT NULL DEFAULT 'MEMORY.md',
 	project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
 	size_bytes  INTEGER NOT NULL DEFAULT 0,
-	content     TEXT NOT NULL DEFAULT ''
+	content     TEXT NOT NULL DEFAULT '',
+	UNIQUE(project_dir, file_name)
 );
 
 CREATE TABLE IF NOT EXISTS commands (
@@ -277,6 +279,7 @@ var migrations = []func(ctx context.Context, tx *sqlx.Tx) error{
 	migrateV11ToV12,
 	migrateV12ToV13,
 	migrateV13ToV14,
+	migrateV14ToV15,
 }
 
 // migrateV4ToV5 adds source_path columns to entity tables and replaces
@@ -743,6 +746,71 @@ func migrateV13ToV14(ctx context.Context, tx *sqlx.Tx) error {
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrating foreign key delete actions: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateV14ToV15 adds file_name column to memories and changes UNIQUE
+// constraint from project_dir to (project_dir, file_name) to support
+// multiple .md files per project memory folder.
+func migrateV14ToV15(ctx context.Context, tx *sqlx.Tx) error {
+	var hasFileName, hasSourcePath bool
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(memories)`)
+	if err != nil {
+		return fmt.Errorf("checking memories schema: %w", err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dfltValue *string
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		switch name {
+		case "file_name":
+			hasFileName = true
+		case "source_path":
+			hasSourcePath = true
+		}
+	}
+	rows.Close()
+
+	if hasFileName && hasSourcePath {
+		return nil
+	}
+
+	insertSelect := `SELECT id, project_dir, 'MEMORY.md', project_id, size_bytes, content, '' FROM memories`
+	if hasFileName && hasSourcePath {
+		insertSelect = `SELECT id, project_dir, file_name, project_id, size_bytes, content, source_path FROM memories`
+	} else if hasFileName {
+		insertSelect = `SELECT id, project_dir, file_name, project_id, size_bytes, content, '' FROM memories`
+	} else if hasSourcePath {
+		insertSelect = `SELECT id, project_dir, 'MEMORY.md', project_id, size_bytes, content, source_path FROM memories`
+	}
+
+	stmts := []string{
+		`CREATE TABLE memories_new (
+			id          INTEGER PRIMARY KEY,
+			project_dir TEXT NOT NULL,
+			file_name   TEXT NOT NULL DEFAULT 'MEMORY.md',
+			project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+			size_bytes  INTEGER NOT NULL DEFAULT 0,
+			content     TEXT NOT NULL DEFAULT '',
+			source_path TEXT NOT NULL DEFAULT '',
+			UNIQUE(project_dir, file_name)
+		)`,
+		`INSERT INTO memories_new (id, project_dir, file_name, project_id, size_bytes, content, source_path) ` + insertSelect,
+		`DROP TABLE memories`,
+		`ALTER TABLE memories_new RENAME TO memories`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source_path)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migrating memories file_name: %w", err)
 		}
 	}
 	return nil

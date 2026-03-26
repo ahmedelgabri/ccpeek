@@ -155,8 +155,9 @@ func (sc *Scanner) scanPasteCache(ctx context.Context) ([]model.ScanFinding, err
 func (sc *Scanner) scanMemories(ctx context.Context) ([]model.ScanFinding, error) {
 	var findings []model.ScanFinding
 	err := sc.store.EachMemoryForScan(ctx, func(r store.ScanMemoryRow) error {
+		sourceID := model.MemorySourceID(r.ProjectDir, r.FileName)
 		for _, f := range sc.detect(r.Content) {
-			findings = append(findings, toFinding(f, "memory", r.ProjectDir))
+			findings = append(findings, toFinding(f, "memory", sourceID))
 		}
 		return nil
 	})

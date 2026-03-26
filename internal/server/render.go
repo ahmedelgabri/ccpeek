@@ -173,7 +173,7 @@ func toAnchor(prefix, value string) string {
 //	"todo"             fileName                   → /todos/{name}/
 //	"task"             dirName                    → /tasks/{dir}/
 //	"paste"            fileName                   → /paste-cache/{name}/
-//	"memory"           projectDir                 → /memories/{dir}/
+//	"memory"           projectDir, fileName        → /memories/{dir}/{name}/
 //	"file-history"     conversationID             → /file-history/{id}/
 //	"usage"            sessionID                  → /usage-data/{sid}/
 //	"command-anchor"   dirName, sessionID, ts     → /projects/{dir}/{sid}/commands/#cmd-{ts}
@@ -200,7 +200,10 @@ func urlFor(kind string, args ...string) string {
 	case "paste":
 		return "/paste-cache/" + strings.TrimSuffix(args[0], ".txt") + "/"
 	case "memory":
-		return "/memories/" + args[0] + "/"
+		if len(args) >= 2 {
+			return model.MemoryURL(args[0], args[1])
+		}
+		return model.MemoryURL(args[0], "MEMORY.md")
 	case "file-history":
 		return "/file-history/" + args[0] + "/"
 	case "usage":

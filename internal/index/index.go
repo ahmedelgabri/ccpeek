@@ -569,9 +569,13 @@ func collectSourceFiles(claudeDir string) []string {
 					}
 				}
 			}
-			memPath := filepath.Join(subDir, "memory", "MEMORY.md")
-			if _, err := os.Stat(memPath); err == nil {
-				paths = append(paths, memPath)
+			memDir := filepath.Join(subDir, "memory")
+			if mdFiles, err := os.ReadDir(memDir); err == nil {
+				for _, mf := range mdFiles {
+					if !mf.IsDir() && strings.HasSuffix(mf.Name(), ".md") {
+						paths = append(paths, filepath.Join(memDir, mf.Name()))
+					}
+				}
 			}
 		}
 	}

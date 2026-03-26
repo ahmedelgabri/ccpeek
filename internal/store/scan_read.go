@@ -218,12 +218,13 @@ func (s *Store) EachContentForScan(ctx context.Context, table string, fn func(Sc
 // ScanMemoryRow holds a memory entry for scanning.
 type ScanMemoryRow struct {
 	ProjectDir string `db:"project_dir"`
+	FileName   string `db:"file_name"`
 	Content    string `db:"content"`
 }
 
 // EachMemoryForScan iterates over all memories for scanning.
 func (s *Store) EachMemoryForScan(ctx context.Context, fn func(ScanMemoryRow) error) error {
-	rows, err := s.db.QueryxContext(ctx, `SELECT project_dir, content FROM memories`)
+	rows, err := s.db.QueryxContext(ctx, `SELECT project_dir, file_name, content FROM memories`)
 	if err != nil {
 		return err
 	}

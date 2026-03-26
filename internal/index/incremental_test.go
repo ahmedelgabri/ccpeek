@@ -39,6 +39,28 @@ func setupTestDir(t *testing.T) string {
 	return dir
 }
 
+func setupMemoryTestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	memDir := filepath.Join(dir, "projects", "test-project", "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	files := map[string]string{
+		"MEMORY.md":        "# Project Memory\n\nPrimary memory file.",
+		"team notes.v2.md": "# Team Notes\n\nFile with spaces in its name.",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(memDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return dir
+}
+
 func TestIncrementalSkipsUnchangedFiles(t *testing.T) {
 	dir := setupTestDir(t)
 	s, err := store.Open(context.Background(), ":memory:")
@@ -265,5 +287,61 @@ func TestIncrementalNewFileAdded(t *testing.T) {
 	plans, _ := s.ListPlans(context.Background())
 	if len(plans) != 3 {
 		t.Errorf("expected 3 plans after adding gamma.md, got %d", len(plans))
+	}
+}
+
+func TestPruneRemovesDeletedMemoryFile(t *testing.T) {
+	dir := setupMemoryTestDir(t)
+	s, err := store.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := Run(context.Background(), dir, s, false, io.Discard); err != nil {
+		t.Fatal("initial Run:", err)
+	}
+
+	memories, err := s.ListMemories(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memories) != 2 {
+		t.Fatalf("expected 2 memories after initial index, got %d", len(memories))
+	}
+
+	if err := os.Remove(filepath.Join(dir, "projects", "test-project", "memory", "team notes.v2.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := RunIncremental(context.Background(), dir, s)
+	if err != nil {
+		t.Fatal("RunIncremental:", err)
+	}
+	if changed {
+		t.Error("expected deleted memory file to be retained until prune")
+	}
+
+	memories, err = s.ListMemories(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memories) != 2 {
+		t.Fatalf("expected deleted memory source to remain after incremental run, got %d entries", len(memories))
+	}
+
+	if err := Prune(context.Background(), dir, s, io.Discard); err != nil {
+		t.Fatal("Prune:", err)
+	}
+
+	memories, err = s.ListMemories(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memories) != 1 {
+		t.Fatalf("expected 1 memory after prune, got %d", len(memories))
+	}
+	if memories[0].FileName != "MEMORY.md" {
+		t.Fatalf("expected MEMORY.md to remain after prune, got %q", memories[0].FileName)
 	}
 }

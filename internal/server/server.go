@@ -114,7 +114,7 @@ func registerRoutes(h *handlers, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /usage-data/report/raw", h.usageReportRaw)
 	mux.HandleFunc("GET /usage-data/{sessionId}/{$}", h.usageDataDetail)
 	mux.HandleFunc("GET /memories/{$}", h.memoriesList)
-	mux.HandleFunc("GET /memories/{projectDir}/{$}", h.memoryDetail)
+	mux.HandleFunc("GET /memories/{projectDir}/{fileName}/{$}", h.memoryDetail)
 	mux.HandleFunc("GET /scan/{$}", h.scanList)
 	mux.HandleFunc("POST /scan/{id}/toggle-ignore", h.scanToggleIgnore)
 	return mux

@@ -323,8 +323,9 @@ func (h *handlers) memoriesList(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectDir := r.PathValue("projectDir")
+	fileName := r.PathValue("fileName")
 
-	entry, content, err := h.store.GetMemory(ctx, projectDir)
+	entry, content, err := h.store.GetMemory(ctx, projectDir, fileName)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -336,7 +337,7 @@ func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, h.tmpl, "memory_detail.html", map[string]any{
-		"Title":       "Memory: " + name,
+		"Title":       "Memory: " + name + " / " + entry.FileName,
 		"CurrentPath": "/memories/",
 		"Entry":       entry,
 		"Content":     renderMarkdown(content),

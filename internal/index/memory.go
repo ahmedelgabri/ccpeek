@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 
@@ -27,40 +28,55 @@ func indexMemory(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx
 			continue
 		}
 
-		memPath := filepath.Join(projDir, e.Name(), "memory", "MEMORY.md")
-		content, err := os.ReadFile(memPath)
+		memDir := filepath.Join(projDir, e.Name(), "memory")
+		mdFiles, err := os.ReadDir(memDir)
 		if err != nil {
-			if rec != nil && !os.IsNotExist(err) {
-				rec.SkippedFile("memory", memPath, err.Error())
+			if !os.IsNotExist(err) && rec != nil {
+				rec.SkippedFile("memory", memDir, err.Error())
 			}
 			continue
 		}
 
-		info, err := os.Stat(memPath)
-		if err != nil {
-			if rec != nil {
-				rec.SkippedFile("memory", memPath, err.Error())
-			}
-			continue
-		}
-
-		// Look up project DB ID
+		// Look up project DB ID once per project
 		var projectID *int64
 		var pid int64
 		err = tx.GetContext(ctx, &pid, `SELECT id FROM projects WHERE dir_name = ?`, e.Name())
 		if err == nil {
 			projectID = &pid
 		} else if rec != nil {
-			rec.UnresolvedLink("memory", memPath, fmt.Sprintf("project %s not found: %v", e.Name(), err))
+			rec.UnresolvedLink("memory", memDir, fmt.Sprintf("project %s not found: %v", e.Name(), err))
 		}
 
-		if err := s.InsertMemory(ctx, tx, e.Name(), projectID, info.Size(), string(content), memPath); err != nil {
-			if rec != nil {
-				rec.SkippedFile("memory", memPath, err.Error())
+		for _, f := range mdFiles {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+				continue
 			}
-			continue
+
+			memPath := filepath.Join(memDir, f.Name())
+			content, err := os.ReadFile(memPath)
+			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("memory", memPath, err.Error())
+				}
+				continue
+			}
+
+			info, err := os.Stat(memPath)
+			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("memory", memPath, err.Error())
+				}
+				continue
+			}
+
+			if err := s.InsertMemory(ctx, tx, e.Name(), f.Name(), projectID, info.Size(), string(content), memPath); err != nil {
+				if rec != nil {
+					rec.SkippedFile("memory", memPath, err.Error())
+				}
+				continue
+			}
+			count++
 		}
-		count++
 	}
 
 	return count, nil

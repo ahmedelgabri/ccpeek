@@ -14,9 +14,9 @@
   >
     {{ range .Entries }}
       <a
-        href="{{ urlFor "memory" .ProjectDir }}"
+        href="{{ urlFor "memory" .ProjectDir .FileName }}"
         class="list-row group flex flex-col gap-1 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
-        data-search-keys="{{ .ProjectName }} {{ .ProjectDir }} {{ .Preview }}"
+        data-search-keys="{{ .ProjectName }} {{ .ProjectDir }} {{ .FileName }} {{ .Preview }}"
       >
         <div class="flex items-baseline justify-between gap-4">
           <span class="text-sm text-slate-200 group-hover:text-slate-50"
@@ -24,8 +24,9 @@
               {{ shortenPath .ProjectName }}
             {{ else }}
               {{ shortenPath .ProjectDir }}
-            {{ end }}</span
-          >
+            {{ end }}
+            <span class="text-slate-500 text-xs ml-1">/ {{ .FileName }}</span>
+          </span>
           <span class="text-xs text-slate-500 whitespace-nowrap"
             >{{ formatBytes .SizeBytes }}</span
           >

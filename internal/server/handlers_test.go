@@ -1195,11 +1195,20 @@ func TestMemoriesList(t *testing.T) {
 	if !strings.Contains(body, "Filter memories...") {
 		t.Error("memories list missing search input")
 	}
+	if !strings.Contains(body, "MEMORY.md") {
+		t.Error("memories list missing MEMORY.md file name")
+	}
+	if !strings.Contains(body, "conventions.md") {
+		t.Error("memories list missing conventions.md file name")
+	}
+	if !strings.Contains(body, "team notes.v2.md") {
+		t.Error("memories list missing team notes.v2.md file name")
+	}
 }
 
 func TestMemoryDetail(t *testing.T) {
 	handler := setupTestServer(t)
-	req := httptest.NewRequest("GET", "/memories/test-project/", nil)
+	req := httptest.NewRequest("GET", "/memories/test-project/MEMORY/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -1216,9 +1225,47 @@ func TestMemoryDetail(t *testing.T) {
 	}
 }
 
+func TestMemoryDetailSecondFile(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/memories/test-project/conventions/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Coding Conventions") {
+		t.Error("memory detail missing conventions.md content")
+	}
+	if !strings.Contains(body, "conventions.md") {
+		t.Error("memory detail missing file name display")
+	}
+}
+
+func TestMemoryDetailEscapedFileName(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/memories/test-project/team%20notes.v2/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Team Notes") {
+		t.Error("memory detail missing escaped file content")
+	}
+	if !strings.Contains(body, "team notes.v2.md") {
+		t.Error("memory detail missing escaped file name display")
+	}
+}
+
 func TestMemoryNotFound(t *testing.T) {
 	handler := setupTestServer(t)
-	req := httptest.NewRequest("GET", "/memories/nonexistent/", nil)
+	req := httptest.NewRequest("GET", "/memories/nonexistent/MEMORY/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
