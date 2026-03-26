@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +15,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexTasks(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexTasks(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "tasks")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -31,8 +32,11 @@ func indexTasks(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 		}
 
 		taskDir := filepath.Join(srcDir, e.Name())
-		items, err := readTaskItems(taskDir)
+		items, err := readTaskItems(taskDir, rec)
 		if err != nil || len(items) == 0 {
+			if err != nil && rec != nil {
+				rec.SkippedFile("task", taskDir, err.Error())
+			}
 			continue
 		}
 
@@ -51,9 +55,14 @@ func indexTasks(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 		var sessionDBID int64
 		if dbID, err := s.GetSessionDBID(ctx, tx, e.Name()); err == nil {
 			sessionDBID = dbID
+		} else if rec != nil {
+			rec.UnresolvedLink("task", taskDir, fmt.Sprintf("session %s not found: %v", e.Name(), err))
 		}
 
 		if err := s.InsertTaskGroup(ctx, tx, entry, items, sessionDBID, taskDir); err != nil {
+			if rec != nil {
+				rec.SkippedFile("task", taskDir, err.Error())
+			}
 			continue
 		}
 		count++
@@ -63,7 +72,7 @@ func indexTasks(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 }
 
 // readTaskItems reads numbered JSON files (1.json, 2.json, ...) from a task directory.
-func readTaskItems(dir string) ([]model.TaskItem, error) {
+func readTaskItems(dir string, rec *ingestRecorder) ([]model.TaskItem, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -75,8 +84,12 @@ func readTaskItems(dir string) ([]model.TaskItem, error) {
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("task", path, err.Error())
+			}
 			continue
 		}
 
@@ -90,6 +103,9 @@ func readTaskItems(dir string) ([]model.TaskItem, error) {
 			BlockedBy   []string `json:"blockedBy"`
 		}
 		if err := json.Unmarshal(data, &raw); err != nil {
+			if rec != nil {
+				rec.ParseFailure("task", path, 0, err.Error())
+			}
 			continue
 		}
 

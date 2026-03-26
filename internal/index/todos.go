@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,7 +21,7 @@ var todoSessionRe = regexp.MustCompile(
 	`^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-agent-`,
 )
 
-func indexTodos(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexTodos(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	srcDir := filepath.Join(claudeDir, "todos")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -39,11 +40,17 @@ func indexTodos(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 		src := filepath.Join(srcDir, e.Name())
 		content, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("todo", src, err.Error())
+			}
 			continue
 		}
 
 		var items []model.TodoItem
 		if err := json.Unmarshal(content, &items); err != nil {
+			if rec != nil {
+				rec.ParseFailure("todo", src, 0, err.Error())
+			}
 			continue
 		}
 		if len(items) == 0 {
@@ -68,11 +75,18 @@ func indexTodos(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.
 			if dbID, err := s.GetSessionDBID(ctx, tx, sessionID); err == nil {
 				sessionDBID = dbID
 				// Also set reverse link: session -> todo file
-				_ = s.LinkTodoToSession(ctx, tx, e.Name(), dbID)
+				if err := s.LinkTodoToSession(ctx, tx, e.Name(), dbID); err != nil && rec != nil {
+					rec.UnresolvedLink("todo", src, fmt.Sprintf("linking to session %s: %v", sessionID, err))
+				}
+			} else if rec != nil {
+				rec.UnresolvedLink("todo", src, fmt.Sprintf("session %s not found: %v", sessionID, err))
 			}
 		}
 
 		if err := s.InsertTodo(ctx, tx, entry, items, sessionDBID, src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("todo", src, err.Error())
+			}
 			continue
 		}
 		count++

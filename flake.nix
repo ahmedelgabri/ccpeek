@@ -31,11 +31,11 @@
           default = self'.packages.ccpeek;
           ccpeek = pkgs.buildGoModule {
             pname = "ccpeek";
-            version = "1.7.6";
+            version = "1.9.0";
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-ems9UlyOiLhseCW+MjAPPsYklKSJM/m+BUIHoC4v59g=";
+            vendorHash = "sha256-8vp/z+7/hZg4lPcyf4G/yZuKDoQTOoxGD1nMpAAkkIU=";
 
             tags = ["sqlite_fts5"];
 
@@ -111,17 +111,19 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
-            go-tools # staticcheck, etc...
+            go-tools # includes staticcheck
             gofumpt
             gomodifytags
             gopls
             gotools # goimports
+            govulncheck
             just
             lefthook
             nixd
             nodejs
             oxlint
             pnpm
+            sqlite # sqlite3 for migration fixture tooling
             tsx
             typescript
           ];

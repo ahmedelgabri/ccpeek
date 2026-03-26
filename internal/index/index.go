@@ -23,31 +23,51 @@ import (
 // (idempotent full index that preserves data from deleted source files).
 // Progress output is written to w.
 func Run(ctx context.Context, claudeDir string, s *store.Store, rebuild bool, w io.Writer) error {
-	if rebuild {
-		if err := s.Reset(ctx); err != nil {
-			return fmt.Errorf("resetting database: %w", err)
-		}
-		return doIndex(ctx, claudeDir, s, w)
-	}
+	rec := newIngestRecorder("full", claudeDir)
+	files := collectSourceFiles(claudeDir)
+	rec.SetFilesSeen(len(files))
+	rec.SetFilesChanged(len(files))
 
-	// Non-rebuild: delete existing data for all current source files,
-	// then reinsert. This is idempotent and preserves data from
-	// source files that no longer exist on disk.
-	return doCleanIndex(ctx, claudeDir, s, w)
+	var err error
+	if rebuild {
+		if err = s.Reset(ctx); err == nil {
+			err = doIndex(ctx, claudeDir, s, w, rec)
+		} else {
+			err = fmt.Errorf("resetting database: %w", err)
+		}
+	} else {
+		// Non-rebuild: delete existing data for all current source files,
+		// then reinsert. This is idempotent and preserves data from
+		// source files that no longer exist on disk.
+		err = doCleanIndex(ctx, claudeDir, s, w, rec)
+	}
+	return persistIngestRun(ctx, s, rec, err, true)
 }
 
 // RunIncremental checks source file hashes and only re-indexes changed files.
 // Returns true if any files were re-indexed.
 func RunIncremental(ctx context.Context, claudeDir string, s *store.Store) (bool, error) {
-	return doIncrementalIndex(ctx, claudeDir, s)
+	rec := newIngestRecorder("incremental", claudeDir)
+	changed, err := doIncrementalIndex(ctx, claudeDir, s, rec)
+	if persistErr := persistIngestRun(ctx, s, rec, err, false); persistErr != nil {
+		return changed, persistErr
+	}
+	return changed, err
 }
 
 // Prune removes DB rows whose source_path no longer exists on disk.
 // Progress output is written to w.
 func Prune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) error {
+	rec := newIngestRecorder("prune", claudeDir)
+	err := doPrune(ctx, claudeDir, s, w, rec)
+	return persistIngestRun(ctx, s, rec, err, true)
+}
+
+func doPrune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
 	// Read tracked paths before starting the transaction to avoid
 	// deadlock on single-connection in-memory databases.
 	tracked, err := s.ListSourceFilePaths(ctx)
+	rec.SetFilesSeen(len(tracked))
 	if err != nil {
 		return fmt.Errorf("listing tracked paths: %w", err)
 	}
@@ -71,11 +91,13 @@ func Prune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) e
 		if err := deleteSourceData(ctx, tx, s, p); err != nil {
 			return fmt.Errorf("pruning %s: %w", p, err)
 		}
-		if _, err := tx.Exec(`DELETE FROM source_files WHERE path = ?`, p); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM source_files WHERE path = ?`, p); err != nil {
 			return fmt.Errorf("removing source_files entry %s: %w", p, err)
 		}
 		pruned++
 	}
+	rec.SetFilesChanged(pruned)
+	rec.AddIndexed(pruned)
 
 	if pruned > 0 {
 		if err := s.PruneOrphanedProjects(ctx, tx); err != nil {
@@ -88,6 +110,12 @@ func Prune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) e
 		if err := s.RepopulateFTS(ctx, tx); err != nil {
 			return fmt.Errorf("repopulating FTS: %w", err)
 		}
+		if err := s.RebuildSearchIndex(ctx, tx); err != nil {
+			return fmt.Errorf("rebuilding search index: %w", err)
+		}
+		if err := s.RepopulateSearchIndex(ctx, tx); err != nil {
+			return fmt.Errorf("repopulating search index: %w", err)
+		}
 	}
 
 	fmt.Fprintf(w, "  Pruned: %d source files\n", pruned)
@@ -97,7 +125,7 @@ func Prune(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) e
 // doCleanIndex deletes existing data for all current source files, then
 // does a full reindex. This is idempotent and safe to call on a DB that
 // already has data.
-func doCleanIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) error {
+func doCleanIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -123,11 +151,11 @@ func doCleanIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Wr
 		return fmt.Errorf("committing cleanup: %w", err)
 	}
 
-	return doIndex(ctx, claudeDir, s, w)
+	return doIndex(ctx, claudeDir, s, w, rec)
 }
 
 // doIndex does a full index of all source files (assumes clean state).
-func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer) error {
+func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer, rec *ingestRecorder) error {
 	tx, err := s.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -138,10 +166,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	done := func(format string, a ...any) { fmt.Fprintf(w, "  "+format+"\n", a...) }
 
 	progress("Plans")
-	planCount, err := indexPlans(ctx, claudeDir, s, tx)
+	planCount, err := indexPlans(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing plans: %w", err)
 	}
+	rec.AddIndexed(planCount)
 	done("Plans: %d", planCount)
 
 	if err := ctx.Err(); err != nil {
@@ -149,10 +178,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Shell snapshots")
-	snapCount, err := indexShellSnapshots(ctx, claudeDir, s, tx)
+	snapCount, err := indexShellSnapshots(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing shell snapshots: %w", err)
 	}
+	rec.AddIndexed(snapCount)
 	done("Shell snapshots: %d", snapCount)
 
 	if err := ctx.Err(); err != nil {
@@ -160,10 +190,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Projects")
-	projectCount, sessionCount, err := indexProjects(ctx, claudeDir, s, tx)
+	projectCount, sessionCount, err := indexProjects(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing projects: %w", err)
 	}
+	rec.AddIndexed(projectCount + sessionCount)
 	done("Projects: %d (%d sessions)", projectCount, sessionCount)
 
 	if err := ctx.Err(); err != nil {
@@ -171,10 +202,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Todos")
-	todoCount, err := indexTodos(ctx, claudeDir, s, tx)
+	todoCount, err := indexTodos(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing todos: %w", err)
 	}
+	rec.AddIndexed(todoCount)
 	done("Todos: %d (non-empty)", todoCount)
 
 	if err := ctx.Err(); err != nil {
@@ -182,10 +214,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("File history")
-	fhCount, err := indexFileHistory(ctx, claudeDir, s, tx)
+	fhCount, err := indexFileHistory(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing file history: %w", err)
 	}
+	rec.AddIndexed(fhCount)
 	done("File history: %d conversations", fhCount)
 
 	if err := ctx.Err(); err != nil {
@@ -193,10 +226,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("History")
-	histCount, err := indexHistory(ctx, claudeDir, s, tx)
+	histCount, err := indexHistory(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing history: %w", err)
 	}
+	rec.AddIndexed(histCount)
 	done("History: %d entries", histCount)
 
 	if err := ctx.Err(); err != nil {
@@ -204,10 +238,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Tasks")
-	taskCount, err := indexTasks(ctx, claudeDir, s, tx)
+	taskCount, err := indexTasks(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing tasks: %w", err)
 	}
+	rec.AddIndexed(taskCount)
 	done("Tasks: %d groups", taskCount)
 
 	if err := ctx.Err(); err != nil {
@@ -215,10 +250,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Paste cache")
-	pasteCount, err := indexPasteCache(ctx, claudeDir, s, tx)
+	pasteCount, err := indexPasteCache(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing paste cache: %w", err)
 	}
+	rec.AddIndexed(pasteCount)
 	done("Paste cache: %d entries", pasteCount)
 
 	if err := ctx.Err(); err != nil {
@@ -226,10 +262,11 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Usage data")
-	usageCount, err := indexUsageData(ctx, claudeDir, s, tx)
+	usageCount, err := indexUsageData(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing usage data: %w", err)
 	}
+	rec.AddIndexed(usageCount)
 	done("Usage facets: %d", usageCount)
 
 	if err := ctx.Err(); err != nil {
@@ -237,14 +274,22 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 	}
 
 	progress("Memories")
-	memoryCount, err := indexMemory(ctx, claudeDir, s, tx)
+	memoryCount, err := indexMemory(ctx, claudeDir, s, tx, rec)
 	if err != nil {
 		return fmt.Errorf("indexing memories: %w", err)
 	}
+	rec.AddIndexed(memoryCount)
 	done("Memories: %d", memoryCount)
 
+	if err := s.RebuildSearchIndex(ctx, tx); err != nil {
+		return fmt.Errorf("rebuilding search index: %w", err)
+	}
+	if err := s.RepopulateSearchIndex(ctx, tx); err != nil {
+		return fmt.Errorf("repopulating search index: %w", err)
+	}
+
 	// Record hashes for all source files
-	recordSourceHashes(ctx, claudeDir, s, tx)
+	recordSourceHashes(ctx, claudeDir, s, tx, rec)
 
 	// Set generated timestamp
 	if err := s.SetMeta(ctx, tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
@@ -255,8 +300,9 @@ func doIndex(ctx context.Context, claudeDir string, s *store.Store, w io.Writer)
 }
 
 // doIncrementalIndex hashes each source file and only re-indexes changed ones.
-func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store) (bool, error) {
+func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store, rec *ingestRecorder) (bool, error) {
 	allFiles := collectSourceFiles(claudeDir)
+	rec.SetFilesSeen(len(allFiles))
 
 	// Find files that have changed, caching hashes for later
 	var changedFiles []string
@@ -275,6 +321,7 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store) (
 		}
 	}
 
+	rec.SetFilesChanged(len(changedFiles))
 	if len(changedFiles) == 0 {
 		return false, nil
 	}
@@ -307,65 +354,75 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store) (
 
 	reindexed := 0
 
-	planCount, err := indexPlansFiltered(ctx, claudeDir, s, tx, changedSet)
+	planCount, err := indexPlansFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing plans: %w", err)
 	}
 	reindexed += planCount
+	rec.AddIndexed(planCount)
 
-	snapCount, err := indexSnapshotsFiltered(ctx, claudeDir, s, tx, changedSet)
+	snapCount, err := indexSnapshotsFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing snapshots: %w", err)
 	}
 	reindexed += snapCount
+	rec.AddIndexed(snapCount)
 
-	_, sessionCount, err := indexProjectsFiltered(ctx, claudeDir, s, tx, changedSet)
+	projectCount, sessionCount, err := indexProjectsFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing projects: %w", err)
 	}
 	reindexed += sessionCount
+	rec.AddIndexed(projectCount + sessionCount)
 
-	todoCount, err := indexTodosFiltered(ctx, claudeDir, s, tx, changedSet)
+	todoCount, err := indexTodosFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing todos: %w", err)
 	}
 	reindexed += todoCount
+	rec.AddIndexed(todoCount)
 
-	fhCount, err := indexFileHistoryFiltered(ctx, claudeDir, s, tx, changedSet)
+	fhCount, err := indexFileHistoryFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing file history: %w", err)
 	}
 	reindexed += fhCount
+	rec.AddIndexed(fhCount)
 
-	histCount, err := indexHistoryFiltered(ctx, claudeDir, s, tx, changedSet)
+	histCount, err := indexHistoryFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing history: %w", err)
 	}
 	reindexed += histCount
+	rec.AddIndexed(histCount)
 
-	taskCount, err := indexTasksFiltered(ctx, claudeDir, s, tx, changedSet)
+	taskCount, err := indexTasksFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing tasks: %w", err)
 	}
 	reindexed += taskCount
+	rec.AddIndexed(taskCount)
 
-	pasteCount, err := indexPasteCacheFiltered(ctx, claudeDir, s, tx, changedSet)
+	pasteCount, err := indexPasteCacheFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing paste cache: %w", err)
 	}
 	reindexed += pasteCount
+	rec.AddIndexed(pasteCount)
 
-	usageCount, err := indexUsageDataFiltered(ctx, claudeDir, s, tx, changedSet)
+	usageCount, err := indexUsageDataFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing usage data: %w", err)
 	}
 	reindexed += usageCount
+	rec.AddIndexed(usageCount)
 
-	memoryCount, err := indexMemoryFiltered(ctx, claudeDir, s, tx, changedSet)
+	memoryCount, err := indexMemoryFiltered(ctx, claudeDir, s, tx, changedSet, rec)
 	if err != nil {
 		return false, fmt.Errorf("indexing memories: %w", err)
 	}
 	reindexed += memoryCount
+	rec.AddIndexed(memoryCount)
 
 	// Clean up orphaned projects (projects with no sessions left)
 	if sessionsChanged {
@@ -383,15 +440,26 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store) (
 			return false, fmt.Errorf("repopulating FTS: %w", err)
 		}
 	}
+	if err := s.RebuildSearchIndex(ctx, tx); err != nil {
+		return false, fmt.Errorf("rebuilding search index: %w", err)
+	}
+	if err := s.RepopulateSearchIndex(ctx, tx); err != nil {
+		return false, fmt.Errorf("repopulating search index: %w", err)
+	}
 
 	// Update hashes for changed files (reuse cached hashes from detection pass)
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, path := range changedFiles {
 		hash, ok := hashCache[path]
 		if !ok {
+			if rec != nil {
+				rec.SkippedFile("source_file", path, "unable to compute content hash")
+			}
 			continue
 		}
-		_ = s.SetSourceFileHash(ctx, tx, path, hash, now)
+		if err := s.SetSourceFileHash(ctx, tx, path, hash, now); err != nil && rec != nil {
+			rec.SkippedFile("source_file", path, err.Error())
+		}
 	}
 
 	if err := s.SetMeta(ctx, tx, "generated_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
@@ -403,33 +471,10 @@ func doIncrementalIndex(ctx context.Context, claudeDir string, s *store.Store) (
 
 // deleteSourceData removes all indexed data originating from a source file.
 func deleteSourceData(ctx context.Context, tx *sqlx.Tx, s *store.Store, sourcePath string) error {
-	// Sessions require cascade handling (messages, FTS, unlinking)
 	if err := s.DeleteSessionCascade(ctx, tx, sourcePath); err != nil {
 		return err
 	}
-	// Todos: delete items first, then todos
-	if err := s.DeleteChildrenBySource(ctx, tx, "todos", "id", "todo_items", "todo_id", sourcePath); err != nil {
-		return err
-	}
-	if err := s.DeleteBySource(ctx, tx, "todos", sourcePath); err != nil {
-		return err
-	}
-	// File history: delete versions first, then entries
-	if err := s.DeleteChildrenBySource(ctx, tx, "file_history", "id", "file_versions", "file_history_id", sourcePath); err != nil {
-		return err
-	}
-	if err := s.DeleteBySource(ctx, tx, "file_history", sourcePath); err != nil {
-		return err
-	}
-	// Task groups: delete items first, then groups
-	if err := s.DeleteChildrenBySource(ctx, tx, "task_groups", "id", "task_items", "task_group_id", sourcePath); err != nil {
-		return err
-	}
-	if err := s.DeleteBySource(ctx, tx, "task_groups", sourcePath); err != nil {
-		return err
-	}
-	// Simple tables (no children)
-	for _, table := range []string{"plans", "shell_snapshots", "history", "paste_cache", "usage_facets", "usage_report", "memories"} {
+	for _, table := range []string{"todos", "file_history", "task_groups", "plans", "shell_snapshots", "history", "paste_cache", "usage_facets", "usage_report", "memories"} {
 		if err := s.DeleteBySource(ctx, tx, table, sourcePath); err != nil {
 			return err
 		}
@@ -485,7 +530,7 @@ func hashDir(dir string) (string, error) {
 }
 
 // recordSourceHashes saves the content hash for all source files.
-func recordSourceHashes(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) {
+func recordSourceHashes(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, path := range collectSourceFiles(claudeDir) {
 		hash, err := hashFile(path)
@@ -493,10 +538,15 @@ func recordSourceHashes(ctx context.Context, claudeDir string, s *store.Store, t
 			// For directories (tasks, file-history), use hashDir
 			hash, err = hashDir(path)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("source_file", path, err.Error())
+				}
 				continue
 			}
 		}
-		_ = s.SetSourceFileHash(ctx, tx, path, hash, now)
+		if err := s.SetSourceFileHash(ctx, tx, path, hash, now); err != nil && rec != nil {
+			rec.SkippedFile("source_file", path, err.Error())
+		}
 	}
 }
 

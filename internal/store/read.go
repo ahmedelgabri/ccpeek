@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -52,7 +51,7 @@ func (s *Store) GetStats(ctx context.Context) (Stats, error) {
 			(SELECT COUNT(*) FROM paste_cache) AS pastecachecount,
 			(SELECT COUNT(*) FROM usage_facets) AS usagefacetcount,
 			(SELECT COUNT(*) FROM memories) AS memorycount,
-			(SELECT COUNT(*) FROM commands) AS commandcount,
+			(SELECT COUNT(*) FROM tool_calls WHERE tool_kind = 'shell') AS commandcount,
 			(SELECT COUNT(*) FROM scan_findings WHERE ignored = 0) AS scanfindingcount`)
 	return st, err
 }
@@ -221,11 +220,12 @@ func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.
 // avoiding N+1 queries.
 func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) {
 	var projRows []struct {
-		ID          int64  `db:"id"`
-		DirName     string `db:"dir_name"`
-		DisplayName string `db:"display_name"`
+		ID            int64  `db:"id"`
+		DirName       string `db:"dir_name"`
+		DisplayName   string `db:"display_name"`
+		CanonicalPath string `db:"canonical_path"`
 	}
-	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
+	if err := s.db.SelectContext(ctx, &projRows, `SELECT id, dir_name, display_name, canonical_path FROM projects ORDER BY (SELECT COUNT(*) FROM sessions WHERE project_id = projects.id) DESC`); err != nil {
 		return nil, err
 	}
 
@@ -278,10 +278,11 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 	for i, pr := range projRows {
 		sessions := sessMap[pr.ID]
 		projects[i] = model.ProjectEntry{
-			DirName:      pr.DirName,
-			DisplayName:  pr.DisplayName,
-			SessionCount: len(sessions),
-			Sessions:     sessions,
+			DirName:       pr.DirName,
+			DisplayName:   pr.DisplayName,
+			CanonicalPath: pr.CanonicalPath,
+			SessionCount:  len(sessions),
+			Sessions:      sessions,
 		}
 	}
 	return projects, nil
@@ -290,11 +291,12 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.ProjectEntry, error) 
 // GetProject returns a single project with its sessions.
 func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectEntry, error) {
 	var pr struct {
-		ID          int64  `db:"id"`
-		DirName     string `db:"dir_name"`
-		DisplayName string `db:"display_name"`
+		ID            int64  `db:"id"`
+		DirName       string `db:"dir_name"`
+		DisplayName   string `db:"display_name"`
+		CanonicalPath string `db:"canonical_path"`
 	}
-	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name FROM projects WHERE dir_name = ?`, dirName); err != nil {
+	if err := s.db.GetContext(ctx, &pr, `SELECT id, dir_name, display_name, canonical_path FROM projects WHERE dir_name = ?`, dirName); err != nil {
 		return nil, err
 	}
 	sessions, err := s.listSessionsForProject(ctx, pr.ID)
@@ -302,10 +304,11 @@ func (s *Store) GetProject(ctx context.Context, dirName string) (*model.ProjectE
 		return nil, err
 	}
 	return &model.ProjectEntry{
-		DirName:      pr.DirName,
-		DisplayName:  pr.DisplayName,
-		SessionCount: len(sessions),
-		Sessions:     sessions,
+		DirName:       pr.DirName,
+		DisplayName:   pr.DisplayName,
+		CanonicalPath: pr.CanonicalPath,
+		SessionCount:  len(sessions),
+		Sessions:      sessions,
 	}, nil
 }
 
@@ -442,8 +445,9 @@ func (s *Store) GetProjectID(ctx context.Context, dirName string) (int64, error)
 func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*model.ProjectEntry, *model.SessionEntry, error) {
 	var row struct {
 		// Project fields
-		ProjectDirName     string `db:"dir_name"`
-		ProjectDisplayName string `db:"display_name"`
+		ProjectDirName       string `db:"dir_name"`
+		ProjectDisplayName   string `db:"display_name"`
+		ProjectCanonicalPath string `db:"canonical_path"`
 		// Session fields
 		SessionID        string `db:"session_id"`
 		FirstPrompt      string `db:"first_prompt"`
@@ -459,7 +463,7 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 		EstimatedTokens  int    `db:"estimated_tokens"`
 	}
 	err := s.db.GetContext(ctx, &row, `
-		SELECT p.dir_name, p.display_name,
+		SELECT p.dir_name, p.display_name, p.canonical_path,
 			   s.session_id, s.first_prompt, s.message_count, s.created_at, s.modified_at,
 			   s.git_branch, s.project_path, s.todo_file_name, s.has_file_history,
 			   s.bash_command_count, s.tool_use_counts, s.estimated_tokens
@@ -474,8 +478,9 @@ func (s *Store) GetSession(ctx context.Context, dirName, sessionID string) (*mod
 	_ = json.Unmarshal([]byte(row.ToolUseCounts), &toolCounts)
 
 	project := &model.ProjectEntry{
-		DirName:     row.ProjectDirName,
-		DisplayName: row.ProjectDisplayName,
+		DirName:       row.ProjectDirName,
+		DisplayName:   row.ProjectDisplayName,
+		CanonicalPath: row.ProjectCanonicalPath,
 	}
 	session := &model.SessionEntry{
 		SessionID:        row.SessionID,
@@ -592,6 +597,9 @@ func (s *Store) ListHistory(ctx context.Context, limit int) ([]model.HistoryEntr
 	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC LIMIT ?`, limit); err != nil {
 		return nil, err
 	}
+	if err := s.enrichHistoryEntries(ctx, entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
 }
 
@@ -601,7 +609,88 @@ func (s *Store) ListAllHistory(ctx context.Context) ([]model.HistoryEntry, error
 	if err := s.db.SelectContext(ctx, &entries, `SELECT display, timestamp, project FROM history ORDER BY timestamp DESC`); err != nil {
 		return nil, err
 	}
+	if err := s.enrichHistoryEntries(ctx, entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
+}
+
+func (s *Store) enrichHistoryEntries(ctx context.Context, entries []model.HistoryEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	var projects []struct {
+		DirName       string `db:"dir_name"`
+		DisplayName   string `db:"display_name"`
+		CanonicalPath string `db:"canonical_path"`
+	}
+	if err := s.db.SelectContext(ctx, &projects, `SELECT dir_name, display_name, canonical_path FROM projects`); err != nil {
+		return err
+	}
+
+	byDir := make(map[string]struct {
+		DisplayName   string
+		CanonicalPath string
+	}, len(projects))
+	byCanonical := make(map[string]struct {
+		DirName       string
+		DisplayName   string
+		CanonicalPath string
+	}, len(projects))
+	for _, p := range projects {
+		byDir[p.DirName] = struct {
+			DisplayName   string
+			CanonicalPath string
+		}{
+			DisplayName:   p.DisplayName,
+			CanonicalPath: p.CanonicalPath,
+		}
+		if p.CanonicalPath != "" {
+			byCanonical[p.CanonicalPath] = struct {
+				DirName       string
+				DisplayName   string
+				CanonicalPath string
+			}{
+				DirName:       p.DirName,
+				DisplayName:   p.DisplayName,
+				CanonicalPath: p.CanonicalPath,
+			}
+		}
+	}
+
+	for i := range entries {
+		raw := strings.TrimSpace(entries[i].Project)
+		if raw == "" {
+			continue
+		}
+		entries[i].ProjectDisplay = raw
+
+		if p, ok := byCanonical[raw]; ok {
+			entries[i].ProjectDirName = p.DirName
+			entries[i].ProjectDisplay = p.CanonicalPath
+			continue
+		}
+		if p, ok := byDir[raw]; ok {
+			entries[i].ProjectDirName = raw
+			if p.CanonicalPath != "" {
+				entries[i].ProjectDisplay = p.CanonicalPath
+			} else if p.DisplayName != "" {
+				entries[i].ProjectDisplay = p.DisplayName
+			}
+			continue
+		}
+
+		encoded := model.EncodeProjectDir(raw)
+		if p, ok := byDir[encoded]; ok {
+			entries[i].ProjectDirName = encoded
+			if p.CanonicalPath != "" {
+				entries[i].ProjectDisplay = p.CanonicalPath
+			}
+		}
+	}
+
+	return nil
 }
 
 // HeatmapDayCounts holds a date and its activity count.
@@ -700,498 +789,6 @@ func (s *Store) GetFileHistory(ctx context.Context, conversationID string) (*mod
 	return entry, detail, nil
 }
 
-// SearchHit is a generic search result from any data type.
-type SearchHit struct {
-	Title    string
-	Snippet  string
-	URL      string
-	Subtitle string
-}
-
-// SearchGroup holds search results for a single data type.
-type SearchGroup struct {
-	Type  string // display name: "Conversations", "Memories", etc.
-	Color string // tailwind color name for badge
-	Hits  []SearchHit
-}
-
-// SearchAll performs a search across all indexed data types.
-// Returns groups in a fixed display order; empty groups are omitted.
-func (s *Store) SearchAll(ctx context.Context, query string, perTypeLimit int) ([]SearchGroup, error) {
-	if query == "" {
-		return nil, nil
-	}
-
-	var groups []SearchGroup
-
-	// 1. Conversations (FTS)
-	if hits, err := s.searchConversations(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Conversations", Color: "sky", Hits: hits})
-	}
-
-	// 2. Commands (LIKE)
-	if hits, err := s.searchCommands(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Commands", Color: "lime", Hits: hits})
-	}
-
-	// 3. Memories (LIKE)
-	if hits, err := s.searchMemories(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Memories", Color: "cyan", Hits: hits})
-	}
-
-	// 4. Plans (LIKE)
-	if hits, err := s.searchPlans(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Plans", Color: "emerald", Hits: hits})
-	}
-
-	// 5. Todos (LIKE)
-	if hits, err := s.searchTodos(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Todos", Color: "rose", Hits: hits})
-	}
-
-	// 6. Tasks (LIKE)
-	if hits, err := s.searchTasks(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Tasks", Color: "indigo", Hits: hits})
-	}
-
-	// 7. Paste Cache (LIKE)
-	if hits, err := s.searchPasteCache(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Paste Cache", Color: "orange", Hits: hits})
-	}
-
-	// 8. Shell Snapshots (LIKE)
-	if hits, err := s.searchSnapshots(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Shell Snapshots", Color: "amber", Hits: hits})
-	}
-
-	// 9. Usage Data (LIKE)
-	if hits, err := s.searchUsageData(ctx, query, perTypeLimit); err == nil && len(hits) > 0 {
-		groups = append(groups, SearchGroup{Type: "Usage Data", Color: "fuchsia", Hits: hits})
-	}
-
-	// Append Text Fragment directives to all URLs so browsers highlight
-	// the matched text on the target page.
-	for i := range groups {
-		for j := range groups[i].Hits {
-			groups[i].Hits[j].URL = withTextFragment(groups[i].Hits[j].URL, query)
-		}
-	}
-
-	return groups, nil
-}
-
-func (s *Store) searchConversations(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	q := `
-		SELECT m.role, m.timestamp,
-			   s.session_id AS session_id_text, s.first_prompt,
-			   p.dir_name, p.display_name,
-			   snippet(messages_fts, 0, '[[HL_START]]', '[[HL_END]]', '...', 40) AS snippet
-		FROM messages_fts
-		JOIN messages m ON messages_fts.rowid = m.id
-		JOIN sessions s ON m.session_id = s.id
-		JOIN projects p ON s.project_id = p.id
-		WHERE messages_fts MATCH ?
-		ORDER BY rank LIMIT ?`
-
-	var rows []struct {
-		Role           string `db:"role"`
-		Timestamp      string `db:"timestamp"`
-		SessionID      string `db:"session_id_text"`
-		FirstPrompt    string `db:"first_prompt"`
-		ProjectDirName string `db:"dir_name"`
-		ProjectDisplay string `db:"display_name"`
-		Snippet        string `db:"snippet"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, query, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		prompt := r.FirstPrompt
-		if prompt == "" {
-			prompt = r.SessionID
-		}
-		url := "/projects/" + r.ProjectDirName + "/" + r.SessionID + "/"
-		if r.Timestamp != "" {
-			url += anchor("msg", r.Timestamp)
-		}
-		hits[i] = SearchHit{
-			Title:    prompt,
-			Snippet:  r.Snippet,
-			URL:      url,
-			Subtitle: r.ProjectDisplay + " · " + r.Role,
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchCommands(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT c.command, c.timestamp, s.session_id, s.first_prompt,
-			   p.dir_name, p.display_name
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
-		JOIN projects p ON s.project_id = p.id
-		WHERE c.command LIKE ? ESCAPE '\'
-		ORDER BY c.timestamp DESC LIMIT ?`
-
-	var rows []struct {
-		Command        string `db:"command"`
-		Timestamp      string `db:"timestamp"`
-		SessionID      string `db:"session_id"`
-		FirstPrompt    string `db:"first_prompt"`
-		ProjectDirName string `db:"dir_name"`
-		ProjectDisplay string `db:"display_name"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		url := "/projects/" + r.ProjectDirName + "/" + r.SessionID + "/commands/"
-		if r.Timestamp != "" {
-			url += anchor("cmd", r.Timestamp)
-		}
-		hits[i] = SearchHit{
-			Title:    truncateStr(r.Command, 120),
-			Snippet:  likeSnippet(r.Command, query, 80),
-			URL:      url,
-			Subtitle: r.ProjectDisplay,
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchMemories(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT m.project_dir, m.content,
-			   COALESCE(p.display_name, m.project_dir) AS display_name
-		FROM memories m
-		LEFT JOIN projects p ON m.project_id = p.id
-		WHERE m.content LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		ProjectDir  string `db:"project_dir"`
-		Content     string `db:"content"`
-		DisplayName string `db:"display_name"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		hits[i] = SearchHit{
-			Title:    r.DisplayName,
-			Snippet:  likeSnippet(r.Content, query, 120),
-			URL:      "/memories/" + r.ProjectDir + "/",
-			Subtitle: "MEMORY.md",
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchPlans(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT file_name, title, content
-		FROM plans
-		WHERE title LIKE ? ESCAPE '\' OR content LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		FileName string `db:"file_name"`
-		Title    string `db:"title"`
-		Content  string `db:"content"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		snippet := likeSnippet(r.Content, query, 120)
-		if snippet == "" {
-			snippet = likeSnippet(r.Title, query, 120)
-		}
-		hits[i] = SearchHit{
-			Title:    r.Title,
-			Snippet:  snippet,
-			URL:      "/plans/" + strings.TrimSuffix(r.FileName, ".md") + "/",
-			Subtitle: r.FileName,
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchTodos(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT ti.content, ti.status, ti.seq, t.file_name,
-			   COALESCE(p.display_name, '') AS display_name
-		FROM todo_items ti
-		JOIN todos t ON ti.todo_id = t.id
-		LEFT JOIN sessions s ON t.session_id = s.id
-		LEFT JOIN projects p ON s.project_id = p.id
-		WHERE ti.content LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		Content     string `db:"content"`
-		Status      string `db:"status"`
-		Seq         int    `db:"seq"`
-		FileName    string `db:"file_name"`
-		DisplayName string `db:"display_name"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		subtitle := r.Status
-		if r.DisplayName != "" {
-			subtitle = r.DisplayName + " · " + r.Status
-		}
-		hits[i] = SearchHit{
-			Title:    truncateStr(r.Content, 100),
-			Snippet:  likeSnippet(r.Content, query, 120),
-			URL:      "/todos/" + strings.TrimSuffix(r.FileName, ".json") + "/" + fmt.Sprintf("#item-%d", r.Seq),
-			Subtitle: subtitle,
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchTasks(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT ti.item_id, ti.subject, ti.description, ti.status, tg.dir_name,
-			   COALESCE(p.display_name, '') AS display_name
-		FROM task_items ti
-		JOIN task_groups tg ON ti.task_group_id = tg.id
-		LEFT JOIN sessions s ON tg.session_id = s.id
-		LEFT JOIN projects p ON s.project_id = p.id
-		WHERE ti.subject LIKE ? ESCAPE '\' OR ti.description LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		ItemID      string `db:"item_id"`
-		Subject     string `db:"subject"`
-		Description string `db:"description"`
-		Status      string `db:"status"`
-		DirName     string `db:"dir_name"`
-		DisplayName string `db:"display_name"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		snippet := likeSnippet(r.Subject, query, 120)
-		if snippet == "" {
-			snippet = likeSnippet(r.Description, query, 120)
-		}
-		subtitle := r.Status
-		if r.DisplayName != "" {
-			subtitle = r.DisplayName + " · " + r.Status
-		}
-		url := "/tasks/" + r.DirName + "/"
-		if r.ItemID != "" {
-			url += "#task-" + r.ItemID
-		}
-		hits[i] = SearchHit{
-			Title:    r.Subject,
-			Snippet:  snippet,
-			URL:      url,
-			Subtitle: subtitle,
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchPasteCache(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT file_name, content, size_bytes
-		FROM paste_cache
-		WHERE content LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		FileName  string `db:"file_name"`
-		Content   string `db:"content"`
-		SizeBytes int64  `db:"size_bytes"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		hits[i] = SearchHit{
-			Title:    r.FileName,
-			Snippet:  likeSnippet(r.Content, query, 120),
-			URL:      "/paste-cache/" + strings.TrimSuffix(r.FileName, ".txt") + "/",
-			Subtitle: formatBytesStore(r.SizeBytes),
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchSnapshots(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT file_name, content
-		FROM shell_snapshots
-		WHERE content LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		FileName string `db:"file_name"`
-		Content  string `db:"content"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		hits[i] = SearchHit{
-			Title:    r.FileName,
-			Snippet:  likeSnippet(r.Content, query, 120),
-			URL:      "/shell-snapshots/" + strings.TrimSuffix(r.FileName, ".sh") + "/",
-			Subtitle: "Shell snapshot",
-		}
-	}
-	return hits, nil
-}
-
-func (s *Store) searchUsageData(ctx context.Context, query string, limit int) ([]SearchHit, error) {
-	like := "%" + escapeLike(query) + "%"
-	q := `
-		SELECT session_id_text, brief_summary, underlying_goal, outcome
-		FROM usage_facets
-		WHERE brief_summary LIKE ? ESCAPE '\' OR underlying_goal LIKE ? ESCAPE '\'
-		LIMIT ?`
-
-	var rows []struct {
-		SessionID      string `db:"session_id_text"`
-		BriefSummary   string `db:"brief_summary"`
-		UnderlyingGoal string `db:"underlying_goal"`
-		Outcome        string `db:"outcome"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, q, like, like, limit); err != nil {
-		return nil, err
-	}
-
-	hits := make([]SearchHit, len(rows))
-	for i, r := range rows {
-		title := r.BriefSummary
-		if title == "" {
-			title = r.UnderlyingGoal
-		}
-		snippet := likeSnippet(r.BriefSummary, query, 120)
-		if snippet == "" {
-			snippet = likeSnippet(r.UnderlyingGoal, query, 120)
-		}
-		hits[i] = SearchHit{
-			Title:    truncateStr(title, 80),
-			Snippet:  snippet,
-			URL:      "/usage-data/" + r.SessionID + "/",
-			Subtitle: r.Outcome,
-		}
-	}
-	return hits, nil
-}
-
-// anchor builds a URL-safe fragment from a prefix and value,
-// matching the toAnchor template helper format.
-func anchor(prefix, value string) string {
-	safe := strings.NewReplacer(":", "-", ".", "-").Replace(value)
-	return "#" + prefix + "-" + safe
-}
-
-// withTextFragment appends a Text Fragment directive (:~:text=) to a URL.
-// If the URL already has a # fragment, the directive is appended after it.
-// See https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments
-func withTextFragment(rawURL, query string) string {
-	encoded := url.QueryEscape(query)
-	if strings.Contains(rawURL, "#") {
-		return rawURL + ":~:text=" + encoded
-	}
-	return rawURL + "#:~:text=" + encoded
-}
-
-// likeSnippet extracts a snippet from text centered around the first
-// case-insensitive occurrence of query, with highlight markers.
-func likeSnippet(text, query string, contextLen int) string {
-	lower := strings.ToLower(text)
-	q := strings.ToLower(query)
-	pos := strings.Index(lower, q)
-	if pos < 0 {
-		return ""
-	}
-
-	start := max(pos-contextLen, 0)
-	end := min(pos+len(query)+contextLen, len(text))
-	snippet := text[start:end]
-	snippet = strings.Join(strings.Fields(snippet), " ")
-
-	prefix := ""
-	suffix := ""
-	if start > 0 {
-		prefix = "..."
-	}
-	if end < len(text) {
-		suffix = "..."
-	}
-
-	// Insert highlight markers around the match within the snippet
-	lowerSnippet := strings.ToLower(snippet)
-	matchPos := strings.Index(lowerSnippet, q)
-	if matchPos >= 0 {
-		snippet = snippet[:matchPos] + "[[HL_START]]" + snippet[matchPos:matchPos+len(query)] + "[[HL_END]]" + snippet[matchPos+len(query):]
-	}
-
-	return prefix + snippet + suffix
-}
-
-// truncateStr truncates a string, adding ellipsis if needed.
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}
-
-// formatBytesStore formats a file size for display in search results.
-func formatBytesStore(bytes int64) string {
-	if bytes == 0 {
-		return "0 B"
-	}
-	units := []string{"B", "KB", "MB"}
-	i := 0
-	v := float64(bytes)
-	for v >= 1024 && i < len(units)-1 {
-		v /= 1024
-		i++
-	}
-	if i == 0 {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	return fmt.Sprintf("%.1f %s", v, units[i])
-}
-
 // ListProjectNames returns all project dir_name/display_name pairs for filter dropdowns.
 func (s *Store) ListProjectNames(ctx context.Context) ([]struct {
 	DirName     string `db:"dir_name"`
@@ -1213,15 +810,14 @@ type ToolUsageStat struct {
 	Percent float64 `db:"-"`
 }
 
-// GetToolUsageStats aggregates tool_use_counts across all sessions and returns
+// GetToolUsageStats aggregates normalized tool calls across all sessions and returns
 // the top tools sorted by usage count.
 func (s *Store) GetToolUsageStats(ctx context.Context, limit int) ([]ToolUsageStat, error) {
 	q := `
-		SELECT j.key AS name, CAST(SUM(j.value) AS INTEGER) AS count
-		FROM sessions s, json_each(s.tool_use_counts) j
-		WHERE s.tool_use_counts != '{}'
-		GROUP BY j.key
-		ORDER BY count DESC`
+		SELECT tool_name AS name, COUNT(*) AS count
+		FROM tool_calls
+		GROUP BY tool_name
+		ORDER BY count DESC, name`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -1288,45 +884,17 @@ type ToolTimelineEntry struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// GetToolTimeline returns tool_use blocks with timestamps for a session.
+// GetToolTimeline returns normalized tool calls with timestamps for a session.
 func (s *Store) GetToolTimeline(ctx context.Context, dirName, sessionID string) ([]ToolTimelineEntry, error) {
-	var dbID int64
-	if err := s.db.GetContext(ctx, &dbID,
-		`SELECT s.id FROM sessions s JOIN projects p ON s.project_id = p.id
-		 WHERE p.dir_name = ? AND s.session_id = ?`, dirName, sessionID); err != nil {
-		return nil, err
-	}
-
-	var rows []struct {
-		Content   string `db:"content"`
-		Timestamp string `db:"timestamp"`
-	}
-	if err := s.db.SelectContext(ctx, &rows, `
-		SELECT content, timestamp FROM messages
-		WHERE session_id = ? AND role = 'assistant'
-		ORDER BY seq`, dbID); err != nil {
-		return nil, err
-	}
-
 	var entries []ToolTimelineEntry
-	for _, r := range rows {
-		// Parse content blocks to find tool_use entries
-		var blocks []struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-		}
-		if json.Unmarshal([]byte(r.Content), &blocks) == nil {
-			for _, b := range blocks {
-				if b.Type == "tool_use" && b.Name != "" {
-					entries = append(entries, ToolTimelineEntry{
-						Name:      b.Name,
-						Timestamp: r.Timestamp,
-					})
-				}
-			}
-		}
-	}
-	return entries, nil
+	err := s.db.SelectContext(ctx, &entries, `
+		SELECT tc.tool_name AS name, tc.timestamp
+		FROM tool_calls tc
+		JOIN sessions s ON tc.session_id = s.id
+		JOIN projects p ON s.project_id = p.id
+		WHERE p.dir_name = ? AND s.session_id = ?
+		ORDER BY tc.seq`, dirName, sessionID)
+	return entries, err
 }
 
 // GetSourceFileHash returns the stored content hash for a source file.
@@ -1514,7 +1082,7 @@ func (s *Store) ListUsageFacets(ctx context.Context) ([]model.UsageFacetEntry, e
 		ProjectDir     sql.NullString `db:"project_dir"`
 		ProjectName    sql.NullString `db:"project_name"`
 	}
-	err := s.db.Select(&rows, `
+	err := s.db.SelectContext(ctx, &rows, `
 		SELECT uf.session_id_text, uf.underlying_goal, uf.outcome, uf.helpfulness,
 			   uf.session_type, uf.primary_success, uf.brief_summary, uf.friction_detail,
 			   uf.goal_categories, uf.satisfaction, uf.friction_counts,
@@ -1683,349 +1251,4 @@ func (s *Store) GetSessionDBID(ctx context.Context, tx *sqlx.Tx, sessionID strin
 		err = s.db.GetContext(ctx, &id, `SELECT id FROM sessions WHERE session_id = ? LIMIT 1`, sessionID)
 	}
 	return id, err
-}
-
-// CommandFilter holds optional filter parameters for listing commands.
-type CommandFilter struct {
-	Project string // filter by project dir_name
-	Search  string // filter by command text (LIKE)
-	From    string // filter by timestamp >= (ISO date)
-	To      string // filter by timestamp <= (ISO date)
-}
-
-// ListCommands returns bash commands across all sessions with optional filters.
-func (s *Store) ListCommands(ctx context.Context, limit, offset int, filter CommandFilter) ([]model.CommandEntry, int, error) {
-	baseFrom := `
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
-		JOIN projects p ON s.project_id = p.id`
-
-	var where []string
-	var args []any
-
-	if filter.Project != "" {
-		where = append(where, "p.dir_name = ?")
-		args = append(args, filter.Project)
-	}
-	if filter.Search != "" {
-		where = append(where, `c.command LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(filter.Search)+"%")
-	}
-	if filter.From != "" {
-		where = append(where, "c.timestamp >= ?")
-		args = append(args, filter.From)
-	}
-	if filter.To != "" {
-		where = append(where, "c.timestamp <= ?")
-		args = append(args, filter.To+"T23:59:59Z")
-	}
-
-	whereClause := ""
-	if len(where) > 0 {
-		whereClause = " WHERE " + strings.Join(where, " AND ")
-	}
-
-	// Count total
-	var total int
-	countArgs := make([]any, len(args))
-	copy(countArgs, args)
-	if err := s.db.GetContext(ctx, &total, "SELECT COUNT(*)"+baseFrom+whereClause, countArgs...); err != nil {
-		return nil, 0, err
-	}
-
-	// Fetch page
-	query := "SELECT c.command, c.timestamp, s.session_id, s.first_prompt, p.dir_name, p.display_name" +
-		baseFrom + whereClause +
-		" ORDER BY c.timestamp DESC LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
-
-	var rows []model.CommandEntry
-	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
-		return nil, 0, err
-	}
-
-	return rows, total, nil
-}
-
-// ListAllCommands returns all bash commands (no pagination) with optional filters.
-// Used for export.
-func (s *Store) ListAllCommands(ctx context.Context, filter CommandFilter) ([]model.CommandEntry, error) {
-	baseFrom := `
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
-		JOIN projects p ON s.project_id = p.id`
-
-	var where []string
-	var args []any
-
-	if filter.Project != "" {
-		where = append(where, "p.dir_name = ?")
-		args = append(args, filter.Project)
-	}
-	if filter.Search != "" {
-		where = append(where, `c.command LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(filter.Search)+"%")
-	}
-	if filter.From != "" {
-		where = append(where, "c.timestamp >= ?")
-		args = append(args, filter.From)
-	}
-	if filter.To != "" {
-		where = append(where, "c.timestamp <= ?")
-		args = append(args, filter.To+"T23:59:59Z")
-	}
-
-	whereClause := ""
-	if len(where) > 0 {
-		whereClause = " WHERE " + strings.Join(where, " AND ")
-	}
-
-	query := "SELECT c.command, c.timestamp, s.session_id, s.first_prompt, p.dir_name, p.display_name" +
-		baseFrom + whereClause +
-		" ORDER BY c.timestamp DESC"
-
-	var rows []model.CommandEntry
-	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-// CommandCount returns the total number of commands in the database.
-func (s *Store) CommandCount(ctx context.Context) (int, error) {
-	var count int
-	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM commands`)
-	return count, err
-}
-
-// ListScanFindings returns all scan findings, optionally filtered.
-// Joins with sessions/projects to populate linking fields for message and command findings.
-func (s *Store) ListScanFindings(ctx context.Context, ruleFilter, typeFilter string, showIgnored bool) ([]model.ScanFinding, error) {
-	var where []string
-	var args []any
-
-	if !showIgnored {
-		where = append(where, "f.ignored = 0")
-	}
-	if ruleFilter != "" {
-		where = append(where, "f.rule_id = ?")
-		args = append(args, ruleFilter)
-	}
-	if typeFilter != "" {
-		where = append(where, "f.source_type = ?")
-		args = append(args, typeFilter)
-	}
-
-	whereClause := ""
-	if len(where) > 0 {
-		whereClause = " WHERE " + strings.Join(where, " AND ")
-	}
-
-	// source_id for message/command findings may contain "sessionID@timestamp".
-	// Extract the session ID part (before @) for joining.
-	query := `SELECT f.id, f.rule_id, f.description, f.source_type, f.source_id,
-		f.match_redacted, f.line_number, f.scanned_at, f.ignored,
-		COALESCE(p.dir_name, '') AS project_dir,
-		COALESCE(p.display_name, '') AS project_name,
-		COALESCE(s.session_id, '') AS session_id_text
-		FROM scan_findings f
-		LEFT JOIN sessions s ON (
-			(f.source_type IN ('message', 'command') AND s.session_id = CASE
-				WHEN INSTR(f.source_id, '@') > 0 THEN SUBSTR(f.source_id, 1, INSTR(f.source_id, '@') - 1)
-				ELSE f.source_id
-			END)
-		)
-		LEFT JOIN projects p ON s.project_id = p.id` +
-		whereClause + ` ORDER BY f.ignored ASC, f.rule_id, f.id`
-
-	var rows []model.ScanFinding
-	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-// GetScanStats returns aggregate counts for scan findings (excluding ignored).
-func (s *Store) GetScanStats(ctx context.Context) (model.ScanStats, error) {
-	stats := model.ScanStats{
-		FindingsByRule: make(map[string]int),
-		FindingsByType: make(map[string]int),
-	}
-
-	if err := s.db.GetContext(ctx, &stats.TotalFindings, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`); err != nil {
-		return stats, err
-	}
-
-	var ruleRows []struct {
-		RuleID string `db:"rule_id"`
-		Count  int    `db:"cnt"`
-	}
-	if err := s.db.SelectContext(ctx, &ruleRows, `SELECT rule_id, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY rule_id ORDER BY cnt DESC`); err != nil {
-		return stats, err
-	}
-	for _, r := range ruleRows {
-		stats.FindingsByRule[r.RuleID] = r.Count
-	}
-
-	var typeRows []struct {
-		SourceType string `db:"source_type"`
-		Count      int    `db:"cnt"`
-	}
-	if err := s.db.SelectContext(ctx, &typeRows, `SELECT source_type, COUNT(*) AS cnt FROM scan_findings WHERE ignored = 0 GROUP BY source_type ORDER BY cnt DESC`); err != nil {
-		return stats, err
-	}
-	for _, r := range typeRows {
-		stats.FindingsByType[r.SourceType] = r.Count
-	}
-
-	return stats, nil
-}
-
-// ScanFindingCount returns the total number of non-ignored scan findings.
-func (s *Store) ScanFindingCount(ctx context.Context) (int, error) {
-	var count int
-	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM scan_findings WHERE ignored = 0`)
-	return count, err
-}
-
-// GetScanFinding returns a single scan finding by ID.
-func (s *Store) GetScanFinding(ctx context.Context, id int64) (*model.ScanFinding, error) {
-	var f model.ScanFinding
-	err := s.db.GetContext(ctx, &f, `
-		SELECT f.id, f.rule_id, f.description, f.source_type, f.source_id,
-			   f.match_redacted, f.line_number, f.scanned_at, f.ignored,
-			   COALESCE(p.dir_name, '') AS project_dir,
-			   COALESCE(p.display_name, '') AS project_name,
-			   COALESCE(s.session_id, '') AS session_id_text
-		FROM scan_findings f
-		LEFT JOIN sessions s ON f.source_type IN ('message','command') AND s.session_id = SUBSTR(f.source_id, 1, INSTR(f.source_id || '@', '@') - 1)
-		LEFT JOIN projects p ON s.project_id = p.id
-		WHERE f.id = ?`, id)
-	if err != nil {
-		return nil, err
-	}
-	return &f, nil
-}
-
-// ToggleScanFindingIgnored toggles the ignored state of a scan finding.
-func (s *Store) ToggleScanFindingIgnored(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE scan_findings SET ignored = CASE WHEN ignored = 0 THEN 1 ELSE 0 END WHERE id = ?`, id)
-	return err
-}
-
-// ScanMessageRow holds message data for secret scanning.
-type ScanMessageRow struct {
-	ID        int64  `db:"id"`
-	SessionID string `db:"session_id"`
-	Timestamp string `db:"timestamp"`
-	Content   string `db:"content"`
-	Role      string `db:"role"`
-}
-
-// EachMessageForScan iterates over all messages for scanning without
-// loading them all into memory at once.
-func (s *Store) EachMessageForScan(ctx context.Context, fn func(ScanMessageRow) error) error {
-	rows, err := s.db.QueryxContext(ctx, `
-		SELECT m.id, s.session_id, m.timestamp, m.content, m.role
-		FROM messages m
-		JOIN sessions s ON m.session_id = s.id
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r ScanMessageRow
-		if err := rows.StructScan(&r); err != nil {
-			return err
-		}
-		if err := fn(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-// ScanCommandRow holds command data for secret scanning.
-type ScanCommandRow struct {
-	ID        int64  `db:"id"`
-	SessionID string `db:"session_id"`
-	Timestamp string `db:"timestamp"`
-	Command   string `db:"command"`
-}
-
-// EachCommandForScan iterates over all commands for scanning.
-func (s *Store) EachCommandForScan(ctx context.Context, fn func(ScanCommandRow) error) error {
-	rows, err := s.db.QueryxContext(ctx, `
-		SELECT c.id, s.session_id, c.timestamp, c.command
-		FROM commands c
-		JOIN sessions s ON c.session_id = s.id
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r ScanCommandRow
-		if err := rows.StructScan(&r); err != nil {
-			return err
-		}
-		if err := fn(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-// ScanContentRow holds a file_name + content pair for scanning.
-type ScanContentRow struct {
-	Name    string `db:"file_name"`
-	Content string `db:"content"`
-}
-
-// EachContentForScan iterates over named content rows from a table.
-func (s *Store) EachContentForScan(ctx context.Context, table string, fn func(ScanContentRow) error) error {
-	if !allowedTables[table] {
-		return fmt.Errorf("disallowed table name: %s", table)
-	}
-	rows, err := s.db.QueryxContext(ctx, fmt.Sprintf(`SELECT file_name, content FROM %s`, table))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r ScanContentRow
-		if err := rows.StructScan(&r); err != nil {
-			return err
-		}
-		if err := fn(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-// ScanMemoryRow holds a memory entry for scanning.
-type ScanMemoryRow struct {
-	ProjectDir string `db:"project_dir"`
-	Content    string `db:"content"`
-}
-
-// EachMemoryForScan iterates over all memories for scanning.
-func (s *Store) EachMemoryForScan(ctx context.Context, fn func(ScanMemoryRow) error) error {
-	rows, err := s.db.QueryxContext(ctx, `SELECT project_dir, content FROM memories`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r ScanMemoryRow
-		if err := rows.StructScan(&r); err != nil {
-			return err
-		}
-		if err := fn(r); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
 }

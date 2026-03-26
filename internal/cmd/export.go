@@ -67,14 +67,22 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 		To:      to,
 	}
 
-	commands, err := db.ListAllCommands(ctx, filter)
+	if err := model.ValidateCommandFormat(format); err != nil {
+		return err
+	}
+
+	count := 0
+	err = db.EachCommand(ctx, filter, func(entry model.CommandEntry) error {
+		count++
+		return model.WriteCommand(os.Stdout, entry, format)
+	})
 	if err != nil {
 		return fmt.Errorf("loading commands: %w", err)
 	}
 
-	if len(commands) == 0 {
+	if count == 0 {
 		fmt.Fprintln(os.Stderr, "hint: no commands found. Run 'ccpeek --index-only' first to index your Claude Code data.")
 	}
 
-	return model.FormatCommands(os.Stdout, commands, format)
+	return nil
 }

@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, error) {
+func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, error) {
 	facetsDir := filepath.Join(claudeDir, "usage-data", "facets")
 	entries, err := os.ReadDir(facetsDir)
 	if os.IsNotExist(err) {
@@ -32,6 +33,9 @@ func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *s
 		src := filepath.Join(facetsDir, e.Name())
 		data, err := os.ReadFile(src)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("usage_facet", src, err.Error())
+			}
 			continue
 		}
 
@@ -49,6 +53,9 @@ func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *s
 			SessionID      string         `json:"session_id"`
 		}
 		if err := json.Unmarshal(data, &raw); err != nil {
+			if rec != nil {
+				rec.ParseFailure("usage_facet", src, 0, err.Error())
+			}
 			continue
 		}
 
@@ -71,10 +78,15 @@ func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *s
 		if raw.SessionID != "" {
 			if dbID, err := s.GetSessionDBID(ctx, tx, raw.SessionID); err == nil {
 				sessionDBID = dbID
+			} else if rec != nil {
+				rec.UnresolvedLink("usage_facet", src, fmt.Sprintf("session %s not found: %v", raw.SessionID, err))
 			}
 		}
 
 		if err := s.InsertUsageFacet(ctx, tx, entry, sessionDBID, src); err != nil {
+			if rec != nil {
+				rec.SkippedFile("usage_facet", src, err.Error())
+			}
 			continue
 		}
 		count++
@@ -83,7 +95,11 @@ func indexUsageData(ctx context.Context, claudeDir string, s *store.Store, tx *s
 	// Index the report.html if it exists
 	reportPath := filepath.Join(claudeDir, "usage-data", "report.html")
 	if data, err := os.ReadFile(reportPath); err == nil {
-		_ = s.InsertUsageReport(ctx, tx, string(data), reportPath)
+		if err := s.InsertUsageReport(ctx, tx, string(data), reportPath); err != nil && rec != nil {
+			rec.SkippedFile("usage_report", reportPath, err.Error())
+		}
+	} else if err != nil && !os.IsNotExist(err) && rec != nil {
+		rec.SkippedFile("usage_report", reportPath, err.Error())
 	}
 
 	return count, nil

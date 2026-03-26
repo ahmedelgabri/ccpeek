@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/jmoiron/sqlx"
@@ -11,13 +13,16 @@ import (
 
 // Store wraps a SQLite database for indexed data.
 type Store struct {
-	db *sqlx.DB
+	db   *sqlx.DB
+	path string
 }
 
 // Open opens (or creates) a SQLite database at the given path.
 // Use ":memory:" for an in-memory database.
 func Open(ctx context.Context, dsn string) (*Store, error) {
+	dbPath := ""
 	if dsn != ":memory:" {
+		dbPath = dsn
 		dsn += "?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000"
 	} else {
 		dsn = ":memory:?_foreign_keys=on"
@@ -34,10 +39,14 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		db.SetMaxOpenConns(1)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, path: dbPath}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating schema: %w", err)
+	}
+	if err := s.EnsureFilePermissions(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("tightening database permissions: %w", err)
 	}
 
 	return s, nil
@@ -48,14 +57,39 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// EnsureFilePermissions limits database files to owner-only access.
+func (s *Store) EnsureFilePermissions() error {
+	if s.path == "" {
+		return nil
+	}
+
+	for _, path := range []string{s.path, s.path + "-wal", s.path + "-shm"} {
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", filepath.Base(path), err)
+		}
+		if info.Mode().Perm() == 0o600 {
+			continue
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("chmod %s: %w", filepath.Base(path), err)
+		}
+	}
+	return nil
+}
+
 // Reset drops all data and recreates the schema. Used for full rebuild.
 func (s *Store) Reset(ctx context.Context) error {
 	tables := []string{
-		"messages_fts", "commands", "messages", "todo_items", "todos",
+		"messages_fts", "search_documents_fts", "tool_calls", "commands", "messages", "todo_items", "todos",
 		"file_versions", "file_history",
 		"task_items", "task_groups", "usage_facets", "usage_report", "paste_cache",
 		"memories", "sessions", "projects",
-		"plans", "shell_snapshots", "history", "scan_findings", "source_files", "meta",
+		"plans", "shell_snapshots", "history", "scan_findings",
+		"ingest_issues", "ingest_runs", "source_files", "meta",
 	}
 	for _, t := range tables {
 		if _, err := s.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+t); err != nil {
@@ -87,7 +121,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	if currentVersion >= schemaVersion {
-		return nil
+		if err := s.backfillToolCalls(ctx); err != nil {
+			return err
+		}
+		return s.backfillSearchIndex(ctx)
 	}
 
 	// If this was a fresh database (no version set), we're now at baseline v4
@@ -115,7 +152,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("beginning migration %d: %w", v+1, err)
 		}
 
-		if err := migrations[idx](tx); err != nil {
+		if err := migrations[idx](ctx, tx); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("migration v%d→v%d: %w", v, v+1, err)
 		}
@@ -146,5 +183,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)`,
 		strconv.Itoa(schemaVersion),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if err := s.backfillToolCalls(ctx); err != nil {
+		return fmt.Errorf("backfilling tool calls: %w", err)
+	}
+	if err := s.backfillSearchIndex(ctx); err != nil {
+		return fmt.Errorf("backfilling search index: %w", err)
+	}
+
+	return nil
 }

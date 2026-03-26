@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -42,10 +43,11 @@ type TodoEntry struct {
 }
 
 type ProjectEntry struct {
-	DirName      string         `json:"dirName"`
-	DisplayName  string         `json:"displayName"`
-	SessionCount int            `json:"sessionCount"`
-	Sessions     []SessionEntry `json:"sessions"`
+	DirName       string         `json:"dirName"`
+	DisplayName   string         `json:"displayName"`
+	CanonicalPath string         `json:"canonicalPath,omitempty"`
+	SessionCount  int            `json:"sessionCount"`
+	Sessions      []SessionEntry `json:"sessions"`
 }
 
 type SessionEntry struct {
@@ -71,9 +73,11 @@ type FileHistoryEntry struct {
 }
 
 type HistoryEntry struct {
-	Display   string `json:"display" db:"display"`
-	Timestamp int64  `json:"timestamp" db:"timestamp"`
-	Project   string `json:"project" db:"project"`
+	Display        string `json:"display" db:"display"`
+	Timestamp      int64  `json:"timestamp" db:"timestamp"`
+	Project        string `json:"project" db:"project"`
+	ProjectDirName string `json:"projectDirName,omitempty"`
+	ProjectDisplay string `json:"projectDisplay,omitempty"`
 }
 
 // ConversationMessage represents a single message in a session JSONL.
@@ -116,6 +120,40 @@ func (m *MessagePayload) ContentText() string {
 	return ""
 }
 
+// SearchText returns text suitable for search/scan indexing.
+// Unlike ContentText, it includes tool_result text and text extracted
+// from tool_use inputs.
+func (m *MessagePayload) SearchText() string {
+	var s string
+	if err := json.Unmarshal(m.Content, &s); err == nil {
+		return s
+	}
+
+	var blocks []ContentBlock
+	if err := json.Unmarshal(m.Content, &blocks); err == nil {
+		parts := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			switch b.Type {
+			case "text":
+				if t := strings.TrimSpace(b.Text); t != "" {
+					parts = append(parts, t)
+				}
+			case "tool_result":
+				if t := strings.TrimSpace(b.ToolResultText()); t != "" {
+					parts = append(parts, t)
+				}
+			case "tool_use":
+				if t := strings.TrimSpace(b.ToolInputText()); t != "" {
+					parts = append(parts, t)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	return ""
+}
+
 // ContentBlocks returns the content parsed as a slice of ContentBlock.
 // Returns nil if content is a plain string.
 func (m *MessagePayload) ContentBlocks() []ContentBlock {
@@ -141,6 +179,44 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+}
+
+// ToolInputText extracts text-bearing string values from a tool_use input.
+func (b *ContentBlock) ToolInputText() string {
+	if b.Input == nil {
+		return ""
+	}
+
+	var value any
+	if err := json.Unmarshal(b.Input, &value); err != nil {
+		return ""
+	}
+
+	var parts []string
+	collectJSONStrings(value, &parts)
+	return strings.Join(parts, "\n")
+}
+
+func collectJSONStrings(v any, parts *[]string) {
+	switch x := v.(type) {
+	case string:
+		if strings.TrimSpace(x) != "" {
+			*parts = append(*parts, x)
+		}
+	case []any:
+		for _, item := range x {
+			collectJSONStrings(item, parts)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			collectJSONStrings(x[k], parts)
+		}
+	}
 }
 
 // ToolResultText extracts plain text from a tool_result content field,
@@ -257,24 +333,46 @@ type CommandEntry struct {
 	ProjectDisplay string `json:"projectDisplay" db:"display_name"`
 }
 
-// FormatCommands writes commands to w in the given shell history format.
-// Supported formats: "zsh", "bash", "fish", "plain".
-func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
+// ValidateCommandFormat validates a shell-history export format.
+func ValidateCommandFormat(format string) error {
 	switch format {
 	case "plain", "bash", "zsh", "fish":
+		return nil
 	default:
 		return fmt.Errorf("unsupported format %q: use plain, bash, zsh, or fish", format)
 	}
+}
+
+// WriteCommand writes a single command in the given shell history format.
+func WriteCommand(w io.Writer, cmd CommandEntry, format string) error {
+	if err := ValidateCommandFormat(format); err != nil {
+		return err
+	}
+
+	switch format {
+	case "zsh":
+		ts := parseTimestampUnix(cmd.Timestamp)
+		_, err := fmt.Fprintf(w, ": %d:0;%s\n", ts, escapeZshMultiline(cmd.Command))
+		return err
+	case "fish":
+		ts := parseTimestampUnix(cmd.Timestamp)
+		_, err := fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
+		return err
+	default: // "plain" or "bash"
+		_, err := fmt.Fprintf(w, "%s\n", cmd.Command)
+		return err
+	}
+}
+
+// FormatCommands writes commands to w in the given shell history format.
+// Supported formats: "zsh", "bash", "fish", "plain".
+func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
+	if err := ValidateCommandFormat(format); err != nil {
+		return err
+	}
 	for _, cmd := range commands {
-		switch format {
-		case "zsh":
-			ts := parseTimestampUnix(cmd.Timestamp)
-			fmt.Fprintf(w, ": %d:0;%s\n", ts, escapeZshMultiline(cmd.Command))
-		case "fish":
-			ts := parseTimestampUnix(cmd.Timestamp)
-			fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
-		default: // "plain" or "bash"
-			fmt.Fprintf(w, "%s\n", cmd.Command)
+		if err := WriteCommand(w, cmd, format); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -333,7 +431,7 @@ type ScanFinding struct {
 	ID             int64  `json:"id" db:"id"`
 	RuleID         string `json:"ruleId" db:"rule_id"`
 	Description    string `json:"description" db:"description"`
-	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, shell_snapshot, paste_cache, memory
+	SourceType     string `json:"sourceType" db:"source_type"` // message, command, plan, shell_snapshot, paste_cache, memory, todo, task, file_history, usage_facet, usage_report
 	SourceID       string `json:"sourceId" db:"source_id"`     // identifies the record within source_type
 	MatchRedacted  string `json:"matchRedacted" db:"match_redacted"`
 	Line           int    `json:"line" db:"line_number"`
@@ -394,6 +492,26 @@ func (f *ScanFinding) SourceURL() string {
 		return "/paste-cache/" + name + "/"
 	case "memory":
 		return "/memories/" + f.SourceID + "/"
+	case "todo":
+		name, anchor := splitSourceFragment(f.SourceID)
+		url := "/todos/" + strings.TrimSuffix(name, ".json") + "/"
+		if anchor != "" {
+			url += "#" + anchor
+		}
+		return url
+	case "task":
+		dir, anchor := splitSourceFragment(f.SourceID)
+		url := "/tasks/" + dir + "/"
+		if anchor != "" {
+			url += "#" + anchor
+		}
+		return url
+	case "file_history":
+		return "/file-history/" + f.SourceID + "/"
+	case "usage_facet":
+		return "/usage-data/" + f.SourceID + "/"
+	case "usage_report":
+		return "/usage-data/report/"
 	}
 	return ""
 }
@@ -402,6 +520,14 @@ func (f *ScanFinding) SourceURL() string {
 // If no "@" is present, returns the whole string as sessionID with empty timestamp.
 func splitSourceID(s string) (sessionID, timestamp string) {
 	if i := strings.LastIndex(s, "@"); i > 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// splitSourceFragment splits "id#fragment" into its parts.
+func splitSourceFragment(s string) (id, fragment string) {
+	if i := strings.LastIndex(s, "#"); i > 0 {
 		return s[:i], s[i+1:]
 	}
 	return s, ""
@@ -418,6 +544,39 @@ type ScanStats struct {
 	TotalFindings  int            `json:"totalFindings"`
 	FindingsByRule map[string]int `json:"findingsByRule"`
 	FindingsByType map[string]int `json:"findingsByType"`
+}
+
+// IngestRun records the outcome of an indexing or pruning run.
+type IngestRun struct {
+	ID              int64  `json:"id" db:"id"`
+	Mode            string `json:"mode" db:"mode"`
+	Status          string `json:"status" db:"status"`
+	ClaudeDir       string `json:"claudeDir" db:"claude_dir"`
+	StartedAt       string `json:"startedAt" db:"started_at"`
+	FinishedAt      string `json:"finishedAt" db:"finished_at"`
+	DurationMS      int64  `json:"durationMs" db:"duration_ms"`
+	FilesSeen       int    `json:"filesSeen" db:"files_seen"`
+	FilesChanged    int    `json:"filesChanged" db:"files_changed"`
+	RecordsIndexed  int    `json:"recordsIndexed" db:"records_indexed"`
+	SkippedFiles    int    `json:"skippedFiles" db:"skipped_files"`
+	SkippedRows     int    `json:"skippedRows" db:"skipped_rows"`
+	ParseFailures   int    `json:"parseFailures" db:"parse_failures"`
+	UnresolvedLinks int    `json:"unresolvedLinks" db:"unresolved_links"`
+	WarningCount    int    `json:"warningCount" db:"warning_count"`
+	ErrorMessage    string `json:"errorMessage,omitempty" db:"error_message"`
+}
+
+// IngestIssue records a non-fatal issue encountered during ingest.
+type IngestIssue struct {
+	ID         int64  `json:"id" db:"id"`
+	RunID      int64  `json:"runId" db:"run_id"`
+	Severity   string `json:"severity" db:"severity"`
+	Category   string `json:"category" db:"category"`
+	SourceType string `json:"sourceType" db:"source_type"`
+	SourcePath string `json:"sourcePath" db:"source_path"`
+	LineNumber int    `json:"lineNumber,omitempty" db:"line_number"`
+	Detail     string `json:"detail" db:"detail"`
+	CreatedAt  string `json:"createdAt" db:"created_at"`
 }
 
 // RawJSONLLine is the shape of raw lines from Claude's conversation JSONL files.

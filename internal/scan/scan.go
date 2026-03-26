@@ -29,12 +29,9 @@ func New(s *store.Store) (*Scanner, error) {
 }
 
 // Run scans all indexed content and stores findings in the DB.
-// It clears previous findings before scanning.
+// Previous non-ignored findings are replaced transactionally only after a
+// full successful scan, so a failed re-scan does not wipe existing results.
 func (sc *Scanner) Run(ctx context.Context) ([]model.ScanFinding, error) {
-	if err := sc.store.ClearScanFindings(ctx); err != nil {
-		return nil, fmt.Errorf("clearing old findings: %w", err)
-	}
-
 	var all []model.ScanFinding
 
 	scanners := []struct {
@@ -47,6 +44,11 @@ func (sc *Scanner) Run(ctx context.Context) ([]model.ScanFinding, error) {
 		{"shell_snapshots", sc.scanShellSnapshots},
 		{"paste_cache", sc.scanPasteCache},
 		{"memories", sc.scanMemories},
+		{"todos", sc.scanTodos},
+		{"tasks", sc.scanTasks},
+		{"file_history", sc.scanFileHistory},
+		{"usage_facets", sc.scanUsageFacets},
+		{"usage_report", sc.scanUsageReport},
 	}
 
 	for _, s := range scanners {
@@ -62,6 +64,10 @@ func (sc *Scanner) Run(ctx context.Context) ([]model.ScanFinding, error) {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scan_findings WHERE ignored = 0`); err != nil {
+		return nil, fmt.Errorf("clearing old findings: %w", err)
+	}
 
 	var active []model.ScanFinding
 	for _, f := range all {
@@ -81,7 +87,7 @@ func (sc *Scanner) scanMessages(ctx context.Context) ([]model.ScanFinding, error
 	var findings []model.ScanFinding
 	err := sc.store.EachMessageForScan(ctx, func(r store.ScanMessageRow) error {
 		msg := model.MessagePayload{Content: []byte(r.Content)}
-		text := msg.ContentText()
+		text := msg.SearchText()
 		if text == "" {
 			return nil
 		}
@@ -151,6 +157,90 @@ func (sc *Scanner) scanMemories(ctx context.Context) ([]model.ScanFinding, error
 	err := sc.store.EachMemoryForScan(ctx, func(r store.ScanMemoryRow) error {
 		for _, f := range sc.detect(r.Content) {
 			findings = append(findings, toFinding(f, "memory", r.ProjectDir))
+		}
+		return nil
+	})
+	return findings, err
+}
+
+func (sc *Scanner) scanTodos(ctx context.Context) ([]model.ScanFinding, error) {
+	var findings []model.ScanFinding
+	err := sc.store.EachTodoForScan(ctx, func(r store.ScanTodoRow) error {
+		sourceID := fmt.Sprintf("%s#item-%d", r.FileName, r.Seq)
+		for _, f := range sc.detect(r.Content) {
+			findings = append(findings, toFinding(f, "todo", sourceID))
+		}
+		return nil
+	})
+	return findings, err
+}
+
+func (sc *Scanner) scanTasks(ctx context.Context) ([]model.ScanFinding, error) {
+	var findings []model.ScanFinding
+	err := sc.store.EachTaskForScan(ctx, func(r store.ScanTaskRow) error {
+		text := strings.TrimSpace(r.Subject)
+		if r.Description != "" {
+			if text != "" {
+				text += "\n"
+			}
+			text += r.Description
+		}
+		if text == "" {
+			return nil
+		}
+
+		sourceID := r.DirName
+		if r.ItemID != "" {
+			sourceID += "#task-" + r.ItemID
+		}
+		for _, f := range sc.detect(text) {
+			findings = append(findings, toFinding(f, "task", sourceID))
+		}
+		return nil
+	})
+	return findings, err
+}
+
+func (sc *Scanner) scanFileHistory(ctx context.Context) ([]model.ScanFinding, error) {
+	var findings []model.ScanFinding
+	err := sc.store.EachFileVersionForScan(ctx, func(r store.ScanFileVersionRow) error {
+		for _, f := range sc.detect(r.Content) {
+			findings = append(findings, toFinding(f, "file_history", r.ConversationID))
+		}
+		return nil
+	})
+	return findings, err
+}
+
+func (sc *Scanner) scanUsageFacets(ctx context.Context) ([]model.ScanFinding, error) {
+	var findings []model.ScanFinding
+	err := sc.store.EachUsageFacetForScan(ctx, func(r store.ScanUsageFacetRow) error {
+		text := strings.Join([]string{
+			r.UnderlyingGoal,
+			r.Outcome,
+			r.Helpfulness,
+			r.SessionType,
+			r.PrimarySuccess,
+			r.BriefSummary,
+			r.FrictionDetail,
+		}, "\n")
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil
+		}
+		for _, f := range sc.detect(text) {
+			findings = append(findings, toFinding(f, "usage_facet", r.SessionID))
+		}
+		return nil
+	})
+	return findings, err
+}
+
+func (sc *Scanner) scanUsageReport(ctx context.Context) ([]model.ScanFinding, error) {
+	var findings []model.ScanFinding
+	err := sc.store.EachUsageReportForScan(ctx, func(r store.ScanUsageReportRow) error {
+		for _, f := range sc.detect(r.Content) {
+			findings = append(findings, toFinding(f, "usage_report", "report"))
 		}
 		return nil
 	})

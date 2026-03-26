@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/index"
+	"github.com/ahmedelgabri/ccpeek/internal/scan"
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/ahmedelgabri/ccpeek/internal/web"
 )
@@ -18,7 +19,7 @@ import (
 var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
-func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration) error {
+func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -32,12 +33,16 @@ func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir
 	h := &handlers{tmpl: tmpl, store: db}
 
 	if watch {
-		go watchAndReindex(ctx, claudeDir, db, watchInterval)
+		go watchAndReindex(ctx, claudeDir, db, watchInterval, rescanOnWatch)
 	}
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: requestLogger(securityHeaders(registerRoutes(h, staticFS))),
+		Addr:              addr,
+		Handler:           requestLogger(securityHeaders(registerRoutes(h, staticFS))),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
 		},
@@ -120,7 +125,53 @@ type handlers struct {
 	tmpl  *templates
 }
 
-func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration) {
+func reindexAndMaybeScan(ctx context.Context, claudeDir string, db *store.Store, rescan bool) (bool, error) {
+	beforeRunID, _ := latestIngestRunID(ctx, db)
+	changed, err := index.RunIncremental(ctx, claudeDir, db)
+	if err != nil {
+		return changed, err
+	}
+	if changed {
+		if err := db.EnsureFilePermissions(); err != nil {
+			return changed, fmt.Errorf("tightening database permissions: %w", err)
+		}
+	}
+	logLatestIngestWarnings(ctx, db, beforeRunID)
+	if !changed || !rescan {
+		return changed, nil
+	}
+
+	scanner, err := scan.New(db)
+	if err != nil {
+		return changed, fmt.Errorf("initializing scanner: %w", err)
+	}
+	if _, err := scanner.Run(ctx); err != nil {
+		return changed, fmt.Errorf("scan failed: %w", err)
+	}
+	if err := db.EnsureFilePermissions(); err != nil {
+		return changed, fmt.Errorf("tightening database permissions: %w", err)
+	}
+	return changed, nil
+}
+
+func latestIngestRunID(ctx context.Context, db *store.Store) (int64, error) {
+	run, err := db.GetLatestIngestRun(ctx)
+	if err != nil || run == nil {
+		return 0, err
+	}
+	return run.ID, nil
+}
+
+func logLatestIngestWarnings(ctx context.Context, db *store.Store, previousID int64) {
+	run, err := db.GetLatestIngestRun(ctx)
+	if err != nil || run == nil || run.ID == previousID || run.WarningCount == 0 {
+		return
+	}
+	log.Printf("Ingest completed with %d diagnostic(s): %d skipped file(s), %d skipped row(s), %d parse failure(s), %d unresolved link(s). Run `ccpeek ingest --run-id %d` for details.",
+		run.WarningCount, run.SkippedFiles, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks, run.ID)
+}
+
+func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, interval time.Duration, rescan bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -128,13 +179,16 @@ func watchAndReindex(ctx context.Context, claudeDir string, db *store.Store, int
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			changed, err := index.RunIncremental(ctx, claudeDir, db)
+			changed, err := reindexAndMaybeScan(ctx, claudeDir, db, rescan)
 			if err != nil {
-				log.Printf("Re-index failed: %v", err)
+				log.Printf("Re-index/scan failed: %v", err)
 				continue
 			}
 			if changed {
 				log.Println("Re-index complete.")
+				if rescan {
+					log.Println("Secret scan complete.")
+				}
 			}
 		}
 	}
@@ -179,7 +233,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com")
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

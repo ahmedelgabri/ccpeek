@@ -166,7 +166,7 @@ func TestTodosList(t *testing.T) {
 	if !strings.Contains(body, "3 items") {
 		t.Error("todos list missing item count")
 	}
-	if !strings.Contains(body, "test/project") {
+	if !strings.Contains(body, "test-project") {
 		t.Error("todos list missing project name context")
 	}
 }
@@ -766,7 +766,7 @@ func TestFileHistoryList(t *testing.T) {
 	if !strings.Contains(body, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
 		t.Error("file history list missing conversation ID")
 	}
-	if !strings.Contains(body, "test/project") {
+	if !strings.Contains(body, "test-project") {
 		t.Error("file history list missing project name context")
 	}
 }
@@ -1369,6 +1369,20 @@ func TestCommandsExportFish(t *testing.T) {
 	}
 }
 
+func TestCommandsExportInvalidFormat(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/commands/export?format=wat", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "unsupported format") {
+		t.Error("invalid export should explain unsupported format")
+	}
+}
+
 func setupTestServerWithFindings(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 
@@ -1908,5 +1922,11 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 	if !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("CSP missing default-src 'self': %s", csp)
+	}
+	if strings.Contains(csp, "fonts.googleapis.com") || strings.Contains(csp, "fonts.gstatic.com") {
+		t.Errorf("CSP should not allow external Google font origins: %s", csp)
+	}
+	if strings.Contains(w.Body.String(), "fonts.googleapis.com") || strings.Contains(w.Body.String(), "fonts.gstatic.com") {
+		t.Error("layout should not reference external Google Fonts")
 	}
 }

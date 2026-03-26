@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,7 +16,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/store"
 )
 
-func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx) (int, int, error) {
+func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sqlx.Tx, rec *ingestRecorder) (int, int, error) {
 	srcDir := filepath.Join(claudeDir, "projects")
 	entries, err := os.ReadDir(srcDir)
 	if os.IsNotExist(err) {
@@ -35,18 +36,22 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 
 		dirName := e.Name()
 		projectDir := filepath.Join(srcDir, dirName)
-		displayName := model.DecodeProjectDir(dirName)
 
 		// Read sessions-index.json if available
 		var sessionsIndex model.SessionsIndex
 		indexPath := filepath.Join(projectDir, "sessions-index.json")
 		if data, err := os.ReadFile(indexPath); err == nil {
-			_ = json.Unmarshal(data, &sessionsIndex)
+			if err := json.Unmarshal(data, &sessionsIndex); err != nil && rec != nil {
+				rec.ParseFailure("session_index", indexPath, 0, err.Error())
+			}
 		}
 
 		// Find JSONL session files
 		files, err := os.ReadDir(projectDir)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("project", projectDir, err.Error())
+			}
 			continue
 		}
 
@@ -65,8 +70,11 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			sessionID := strings.TrimSuffix(f.Name(), ".jsonl")
 			jsonlPath := filepath.Join(projectDir, f.Name())
 
-			lines, err := readJSONL[model.RawJSONLLine](jsonlPath)
+			lines, err := readJSONL[model.RawJSONLLine](jsonlPath, "session", rec)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 
@@ -111,9 +119,19 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			return ti.After(tj)
 		})
 
+		entriesForDisplay := make([]model.SessionEntry, 0, len(sessionsData))
+		for _, sd := range sessionsData {
+			entriesForDisplay = append(entriesForDisplay, sd.entry)
+		}
+		displayName, _ := projectDisplayName(dirName, entriesForDisplay)
+		canonicalPath := projectCanonicalPath(entriesForDisplay)
+
 		// Insert project
-		projectID, err := s.InsertProject(ctx, tx, dirName, displayName)
+		projectID, err := s.InsertProject(ctx, tx, dirName, displayName, canonicalPath)
 		if err != nil {
+			if rec != nil {
+				rec.SkippedFile("project", projectDir, err.Error())
+			}
 			continue
 		}
 		projectCount++
@@ -123,13 +141,16 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 			jsonlPath := filepath.Join(projectDir, sd.entry.SessionID+".jsonl")
 			sessionDBID, err := s.InsertSession(ctx, tx, projectID, sd.entry, jsonlPath)
 			if err != nil {
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 
-			if err := s.InsertMessages(ctx, tx, sessionDBID, sd.messages); err != nil {
-				continue
-			}
-			if err := s.InsertCommands(ctx, tx, sessionDBID, sd.messages); err != nil {
+			if err := insertSessionArtifacts(ctx, s, tx, sessionDBID, jsonlPath, sd.messages); err != nil {
+				if rec != nil {
+					rec.SkippedFile("session", jsonlPath, err.Error())
+				}
 				continue
 			}
 			totalSessions++
@@ -137,6 +158,38 @@ func indexProjects(ctx context.Context, claudeDir string, s *store.Store, tx *sq
 	}
 
 	return projectCount, totalSessions, nil
+}
+
+func projectDisplayName(dirName string, sessions []model.SessionEntry) (string, bool) {
+	if p := projectCanonicalPath(sessions); p != "" {
+		return p, true
+	}
+	return dirName, false
+}
+
+func projectCanonicalPath(sessions []model.SessionEntry) string {
+	for _, s := range sessions {
+		if p := strings.TrimSpace(s.ProjectPath); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func insertSessionArtifacts(ctx context.Context, s *store.Store, tx *sqlx.Tx, sessionDBID int64, sourcePath string, messages []model.ConversationMessage) error {
+	if err := s.InsertMessages(ctx, tx, sessionDBID, messages); err != nil {
+		_ = s.DeleteSessionCascade(ctx, tx, sourcePath)
+		return fmt.Errorf("insert messages: %w", err)
+	}
+	if err := s.InsertToolCalls(ctx, tx, sessionDBID, messages); err != nil {
+		_ = s.DeleteSessionCascade(ctx, tx, sourcePath)
+		return fmt.Errorf("insert tool calls: %w", err)
+	}
+	if err := s.InsertCommands(ctx, tx, sessionDBID, messages); err != nil {
+		_ = s.DeleteSessionCascade(ctx, tx, sourcePath)
+		return fmt.Errorf("insert commands: %w", err)
+	}
+	return nil
 }
 
 func buildSessionEntry(sessionID string, messages []model.ConversationMessage, indexEntries []model.SessionEntry) model.SessionEntry {
