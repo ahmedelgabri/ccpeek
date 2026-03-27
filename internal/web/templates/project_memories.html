@@ -1,0 +1,70 @@
+{{ define "content" }}
+  <div class="mb-4">{{ backLink "/projects/" "Projects" }}</div>
+  <h1 class="text-2xl font-bold text-slate-50 mb-1">
+    {{ shortenPath .Project.DisplayName }}
+  </h1>
+  <div
+    class="flex flex-wrap gap-6 text-sm text-slate-400 mb-6 bg-surface-card border border-surface-border rounded-xl px-5 py-3"
+  >
+    <div>
+      <span class="text-slate-500">Sessions</span>
+      <span class="text-slate-200 font-medium ml-1"
+        >{{ .ProjectStats.SessionCount }}</span
+      >
+    </div>
+    <div>
+      <span class="text-slate-500">Messages</span>
+      <span class="text-slate-200 font-medium ml-1"
+        >{{ .ProjectStats.TotalMessages }}</span
+      >
+    </div>
+    {{ if .ProjectStats.TotalTokens }}
+      <div>
+        <span class="text-slate-500">Tokens</span>
+        <span class="text-slate-200 font-medium ml-1"
+          >~{{ formatTokens .ProjectStats.TotalTokens }}</span
+        >
+      </div>
+    {{ end }}
+    {{ if .ProjectStats.FirstSession }}
+      <div>
+        <span class="text-slate-500">Active</span>
+        <span class="text-slate-200 font-medium ml-1"
+          >{{ formatDate .ProjectStats.FirstSession }} &ndash;
+          {{ formatDate .ProjectStats.LastSession }}</span
+        >
+      </div>
+    {{ end }}
+  </div>
+
+  {{ template "project_tabs" . }}
+
+  <div class="space-y-3">
+    {{ range .Memories }}
+      <a
+        href="{{ urlFor "memory" .ProjectDir .FileName }}"
+        class="group flex flex-col gap-1.5 px-5 py-4 rounded-xl border border-surface-border no-underline transition-colors duration-150 hover:bg-surface-hover"
+      >
+        <div class="flex items-baseline justify-between gap-4">
+          <span class="text-sm font-medium text-slate-200 group-hover:text-slate-50"
+            >{{ .FileName }}</span
+          >
+          <span class="text-xs text-slate-600 whitespace-nowrap"
+            >{{ formatBytes .SizeBytes }}</span
+          >
+        </div>
+        {{ if .Preview }}
+          <span class="text-xs text-slate-500 line-clamp-2">{{ .Preview }}</span>
+        {{ end }}
+      </a>
+    {{ else }}
+      <div
+        class="rounded-xl border border-surface-border px-5 py-8 text-center text-sm text-slate-600"
+      >
+        No memory files for this project
+      </div>
+    {{ end }}
+  </div>
+{{ end }}
+
+{{ template "layout.html" . }}

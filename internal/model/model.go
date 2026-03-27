@@ -308,6 +308,15 @@ type MemoryEntry struct {
 	Preview     string `json:"preview"`
 }
 
+// MemoryProjectGroup groups memory entries by project for the list view.
+type MemoryProjectGroup struct {
+	ProjectDir  string        `json:"projectDir"`
+	ProjectName string        `json:"projectName"`
+	FileCount   int           `json:"fileCount"`
+	TotalBytes  int64         `json:"totalBytes"`
+	Entries     []MemoryEntry `json:"entries"`
+}
+
 // NormalizeMemoryFileName ensures a memory file name ends with .md.
 func NormalizeMemoryFileName(fileName string) string {
 	if fileName == "" {

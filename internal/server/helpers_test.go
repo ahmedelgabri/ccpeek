@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
@@ -233,6 +234,7 @@ func TestUrlFor(t *testing.T) {
 		want string
 	}{
 		{"project", []string{"my-project"}, "/projects/my-project/"},
+		{"project-tab", []string{"my-project", "memories"}, "/projects/my-project/memories/"},
 		{"session", []string{"my-project", "sess-123"}, "/projects/my-project/sess-123/"},
 		{"session-anchor", []string{"my-project", "sess-123"}, "/projects/my-project/#s-sess-123"},
 		{"session-tab", []string{"my-project", "sess-123", "commands"}, "/projects/my-project/sess-123/commands/"},
@@ -265,6 +267,135 @@ func TestUrlFor(t *testing.T) {
 			t.Errorf("urlFor(%q, %v) = %q, want %q", tt.kind, tt.args, got, tt.want)
 		}
 	}
+}
+
+func TestGroupMemoriesByProject(t *testing.T) {
+	entries := []model.MemoryEntry{
+		{ProjectDir: "proj-a", ProjectName: "Project A", FileName: "MEMORY.md", SizeBytes: 100},
+		{ProjectDir: "proj-a", ProjectName: "Project A", FileName: "conventions.md", SizeBytes: 200},
+		{ProjectDir: "proj-b", ProjectName: "Project B", FileName: "MEMORY.md", SizeBytes: 50},
+	}
+
+	groups := groupMemoriesByProject(entries)
+
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+	if groups[0].ProjectDir != "proj-a" {
+		t.Errorf("first group dir = %q, want %q", groups[0].ProjectDir, "proj-a")
+	}
+	if groups[0].FileCount != 2 {
+		t.Errorf("first group file count = %d, want 2", groups[0].FileCount)
+	}
+	if groups[0].TotalBytes != 300 {
+		t.Errorf("first group total bytes = %d, want 300", groups[0].TotalBytes)
+	}
+	if len(groups[0].Entries) != 2 {
+		t.Errorf("first group entries = %d, want 2", len(groups[0].Entries))
+	}
+	if groups[1].ProjectDir != "proj-b" {
+		t.Errorf("second group dir = %q, want %q", groups[1].ProjectDir, "proj-b")
+	}
+	if groups[1].FileCount != 1 {
+		t.Errorf("second group file count = %d, want 1", groups[1].FileCount)
+	}
+
+	// Empty input
+	if got := groupMemoriesByProject(nil); got != nil {
+		t.Errorf("expected nil for empty input, got %v", got)
+	}
+}
+
+func TestRewriteMemoryLink(t *testing.T) {
+	tests := []struct {
+		dest       string
+		projectDir string
+		want       string
+		changed    bool
+	}{
+		// Relative .md links get rewritten
+		{"architecture.md", "-Users-proj", "/memories/-Users-proj/architecture/", true},
+		{"./architecture.md", "-Users-proj", "/memories/-Users-proj/architecture/", true},
+		{"./CONVENTIONS.md", "-Users-proj", "/memories/-Users-proj/CONVENTIONS/", true},
+		{"sub/deep.md", "-Users-proj", "/memories/-Users-proj/deep/", true},
+
+		// Fragment preserved
+		{"architecture.md#intro", "-Users-proj", "/memories/-Users-proj/architecture/#intro", true},
+		{"./arch.md#section-2", "-Users-proj", "/memories/-Users-proj/arch/#section-2", true},
+
+		// Absolute URLs unchanged
+		{"https://example.com/foo.md", "-Users-proj", "https://example.com/foo.md", false},
+		{"http://example.com/bar.md", "-Users-proj", "http://example.com/bar.md", false},
+
+		// Protocol-relative unchanged
+		{"//example.com/baz.md", "-Users-proj", "//example.com/baz.md", false},
+
+		// Pure fragment unchanged
+		{"#section", "-Users-proj", "#section", false},
+
+		// Non-.md links unchanged
+		{"image.png", "-Users-proj", "image.png", false},
+		{"./readme.txt", "-Users-proj", "./readme.txt", false},
+
+		// Empty link unchanged
+		{"", "-Users-proj", "", false},
+	}
+
+	for _, tt := range tests {
+		got, changed := rewriteMemoryLink(tt.dest, tt.projectDir)
+		if got != tt.want || changed != tt.changed {
+			t.Errorf("rewriteMemoryLink(%q, %q) = (%q, %v), want (%q, %v)",
+				tt.dest, tt.projectDir, got, changed, tt.want, tt.changed)
+		}
+	}
+}
+
+func TestRenderMemoryMarkdown(t *testing.T) {
+	projectDir := "-Users-demo-proj"
+
+	t.Run("rewrites relative md links", func(t *testing.T) {
+		source := "See [Architecture](./architecture.md) for details."
+		html := string(renderMemoryMarkdown(source, projectDir))
+		want := `/memories/-Users-demo-proj/architecture/`
+		if !strings.Contains(html, want) {
+			t.Errorf("expected HTML to contain %q, got:\n%s", want, html)
+		}
+	})
+
+	t.Run("preserves absolute links", func(t *testing.T) {
+		source := "Visit [GitHub](https://github.com/example/repo.md)."
+		html := string(renderMemoryMarkdown(source, projectDir))
+		want := `https://github.com/example/repo.md`
+		if !strings.Contains(html, want) {
+			t.Errorf("expected HTML to contain %q, got:\n%s", want, html)
+		}
+	})
+
+	t.Run("preserves anchor links", func(t *testing.T) {
+		source := "Jump to [Section](#overview)."
+		html := string(renderMemoryMarkdown(source, projectDir))
+		want := `#overview`
+		if !strings.Contains(html, want) {
+			t.Errorf("expected HTML to contain %q, got:\n%s", want, html)
+		}
+	})
+
+	t.Run("preserves fragment on rewritten link", func(t *testing.T) {
+		source := "See [API section](./api.md#endpoints)."
+		html := string(renderMemoryMarkdown(source, projectDir))
+		want := `/memories/-Users-demo-proj/api/#endpoints`
+		if !strings.Contains(html, want) {
+			t.Errorf("expected HTML to contain %q, got:\n%s", want, html)
+		}
+	})
+
+	t.Run("plain text renders normally", func(t *testing.T) {
+		source := "Hello **world**"
+		html := string(renderMemoryMarkdown(source, projectDir))
+		if !strings.Contains(html, "<strong>world</strong>") {
+			t.Errorf("expected bold markup, got:\n%s", html)
+		}
+	})
 }
 
 func TestStatusColor(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
@@ -16,8 +17,10 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/text"
 )
 
 var (
@@ -49,6 +52,65 @@ func renderMarkdown(source string) template.HTML {
 		return template.HTML("<pre>" + template.HTMLEscapeString(source) + "</pre>")
 	}
 	return template.HTML(buf.String())
+}
+
+// renderMemoryMarkdown renders markdown and rewrites relative .md links so they
+// resolve to sibling memory files within the same project. A MEMORY.md that
+// acts as an index (e.g. [Architecture](./architecture.md)) will have those
+// links point to /memories/{projectDir}/architecture/ instead of breaking.
+func renderMemoryMarkdown(source, projectDir string) template.HTML {
+	src := []byte(source)
+	reader := text.NewReader(src)
+	doc := md.Parser().Parse(reader)
+
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		link, ok := n.(*ast.Link)
+		if !ok {
+			return ast.WalkContinue, nil
+		}
+		if rewritten, changed := rewriteMemoryLink(string(link.Destination), projectDir); changed {
+			link.Destination = []byte(rewritten)
+		}
+		return ast.WalkContinue, nil
+	})
+
+	var buf bytes.Buffer
+	if err := md.Renderer().Render(&buf, src, doc); err != nil {
+		return template.HTML("<pre>" + template.HTMLEscapeString(source) + "</pre>")
+	}
+	return template.HTML(buf.String())
+}
+
+// rewriteMemoryLink rewrites a relative .md link to the canonical ccpeek
+// memory URL for the same project. Absolute URLs, anchors, and non-.md links
+// are left unchanged.
+func rewriteMemoryLink(dest, projectDir string) (string, bool) {
+	// Absolute URLs or pure fragment links — leave as-is.
+	if dest == "" || strings.HasPrefix(dest, "http://") || strings.HasPrefix(dest, "https://") || strings.HasPrefix(dest, "#") || strings.HasPrefix(dest, "//") {
+		return dest, false
+	}
+
+	// Separate optional #fragment from the path portion.
+	fragment := ""
+	if i := strings.Index(dest, "#"); i >= 0 {
+		fragment = dest[i:] // includes the '#'
+		dest = dest[:i]
+	}
+
+	// Only rewrite links that target .md files.
+	if !strings.HasSuffix(dest, ".md") {
+		return dest + fragment, false
+	}
+
+	// Resolve the file name: strip leading ./ and any directory components.
+	// Memory files are flat siblings, so ./foo.md and foo.md both refer to
+	// the same file in the project's memory folder.
+	fileName := path.Base(dest)
+
+	return model.MemoryURL(projectDir, fileName) + fragment, true
 }
 
 func wrapCode(code, lang string) template.HTML {
@@ -164,6 +226,7 @@ func toAnchor(prefix, value string) string {
 // Supported types and arguments:
 //
 //	"project"          dirName                    → /projects/{dir}/
+//	"project-tab"      dirName, tab               → /projects/{dir}/{tab}/
 //	"session"          dirName, sessionID         → /projects/{dir}/{sid}/
 //	"session-anchor"   dirName, sessionID         → /projects/{dir}/#s-{sid}
 //	"session-tab"      dirName, sessionID, tab    → /projects/{dir}/{sid}/{tab}/
@@ -181,6 +244,8 @@ func urlFor(kind string, args ...string) string {
 	switch kind {
 	case "project":
 		return "/projects/" + args[0] + "/"
+	case "project-tab":
+		return "/projects/" + args[0] + "/" + args[1] + "/"
 	case "session":
 		return "/projects/" + args[0] + "/" + args[1] + "/"
 	case "session-anchor":
@@ -302,6 +367,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/partials/message.html",
 		"templates/partials/session_tabs.html",
 		"templates/partials/session_header.html",
+		"templates/partials/project_tabs.html",
 	)
 	if err != nil {
 		return nil, err
@@ -339,6 +405,7 @@ func loadTemplates(fsys fs.FS) (*templates, error) {
 		"templates/usagedata_report.html",
 		"templates/memories_list.html",
 		"templates/memory_detail.html",
+		"templates/project_memories.html",
 		"templates/scan_list.html",
 	}
 

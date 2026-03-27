@@ -1211,6 +1211,69 @@ func TestMemoriesList(t *testing.T) {
 	if !strings.Contains(body, "team notes.v2.md") {
 		t.Error("memories list missing team notes.v2.md file name")
 	}
+	// Verify grouped-by-project structure: file count summary
+	if !strings.Contains(body, "3 files") {
+		t.Error("memories list missing file count for project group")
+	}
+}
+
+func TestProjectMemoriesTab(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/memories/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "MEMORY.md") {
+		t.Error("project memories missing MEMORY.md file name")
+	}
+	if !strings.Contains(body, "conventions.md") {
+		t.Error("project memories missing conventions.md file name")
+	}
+	if !strings.Contains(body, "team notes.v2.md") {
+		t.Error("project memories missing team notes.v2.md file name")
+	}
+	// Should have active tab indicator
+	if !strings.Contains(body, "Memories") {
+		t.Error("project memories missing Memories tab")
+	}
+	if !strings.Contains(body, "Sessions") {
+		t.Error("project memories missing Sessions tab")
+	}
+}
+
+func TestProjectMemoriesTabNotFound(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/nonexistent/memories/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestSessionsListShowsMemoriesTab(t *testing.T) {
+	handler := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/projects/test-project/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Memories") {
+		t.Error("sessions list missing Memories tab")
+	}
+	if !strings.Contains(body, "/projects/test-project/memories/") {
+		t.Error("sessions list missing memories tab link")
+	}
 }
 
 func TestMemoryDetail(t *testing.T) {

@@ -60,14 +60,18 @@ func (h *handlers) sessionsList(w http.ResponseWriter, r *http.Request) {
 	project.Sessions = sessions
 	project.SessionCount = len(sessions)
 
+	memoryCount, _ := h.store.CountProjectMemories(ctx, dirName)
+
 	renderTemplate(w, h.tmpl, "sessions_list.html", map[string]any{
-		"Title":        project.DisplayName,
-		"CurrentPath":  "/projects/",
-		"Project":      project,
-		"ProjectStats": projectStats,
-		"Sort":         filter.Sort,
-		"From":         filter.From,
-		"To":           filter.To,
+		"Title":            project.DisplayName,
+		"CurrentPath":      "/projects/",
+		"Project":          project,
+		"ProjectStats":     projectStats,
+		"ActiveProjectTab": "sessions",
+		"MemoryCount":      memoryCount,
+		"Sort":             filter.Sort,
+		"From":             filter.From,
+		"To":               filter.To,
 	})
 }
 

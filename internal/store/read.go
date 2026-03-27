@@ -1245,6 +1245,48 @@ func (s *Store) GetMemory(ctx context.Context, projectDir, fileName string) (*mo
 	return entry, row.Content, nil
 }
 
+// CountProjectMemories returns the number of memory files for a project.
+func (s *Store) CountProjectMemories(ctx context.Context, projectDir string) (int, error) {
+	var count int
+	err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM memories WHERE project_dir = ?`, projectDir)
+	return count, err
+}
+
+// ListProjectMemories returns memory entries for a specific project dir.
+func (s *Store) ListProjectMemories(ctx context.Context, projectDir string) ([]model.MemoryEntry, error) {
+	var rows []struct {
+		ProjectDir  string         `db:"project_dir"`
+		FileName    string         `db:"file_name"`
+		ProjectName sql.NullString `db:"project_name"`
+		SizeBytes   int64          `db:"size_bytes"`
+		Content     string         `db:"content"`
+	}
+	err := s.db.SelectContext(ctx, &rows, `
+		SELECT m.project_dir, m.file_name, p.display_name AS project_name, m.size_bytes, m.content
+		FROM memories m
+		LEFT JOIN projects p ON m.project_id = p.id
+		WHERE m.project_dir = ?
+		ORDER BY m.file_name`, projectDir)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]model.MemoryEntry, len(rows))
+	for i, r := range rows {
+		preview := r.Content
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		entries[i] = model.MemoryEntry{
+			ProjectDir:  r.ProjectDir,
+			FileName:    r.FileName,
+			ProjectName: r.ProjectName.String,
+			SizeBytes:   r.SizeBytes,
+			Preview:     preview,
+		}
+	}
+	return entries, nil
+}
+
 // GetSessionDBID returns the internal database ID for a session_id string.
 // It accepts an optional transaction; if tx is non-nil it queries within that tx.
 // When session_id exists in multiple projects, an arbitrary match is returned.

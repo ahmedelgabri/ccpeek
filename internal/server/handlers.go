@@ -313,10 +313,76 @@ func (h *handlers) memoriesList(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "load memories", err)
 		return
 	}
+
+	groups := groupMemoriesByProject(entries)
+
 	renderTemplate(w, h.tmpl, "memories_list.html", map[string]any{
 		"Title":       "Memories",
 		"CurrentPath": "/memories/",
-		"Entries":     entries,
+		"Groups":      groups,
+		"Total":       len(entries),
+	})
+}
+
+// groupMemoriesByProject groups a flat list of memory entries into per-project
+// groups, preserving the input order (already sorted by project name then file).
+func groupMemoriesByProject(entries []model.MemoryEntry) []model.MemoryProjectGroup {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	var groups []model.MemoryProjectGroup
+	idx := make(map[string]int) // projectDir → index in groups
+
+	for _, e := range entries {
+		i, ok := idx[e.ProjectDir]
+		if !ok {
+			i = len(groups)
+			idx[e.ProjectDir] = i
+			groups = append(groups, model.MemoryProjectGroup{
+				ProjectDir:  e.ProjectDir,
+				ProjectName: e.ProjectName,
+			})
+		}
+		groups[i].Entries = append(groups[i].Entries, e)
+		groups[i].FileCount++
+		groups[i].TotalBytes += e.SizeBytes
+	}
+	return groups
+}
+
+func (h *handlers) projectMemories(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	dirName := r.PathValue("dirName")
+
+	project, err := h.store.GetProject(ctx, dirName)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	projectID, err := h.store.GetProjectID(ctx, dirName)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	projectStats, _ := h.store.GetProjectStats(ctx, projectID)
+
+	memories, err := h.store.ListProjectMemories(ctx, dirName)
+	if err != nil {
+		serverError(w, "load project memories", err)
+		return
+	}
+
+	renderTemplate(w, h.tmpl, "project_memories.html", map[string]any{
+		"Title":            project.DisplayName + " - Memories",
+		"CurrentPath":      "/projects/",
+		"Project":          project,
+		"ProjectStats":     projectStats,
+		"ActiveProjectTab": "memories",
+		"MemoryCount":      len(memories),
+		"Memories":         memories,
 	})
 }
 
@@ -340,6 +406,6 @@ func (h *handlers) memoryDetail(w http.ResponseWriter, r *http.Request) {
 		"Title":       "Memory: " + name + " / " + entry.FileName,
 		"CurrentPath": "/memories/",
 		"Entry":       entry,
-		"Content":     renderMarkdown(content),
+		"Content":     renderMemoryMarkdown(content, projectDir),
 	})
 }
