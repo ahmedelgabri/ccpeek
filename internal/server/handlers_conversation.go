@@ -406,9 +406,9 @@ func (h *handlers) conversationCode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// hasCodeBlocks returns whether a session has Write or Edit tool calls.
+// hasCodeBlocks returns whether a session has code-writing/editing tool calls.
 func hasCodeBlocks(s *model.SessionEntry) bool {
-	return s.ToolUseCounts["Write"]+s.ToolUseCounts["Edit"] > 0
+	return s.ToolUseCounts["Write"]+s.ToolUseCounts["Edit"]+s.ToolUseCounts["MultiEdit"] > 0
 }
 
 func (h *handlers) sessionCompare(w http.ResponseWriter, r *http.Request) {

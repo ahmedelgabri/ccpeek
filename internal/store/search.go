@@ -68,7 +68,10 @@ func (s *Store) SearchAll(ctx context.Context, query string, perTypeLimit int) (
 	var groups []SearchGroup
 	for _, def := range searchGroupDefs {
 		hits, err := s.searchIndexedGroup(ctx, def.Key, matchQuery, perTypeLimit)
-		if err == nil && len(hits) > 0 {
+		if err != nil {
+			return nil, err
+		}
+		if len(hits) > 0 {
 			groups = append(groups, SearchGroup{Type: def.Type, Color: def.Color, Hits: hits})
 		}
 	}

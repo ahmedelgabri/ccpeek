@@ -213,11 +213,69 @@ func (s *Store) InsertToolCalls(ctx context.Context, tx *sqlx.Tx, dbSessionID in
 }
 
 func (s *Store) backfillToolCalls(ctx context.Context) error {
-	var existing int
-	if err := s.db.GetContext(ctx, &existing, `SELECT COUNT(*) FROM tool_calls`); err != nil {
+	actualRows := []struct {
+		SessionID int64 `db:"session_id"`
+		Count     int   `db:"cnt"`
+	}{}
+	if err := s.db.SelectContext(ctx, &actualRows, `SELECT session_id, COUNT(*) AS cnt FROM tool_calls GROUP BY session_id`); err != nil {
 		return err
 	}
-	if existing > 0 {
+	actualCounts := make(map[int64]int, len(actualRows))
+	for _, row := range actualRows {
+		actualCounts[row.SessionID] = row.Count
+	}
+
+	rows, err := s.db.QueryxContext(ctx, `
+		SELECT session_id, role, timestamp, content
+		FROM messages
+		ORDER BY session_id, seq`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	needRebuild := false
+	var currentSessionID int64 = -1
+	messages := make([]model.ConversationMessage, 0)
+	check := func() {
+		if currentSessionID < 0 {
+			return
+		}
+		expected := len(extractToolCalls(messages))
+		if actualCounts[currentSessionID] != expected {
+			needRebuild = true
+		}
+	}
+
+	for rows.Next() {
+		var row struct {
+			SessionID int64  `db:"session_id"`
+			Role      string `db:"role"`
+			Timestamp string `db:"timestamp"`
+			Content   string `db:"content"`
+		}
+		if err := rows.StructScan(&row); err != nil {
+			return err
+		}
+		if row.SessionID != currentSessionID {
+			check()
+			currentSessionID = row.SessionID
+			messages = messages[:0]
+		}
+		messages = append(messages, model.ConversationMessage{
+			Timestamp: row.Timestamp,
+			Message: model.MessagePayload{
+				Role:    row.Role,
+				Content: []byte(row.Content),
+			},
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	check()
+
+	if !needRebuild {
 		return nil
 	}
 
@@ -227,7 +285,11 @@ func (s *Store) backfillToolCalls(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryxContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tool_calls`); err != nil {
+		return err
+	}
+
+	rows, err = tx.QueryxContext(ctx, `
 		SELECT session_id, role, timestamp, content
 		FROM messages
 		ORDER BY session_id, seq`)
@@ -236,8 +298,8 @@ func (s *Store) backfillToolCalls(ctx context.Context) error {
 	}
 	defer rows.Close()
 
-	var currentSessionID int64 = -1
-	messages := make([]model.ConversationMessage, 0)
+	currentSessionID = -1
+	messages = messages[:0]
 	flush := func() error {
 		if currentSessionID < 0 {
 			return nil
@@ -360,17 +422,63 @@ func (s *Store) GetSessionToolStats(ctx context.Context, dirName, sessionID stri
 
 // GetSessionCodeOperations returns normalized code-writing/editing operations for a session.
 func (s *Store) GetSessionCodeOperations(ctx context.Context, dirName, sessionID string) ([]CodeOperation, error) {
-	var rows []CodeOperation
+	var rows []struct {
+		Tool      string `db:"tool"`
+		FilePath  string `db:"file_path"`
+		InputJSON string `db:"input_json"`
+		Timestamp string `db:"timestamp"`
+	}
 	err := s.db.SelectContext(ctx, &rows, `
 		SELECT tc.tool_name AS tool,
 		       tc.file_path,
-		       COALESCE(json_extract(tc.input_json, '$.content'), json_extract(tc.input_json, '$.new_string'), '') AS content,
-		       COALESCE(json_extract(tc.input_json, '$.old_string'), '') AS old_string,
+		       tc.input_json,
 		       tc.timestamp
 		FROM tool_calls tc
 		JOIN sessions s ON tc.session_id = s.id
 		JOIN projects p ON s.project_id = p.id
 		WHERE p.dir_name = ? AND s.session_id = ? AND tc.tool_kind IN ('file_write', 'file_edit')
 		ORDER BY tc.seq`, dirName, sessionID)
-	return rows, err
+	if err != nil {
+		return nil, err
+	}
+
+	ops := make([]CodeOperation, 0, len(rows))
+	for _, row := range rows {
+		var input struct {
+			Content   string `json:"content"`
+			NewString string `json:"new_string"`
+			OldString string `json:"old_string"`
+			Edits     []struct {
+				OldString string `json:"old_string"`
+				NewString string `json:"new_string"`
+			} `json:"edits"`
+		}
+		_ = json.Unmarshal([]byte(row.InputJSON), &input)
+
+		if row.Tool == "MultiEdit" && len(input.Edits) > 0 {
+			for _, edit := range input.Edits {
+				ops = append(ops, CodeOperation{
+					Tool:      row.Tool,
+					FilePath:  row.FilePath,
+					Content:   edit.NewString,
+					OldString: edit.OldString,
+					Timestamp: row.Timestamp,
+				})
+			}
+			continue
+		}
+
+		content := input.Content
+		if content == "" {
+			content = input.NewString
+		}
+		ops = append(ops, CodeOperation{
+			Tool:      row.Tool,
+			FilePath:  row.FilePath,
+			Content:   content,
+			OldString: input.OldString,
+			Timestamp: row.Timestamp,
+		})
+	}
+	return ops, nil
 }

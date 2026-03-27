@@ -495,6 +495,13 @@ func TestConversationCodeNotFound(t *testing.T) {
 	}
 }
 
+func TestHasCodeBlocksIncludesMultiEdit(t *testing.T) {
+	session := &model.SessionEntry{ToolUseCounts: map[string]int{"MultiEdit": 1}}
+	if !hasCodeBlocks(session) {
+		t.Fatal("expected MultiEdit sessions to expose the Code tab")
+	}
+}
+
 func TestConversationExport(t *testing.T) {
 	handler := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/export.md", nil)

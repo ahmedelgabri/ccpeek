@@ -32,7 +32,7 @@
           </button>
           <textarea class="hidden" aria-hidden="true">{{ .Content }}</textarea>
         </div>
-        {{ if and (eq .Tool "Edit") .OldString }}
+        {{ if and (or (eq .Tool "Edit") (eq .Tool "MultiEdit")) .OldString }}
           <div class="px-4 py-2 border-b border-surface-border bg-rose-500/5">
             <div class="text-[10px] text-slate-500 mb-1">old_string</div>
             <pre

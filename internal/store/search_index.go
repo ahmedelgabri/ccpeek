@@ -59,11 +59,11 @@ func (s *Store) RepopulateSearchIndex(ctx context.Context, tx *sqlx.Tx) error {
 }
 
 func (s *Store) backfillSearchIndex(ctx context.Context) error {
-	var count int
-	if err := s.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM search_documents_fts`); err != nil {
+	needRebuild, err := s.searchIndexNeedsRebuild(ctx)
+	if err != nil {
 		return err
 	}
-	if count > 0 {
+	if !needRebuild {
 		return nil
 	}
 
@@ -80,6 +80,103 @@ func (s *Store) backfillSearchIndex(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) searchIndexNeedsRebuild(ctx context.Context) (bool, error) {
+	current, err := s.currentSearchDocumentCounts(ctx)
+	if err != nil {
+		return false, err
+	}
+	expected, err := s.expectedSearchDocumentCounts(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, def := range searchGroupDefs {
+		if current[def.Key] != expected[def.Key] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) currentSearchDocumentCounts(ctx context.Context) (map[string]int, error) {
+	rows := []struct {
+		GroupType string `db:"group_type"`
+		Count     int    `db:"cnt"`
+	}{}
+	if err := s.db.SelectContext(ctx, &rows, `
+		SELECT group_type, COUNT(*) AS cnt
+		FROM search_documents_fts
+		GROUP BY group_type`); err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(searchGroupDefs))
+	for _, row := range rows {
+		counts[row.GroupType] = row.Count
+	}
+	return counts, nil
+}
+
+func (s *Store) expectedSearchDocumentCounts(ctx context.Context) (map[string]int, error) {
+	counts := make(map[string]int, len(searchGroupDefs))
+
+	messageRows := []struct {
+		Content string `db:"content"`
+	}{}
+	if err := s.db.SelectContext(ctx, &messageRows, `SELECT content FROM messages`); err != nil {
+		return nil, err
+	}
+	for _, row := range messageRows {
+		msg := model.MessagePayload{Content: []byte(row.Content)}
+		if strings.TrimSpace(msg.SearchText()) != "" {
+			counts[searchGroupConversations]++
+		}
+	}
+
+	queries := map[string]string{
+		searchGroupCommands: `
+			SELECT COUNT(*)
+			FROM tool_calls
+			WHERE tool_kind = 'shell'
+			  AND TRIM(COALESCE(json_extract(input_json, '$.command'), '')) <> ''`,
+		searchGroupMemories: `
+			SELECT COUNT(*)
+			FROM memories
+			WHERE TRIM(content) <> ''`,
+		searchGroupPlans: `
+			SELECT COUNT(*)
+			FROM plans
+			WHERE TRIM(COALESCE(title, '') || '\n' || COALESCE(content, '')) <> ''`,
+		searchGroupTodos: `
+			SELECT COUNT(*)
+			FROM todo_items
+			WHERE TRIM(content) <> ''`,
+		searchGroupTasks: `
+			SELECT COUNT(*)
+			FROM task_items
+			WHERE TRIM(COALESCE(subject, '') || '\n' || COALESCE(description, '')) <> ''`,
+		searchGroupPasteCache: `
+			SELECT COUNT(*)
+			FROM paste_cache
+			WHERE TRIM(content) <> ''`,
+		searchGroupSnapshots: `
+			SELECT COUNT(*)
+			FROM shell_snapshots
+			WHERE TRIM(content) <> ''`,
+		searchGroupUsageData: `
+			SELECT COUNT(*)
+			FROM usage_facets
+			WHERE TRIM(COALESCE(brief_summary, '') || '\n' || COALESCE(underlying_goal, '') || '\n' || COALESCE(primary_success, '') || '\n' || COALESCE(friction_detail, '')) <> ''`,
+	}
+	for groupType, query := range queries {
+		var count int
+		if err := s.db.GetContext(ctx, &count, query); err != nil {
+			return nil, err
+		}
+		counts[groupType] = count
+	}
+
+	return counts, nil
 }
 
 func insertSearchDocument(ctx context.Context, stmt *sql.Stmt, groupType, title, subtitle, url, textContent string) error {

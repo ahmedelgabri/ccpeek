@@ -517,6 +517,56 @@ func TestBackfillSearchIndexRepopulatesExistingData(t *testing.T) {
 	}
 }
 
+func TestBackfillSearchIndexRepairsPartialDerivedData(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	tx, err := s.BeginTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := s.InsertProject(ctx, tx, "proj", "Project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDBID, err := s.InsertSession(ctx, tx, projectID, model.SessionEntry{SessionID: "sess-1", FirstPrompt: "Architecture"}, "/src/sess-1.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertPlan(ctx, tx, model.PlanEntry{FileName: "alpha.md", Title: "Alpha Architecture", SizeBytes: 12}, "Step one", "/src/alpha.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertMessages(ctx, tx, sessionDBID, []model.ConversationMessage{{
+		Type:      "user",
+		Timestamp: "2025-01-01T00:00:00Z",
+		Message: model.MessagePayload{
+			Role:    "user",
+			Content: []byte(`"Architecture discussion"`),
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO search_documents_fts (group_type, title, subtitle, url, text_content)
+		VALUES ('plans', 'stale', 'stale', '/stale/', 'stale')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.backfillSearchIndex(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSearchDocumentCount(t, s, searchGroupPlans, 1)
+	assertSearchDocumentCount(t, s, searchGroupConversations, 1)
+}
+
 func TestOpenRecoversDamagedVersionedDerivedTables(t *testing.T) {
 	ctx := context.Background()
 	s := assertMigrationFixtureMatrixCase(t, migrationFixtureMatrixCase{

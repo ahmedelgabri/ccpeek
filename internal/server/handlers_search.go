@@ -19,7 +19,8 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 		var err error
 		groups, err = h.store.SearchAll(ctx, query, searchPerTypeLimit)
 		if err != nil {
-			groups = nil
+			serverError(w, "search", err)
+			return
 		}
 		for _, g := range groups {
 			totalResults += len(g.Hits)
