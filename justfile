@@ -31,10 +31,10 @@ lint:
     pnpm exec oxlint --type-aware --type-check
 
 format:
-    nix fmt
+    nix --extra-experimental-features 'nix-command flakes' fmt
 
 format-check:
-    nix fmt -- --fail-on-change
+    nix --extra-experimental-features 'nix-command flakes' fmt -- --fail-on-change
 
 test-unit: css
     CGO_ENABLED=1 go test -tags sqlite_fts5 ./...
