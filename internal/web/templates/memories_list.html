@@ -2,7 +2,8 @@
   <h1 class="text-2xl font-bold text-slate-50 mb-1">Memories</h1>
   <p class="text-sm text-slate-500 mb-6">
     {{ .Total }} memory {{ if eq .Total 1 }}file{{ else }}files{{ end }} across
-    {{ len .Groups }} {{ if eq (len .Groups) 1 }}project{{ else }}projects{{ end }}
+    {{ len .Groups }}
+    {{ if eq (len .Groups) 1 }}project{{ else }}projects{{ end }}
   </p>
 
   <input
@@ -17,7 +18,10 @@
     {{ range .Groups }}
       <div
         class="list-row rounded-xl border border-surface-border overflow-hidden"
-        data-search-keys="{{ .ProjectName }} {{ .ProjectDir }} {{ range .Entries }}{{ .FileName }} {{ .Preview }} {{ end }}"
+        data-search-keys="{{ .ProjectName }} {{ .ProjectDir }} {{ range .Entries }}
+          {{ .FileName }}
+          {{ .Preview }}
+        {{ end }}"
       >
         <div
           class="flex items-center justify-between px-5 py-3 bg-surface-card border-b border-surface-border"
@@ -48,7 +52,10 @@
             </a>
           </div>
           <div class="flex items-center gap-3 text-xs text-slate-500 shrink-0">
-            <span>{{ .FileCount }} {{ if eq .FileCount 1 }}file{{ else }}files{{ end }}</span>
+            <span
+              >{{ .FileCount }}
+              {{ if eq .FileCount 1 }}file{{ else }}files{{ end }}</span
+            >
             <span>{{ formatBytes .TotalBytes }}</span>
           </div>
         </div>
@@ -56,11 +63,10 @@
           {{ range .Entries }}
             <a
               href="{{ urlFor "memory" .ProjectDir .FileName }}"
-              class="group flex flex-col gap-1 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
+              class="list-row group flex flex-col gap-1 px-5 py-3 no-underline transition-colors duration-150 hover:bg-surface-hover"
             >
               <div class="flex items-baseline justify-between gap-4">
-                <span
-                  class="text-sm text-slate-300 group-hover:text-slate-50"
+                <span class="text-sm text-slate-300 group-hover:text-slate-50"
                   >{{ .FileName }}</span
                 >
                 <span class="text-xs text-slate-600 whitespace-nowrap"

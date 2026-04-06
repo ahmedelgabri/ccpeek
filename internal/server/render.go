@@ -17,8 +17,8 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
 )

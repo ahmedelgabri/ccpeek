@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1212,7 +1213,7 @@ func TestMemoriesList(t *testing.T) {
 		t.Error("memories list missing team notes.v2.md file name")
 	}
 	// Verify grouped-by-project structure: file count summary
-	if !strings.Contains(body, "3 files") {
+	if !regexp.MustCompile(`3\s*files`).MatchString(body) {
 		t.Error("memories list missing file count for project group")
 	}
 }
