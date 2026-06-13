@@ -144,7 +144,7 @@ jobs:
             ### Using Homebrew
 
             ```bash
-            brew install ahmedelgabri/ccpeek/ccpeek
+            brew install ahmedelgabri/tap/ccpeek
             ```
 
             ### Manual Download
@@ -183,9 +183,9 @@ jobs:
           sha256sum ccpeek-${VERSION}-*.tar.gz > "ccpeek-${VERSION}-checksums.txt"
       - uses: actions/checkout@v6
         with:
-          repository: ahmedelgabri/homebrew-ccpeek
+          repository: ahmedelgabri/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-ccpeek
+          path: homebrew-tap
       - name: Update formula
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -195,7 +195,7 @@ jobs:
           SHA_LINUX_ARM64=$(grep "linux-arm64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
           SHA_LINUX_AMD64=$(grep "linux-amd64" dist/ccpeek-${VERSION}-checksums.txt | awk '{print $1}')
 
-          cat > homebrew-ccpeek/Formula/ccpeek.rb << EOF
+          cat > homebrew-tap/Formula/ccpeek.rb << EOF
           class Ccpeek < Formula
             desc "Explore your Claude Code history"
             homepage "https://github.com/ahmedelgabri/ccpeek"
@@ -241,9 +241,9 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          cd homebrew-ccpeek
+          cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/ccpeek.rb
-          git diff --staged --quiet || git commit -m "ccpeek ${VERSION}"
+          git diff --staged --quiet || git commit -m "chore: bump ccpeek to v${VERSION}"
           git push

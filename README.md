@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
 ### Homebrew
 
 ```sh
-brew install ahmedelgabri/ccpeek/ccpeek
+brew install ahmedelgabri/tap/ccpeek
 ```
 
 ### Nix Flakes
