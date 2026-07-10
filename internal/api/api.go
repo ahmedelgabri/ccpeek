@@ -34,6 +34,13 @@ func Handler(svc *query.Service, events *Broadcaster) http.Handler {
 	mux.HandleFunc("GET /api/v1/usage", h.usage)
 	mux.HandleFunc("GET /api/v1/search", h.search)
 	mux.HandleFunc("GET /api/v1/events", h.events)
+	mux.HandleFunc("GET /api/v1/artifacts", h.artifacts)
+	mux.HandleFunc("GET /api/v1/artifacts/{agent}/{kind}/{name}", h.artifact)
+	mux.HandleFunc("GET /api/v1/scan", h.scanFindings)
+	mux.HandleFunc("POST /api/v1/scan/{id}/ignore", sameOriginOnly(h.scanIgnore))
+	mux.HandleFunc("GET /api/v1/blocks", h.blocks)
+	mux.HandleFunc("GET /api/v1/budget", h.budget)
+	mux.HandleFunc("PUT /api/v1/budget", sameOriginOnly(h.setBudget))
 	return mux
 }
 
