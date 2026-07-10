@@ -256,15 +256,40 @@ CREATE INDEX IF NOT EXISTS idx_scan_findings_rule ON scan_findings(rule_id);
 CREATE INDEX IF NOT EXISTS idx_scan_findings_entity ON scan_findings(entity_type, natural_key);
 `
 
-// derivedVirtualSchema is created outside transactions where required by
-// the driver; kept separate so ResetDerived can recreate it too.
+// derivedVirtualSchema holds the search index: search_docs is the content
+// table (locator fields, no presentation URLs — the query layer builds
+// links), search_fts is an external-content FTS5 index kept in sync by
+// triggers. Explicit deletes in the write layer keep the pair consistent
+// without relying on FK-cascade trigger semantics.
 const derivedVirtualSchema = `
-CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
-	doc_type UNINDEXED,
-	title UNINDEXED,
-	url UNINDEXED,
-	text_content
+CREATE TABLE IF NOT EXISTS search_docs (
+	id INTEGER PRIMARY KEY,
+	session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+	artifact_id INTEGER REFERENCES artifacts(id) ON DELETE CASCADE,
+	doc_type TEXT NOT NULL,
+	seq INTEGER NOT NULL DEFAULT 0,
+	title TEXT NOT NULL DEFAULT '',
+	text_content TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_search_docs_session ON search_docs(session_id);
+CREATE INDEX IF NOT EXISTS idx_search_docs_artifact ON search_docs(artifact_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+	text_content,
+	content='search_docs',
+	content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS search_docs_ai AFTER INSERT ON search_docs BEGIN
+	INSERT INTO search_fts(rowid, text_content) VALUES (new.id, new.text_content);
+END;
+CREATE TRIGGER IF NOT EXISTS search_docs_ad AFTER DELETE ON search_docs BEGIN
+	INSERT INTO search_fts(search_fts, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+END;
+CREATE TRIGGER IF NOT EXISTS search_docs_au AFTER UPDATE ON search_docs BEGIN
+	INSERT INTO search_fts(search_fts, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+	INSERT INTO search_fts(rowid, text_content) VALUES (new.id, new.text_content);
+END;
 `
 
 // userSchema holds user-created state. It is NEVER dropped by

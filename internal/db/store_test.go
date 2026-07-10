@@ -35,7 +35,7 @@ func TestOpenFreshCreatesLatestSchema(t *testing.T) {
 		"messages", "message_usage", "tool_calls", "artifacts",
 		"artifact_sessions", "workspaces", "session_workspaces", "history",
 		"source_files", "ingest_runs", "ingest_issues", "rollup_usage_daily",
-		"scan_findings", "pricing", "user_annotations", "search_fts",
+		"scan_findings", "pricing", "user_annotations", "search_docs", "search_fts",
 	} {
 		var name string
 		err := s.db.QueryRowContext(ctx,
@@ -156,8 +156,8 @@ func TestResetDerivedPreservesUserState(t *testing.T) {
 		t.Fatalf("reinsert after reset: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO search_fts (doc_type, title, url, text_content) VALUES ('m', 't', '/x', 'hello world')`); err != nil {
-		t.Fatalf("fts insert after reset: %v", err)
+		`INSERT INTO search_docs (doc_type, seq, title, text_content) VALUES ('m', 0, 't', 'hello world')`); err != nil {
+		t.Fatalf("search doc insert after reset: %v", err)
 	}
 }
 
@@ -165,22 +165,38 @@ func TestFTSRoundTrip(t *testing.T) {
 	s, _ := openTemp(t)
 	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO search_fts (doc_type, title, url, text_content)
-		 VALUES ('message', 'greeting', '/sessions/x/', 'hello session world')`); err != nil {
+		`INSERT INTO search_docs (doc_type, seq, title, text_content)
+		 VALUES ('message', 3, 'greeting', 'hello session world')`); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	var url, snip string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT url, snippet(search_fts, 3, '[', ']', '…', 5)
-		 FROM search_fts WHERE search_fts MATCH 'session' ORDER BY rank LIMIT 1`).
-		Scan(&url, &snip)
+	var docType, snip string
+	var seq int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT d.doc_type, d.seq, snippet(search_fts, 0, '[', ']', '…', 5)
+		FROM search_fts
+		JOIN search_docs d ON d.id = search_fts.rowid
+		WHERE search_fts MATCH 'session' ORDER BY rank LIMIT 1`).
+		Scan(&docType, &seq, &snip)
 	if err != nil {
 		t.Fatalf("fts query: %v", err)
 	}
-	if url != "/sessions/x/" {
-		t.Errorf("url = %q", url)
+	if docType != "message" || seq != 3 {
+		t.Errorf("locator = %s/%d", docType, seq)
 	}
 	if snip == "" {
 		t.Error("empty snippet")
+	}
+
+	// Trigger-maintained consistency: deleting the doc removes the hit.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM search_docs`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM search_fts WHERE search_fts MATCH 'session'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("fts hits after delete = %d, want 0", n)
 	}
 }

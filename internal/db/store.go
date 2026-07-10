@@ -158,6 +158,9 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS search_fts`); err != nil {
 		return fmt.Errorf("dropping search index: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS search_docs`); err != nil {
+		return fmt.Errorf("dropping search docs: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

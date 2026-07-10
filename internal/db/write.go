@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
@@ -115,10 +116,11 @@ func (w *Writer) UpsertSession(sess canon.Session, contentHash string) (int64, e
 	return id, nil
 }
 
-// ClearSessionChildren removes messages and tool calls for a session prior
-// to re-inserting them when its source changed.
+// ClearSessionChildren removes messages, tool calls, and search documents
+// for a session prior to re-inserting them when its source changed.
 func (w *Writer) ClearSessionChildren(sessionID int64) error {
 	for _, q := range []string{
+		`DELETE FROM search_docs WHERE session_id = ?`,
 		`DELETE FROM messages WHERE session_id = ?`,
 		`DELETE FROM tool_calls WHERE session_id = ?`,
 	} {
@@ -127,6 +129,39 @@ func (w *Writer) ClearSessionChildren(sessionID int64) error {
 		}
 	}
 	return nil
+}
+
+// InsertSearchDoc adds one document to the search index. Exactly one of
+// sessionID/artifactID should be non-zero; seq anchors message docs within
+// their session. Presentation URLs are built by the query layer from these
+// locators.
+func (w *Writer) InsertSearchDoc(sessionID, artifactID int64, docType string, seq int, title, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	var sid, aid any
+	if sessionID != 0 {
+		sid = sessionID
+	}
+	if artifactID != 0 {
+		aid = artifactID
+	}
+	_, err := w.tx.ExecContext(w.ctx, `
+		INSERT INTO search_docs (session_id, artifact_id, doc_type, seq, title, text_content)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		sid, aid, docType, seq, title, text)
+	if err != nil {
+		return fmt.Errorf("inserting search doc (%s): %w", docType, err)
+	}
+	return nil
+}
+
+// ClearArtifactSearchDocs removes an artifact's search documents before
+// re-indexing changed content.
+func (w *Writer) ClearArtifactSearchDocs(artifactID int64) error {
+	_, err := w.tx.ExecContext(w.ctx,
+		`DELETE FROM search_docs WHERE artifact_id = ?`, artifactID)
+	return err
 }
 
 // InsertMessage writes one message (and its usage, when present) for an
