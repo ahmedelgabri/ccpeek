@@ -39,8 +39,11 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	default:
 		return nil, fmt.Errorf("unknown group %q (want day|model|project|agent)", f.GroupBy)
 	}
-	if f.Limit <= 0 || f.Limit > 1000 {
+	if f.Limit <= 0 {
 		f.Limit = 100
+	}
+	if f.Limit > 1000 {
+		f.Limit = 1000
 	}
 
 	where := "WHERE 1=1"

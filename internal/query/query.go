@@ -72,8 +72,11 @@ type SessionsFilter struct {
 // Sessions lists sessions newest-first — the primary op of the
 // session-centric model.
 func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSummary, error) {
-	if f.Limit <= 0 || f.Limit > 500 {
+	if f.Limit <= 0 {
 		f.Limit = 50
+	}
+	if f.Limit > 500 {
+		f.Limit = 500
 	}
 	var where []string
 	var args []any
@@ -304,9 +307,13 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 	return detail, models.Err()
 }
 
-// TranscriptMessage is one entry of the `transcript` op.
+// TranscriptMessage is one entry of the `transcript` op. ExternalID and
+// ParentID expose the agent's native entry tree (Claude parentUuid, Pi
+// id/parentId) so callers can render branches.
 type TranscriptMessage struct {
 	Seq         int    `json:"seq"`
+	ExternalID  string `json:"externalId,omitempty"`
+	ParentID    string `json:"parentId,omitempty"`
 	Role        string `json:"role"`
 	Kind        string `json:"kind"`
 	CreatedAt   string `json:"createdAt"`
@@ -330,11 +337,15 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 	if err != nil {
 		return nil, err
 	}
-	if opts.Limit <= 0 || opts.Limit > 1000 {
+	if opts.Limit <= 0 {
 		opts.Limit = 200
 	}
+	if opts.Limit > 1000 {
+		opts.Limit = 1000
+	}
 	rows, err := s.store.DB().QueryContext(ctx, `
-		SELECT m.seq, m.role, m.kind, COALESCE(m.created_at, ''), m.model,
+		SELECT m.seq, m.external_id, m.parent_external_id,
+		       m.role, m.kind, COALESCE(m.created_at, ''), m.model,
 		       m.is_sidechain, d.text_content, m.content
 		FROM messages m
 		LEFT JOIN search_docs d ON d.session_id = m.session_id
@@ -351,7 +362,8 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 		var sidechain int
 		var text sql.NullString
 		var content string
-		if err := rows.Scan(&tm.Seq, &tm.Role, &tm.Kind, &tm.CreatedAt,
+		if err := rows.Scan(&tm.Seq, &tm.ExternalID, &tm.ParentID,
+			&tm.Role, &tm.Kind, &tm.CreatedAt,
 			&tm.Model, &sidechain, &text, &content); err != nil {
 			return nil, err
 		}

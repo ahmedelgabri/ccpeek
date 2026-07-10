@@ -31,8 +31,11 @@ func (s *Service) Search(ctx context.Context, q string, f SearchFilter) ([]Searc
 	if q == "" {
 		return nil, nil
 	}
-	if f.Limit <= 0 || f.Limit > 100 {
+	if f.Limit <= 0 {
 		f.Limit = 20
+	}
+	if f.Limit > 100 {
+		f.Limit = 100
 	}
 
 	where := ""

@@ -27,8 +27,11 @@ type ArtifactsFilter struct {
 
 // Artifacts lists artifacts, optionally by kind, newest natural order.
 func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactSummary, error) {
-	if f.Limit <= 0 || f.Limit > 500 {
+	if f.Limit <= 0 {
 		f.Limit = 100
+	}
+	if f.Limit > 500 {
+		f.Limit = 500
 	}
 	var where []string
 	var args []any

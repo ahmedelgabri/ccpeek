@@ -7,16 +7,21 @@ const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
 // The primary surface of the session-centric model: a filterable stream of
 // sessions across every agent (docs/v2-plan.md §7 P0).
+const PAGE = 100;
+
 export function SessionsPage() {
   const [agent, setAgent] = useState("");
   const [q, setQ] = useState("");
+  const [pages, setPages] = useState(1);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["sessions", agent, q],
-    queryFn: () => api.sessions({ agent, q, limit: "100" }),
+    queryKey: ["sessions", agent, q, pages],
+    queryFn: () => api.sessions({ agent, q, limit: String(PAGE * pages) }),
+    placeholderData: (prev) => prev,
   });
 
   const sessions = data ?? [];
+  const mayHaveMore = sessions.length === PAGE * pages;
 
   return (
     <div>
@@ -82,6 +87,15 @@ export function SessionsPage() {
           </li>
         ))}
       </ul>
+
+      {mayHaveMore && (
+        <button
+          onClick={() => setPages((p) => p + 1)}
+          className="mt-4 w-full rounded-lg border border-edge bg-surface-1 py-2 text-sm text-ink-dim hover:text-ink"
+        >
+          Load more
+        </button>
+      )}
     </div>
   );
 }

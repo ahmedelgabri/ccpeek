@@ -44,6 +44,8 @@ export interface SessionDetail extends SessionSummary {
 
 export interface TranscriptMessage {
   seq: number;
+  externalId?: string;
+  parentId?: string;
   role: string;
   kind: string;
   createdAt: string;
@@ -149,3 +151,80 @@ export function fmtTokens(n: number): string {
 export function totalTokens(t: TokenTotals): number {
   return t.input + t.output + t.cacheRead + t.cacheWrite;
 }
+
+export interface ArtifactSummary {
+  agent: string;
+  kind: string;
+  name: string;
+  size: number;
+  sessions: number;
+}
+
+export interface ArtifactDetail extends ArtifactSummary {
+  content?: string;
+  contentHTML?: string;
+  metadata?: string;
+  sessionIds?: string[];
+}
+
+export interface ScanFinding {
+  id: number;
+  ruleId: string;
+  description: string;
+  entityType: string;
+  naturalKey: string;
+  matchRedacted: string;
+  line: number;
+  scannedAt: string;
+  ignored: boolean;
+}
+
+export interface BlockRow {
+  start: string;
+  end: string;
+  sessions: number;
+  messages: number;
+  tokens: TokenTotals;
+  costUSD: number;
+  unpricedTokens?: number;
+  active?: boolean;
+}
+
+export interface Budget {
+  monthlyUSD: number;
+  spentUSD: number;
+  month: string;
+}
+
+async function send<T>(method: string, path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api/v1${path}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const env = (await res.json()) as Envelope<T>;
+  if (!res.ok) throw new Error(env.error ?? `HTTP ${res.status}`);
+  return env.data;
+}
+
+export const parityApi = {
+  artifacts: (kind?: string, agent?: string) =>
+    get<ArtifactSummary[] | null>("/artifacts", {
+      kind: kind ?? "",
+      agent: agent ?? "",
+      limit: "500",
+    }),
+  artifact: (agent: string, kind: string, name: string) =>
+    get<ArtifactDetail>(
+      `/artifacts/${agent}/${kind}/${encodeURIComponent(name)}`,
+    ),
+  scan: (includeIgnored: boolean) =>
+    get<ScanFinding[] | null>("/scan", { ignored: includeIgnored ? "1" : "" }),
+  scanIgnore: (id: number, ignored: boolean) =>
+    send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
+  blocks: (limit = 24) =>
+    get<BlockRow[] | null>("/blocks", { limit: String(limit) }),
+  budget: () => get<Budget>("/budget"),
+  setBudget: (monthlyUSD: number) =>
+    send<Budget>("PUT", "/budget", { monthlyUSD }),
+};

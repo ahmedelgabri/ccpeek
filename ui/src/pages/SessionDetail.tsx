@@ -1,6 +1,7 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { api, fmtCost, fmtTokens } from "../api";
+import { api, fmtCost, fmtTokens, type TranscriptMessage } from "../api";
 
 // The gathering point of the session-centric model: one session with its
 // transcript, usage, relations, and linked artifacts.
@@ -15,6 +16,11 @@ export function SessionDetailPage() {
     queryKey: ["transcript", agent, sessionId],
     queryFn: () => api.transcript(agent, sessionId, { limit: "500" }),
   });
+  const [treeView, setTreeView] = useState(false);
+  const depths = useMemo(
+    () => computeDepths(transcript.data ?? []),
+    [transcript.data],
+  );
 
   if (detail.isLoading) return <p className="text-ink-dim">Loading…</p>;
   if (detail.error) return <p className="text-warn">{String(detail.error)}</p>;
@@ -78,16 +84,33 @@ export function SessionDetailPage() {
         </div>
       )}
 
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-dim">
-        Transcript
-      </h2>
+      <div className="mb-2 flex items-center gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-dim">
+          Transcript
+        </h2>
+        <button
+          onClick={() => setTreeView((v) => !v)}
+          className={`ml-auto rounded-md border border-edge px-2 py-1 text-xs ${
+            treeView ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
+          }`}
+        >
+          tree view
+        </button>
+      </div>
       <ol className="space-y-2">
         {(transcript.data ?? []).map((m) => (
           <li
             key={m.seq}
+            style={
+              treeView
+                ? { marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px` }
+                : undefined
+            }
             className={`rounded-lg border border-edge p-3 ${
               m.role === "user" ? "bg-surface-2" : "bg-surface-1"
-            } ${m.isSidechain ? "ml-8 border-dashed" : ""}`}
+            } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
+              m.isSidechain && treeView ? "border-dashed" : ""
+            }`}
           >
             <div className="mb-1 flex gap-2 text-xs text-ink-dim">
               <span className={m.role === "assistant" ? "text-accent" : ""}>
@@ -106,6 +129,33 @@ export function SessionDetailPage() {
       </ol>
     </div>
   );
+}
+
+// computeDepths walks the agent-native entry tree (Claude parentUuid, Pi
+// id/parentId): an entry's depth is parent depth + 1 when the parent is
+// NOT the immediately preceding entry (a real branch), else parent depth —
+// keeping the main thread flat while branches indent.
+function computeDepths(msgs: TranscriptMessage[]): Map<number, number> {
+  const bySeq = new Map<number, number>();
+  const byExternal = new Map<string, TranscriptMessage>();
+  for (const m of msgs) {
+    if (m.externalId) byExternal.set(m.externalId, m);
+  }
+  let prev: TranscriptMessage | undefined;
+  for (const m of msgs) {
+    let depth = 0;
+    const parent = m.parentId ? byExternal.get(m.parentId) : undefined;
+    if (parent) {
+      const parentDepth = bySeq.get(parent.seq) ?? 0;
+      depth =
+        prev && parent.seq !== prev.seq ? parentDepth + 1 : parentDepth;
+    } else if (m.isSidechain) {
+      depth = 1;
+    }
+    bySeq.set(m.seq, depth);
+    prev = m;
+  }
+  return bySeq;
 }
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
