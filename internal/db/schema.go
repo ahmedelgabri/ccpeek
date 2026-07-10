@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model) WHERE model <> '';
+CREATE INDEX IF NOT EXISTS idx_messages_external ON messages(external_id) WHERE external_id <> '';
 
 CREATE TABLE IF NOT EXISTS message_usage (
 	message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -147,6 +148,17 @@ CREATE TABLE IF NOT EXISTS artifact_sessions (
 	PRIMARY KEY (artifact_id, session_id, relation)
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_sessions_session ON artifact_sessions(session_id);
+
+-- Artifact→session links whose session hasn't been ingested yet; resolved
+-- opportunistically at the end of each ingest run.
+CREATE TABLE IF NOT EXISTS pending_artifact_links (
+	artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+	agent_id INTEGER NOT NULL REFERENCES agents(id),
+	session_external_id TEXT NOT NULL,
+	relation TEXT NOT NULL,
+	evidence TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (artifact_id, session_external_id, relation)
+);
 
 -- Derived grouping facet over sessions.cwd. Regenerated at ingest; powers
 -- the Projects view but is never a parent container.
@@ -279,6 +291,7 @@ var derivedTables = []string{
 	"history",
 	"session_workspaces",
 	"workspaces",
+	"pending_artifact_links",
 	"artifact_sessions",
 	"artifacts",
 	"tool_calls",
