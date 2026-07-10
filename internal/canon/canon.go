@@ -96,14 +96,21 @@ type Message struct {
 	Seq               int
 	ExternalID        string // agent-native entry id, "" if the agent has none
 	ParentExternalID  string // tree edge for branching agents (Pi, Claude)
-	Role              Role
-	Kind              MessageKind
-	CreatedAt         time.Time
-	Model             string // model in effect for this entry, if known
-	CWD               string // per-message cwd where the agent records it
-	Content           json.RawMessage
-	Text              string
-	Usage             *Usage // assistant entries that report usage
+	// ContentID is the agent's identity for the message CONTENT, distinct
+	// from the entry id: Claude Code splits one assistant turn across
+	// several JSONL lines (and repeats them in resumed session files) that
+	// share message.id + requestId while every line has its own entry uuid.
+	// (ContentID, Usage.RequestID) is the usage dedupe key.
+	ContentID   string
+	Role        Role
+	Kind        MessageKind
+	CreatedAt   time.Time
+	Model       string // model in effect for this entry, if known
+	CWD         string // per-message cwd where the agent records it
+	IsSidechain bool   // subagent branch entries (Claude sidechains)
+	Content     json.RawMessage
+	Text        string
+	Usage       *Usage // assistant entries that report usage
 }
 
 // Usage is per-message token accounting as reported by the agent.
@@ -215,4 +222,25 @@ type HistoryEntry struct {
 	Display           string
 	Timestamp         time.Time
 	SessionExternalID string // "" when unresolvable
+}
+
+// IssueSeverity grades a diagnostic.
+type IssueSeverity string
+
+const (
+	SeverityWarn  IssueSeverity = "warn"
+	SeverityError IssueSeverity = "error"
+)
+
+// Issue is an ingest diagnostic: a skipped line, an unknown shape, an
+// unreadable file. Adapters emit issues instead of failing whole sources —
+// partial data plus a visible diagnostic beats silent loss (v1's
+// ingest_issues, carried forward).
+type Issue struct {
+	Agent      AgentSlug
+	Severity   IssueSeverity
+	Category   string // "parse", "io", "format", …
+	SourcePath string
+	Line       int // 1-based; 0 when not line-scoped
+	Detail     string
 }

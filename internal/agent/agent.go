@@ -61,6 +61,9 @@ type RecordSink interface {
 	Artifact(canon.Artifact) error
 	ArtifactLink(canon.ArtifactLink) error
 	History(canon.HistoryEntry) error
+	// Issue reports a diagnostic without failing the source; adapters call
+	// it for skipped lines and unknown shapes instead of returning errors.
+	Issue(canon.Issue) error
 }
 
 // Adapter translates one agent's on-disk data into canonical records.

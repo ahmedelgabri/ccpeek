@@ -131,19 +131,19 @@ func (w *Writer) ClearSessionChildren(sessionID int64) error {
 
 // InsertMessage writes one message (and its usage, when present) for an
 // already-upserted session. Usage rows are deduped agent-wide by
-// (message external_id, request_id): resumed/forked session files repeat
-// earlier assistant entries, and counting them twice would inflate cost
-// (docs/v2-plan.md §5.3). The message row itself is always written so
-// transcripts stay complete.
+// (content_id, request_id): one assistant turn spans several JSONL lines
+// in Claude Code, and resumed/forked session files repeat earlier entries —
+// counting either twice would inflate cost (docs/v2-plan.md §5.3). The
+// message row itself is always written so transcripts stay complete.
 func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
 	res, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO messages
-			(session_id, seq, external_id, parent_external_id, role, kind,
-			 created_at, model, cwd, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, msg.Seq, msg.ExternalID, msg.ParentExternalID,
+			(session_id, seq, external_id, parent_external_id, content_id,
+			 role, kind, created_at, model, cwd, is_sidechain, content)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, msg.Seq, msg.ExternalID, msg.ParentExternalID, msg.ContentID,
 		string(msg.Role), kindText(msg.Kind), timeText(msg.CreatedAt),
-		msg.Model, msg.CWD, string(msg.Content))
+		msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content))
 	if err != nil {
 		return fmt.Errorf("inserting message seq %d: %w", msg.Seq, err)
 	}
@@ -151,7 +151,7 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		return nil
 	}
 
-	if msg.ExternalID != "" && msg.Usage.RequestID != "" {
+	if msg.ContentID != "" && msg.Usage.RequestID != "" {
 		agentID, err := w.EnsureAgent(agent)
 		if err != nil {
 			return err
@@ -161,9 +161,9 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 			SELECT 1 FROM message_usage u
 			JOIN messages m ON m.id = u.message_id
 			JOIN sessions s ON s.id = m.session_id
-			WHERE s.agent_id = ? AND m.external_id = ? AND u.request_id = ?
+			WHERE s.agent_id = ? AND m.content_id = ? AND u.request_id = ?
 			LIMIT 1`,
-			agentID, msg.ExternalID, msg.Usage.RequestID).Scan(&dup)
+			agentID, msg.ContentID, msg.Usage.RequestID).Scan(&dup)
 		switch {
 		case err == nil:
 			return nil // duplicate usage: transcript kept, tokens not double-counted
@@ -479,4 +479,11 @@ func kindText(k canon.MessageKind) string {
 		return string(canon.KindMessage)
 	}
 	return string(k)
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

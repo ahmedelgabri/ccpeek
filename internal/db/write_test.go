@@ -83,7 +83,8 @@ func TestUsageDedupeAcrossSessions(t *testing.T) {
 		ReportedCostUSD: &cost, RequestID: "req_1",
 	}
 	msg := canon.Message{
-		Seq: 0, ExternalID: "msg_abc", Role: canon.RoleAssistant,
+		Seq: 0, ExternalID: "entry-uuid-1", ContentID: "msg_abc",
+		Role:      canon.RoleAssistant,
 		CreatedAt: time.Now(), Model: "claude-sonnet-5",
 		Content: []byte(`{"role":"assistant"}`), Usage: usage,
 	}
@@ -97,20 +98,24 @@ func TestUsageDedupeAcrossSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A resumed session repeats the same assistant entry (same external
-	// message id + request id): transcript row lands, usage must not.
+	// A resumed session repeats the same assistant content (same content
+	// id + request id, different entry uuid): transcript row lands, usage
+	// must not double-count.
 	resumedID, err := w.UpsertSession(testSession("sess-b"), "h")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.InsertMessage(resumedID, "claude-code", msg); err != nil {
+	repeated := msg
+	repeated.ExternalID = "entry-uuid-2"
+	if err := w.InsertMessage(resumedID, "claude-code", repeated); err != nil {
 		t.Fatal(err)
 	}
 
-	// Different request id → separate usage.
+	// Different content + request id → separate usage.
 	fresh := msg
 	fresh.Seq = 1
-	fresh.ExternalID = "msg_def"
+	fresh.ExternalID = "entry-uuid-3"
+	fresh.ContentID = "msg_def"
 	freshUsage := *usage
 	freshUsage.RequestID = "req_2"
 	fresh.Usage = &freshUsage

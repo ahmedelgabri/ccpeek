@@ -82,17 +82,19 @@ CREATE TABLE IF NOT EXISTS messages (
 	seq INTEGER NOT NULL,
 	external_id TEXT NOT NULL DEFAULT '',
 	parent_external_id TEXT NOT NULL DEFAULT '',
+	content_id TEXT NOT NULL DEFAULT '',
 	role TEXT NOT NULL,
 	kind TEXT NOT NULL DEFAULT 'message',
 	created_at TEXT,
 	model TEXT NOT NULL DEFAULT '',
 	cwd TEXT NOT NULL DEFAULT '',
+	is_sidechain INTEGER NOT NULL DEFAULT 0,
 	content TEXT NOT NULL DEFAULT '',
 	UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model) WHERE model <> '';
-CREATE INDEX IF NOT EXISTS idx_messages_external ON messages(external_id) WHERE external_id <> '';
+CREATE INDEX IF NOT EXISTS idx_messages_content_id ON messages(content_id) WHERE content_id <> '';
 
 CREATE TABLE IF NOT EXISTS message_usage (
 	message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
