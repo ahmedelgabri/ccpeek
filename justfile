@@ -12,11 +12,14 @@ css:
 css-watch:
     pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --watch
 
-# Build the v2 SPA into internal/webui/dist (embedded via go:embed)
+# Build the v2 SPA into internal/webui/dist (embedded via go:embed).
+# .gitkeep is recreated because vite's emptyOutDir wipes it, and a fresh
+# clone needs at least one tracked file for the go:embed pattern.
 ui:
     pnpm -C ui install --frozen-lockfile
     pnpm -C ui exec tsc --noEmit
     pnpm -C ui exec vite build
+    touch internal/webui/dist/.gitkeep
 
 # Vite dev server with HMR, proxying /api to a running ccpeek server
 ui-dev:
