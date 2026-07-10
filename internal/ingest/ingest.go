@@ -57,12 +57,14 @@ type Report struct {
 // Runner executes the pipeline over a fixed adapter set.
 type Runner struct {
 	store    *db.Store
+	pricer   db.Pricer
 	adapters []agent.Adapter
 }
 
-// New builds a Runner.
-func New(store *db.Store, adapters ...agent.Adapter) *Runner {
-	return &Runner{store: store, adapters: adapters}
+// New builds a Runner. pricer prices the usage rollups regenerated after
+// each run that changed data.
+func New(store *db.Store, pricer db.Pricer, adapters ...agent.Adapter) *Runner {
+	return &Runner{store: store, pricer: pricer, adapters: adapters}
 }
 
 type resolvedRoot struct {
@@ -154,6 +156,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	if report.FilesChanged > 0 {
 		if err := r.store.RegenerateWorkspaces(ctx); err != nil {
+			return nil, r.fail(ctx, report, started, err)
+		}
+		if err := r.store.RegenerateRollups(ctx, r.pricer); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
 	}

@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 	cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 	cache_write_tokens INTEGER NOT NULL DEFAULT 0,
 	cost_usd REAL NOT NULL DEFAULT 0,
+	priced INTEGER NOT NULL DEFAULT 1, -- 0: model unknown to the pricing table
 	PRIMARY KEY (day, agent_id, workspace_id, model)
 );
 

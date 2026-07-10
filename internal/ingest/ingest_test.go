@@ -10,6 +10,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
 func fixturePath(t *testing.T, agentDir string) string {
@@ -28,7 +29,11 @@ func newRunner(t *testing.T) (*Runner, *db.Store) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return New(store, claude.New(), pi.New()), store
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatalf("pricing: %v", err)
+	}
+	return New(store, table, claude.New(), pi.New()), store
 }
 
 func fixtureOptions(t *testing.T) Options {
@@ -119,6 +124,26 @@ func TestRunOverFixtureCorpus(t *testing.T) {
 	}
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM ingest_issues`); n != 2 {
 		t.Errorf("ingest_issues = %d, want 2", n)
+	}
+
+	// Rollups regenerated with cost: priced rows for known models, an
+	// unpriced row for the sidechain's experimental model.
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM rollup_usage_daily`); n == 0 {
+		t.Fatal("no rollup rows")
+	}
+	if n := queryInt(t, store,
+		`SELECT COUNT(*) FROM rollup_usage_daily WHERE priced = 0 AND model = 'experimental-audit-model'`); n != 1 {
+		t.Errorf("unpriced rollup rows for unknown model = %d, want 1", n)
+	}
+	var cost float64
+	if err := store.DB().QueryRowContext(context.Background(),
+		`SELECT SUM(cost_usd) FROM rollup_usage_daily`).Scan(&cost); err != nil {
+		t.Fatal(err)
+	}
+	// Pi's reported costs alone sum to ~0.019; computed Claude costs add
+	// more. Exact value depends on the pricing snapshot — assert sanity.
+	if cost <= 0.019 || cost > 1.0 {
+		t.Errorf("total rollup cost = %v, want (0.019, 1.0]", cost)
 	}
 }
 
