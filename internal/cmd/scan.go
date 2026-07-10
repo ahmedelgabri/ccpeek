@@ -8,20 +8,16 @@ import (
 
 var (
 	colorReset  = "\033[0m"
-	colorRed    = "\033[31m"
 	colorGreen  = "\033[32m"
 	colorYellow = "\033[33m"
-	colorDim    = "\033[2m"
 	colorBold   = "\033[1m"
 )
 
 func init() {
 	if os.Getenv("NO_COLOR") != "" || !isTerminal(os.Stderr) {
 		colorReset = ""
-		colorRed = ""
 		colorGreen = ""
 		colorYellow = ""
-		colorDim = ""
 		colorBold = ""
 	}
 }
