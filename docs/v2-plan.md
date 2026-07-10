@@ -32,6 +32,10 @@ and research into the storage formats of other coding agents.
   `message.usage` (input/output/cache-write/cache-read/reasoning tokens) and
   `model` per message, price via an embedded LiteLLM/models.dev snapshot,
   aggregate into rollups for dashboards.
+- **Agent-friendly by design.** One typed query layer, three transports —
+  `ccpeek query --json` CLI, localhost `/api/v1`, and an MCP server — so
+  agents can ask "have I solved this before?", pull compact transcripts, or
+  check spend, with token-efficient output and stable schemas (§5.7).
 - **Full schema redesign, with automatic migration on first run.** The v2
   schema is a clean break (§5.2) — no attempt to evolve v1's tables in place.
   This is safe because the DB is a derived index: the primary migration path
@@ -138,9 +142,12 @@ Web layer (`internal/server`, `internal/web`):
 1. Support multiple coding agents behind one canonical data model.
 2. Accurate token accounting and cost estimation (per message → session →
    project → model → agent → day), including cache economics.
-3. Managed migration: no data loss, no user-state loss, trivial rollback.
-4. Fix the structural debt (startup scans, duplication, memory, pagination).
-5. Keep local-first privacy, single-binary distribution, and the existing
+3. Be a first-class data source *for* agents, not just a viewer of their
+   output: every question the UI answers is also answerable via JSON CLI,
+   local HTTP API, and MCP (§5.7).
+4. Managed migration: no data loss, no user-state loss, trivial rollback.
+5. Fix the structural debt (startup scans, duplication, memory, pagination).
+6. Keep local-first privacy, single-binary distribution, and the existing
    quality bar (unit + e2e + migration-fixture CI).
 
 **Non-goals (v2.0)**
@@ -196,6 +203,23 @@ type Adapter interface {
 //   Session, Message, Usage, ToolCall, Artifact, HistoryEntry
 ```
 
+- **Root discovery must respect each agent's own relocation mechanisms.**
+  Most agents let users move their data directory; hardcoding platform
+  defaults (v1's `~/.claude` mistake) silently indexes nothing for those
+  users. `DetectRoots()` resolves in precedence order:
+  1. explicit ccpeek config/flags (`--root claude-code=~/backup/claude`,
+     repeatable — multiple roots per agent are supported, e.g. an archive
+     copy next to the live directory);
+  2. the agent's own environment overrides, honored exactly as the agent
+     itself would: `CLAUDE_CONFIG_DIR` (Claude Code), `PI_CODING_AGENT_DIR`
+     (Pi), `CODEX_HOME` (Codex), `OPENCODE_DATA_DIR` (OpenCode — note: a
+     comma-separated *list* of directories); Cursor's override, if any, is
+     part of the P3 spike;
+  3. platform defaults (`~/.claude`, `~/.pi/agent`, `~/.codex`,
+     `~/.local/share/opencode`, `~/.cursor/chats`).
+  Resolved roots are recorded per ingest run (in `ingest_runs`) so "why is my
+  data missing" is diagnosable, and `ccpeek doctor` prints which roots were
+  detected, from which mechanism.
 - The **core pipeline** (hashing, incremental diff, transactions, diagnostics,
   FTS, secret scan) is agent-agnostic and lives once, in `internal/ingest`.
 - Each adapter is pure translation: agent format → canonical records. This is
@@ -329,13 +353,64 @@ Schema hygiene rules (fixing v1's drift):
   project's full message set).
 - Dashboard queries **< 50 ms** from rollups; every list paginated server-side.
 
+### 5.7 Agent-facing query surface (one query layer, three transports)
+
+v2 is not just a viewer *of* agent data — it is a data source *for* agents.
+A single typed query service (`internal/query`) backs every surface, so
+anything the UI can show, an agent can fetch:
+
+- **CLI**: `ccpeek query <op> --json` (NDJSON for streams). Reads the SQLite
+  DB directly — **no server required** — because shell-oriented harnesses
+  (Claude Code's Bash tool, Pi, scripts, CI) reach for a command before
+  anything else.
+- **HTTP API**: versioned JSON under `/api/v1/*` on the existing localhost
+  server, mirroring the CLI ops 1:1.
+- **MCP server**: `ccpeek mcp` (stdio) exposing the same ops as MCP tools, so
+  Claude Code / Pi / Cursor can be configured to query history natively.
+
+Core operations (same shapes on all three transports):
+
+| Op | Answers |
+|---|---|
+| `search` | "have I solved this before?" — FTS with agent/project/model/tool/date filters; snippet + deep-link URL per hit |
+| `sessions` | list/filter sessions (project, agent, date range, min cost, …) |
+| `transcript` | one session as compact markdown or structured JSON, with seq ranges and limits (token-budget friendly) |
+| `usage` | token/cost aggregates grouped by day, model, project, or agent |
+| `file-history` | which sessions touched a path, when, and what changed |
+| `commands` | shell-command history (v1's export, now also JSON) |
+| `scan` | secret findings as JSON (v1's `scan --format json`, folded into the same layer) |
+
+Design rules that make it agent-friendly rather than merely machine-readable:
+
+- **Stable, versioned payloads** — a `"schema"` field in every response;
+  additive-only evolution within a major version; golden tests on the shapes.
+- **Token-efficient defaults** — snippets not blobs, `--limit` on everything,
+  explicit `--full` to opt into large content. An agent asking "what did we
+  do about auth last month" should get back hundreds of tokens, not a
+  transcript dump.
+- **Deterministic exit codes** — 0 results found, 1 error, 2 scan findings
+  (kept from v1), 3 valid query but no matches — so scripts and agents can
+  branch without parsing.
+- **Self-describing** — `ccpeek docs --agents` prints an llms.txt-style
+  cheatsheet of ops, flags, and schemas; `ccpeek skill install` drops a
+  ready-made skill file into `~/.claude/skills` (and equivalents for other
+  harnesses) so agents discover the tool without hand-written prompts.
+- **Local-only** — the API binds 127.0.0.1 like everything else; MCP is
+  stdio. Nothing is ever exposed off-machine.
+
+Rollout: the query layer lands in P1 (the web UI is rebuilt on it anyway);
+`ccpeek query` + `/api/v1` ship with v2.0 (P2); the MCP server and skill
+packaging land in P3, when multi-agent data makes them most valuable.
+
 ---
 
 ## 6. Agent support matrix
 
 The **launch set** — Claude Code, Pi, Codex, OpenCode, Cursor — targets ~80%
 of coding-agent users. Everything below the line ships post-launch, prioritized
-by demand.
+by demand. Locations shown are platform defaults; each adapter also honors the
+agent's own relocation env vars (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
+`CODEX_HOME`, `OPENCODE_DATA_DIR`, …) per the root-discovery rules in §5.1.
 
 | Agent | Location | Format | Usage data | Phase |
 |---|---|---|---|---|
@@ -408,40 +483,46 @@ Notes:
    - `ccpeek usage --today|--month --json` CLI for scripts/statusline
      integration.
 3. **Migration** (§8) — automatic, reported, reversible.
+4. **Agent query basics** — `ccpeek query {search,sessions,transcript,usage}
+   --json` plus `/api/v1` on the local server, with stable schemas, limits,
+   and exit codes (§5.7). Cheap to ship with v2.0 because the same query
+   layer backs the UI.
 
 ### P1 — high value, fast follow
 
-4. **Conversation tree view** — render branching: Claude's `parentUuid`
+5. **Conversation tree view** — render branching: Claude's `parentUuid`
    (forks, resumed sessions) and Pi's native `id`/`parentId` tree with
    in-place branches, compactions, and labels; plus **sidechains**: link
    `Task` tool calls to their subagent transcripts (v1 drops all of this
    today).
-5. **Cost per outcome** — join usage with Claude's own `usage_facets`
+6. **Cost per outcome** — join usage with Claude's own `usage_facets`
    (outcome/helpfulness/friction): "fully_achieved sessions averaged $0.42;
    abandoned ones $1.90." No other tool can do this.
-6. **File-touch history** — per-file timeline across all sessions/agents:
+7. **File-touch history** — per-file timeline across all sessions/agents:
    "what has touched `internal/store/schema.go`, when, and what did it cost."
-7. **Budgets & alerts** — monthly budget per scope (global/project);
+8. **Budgets & alerts** — monthly budget per scope (global/project);
    dashboard banner + optional desktop notification at thresholds.
-8. **Tool analytics** — error rates per tool, retry patterns, slowest tools,
+9. **Tool analytics** — error rates per tool, retry patterns, slowest tools,
    most-edited files, command frequency (feeding the existing shell-history
    export).
-9. **Live session tail** (SSE) + fsnotify watch (§5.5).
+10. **Live session tail** (SSE) + fsnotify watch (§5.5).
 
 ### P2 — differentiators
 
-10. **MCP server mode** (`ccpeek mcp`) — expose search/usage/history as MCP
-    tools so any agent can query your past sessions ("have I solved this
-    before?"). Local stdio transport only.
-11. **Archive & rescue** — `ccpeek archive export/import` (compressed bundle
+11. **Agent surface completion** — `ccpeek mcp` (stdio MCP server over the
+    query layer) plus self-describing docs: `ccpeek docs --agents`
+    (llms.txt-style cheatsheet) and `ccpeek skill install` (drops a skill
+    file into `~/.claude/skills` and equivalents) so harnesses discover the
+    tool without hand-written prompts (§5.7).
+12. **Archive & rescue** — `ccpeek archive export/import` (compressed bundle
     of raw sources + user state) for backup and machine moves; also sets up
     the retention-rescue story for the post-launch Gemini adapter (30-day
     auto-deletion).
-12. **Cross-agent compare** — same repo, different agents: sessions, tokens,
+13. **Cross-agent compare** — same repo, different agents: sessions, tokens,
     cost, tools side-by-side.
-13. **Session replay** — timeline scrubber through a session's tool calls and
+14. **Session replay** — timeline scrubber through a session's tool calls and
     diffs.
-14. **Redaction-aware sharing** — export a session to standalone HTML/markdown
+15. **Redaction-aware sharing** — export a session to standalone HTML/markdown
     with secret-scan matches redacted by default.
 
 ### Backlog / explicitly deferred
@@ -536,10 +617,10 @@ GitHub release tarballs all provide the old version indefinitely.
 | Phase | Scope | Exit criteria | Est. |
 |---|---|---|---|
 | **P0 Foundations** | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/` | ADRs merged; go/no-go on pure-Go SQLite; schema v2 reviewed | ~1 wk |
-| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); usage capture + pricing + cost engine + rollups; migration command + compat shims; existing UI wired to new store; upgrade-path CI | all v1 e2e tests green on v2 engine; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~3–4 wk |
-| **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer + CSV/JSON; blocks view; budgets/alerts; `ccpeek usage` CLI; pagination everywhere; uPlot charts with keyboard/ARIA support | ship `v2.0.0` (beta → stable) | ~2 wk |
-| **P3 Multi-agent** | Codex, OpenCode, and Cursor adapters (spike → fixtures → implement; Cursor spike includes the SQLite `SourceRef` path); agent dimension in all UI filters; unified timeline; cross-agent compare | launch set complete: 5 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
-| **P4 Live & power** | fsnotify + SSE live tail; conversation tree + sidechains; MCP server; file-touch history; archive/rescue; replay; redacted sharing | rolling `v2.x` releases | ongoing |
+| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); root discovery incl. agent env overrides (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, …); usage capture + pricing + cost engine + rollups; typed `internal/query` layer (§5.7); migration command + compat shims; existing UI rebuilt on the query layer; upgrade-path CI | all v1 e2e tests green on v2 engine; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~3–4 wk |
+| **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer + CSV/JSON; blocks view; budgets/alerts; agent surface v1: `ccpeek query` + `ccpeek usage` JSON CLIs + localhost `/api/v1` (§5.7); pagination everywhere; uPlot charts with keyboard/ARIA support | ship `v2.0.0` (beta → stable) | ~2 wk |
+| **P3 Multi-agent** | Codex, OpenCode, and Cursor adapters (spike → fixtures → implement; Cursor spike includes the SQLite `SourceRef` path); agent dimension in all UI filters; unified timeline; cross-agent compare; MCP server + skill packaging over the query layer (§5.7) | launch set complete: 5 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
+| **P4 Live & power** | fsnotify + SSE live tail; conversation tree + sidechains; file-touch history; archive/rescue; replay; redacted sharing | rolling `v2.x` releases | ongoing |
 
 Parallel track — **v1 quick wins** (ship as v1.10.x while P0/P1 run, all
 low-risk):
@@ -556,7 +637,7 @@ low-risk):
 | Risk | Mitigation |
 |---|---|
 | modernc.org/sqlite slower or FTS5 gaps | P0 benchmark gate; fallback = keep CGO driver (plan otherwise unchanged; driver stays behind sqlx) |
-| Other agents' formats change without notice (none are documented/stable) | version-tolerant parsers; per-version fixture corpus; ingest diagnostics surface unknown shapes as warnings, never hard failures |
+| Other agents' formats change without notice (only Pi's is documented/versioned) | version-tolerant parsers; per-version fixture corpus; ingest diagnostics surface unknown shapes as warnings, never hard failures |
 | Usage double-counting (resumed/forked sessions, cumulative counters) | dedupe by (external message id, request id); delta derivation with reset detection; unit fixtures for resume/fork cases |
 | Pricing wrong or stale | embedded snapshot + `pricing update`; unknown models shown as "unpriced," never $0; costs labeled as estimates for subscription users |
 | Rewrite stalls / scope creep | phases each ship; v1 stays maintained (quick-wins track) until v2.0 stable; P1 exit = v1 e2e suite green on the new engine |
