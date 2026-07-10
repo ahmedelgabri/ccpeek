@@ -4,6 +4,14 @@ Explore your Claude Code history. A local web app that indexes and browses your
 Claude Code conversations, plans, todos, tasks, shell snapshots, file history,
 paste cache, usage data, memories, and commands.
 
+> **v2 preview.** This branch also ships the v2 engine: a session-centric
+> index of **Claude Code, Pi, Codex CLI, OpenCode, and Cursor** with real
+> token usage and estimated cost, an agent-facing query surface
+> (`ccpeek query`, `/api/v1`, `ccpeek mcp`), live updates, and a new UI at
+> `/v2/`. It builds itself automatically on first run (your v1 database is
+> never modified) — see [docs/v2-plan.md](docs/v2-plan.md) and the
+> [v2 section](#v2-preview) below.
+
 https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
 
 ## Installation
@@ -141,6 +149,41 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 - **Usage Data** - Session usage insights and reports
 - **Memories** - Project-level MEMORY.md context files
 - **Secret Scan** - Detects leaked secrets across all indexed data
+
+## v2 preview
+
+The v2 engine indexes every supported agent into one session-centric
+database (`ccpeek2.db`, alongside the v1 file) with real token usage and
+estimated cost. It initializes automatically on first use: full ingest of
+detected agent roots plus import of v1-only data (sessions whose source
+files were deleted, scan-ignore flags). Rollback is running the old
+version — the v1 database is opened read-only and never modified.
+
+```sh
+# Query as JSON (no server needed; exit 3 = valid query, no matches)
+ccpeek query sessions --agent codex --since 2026-07-01
+ccpeek query session claude-code <session-id>
+ccpeek query transcript pi <session-id> --limit 50
+ccpeek query usage --group model
+ccpeek query search "rate limiting"
+
+# Serve: v1 UI at /, v2 UI at /v2/, JSON API at /api/v1
+# (--watch adds fsnotify-driven re-indexing + SSE live updates)
+ccpeek --watch
+
+# MCP server over stdio (register: claude mcp add ccpeek -- ccpeek mcp)
+ccpeek mcp
+
+# Secret-scan every agent's history (not just Claude's)
+ccpeek scan --v2
+
+# Cheatsheet for agents/scripts
+ccpeek docs --agents
+```
+
+Agent data roots resolve as: explicit config > the agent's own env
+override (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `CODEX_HOME`,
+`OPENCODE_DATA_DIR`) > platform defaults.
 
 ## Development
 
