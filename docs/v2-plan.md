@@ -36,6 +36,13 @@ and research into the storage formats of other coding agents.
   `ccpeek query --json` CLI, localhost `/api/v1`, and an MCP server — so
   agents can ask "have I solved this before?", pull compact transcripts, or
   check spend, with token-efficient output and stable schemas (§5.7).
+- **Rich UI as a priority: embedded SPA.** The web app becomes a
+  Vite + React + TypeScript SPA served from `go:embed`, consuming the same
+  `/api/v1` the agents use — full interactivity (virtualized transcripts,
+  cross-filtered cost analytics, live-updating dashboards, tree views,
+  command palette) with **zero change to the single-binary distribution**;
+  Node stays a build-time-only dependency, as it already is for Tailwind.
+  Astro (incl. v7) was evaluated and rejected for the app UI (§4).
 - **Full schema redesign, with automatic migration on first run.** The v2
   schema is a clean break (§5.2) — no attempt to evolve v1's tables in place.
   This is safe because the DB is a derived index: the primary migration path
@@ -67,7 +74,11 @@ power features.** Each phase ships.
   tap auto-update, Nix flake.
 - **Local-first privacy** — nothing leaves the machine. Non-negotiable in v2.
 - **Server-rendered UI with tiny JS** — fast, dependency-light, CSP-strict.
-  The pattern is right; specific pages need work (see gaps).
+  It served v1 well, but v2 replaces it with an embedded SPA because UI
+  richness is a stated v2 priority (§4). The properties worth preserving —
+  speed, strict CSP, zero runtime dependencies, keyboard-first UX — carry
+  over as hard requirements on the new stack rather than reasons to keep the
+  old one.
 
 ### 2.2 Confirmed bugs and design debt
 
@@ -162,22 +173,64 @@ Web layer (`internal/server`, `internal/web`):
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| **Go (rewrite internals)** | Single static binary; existing release infra (Homebrew/Nix/4-arch) and test culture carry over; gitleaks is a Go library; maintainer fluency; pure-Go SQLite removes CGO | UI iteration slower than JS SPA ecosystems | **Recommended** |
+| **Go (rewrite internals)** | Single static binary; existing release infra (Homebrew/Nix/4-arch) and test culture carry over; gitleaks is a Go library; maintainer fluency; pure-Go SQLite removes CGO | Weak native UI ecosystem — solved by pairing it with a TypeScript SPA over `/api/v1` (below), not by leaving Go | **Recommended** (engine) |
 | TypeScript (Bun/Node) | Richest UI ecosystem; fastest analytics-UI iteration; ccusage precedent | Distribution regresses (large `bun compile` binaries or runtime dependency); no gitleaks equivalent — secret scanning would be lost or shelled out; whole release pipeline rebuilt | No |
 | Rust | Fast, single binary, no CGO | Slowest velocity; total rewrite incl. scanning; perf bottleneck is SQLite/IO anyway | No |
 
-Within Go, three concrete changes:
+Within Go, two concrete engine changes:
 
 - **`modernc.org/sqlite`** (pure Go, FTS5 included) replaces
   `mattn/go-sqlite3` + CGO. Phase 0 includes a benchmark gate (ingest + FTS
   query perf on a large real `~/.claude`); fallback is staying on CGO with the
   rest of the plan unchanged.
-- **UI stays server-rendered** (`html/template`, Tailwind v4) with progressive
-  enhancement. Add: SSE for live updates, a small vendored charting library
-  (uPlot — ~40 kB, ideal for time series) instead of hand-rolled SVG, and
-  pagination everywhere. No SPA framework; the analytics pages are the only
-  chart-heavy surface and uPlot covers them.
 - **Keep cobra, goldmark, chroma, gitleaks, difflib.** They earn their keep.
+
+### 4.1 Web UI: embedded SPA (UI richness is a v2 priority)
+
+UI richness is a stated priority for v2. The interactions that implies —
+virtualized transcripts for huge sessions, cross-filtered cost analytics with
+brush/zoom, live-updating dashboards, conversation-tree visualization, session
+replay, a command palette — are past what server templates + vanilla JS can
+carry. v2 therefore replaces `html/template` with a **single-page app served
+from `go:embed`**:
+
+- **Stack**: Vite + **React + TypeScript**; TanStack Router (type-safe routes
+  preserving v1's URL scheme) + TanStack Query (data fetching, with SSE-driven
+  cache invalidation for live updates everywhere); Tailwind v4 (already in the
+  build); shadcn/ui on Radix primitives (accessible components — fixes v1's
+  ARIA/keyboard gaps by construction); **ECharts** for analytics (brush/zoom,
+  heatmaps, treemaps, timelines in one dependency — bundle size is a non-issue
+  for a localhost app whose assets ship embedded anyway).
+- **Distribution is unchanged.** `vite build` output is embedded via
+  `go:embed`, exactly like today's CSS. Single binary; Node/pnpm remain
+  build-time-only (they already are, for Tailwind). Nix/Homebrew/release
+  pipelines keep working with a swapped build step.
+- **The Go server slims** to engine + `/api/v1` + static assets. The SPA is
+  `/api/v1`'s first and heaviest client — which keeps the agent-facing API
+  (§5.7) complete and battle-tested by construction.
+- **Server-side rendering of rich content stays in Go**: markdown (goldmark),
+  code highlighting (chroma), and diffs (difflib) are returned as sanitized
+  HTML fragments in API payloads — one hardened XSS path, reused by UI and
+  agent transcript export alike.
+- **Carried over as requirements**: strict CSP (all assets self-hosted),
+  v1's keyboard-first UX (`j`/`k`/`/`, plus a proper ⌘K palette), URL
+  compatibility (§8.2), Playwright e2e (port 4322 setup reused; specs ported).
+- **Trade-off accepted**: the no-JS fallback goes away. On localhost, with
+  code-splitting and prefetching, perceived speed is preserved.
+
+**Considered and rejected — Astro (incl. v7).** Its SSR mode needs a JS
+runtime at runtime, breaking single-binary distribution; static output cannot
+serve a fully dynamic data app (every ccpeek page is a live SQLite query, and
+watch mode/live tail invalidate constantly); and its islands model optimizes
+for mostly-static content — the opposite of this app. A plain SPA over
+`/api/v1` is the honest fit. Astro remains a great choice for a future
+project docs/marketing site, which is exactly its sweet spot.
+
+**Considered — Solid or Svelte** instead of React: lighter and faster, both
+viable. React is recommended for ecosystem depth (TanStack, Radix/shadcn,
+every charting library) and agent-assisted development velocity on a
+solo-maintainer project. Final call is a P0 decision (§11); the `/api/v1`
+contract contains the blast radius either way.
 
 Naming: `ccpeek` stays the binary/brand ("**c**oding-**c**LI peek" once
 multi-agent lands). A rename would burn Homebrew/Nix continuity for zero
@@ -239,7 +292,7 @@ user state live in disjoint table sets** — rebuild may drop the former, never
 the latter; (c) natural keys (agent slug + external IDs) everywhere user state
 or cross-references attach, so they survive re-ingest.
 
-```
+```sql
 -- dimensions
 agents(id, slug UNIQUE, display_name)
 workspaces(id, canonical_path UNIQUE, display_name)        -- v1 "projects", agent-neutral
@@ -340,8 +393,9 @@ Schema hygiene rules (fixing v1's drift):
 
 - Replace the 30 s ticker with **fsnotify** watchers per adapter root
   (debounced), falling back to polling where fsnotify is unreliable.
-- **SSE endpoint** (`/events`) pushes "data changed" to the browser; pages
-  refresh their data (list pages re-fetch, dashboard tiles update).
+- **SSE endpoint** (`/events`) feeds TanStack Query cache invalidation in the
+  SPA — every open view updates live (lists, dashboard tiles, transcripts),
+  not just a dedicated tail page.
 - Headline feature: **live session tail** — open a running session and watch
   messages/tool calls stream in. This is the "peek" the name promises.
 
@@ -364,7 +418,9 @@ anything the UI can show, an agent can fetch:
   (Claude Code's Bash tool, Pi, scripts, CI) reach for a command before
   anything else.
 - **HTTP API**: versioned JSON under `/api/v1/*` on the existing localhost
-  server, mirroring the CLI ops 1:1.
+  server, mirroring the CLI ops 1:1. The v2 SPA (§4.1) is this API's first
+  client, so the agent-facing surface stays complete and battle-tested by
+  construction — if the UI can show it, an agent can query it.
 - **MCP server**: `ccpeek mcp` (stdio) exposing the same ops as MCP tools, so
   Claude Code / Pi / Cursor can be configured to query history natively.
 
@@ -467,7 +523,9 @@ Notes:
 ### P0 — must-have for v2.0 (parity + the point of v2)
 
 1. **Everything v1 does today** (all 12 Claude sources, scan, exports,
-   ingest diagnostics, compare, search) on the new engine.
+   ingest diagnostics, compare, search) on the new engine — rebuilt as the
+   v2 SPA with URL-compatible routes, virtualized transcripts for large
+   sessions, v1's keyboard-first UX, and a ⌘K command palette.
 2. **Real tokens & cost**
    - Session header: real tokens by type (input/output/cache-w/cache-r),
      cost, model mix.
@@ -560,7 +618,7 @@ if absent, it runs the full flow below with progress output before serving.
 No flag, no prompt, no manual step. The `ccpeek migrate` command exists only
 to re-run or troubleshoot it.
 
-```
+```text
 1. v2 opens NEW file: $XDG_DATA_HOME/ccpeek/ccpeek2.db   (v1 ccpeek.db untouched)
 2. Full ingest of all detected agent roots with the v2 engine
 3. If ccpeek.db (v1) exists:
@@ -616,9 +674,9 @@ GitHub release tarballs all provide the old version indefinitely.
 
 | Phase | Scope | Exit criteria | Est. |
 |---|---|---|---|
-| **P0 Foundations** | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/` | ADRs merged; go/no-go on pure-Go SQLite; schema v2 reviewed | ~1 wk |
-| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); root discovery incl. agent env overrides (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, …); usage capture + pricing + cost engine + rollups; typed `internal/query` layer (§5.7); migration command + compat shims; existing UI rebuilt on the query layer; upgrade-path CI | all v1 e2e tests green on v2 engine; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~3–4 wk |
-| **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer + CSV/JSON; blocks view; budgets/alerts; agent surface v1: `ccpeek query` + `ccpeek usage` JSON CLIs + localhost `/api/v1` (§5.7); pagination everywhere; uPlot charts with keyboard/ARIA support | ship `v2.0.0` (beta → stable) | ~2 wk |
+| **P0 Foundations** | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); SPA scaffold spike (React-vs-Solid call, Vite dev proxy → Go API workflow, go:embed pipeline); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/` | ADRs merged; go/no-go on pure-Go SQLite; SPA stack locked; schema v2 reviewed | ~1–2 wk |
+| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); root discovery incl. agent env overrides (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, …); usage capture + pricing + cost engine + rollups; typed `internal/query` layer + `/api/v1` (§5.7); migration command + compat shims; **SPA parity build** (all v1 pages as React routes over the API, virtualized transcripts, keyboard nav); upgrade-path CI | all v1 e2e specs ported and green against the SPA; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~4–5 wk |
+| **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer with cross-filtering + brush/zoom (ECharts) + CSV/JSON; blocks view; budgets/alerts; agent surface v1: `ccpeek query` + `ccpeek usage` JSON CLIs (§5.7); command palette polish; pagination/virtualization everywhere | ship `v2.0.0` (beta → stable) | ~2–3 wk |
 | **P3 Multi-agent** | Codex, OpenCode, and Cursor adapters (spike → fixtures → implement; Cursor spike includes the SQLite `SourceRef` path); agent dimension in all UI filters; unified timeline; cross-agent compare; MCP server + skill packaging over the query layer (§5.7) | launch set complete: 5 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
 | **P4 Live & power** | fsnotify + SSE live tail; conversation tree + sidechains; file-touch history; archive/rescue; replay; redacted sharing | rolling `v2.x` releases | ongoing |
 
@@ -641,6 +699,8 @@ low-risk):
 | Usage double-counting (resumed/forked sessions, cumulative counters) | dedupe by (external message id, request id); delta derivation with reset detection; unit fixtures for resume/fork cases |
 | Pricing wrong or stale | embedded snapshot + `pricing update`; unknown models shown as "unpriced," never $0; costs labeled as estimates for subscription users |
 | Rewrite stalls / scope creep | phases each ship; v1 stays maintained (quick-wins track) until v2.0 stable; P1 exit = v1 e2e suite green on the new engine |
+| SPA rewrite balloons P1 | parity pages first (lists/tables are fast in a component system), analytics deferred to P2; ported e2e suite is the objective gate; P0 spike de-risks the scaffold |
+| SPA regresses v1's speed/lightness | localhost latency ≈ 0; code-splitting + prefetch + virtualization; strict CSP and embedded assets kept; perceived-perf checks in e2e |
 | Migration bugs lose user data | new DB file (v1 untouched); upgrade-path CI; natural-key imports; beta soak before tap update |
 | Large histories (multi-GB) strain SQLite/UI | per-file transactions, rollups, server-side pagination, FTS-only text storage; optional content compression later |
 
@@ -649,9 +709,12 @@ low-risk):
 ## 11. Open questions
 
 1. **Rename?** Recommendation: keep `ccpeek` through v2; revisit after P3.
-2. **Secret-scan scope**: scan non-Claude agent logs by default (recommended)
+2. **SPA framework**: React + TanStack (recommended: ecosystem depth,
+   agent-assisted dev velocity) vs Solid/Svelte (lighter, faster). Decide in
+   the P0 spike; the `/api/v1` contract contains the blast radius.
+3. **Secret-scan scope**: scan non-Claude agent logs by default (recommended)
    or opt-in per agent?
-3. **Subscription cost framing**: show `$` estimates by default for
+4. **Subscription cost framing**: show `$` estimates by default for
    Pro/Max-only users, or default to token counts with `$` opt-in?
-4. **Post-launch adapter order**: Gemini CLI is penciled in first (retention
+5. **Post-launch adapter order**: Gemini CLI is penciled in first (retention
    rescue), then Droid/Amp — confirm against issue feedback after v2.1.
