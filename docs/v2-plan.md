@@ -21,20 +21,25 @@ and research into the storage formats of other coding agents.
   simplifies the 4-arch release matrix (no more cross-gcc), enables plain
   `go install`, and removes the `sqlite_fts5` build-tag foot-gun.
 - **v2 core = canonical agent-neutral data model + adapter framework.**
-  Claude Code and Pi are the two first-class adapters built in Phase 1 —
-  implementing the framework against two very different agents from day one is
-  what proves the abstraction. Codex CLI, Gemini CLI, and OpenCode follow.
-  Every entity gets an `agent` dimension.
+  The launch set is five agents chosen to cover ~80% of coding-agent users:
+  **Claude Code, Pi, Codex CLI, OpenCode, and Cursor**. Claude Code and Pi are
+  built in Phase 1 — implementing the framework against two very different
+  agents from day one is what proves the abstraction — with Codex, OpenCode,
+  and Cursor completing the set in Phase 3. Gemini CLI, Droid, Amp, and others
+  follow post-launch, driven by demand. Every entity gets an `agent`
+  dimension.
 - **Real token + cost accounting** becomes a first-class subsystem: capture
   `message.usage` (input/output/cache-write/cache-read/reasoning tokens) and
   `model` per message, price via an embedded LiteLLM/models.dev snapshot,
   aggregate into rollups for dashboards.
-- **Migration is managed, not assumed.** The DB is a derived index, so the
-  primary migration path is re-ingest from source — plus an explicit import
-  step for the two things that are *not* re-derivable: rows whose source files
-  were deleted (v1's retention feature) and user state (scan ignore flags).
-  v2 writes a new DB file; v1's DB is never touched, so rollback is "run the
-  old binary."
+- **Full schema redesign, with automatic migration on first run.** The v2
+  schema is a clean break (§5.2) — no attempt to evolve v1's tables in place.
+  This is safe because the DB is a derived index: the primary migration path
+  is re-ingest from source, plus an import step for the two things that are
+  *not* re-derivable: rows whose source files were deleted (v1's retention
+  feature) and user state (scan ignore flags). The entire flow runs
+  **automatically on the first v2 start — zero manual steps**. v2 writes a
+  new DB file; v1's DB is never touched, so rollback is "run the old binary."
 
 Phases: **P0 foundations → P1 core engine + Claude & Pi adapters + cost +
 migration → P2 cost/analytics UI → P3 more agent adapters → P4 live mode &
@@ -180,7 +185,7 @@ functional gain. Revisit after Phase 3 if desired.
 ```go
 // internal/agent
 type Adapter interface {
-    Slug() string                          // "claude-code", "pi", "codex", "gemini", "opencode"
+    Slug() string                          // "claude-code", "pi", "codex", "opencode", "cursor"
     DetectRoots() []Root                   // default dirs + flag/env overrides
     Discover(root Root) ([]SourceRef, error) // files/dirs + content hashes
     Parse(src SourceRef, sink RecordSink) error // emit canonical records
@@ -269,8 +274,9 @@ Schema hygiene rules (fixing v1's drift):
 | Claude Code | `message.usage` + `message.model` on assistant JSONL lines | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `service_tier`; older versions also wrote `costUSD` |
 | Pi | `usage` on assistant message entries | `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens` **plus a pre-computed `cost` breakdown** (`cost.input/output/cacheRead/cacheWrite/total`); model tracked via `model_change` entries |
 | Codex CLI | `token_count` events (cumulative) | subtract previous totals → per-turn input / cached input / output / reasoning; logs before 2025-09 have none |
-| Gemini CLI | session checkpoint JSON | per-turn token stats incl. cached |
 | OpenCode | per-message JSON | token + cost fields present |
+| Cursor CLI | hex-encoded JSON blobs in per-session `store.db` | usage metadata incl. input/output/cache tokens and cost — confirm exact field names in the P3 spike |
+| Gemini CLI (post-launch) | session checkpoint JSON | per-turn token stats incl. cached |
 
 **Correctness details that v1-style naive parsing would get wrong:**
 
@@ -327,16 +333,21 @@ Schema hygiene rules (fixing v1's drift):
 
 ## 6. Agent support matrix
 
+The **launch set** — Claude Code, Pi, Codex, OpenCode, Cursor — targets ~80%
+of coding-agent users. Everything below the line ships post-launch, prioritized
+by demand.
+
 | Agent | Location | Format | Usage data | Phase |
 |---|---|---|---|---|
 | Claude Code | `~/.claude` (12 source types) | JSONL + sidecars | full (`message.usage`) | P1 (adapter = v1 port) |
 | Pi | `~/.pi/agent/sessions/--<cwd>--/<ts>_<uuid>.jsonl` | JSONL, typed entries, **documented + versioned spec** | full tokens **+ pre-computed cost** | P1 (second first-class adapter) |
 | OpenAI Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL event stream | cumulative `token_count` | P3 |
-| Gemini CLI | `~/.gemini/tmp/<hash>/chats/*.json` | JSON checkpoints | per-turn tokens | P3 |
 | OpenCode | `~/.local/share/opencode/storage/{session,message}` | JSON per message | tokens + cost | P3 |
-| Factory Droid | `~/.factory/sessions` | JSONL per workspace | verify in spike | P3 stretch |
-| Amp | file-based threads | verify in spike | verify in spike | P3 stretch |
-| Cursor CLI | `~/.cursor/chats` (SQLite) | SQLite | verify in spike | P4 |
+| Cursor CLI | `~/.cursor/chats/{ws-hash}/{session-uuid}/store.db` | SQLite per session (`meta` + `blobs`, hex-encoded JSON) | usage metadata present; verify fields in spike | P3 |
+| — post-launch — | | | | |
+| Gemini CLI | `~/.gemini/tmp/<hash>/chats/*.json` | JSON checkpoints | per-turn tokens | backlog (first in line) |
+| Factory Droid | `~/.factory/sessions` | JSONL per workspace | verify in spike | backlog |
+| Amp | file-based threads | verify in spike | verify in spike | backlog |
 | Aider | `.aider.chat.history.md` (per repo) | markdown | weak | backlog |
 
 Notes:
@@ -359,10 +370,18 @@ Notes:
   agent versions into `testdata/<agent>/`, then implement against fixtures.
   These formats are unstable and undocumented — version-tolerant parsing +
   ingest diagnostics (which v1 already has) are the mitigation.
+- **Cursor is the only non-file-based source** in the launch set: one SQLite
+  DB per session with hex-encoded (not encrypted) JSON in `meta`/`blobs`
+  tables. It still fits the adapter model — a `SourceRef` is the per-session
+  `store.db` file and change detection hashes it like any other file — but
+  P0 must design `SourceRef`/`Parse` so a source can be "a database to query,"
+  not only "a text file to scan." Designing for this early keeps the door
+  open for other SQLite-based agents later.
 - **Gemini CLI deletes sessions after 30 days by default** — ccpeek ingesting
-  them becomes a permanent archive. Market this: "your agent history outlives
-  the agent's retention policy." Same argument applies to v1's
-  deleted-source retention generally.
+  them becomes a permanent archive, which is why Gemini is first in line
+  post-launch. Market this: "your agent history outlives the agent's
+  retention policy." Same argument applies to v1's deleted-source retention
+  generally.
 - Secret scanning runs across **all** agents' logs — a genuinely new
   capability (nothing else scans your Codex/Gemini history for leaked keys).
 
@@ -415,8 +434,9 @@ Notes:
     tools so any agent can query your past sessions ("have I solved this
     before?"). Local stdio transport only.
 11. **Archive & rescue** — `ccpeek archive export/import` (compressed bundle
-    of raw sources + user state) for backup and machine moves; positions the
-    Gemini 30-day rescue story.
+    of raw sources + user state) for backup and machine moves; also sets up
+    the retention-rescue story for the post-launch Gemini adapter (30-day
+    auto-deletion).
 12. **Cross-agent compare** — same repo, different agents: sessions, tokens,
     cost, tools side-by-side.
 13. **Session replay** — timeline scrubber through a session's tool calls and
@@ -426,9 +446,10 @@ Notes:
 
 ### Backlog / explicitly deferred
 
-- Semantic search (local embeddings, opt-in) · TUI (`ccpeek top` live cost
-  meter) · git commit correlation · multi-machine merge · Aider/Cursor
-  adapters (pending spikes).
+- Post-launch adapters: Gemini CLI (first in line — retention-rescue story),
+  Factory Droid, Amp, Aider · semantic search (local embeddings, opt-in) ·
+  TUI (`ccpeek top` live cost meter) · git commit correlation · multi-machine
+  merge.
 
 ---
 
@@ -439,9 +460,13 @@ running the old version.**
 
 ### 8.1 Data migration
 
-Principle: the DB is a derived index of `~/.claude`; the primary migration is
-**re-ingest from source** with the v2 engine. Exactly two categories are not
-re-derivable and are **imported from the v1 DB**:
+The v2 schema is a **clean break** — a full redesign per §5.2, with no
+in-place evolution of v1 tables. That freedom is affordable because migration
+is automatic and total.
+
+Principle: the DB is a derived index of the agents' source directories; the
+primary migration is **re-ingest from source** with the v2 engine. Exactly two
+categories are not re-derivable and are **imported from the v1 DB**:
 
 1. **Retained rows whose source files no longer exist on disk** (v1's
    deleted-source retention). Imported and tagged `origin='imported-v1'`.
@@ -449,11 +474,14 @@ re-derivable and are **imported from the v1 DB**:
    `user_annotations` keyed by natural keys (rule_id + source natural key),
    not rowids, so they re-attach correctly after re-ingest.
 
-Flow on first v2 start (also available explicitly as `ccpeek migrate`):
+The migration **triggers automatically**: on startup, v2 looks for its own DB;
+if absent, it runs the full flow below with progress output before serving.
+No flag, no prompt, no manual step. The `ccpeek migrate` command exists only
+to re-run or troubleshoot it.
 
 ```
 1. v2 opens NEW file: $XDG_DATA_HOME/ccpeek/ccpeek2.db   (v1 ccpeek.db untouched)
-2. Full ingest of ~/.claude with the v2 engine
+2. Full ingest of all detected agent roots with the v2 engine
 3. If ccpeek.db (v1) exists:
    a. read-only ATTACH
    b. import sessions/artifacts whose source_path is absent on disk → origin='imported-v1'
@@ -462,6 +490,14 @@ Flow on first v2 start (also available explicitly as `ccpeek migrate`):
    anything skipped and why — reuses ingest_runs/ingest_issues)
 5. v1 DB left in place. `ccpeek migrate cleanup` deletes it later, on request.
 ```
+
+The same guarantee holds **within v2.x**: later schema changes ship as
+sequential versioned migrations applied automatically at open (with the
+fixture-drift CI carried over from v1) — the schema stays free to evolve
+without ever asking the user to do anything. The v1→v2 clean break is a
+one-time exception justified by the re-ingest path; within v2, migrations are
+additive and the "always re-run initialSchema + backfill at open" anti-patterns
+from v1 (§2.2 items 2–3) are explicitly banned.
 
 Rollback: run the previous binary — its DB was never modified. Homebrew
 (`brew install ccpeek@1` formula kept in the tap), Nix (pin the flake rev), and
@@ -502,7 +538,7 @@ GitHub release tarballs all provide the old version indefinitely.
 | **P0 Foundations** | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/` | ADRs merged; go/no-go on pure-Go SQLite; schema v2 reviewed | ~1 wk |
 | **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); usage capture + pricing + cost engine + rollups; migration command + compat shims; existing UI wired to new store; upgrade-path CI | all v1 e2e tests green on v2 engine; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~3–4 wk |
 | **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer + CSV/JSON; blocks view; budgets/alerts; `ccpeek usage` CLI; pagination everywhere; uPlot charts with keyboard/ARIA support | ship `v2.0.0` (beta → stable) | ~2 wk |
-| **P3 Multi-agent** | Codex, Gemini, OpenCode adapters (spike → fixtures → implement); agent dimension in all UI filters; unified timeline; cross-agent compare; Droid/Amp stretch | 3 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
+| **P3 Multi-agent** | Codex, OpenCode, and Cursor adapters (spike → fixtures → implement; Cursor spike includes the SQLite `SourceRef` path); agent dimension in all UI filters; unified timeline; cross-agent compare | launch set complete: 5 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
 | **P4 Live & power** | fsnotify + SSE live tail; conversation tree + sidechains; MCP server; file-touch history; archive/rescue; replay; redacted sharing | rolling `v2.x` releases | ongoing |
 
 Parallel track — **v1 quick wins** (ship as v1.10.x while P0/P1 run, all
@@ -536,5 +572,5 @@ low-risk):
    or opt-in per agent?
 3. **Subscription cost framing**: show `$` estimates by default for
    Pro/Max-only users, or default to token counts with `$` opt-in?
-4. **Droid/Amp/Cursor priority**: which stretch adapter matters most to actual
-   users? Decide from issue feedback after v2.0.
+4. **Post-launch adapter order**: Gemini CLI is penciled in first (retention
+   rescue), then Droid/Amp — confirm against issue feedback after v2.1.
