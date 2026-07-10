@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/api"
 	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
@@ -197,7 +199,18 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return server.ListenAndServe(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second, !skipScan)
+	// Transition wiring: open the v2 engine (auto-building/migrating on
+	// first run) and mount its /api/v1 alongside the v1 UI, so agents get
+	// the query surface before the UI flips to the SPA.
+	var apiHandler http.Handler
+	if eng, err := openV2Engine(ctx, cmd, false, os.Stderr); err != nil {
+		logf("WARNING: v2 engine unavailable, /api/v1 disabled: %v\n", err)
+	} else {
+		defer eng.Close()
+		apiHandler = api.Handler(eng.query)
+	}
+
+	return server.ListenAndServeWithAPI(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second, !skipScan, apiHandler)
 }
 
 func latestIngestRunID(ctx context.Context, db *store.Store) (int64, error) {

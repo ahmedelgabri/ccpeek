@@ -20,6 +20,12 @@ var logColors = os.Getenv("NO_COLOR") == "" && isTerminalFd(os.Stderr)
 
 // ListenAndServe starts the HTTP server.
 func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool) error {
+	return ListenAndServeWithAPI(ctx, addr, db, claudeDir, watch, watchInterval, rescanOnWatch, nil)
+}
+
+// ListenAndServeWithAPI additionally mounts a JSON API (the v2 /api/v1
+// surface) alongside the v1 UI during the transition; api may be nil.
+func ListenAndServeWithAPI(ctx context.Context, addr string, db *store.Store, claudeDir string, watch bool, watchInterval time.Duration, rescanOnWatch bool, api http.Handler) error {
 	tmpl, err := loadTemplates(web.FS)
 	if err != nil {
 		return fmt.Errorf("loading templates: %w", err)
@@ -36,9 +42,17 @@ func ListenAndServe(ctx context.Context, addr string, db *store.Store, claudeDir
 		go watchAndReindex(ctx, claudeDir, db, watchInterval, rescanOnWatch)
 	}
 
+	var handler http.Handler = securityHeaders(registerRoutes(h, staticFS))
+	if api != nil {
+		outer := http.NewServeMux()
+		outer.Handle("/api/", api)
+		outer.Handle("/", handler)
+		handler = outer
+	}
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           requestLogger(securityHeaders(registerRoutes(h, staticFS))),
+		Handler:           requestLogger(handler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
