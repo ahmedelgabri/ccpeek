@@ -196,7 +196,11 @@ export interface Budget {
   month: string;
 }
 
-async function send<T>(method: string, path: string, body: unknown): Promise<T> {
+async function send<T>(
+  method: string,
+  path: string,
+  body: unknown,
+): Promise<T> {
   const res = await fetch(`/api/v1${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
