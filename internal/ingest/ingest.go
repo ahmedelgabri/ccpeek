@@ -28,6 +28,10 @@ import (
 type Options struct {
 	// Rebuild drops all derived data first (user state survives).
 	Rebuild bool
+	// Prune removes rows whose source files no longer exist on disk.
+	// Default is retention (deleted sources keep their data — that history
+	// may exist nowhere else).
+	Prune bool
 	// ConfigRoots are explicit --root overrides per agent; they take
 	// precedence over the agent's own env overrides and defaults.
 	ConfigRoots map[canon.AgentSlug][]string
@@ -146,6 +150,19 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 					Detail: err.Error(),
 				})
 			}
+		}
+	}
+
+	if opts.Prune {
+		pruned, err := r.store.PruneMissingSources(ctx, func(path string) bool {
+			_, err := os.Stat(path)
+			return err == nil
+		})
+		if err != nil {
+			return nil, r.fail(ctx, report, started, err)
+		}
+		if pruned > 0 {
+			report.FilesChanged += pruned // force facet/rollup regeneration
 		}
 	}
 

@@ -522,3 +522,57 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// PruneMissingSources removes derived rows whose recorded source no longer
+// exists on disk (v1's --prune semantics). exists is injectable for tests.
+// Imported-v1 rows are exempt: their sources were already gone at import
+// time — that retention is the point.
+func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string) bool) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path FROM source_files`)
+	if err != nil {
+		return 0, err
+	}
+	var stale []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if !exists(p) {
+			stale = append(stale, p)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(stale) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	for _, p := range stale {
+		for _, q := range []string{
+			`DELETE FROM search_docs WHERE session_id IN
+			   (SELECT id FROM sessions WHERE source_path = ? AND origin = 'ingest')`,
+			`DELETE FROM sessions WHERE source_path = ? AND origin = 'ingest'`,
+			`DELETE FROM search_docs WHERE artifact_id IN
+			   (SELECT id FROM artifacts WHERE source_path = ?)`,
+			`DELETE FROM artifacts WHERE source_path = ?`,
+			`DELETE FROM source_files WHERE path = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, p); err != nil {
+				return 0, fmt.Errorf("pruning %s: %w", p, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(stale), nil
+}
