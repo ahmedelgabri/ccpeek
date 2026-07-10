@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #0b0e14;
+  --color-surface-1: #11151f;
+  --color-surface-2: #1a2030;
+  --color-edge: #232b3d;
+  --color-ink: #d6dbe7;
+  --color-ink-dim: #8b93a7;
+  --color-accent: #7aa2f7;
+  --color-ok: #9ece6a;
+  --color-warn: #e0af68;
+}
+
+body {
+  @apply bg-surface text-ink antialiased;
+  font-family:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}

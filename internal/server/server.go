@@ -46,6 +46,7 @@ func ListenAndServeWithAPI(ctx context.Context, addr string, db *store.Store, cl
 	if api != nil {
 		outer := http.NewServeMux()
 		outer.Handle("/api/", api)
+		outer.Handle("/v2/", api) // v2 SPA rides the same transition handler
 		outer.Handle("/", handler)
 		handler = outer
 	}

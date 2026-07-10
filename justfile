@@ -12,10 +12,20 @@ css:
 css-watch:
     pnpm exec tailwindcss --input {{css_input}} --output {{css_output}} --watch
 
-build: css
+# Build the v2 SPA into internal/webui/dist (embedded via go:embed)
+ui:
+    pnpm -C ui install --frozen-lockfile
+    pnpm -C ui exec tsc --noEmit
+    pnpm -C ui exec vite build
+
+# Vite dev server with HMR, proxying /api to a running ccpeek server
+ui-dev:
+    pnpm -C ui exec vite
+
+build: css ui
     CGO_ENABLED=1 go build -tags sqlite_fts5 -o {{binary}} ./cmd/ccpeek/
 
-dev: css
+dev: css ui
     CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --open --watch
 
 vet:
