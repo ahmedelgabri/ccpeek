@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/codex"
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/cursor"
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/opencode"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
@@ -61,7 +64,10 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 		store.Close()
 		return nil, err
 	}
-	runner := ingest.New(store, table, claude.New(), pi.New())
+	// The full launch set (docs/v2-plan.md §6): Claude Code, Pi, Codex,
+	// OpenCode, Cursor.
+	runner := ingest.New(store, table,
+		claude.New(), pi.New(), codex.New(), opencode.New(), cursor.New())
 	eng := &v2Engine{
 		store:   store,
 		pricing: table,
