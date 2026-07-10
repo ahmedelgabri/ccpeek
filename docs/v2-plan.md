@@ -27,7 +27,10 @@ and research into the storage formats of other coding agents.
   agents from day one is what proves the abstraction — with Codex, OpenCode,
   and Cursor completing the set in Phase 3. Gemini CLI, Droid, Amp, and others
   follow post-launch, driven by demand. Every entity gets an `agent`
-  dimension.
+  dimension, and the model is **session-centric**: the session is the hub
+  every other entity relates to; directories/paths are session attributes and
+  provenance, never hierarchy (§5.2) — the only model that fits all five
+  launch agents (Codex stores by date, Cursor by workspace hash).
 - **Real token + cost accounting** becomes a first-class subsystem: capture
   `message.usage` (input/output/cache-write/cache-read/reasoning tokens) and
   `model` per message, price via an embedded LiteLLM/models.dev snapshot,
@@ -253,7 +256,8 @@ type Adapter interface {
 }
 
 // RecordSink receives canonical records:
-//   Session, Message, Usage, ToolCall, Artifact, HistoryEntry
+//   Session, SessionRelation, Message, Usage, ToolCall,
+//   Artifact, ArtifactLink (evidence-carrying session link), HistoryEntry
 ```
 
 - **Root discovery must respect each agent's own relocation mechanisms.**
@@ -285,48 +289,92 @@ type Adapter interface {
   search | discovery | subagent | web | other`), while preserving the native
   name.
 
-### 5.2 Canonical schema (v2 sketch)
+### 5.2 Canonical schema (v2 sketch) — session-centric
 
-Design principles: (a) every entity carries `agent_id`; (b) **derived data and
-user state live in disjoint table sets** — rebuild may drop the former, never
-the latter; (c) natural keys (agent slug + external IDs) everywhere user state
-or cross-references attach, so they survive re-ingest.
+**The session is the hub of the model.** Everything else is defined by its
+relationship *to a session*; directories and paths are session attributes and
+ingest provenance, never identity or hierarchy. This isn't just taste — it's
+what the launch agents force:
+
+- **Directory-as-container doesn't generalize.** Codex organizes sessions by
+  *date* (`sessions/YYYY/MM/DD/`) with no project directory at all; Cursor
+  groups by opaque workspace hash; Pi and Claude encode cwd lossily into a
+  dir name (Claude's `-`/`--` mangling can't round-trip paths containing
+  `-`). Only the session exists in every agent.
+- **A session's directory isn't even stable.** Claude Code records `cwd` per
+  message and it can change mid-session; sessions run outside any repo.
+- **v1's weakest links come from path-thinking**: plans, snapshots, and
+  paste-cache entries are indexed as loose files with *no* session
+  relationship at all; todos/tasks/file-history are linked by fragile
+  filename conventions buried in indexers.
+
+Design principles: (a) **session-centric** — every entity either belongs to a
+session or is connected to sessions through an explicit, evidence-carrying
+link table; "project" is a derived grouping facet over sessions' `cwd`, not a
+container; (b) every entity carries `agent_id`; (c) **derived data and user
+state live in disjoint table sets** — rebuild may drop the former, never the
+latter; (d) natural keys (agent slug + external IDs) everywhere user state or
+cross-references attach, so they survive re-ingest; (e) paths appear only as
+provenance (`source_path`) and session attributes (`cwd`), never as join keys.
 
 ```sql
 -- dimensions
 agents(id, slug UNIQUE, display_name)
-workspaces(id, canonical_path UNIQUE, display_name)        -- v1 "projects", agent-neutral
 pricing(model_key, effective_from, input_per_mtok, output_per_mtok,
         cache_write_per_mtok, cache_read_per_mtok, source, fetched_at)
 
--- derived (rebuildable from sources)
-sessions(id, agent_id, workspace_id, external_id, title, created_at,
-         modified_at, git_branch, cwd, source_path, content_hash,
-         origin DEFAULT 'ingest',            -- 'ingest' | 'imported-v1' | 'archive'
+-- THE HUB (derived, rebuildable from sources)
+sessions(id, agent_id, external_id, title, created_at, modified_at,
+         cwd, repo_root, git_branch,        -- context attributes, not hierarchy
+         model_mix, origin DEFAULT 'ingest', -- 'ingest' | 'imported-v1' | 'archive'
+         source_path, content_hash,          -- provenance only
          UNIQUE(agent_id, external_id))
-messages(id, session_id, seq, external_id, parent_external_id, role, kind,
-         created_at, model, is_sidechain, content /* raw JSON */)
+
+-- session ↔ session relationships (the graph agents actually produce)
+session_relations(from_session_id, to_session_id, kind, evidence_json,
+                  PRIMARY KEY (from_session_id, to_session_id, kind))
+  -- kinds: resumed_from, fork_of, sidechain_of (Claude Task subagents),
+  --        compacted_into (Codex/Pi compaction lineage)
+
+-- owned by exactly one session
+messages(id, session_id FK, seq, external_id, parent_external_id, role, kind,
+         created_at, model, cwd, content /* raw JSON */)
 message_usage(message_id PK, input_tokens, output_tokens,
               cache_write_tokens, cache_read_tokens, reasoning_tokens,
               service_tier, reported_cost_usd, request_id)
-tool_calls(id, session_id, message_id, seq, name, kind, input_json,
+tool_calls(id, session_id FK, message_id FK, seq, name, kind, input_json,
            result_status, result_excerpt, file_path, started_at)
-artifacts(id, agent_id, workspace_id NULL, session_id NULL, kind, name,
-          content, metadata_json, source_path, content_hash,
-          UNIQUE(agent_id, kind, name))
+
+-- artifacts stand alone, then RELATE to sessions (n:m, with evidence)
+artifacts(id, agent_id, kind, name, content, metadata_json,
+          source_path, content_hash, UNIQUE(agent_id, kind, name))
   -- kinds: plan, todo_list, task_group, shell_snapshot, paste, memory,
   --        file_history, usage_facet, usage_report, checkpoint, ...
   -- structured children stay relational: todo_items, task_items, file_versions
-history(id, agent_id, display, timestamp, project_path)
-source_files(path PK, agent_id, content_hash, indexed_at)
+artifact_sessions(artifact_id, session_id, relation, evidence,
+                  PRIMARY KEY (artifact_id, session_id, relation))
+  -- relation: produced_by | applies_to
+  -- evidence: id_match | filename_uuid | cwd_match | content_ref | manual
+  -- the link resolver is a distinct ingest stage and can improve between
+  -- releases without re-parsing sources — v1's unlinked plans/snapshots/
+  -- pastes become linkable over time instead of forever orphaned
+
+-- derived grouping facet (regenerated at ingest from sessions.cwd;
+-- powers the "Projects" view but is NEVER a parent container)
+workspaces(id, canonical_path UNIQUE, display_name)
+session_workspaces(session_id, workspace_id, PRIMARY KEY (session_id, workspace_id))
+
+history(id, agent_id, display, timestamp, session_id NULL)
+source_files(path PK, agent_id, content_hash, indexed_at)   -- ingest bookkeeping
 ingest_runs / ingest_issues                                  -- carried from v1
 rollup_usage_daily(day, agent_id, workspace_id, model,
                    sessions, messages, input_tokens, output_tokens,
                    cache_write_tokens, cache_read_tokens, cost_usd)
-search_fts   -- ONE fts5 table (text + type/url metadata); messages keep raw
-             -- JSON, extracted plain text lives only here (3× → 2×)
+search_fts   -- ONE fts5 table (text + type/url metadata); every hit resolves
+             -- to a session (or an artifact with its session links)
 
--- user state (NEVER dropped by rebuild/reset)
+-- user state (NEVER dropped by rebuild/reset), attached by natural key —
+-- for session-scoped state that's (agent_slug, session external_id)
 user_annotations(id, entity_type, natural_key, kind, value_json, created_at)
   -- kinds: scan_ignore, pin, note, tag, budget, saved_search
 scan_findings(..., ignored moves to user_annotations via natural key)
@@ -428,8 +476,9 @@ Core operations (same shapes on all three transports):
 
 | Op | Answers |
 |---|---|
-| `search` | "have I solved this before?" — FTS with agent/project/model/tool/date filters; snippet + deep-link URL per hit |
-| `sessions` | list/filter sessions (project, agent, date range, min cost, …) |
+| `search` | "have I solved this before?" — FTS with agent/project/model/tool/date filters; every hit resolves to a session deep-link |
+| `sessions` | list/filter sessions — the primary op (project facet, agent, date range, min cost, …) |
+| `session` | one session with everything related to it: usage rollup, relations (forks, resumes, sidechains), linked artifacts with evidence |
 | `transcript` | one session as compact markdown or structured JSON, with seq ranges and limits (token-budget friendly) |
 | `usage` | token/cost aggregates grouped by day, model, project, or agent |
 | `file-history` | which sessions touched a path, when, and what changed |
@@ -526,6 +575,11 @@ Notes:
    ingest diagnostics, compare, search) on the new engine — rebuilt as the
    v2 SPA with URL-compatible routes, virtualized transcripts for large
    sessions, v1's keyboard-first UX, and a ⌘K command palette.
+   **Navigation is session-first**: the primary surface is a filterable
+   session stream (agent, project facet, model, date, cost); a session's
+   page gathers everything related to it (transcript, usage, artifacts,
+   forks/sidechains). "Projects" survives as one grouping facet over
+   sessions — no longer the entry-point hierarchy.
 2. **Real tokens & cost**
    - Session header: real tokens by type (input/output/cache-w/cache-r),
      cost, model mix.
@@ -649,7 +703,10 @@ GitHub release tarballs all provide the old version indefinitely.
   v2.x). `export commands` output stays byte-identical — port the existing
   zsh/bash/fish format tests verbatim.
 - **URLs**: v1 routes 301 to their v2 equivalents (people bookmark
-  conversations). A route-map table with golden tests.
+  conversations). Session pages move to session-centric URLs —
+  `/projects/{dirName}/{sessionId}/` → `/sessions/{sessionId}/` — with the
+  project surviving as a filter (`/sessions/?project=…`). A route-map table
+  with golden tests.
 - **Exit codes**: `scan` keeps exit 2 on findings.
 - **DB file**: new name (`ccpeek2.db`), so no version of either binary can
   corrupt the other's store.
