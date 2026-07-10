@@ -58,11 +58,16 @@ Results are stored in the database and viewable in the web UI at /scan/.`,
 
 func init() {
 	scanCmd.Flags().StringP("format", "f", "text", "Output format: text, json")
+	scanCmd.Flags().Bool("v2", false, "Scan the v2 index (all agents) instead of the v1 database")
 	rootCmd.AddCommand(scanCmd)
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
+
+	if v2, _ := cmd.Flags().GetBool("v2"); v2 {
+		return runScanV2(cmd)
+	}
 
 	dataFile, _ := cmd.Flags().GetString("data-file")
 	format, _ := cmd.Flags().GetString("format")
