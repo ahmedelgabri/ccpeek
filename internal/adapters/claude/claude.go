@@ -50,18 +50,21 @@ func (*Adapter) RootSpec() agent.RootSpec {
 	}
 }
 
-// Discover enumerates session JSONL files under projects/. Missing
+// Discover enumerates all indexable sources under a root: session JSONL
+// files plus every sidecar kind (plans, snapshots, pastes, todos, tasks,
+// memories, file history, usage data, history.jsonl). Missing
 // subdirectories are normal (fresh installs) and yield an empty result.
 func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
-	projectsDir := filepath.Join(root.Path, "projects")
-	entries, err := os.ReadDir(projectsDir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", projectsDir, err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	var refs []agent.SourceRef
+
+	projectsDir := filepath.Join(root.Path, "projects")
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("reading %s: %w", projectsDir, err)
+	}
 	for _, dir := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -84,6 +87,8 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			})
 		}
 	}
+
+	refs = append(refs, discoverSidecars(root)...)
 	return refs, nil
 }
 
@@ -131,10 +136,19 @@ type contentBlock struct {
 	IsError   bool            `json:"is_error"`
 }
 
-// Parse reads one session JSONL file and emits Session, Message, and
-// ToolCall records. Individual bad lines become diagnostics, never file
+// Parse dispatches a source by shape: session transcripts here, sidecars
+// in sidecar.go. Individual bad lines become diagnostics, never file
 // failures.
 func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
+	if kind := classify(src.Root, src.Path); kind != srcSession {
+		return a.parseSidecar(ctx, kind, src, sink)
+	}
+	return a.parseSession(ctx, src, sink)
+}
+
+// parseSession reads one session JSONL file and emits Session, Message,
+// and ToolCall records.
+func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
 	f, err := os.Open(src.Path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src.Path, err)

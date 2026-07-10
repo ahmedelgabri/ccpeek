@@ -58,11 +58,22 @@ func TestRunOverFixtureCorpus(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if report.FilesSeen != 5 || report.FilesChanged != 5 {
-		t.Errorf("files seen/changed = %d/%d, want 5/5", report.FilesSeen, report.FilesChanged)
+	// 13 claude sources (3 sessions + 10 sidecars) + 2 pi sessions.
+	if report.FilesSeen != 15 || report.FilesChanged != 15 {
+		t.Errorf("files seen/changed = %d/%d, want 15/15", report.FilesSeen, report.FilesChanged)
 	}
 	if report.Sessions != 5 {
 		t.Errorf("sessions = %d, want 5 (3 claude + 2 pi)", report.Sessions)
+	}
+	if report.Artifacts != 9 {
+		t.Errorf("artifacts = %d, want 9", report.Artifacts)
+	}
+	if report.History != 2 {
+		t.Errorf("history = %d, want 2", report.History)
+	}
+	// Artifact links resolved against ingested sessions.
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM artifact_sessions`); n != 4 {
+		t.Errorf("artifact_sessions = %d, want 4 (todo, task, file-history, facet)", n)
 	}
 	// Two corrupted fixture lines (one per agent corpus).
 	if len(report.Issues) != 2 {

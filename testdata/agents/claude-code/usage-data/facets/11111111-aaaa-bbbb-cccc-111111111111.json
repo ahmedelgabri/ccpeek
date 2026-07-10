@@ -1,0 +1,1 @@
+{"underlying_goal":"Add rate limiting","outcome":"fully_achieved","claude_helpfulness":"very_helpful","session_type":"feature_work","goal_categories":{"feature_addition":1},"user_satisfaction_counts":{"likely_satisfied":2},"friction_counts":{},"brief_summary":"Added per-IP rate limiting.","session_id":"11111111-aaaa-bbbb-cccc-111111111111"}

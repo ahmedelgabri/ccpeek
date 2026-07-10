@@ -46,13 +46,17 @@ func parseFixture(t *testing.T, sessionID string) *agenttest.Sink {
 
 func TestDiscoverFindsSessionFiles(t *testing.T) {
 	refs := discover(t)
-	if len(refs) != 3 {
-		t.Fatalf("Discover found %d sources, want 3", len(refs))
-	}
+	sessions := 0
 	for _, ref := range refs {
-		if ref.Kind != agent.SourceFile {
-			t.Errorf("%s kind = %q, want file", ref.Path, ref.Kind)
+		if classify(ref.Root, ref.Path) == srcSession {
+			sessions++
+			if ref.Kind != agent.SourceFile {
+				t.Errorf("%s kind = %q, want file", ref.Path, ref.Kind)
+			}
 		}
+	}
+	if sessions != 3 {
+		t.Fatalf("Discover found %d session sources, want 3", sessions)
 	}
 }
 
