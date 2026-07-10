@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
-	"github.com/ahmedelgabri/ccpeek/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +17,8 @@ var exportCmd = &cobra.Command{
 
 var exportCommandsCmd = &cobra.Command{
 	Use:   "commands",
-	Short: "Export bash commands in shell history format",
-	Long: `Export bash commands extracted from Claude Code sessions.
+	Short: "Export shell commands in shell history format",
+	Long: `Export shell commands extracted from indexed agent sessions.
 
 Supported formats:
   plain  One command per line (default)
@@ -35,7 +35,7 @@ Examples:
 
 func init() {
 	exportCmd.PersistentFlags().StringP("format", "f", "plain", "Output format: plain, bash, zsh, fish")
-	exportCmd.PersistentFlags().String("project", "", "Filter by project")
+	exportCmd.PersistentFlags().String("project", "", "Filter by workspace path (substring of the session cwd)")
 	exportCmd.PersistentFlags().String("search", "", "Filter by command text")
 	exportCmd.PersistentFlags().String("from", "", "Filter from date (YYYY-MM-DD)")
 	exportCmd.PersistentFlags().String("to", "", "Filter to date (YYYY-MM-DD)")
@@ -44,44 +44,88 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 }
 
-func runExportCommands(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+// escapeExportLike escapes LIKE wildcards so user filters match literally.
+func escapeExportLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
 
-	dataFile, _ := cmd.Flags().GetString("data-file")
+func runExportCommands(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	format, _ := cmd.Flags().GetString("format")
 	project, _ := cmd.Flags().GetString("project")
 	search, _ := cmd.Flags().GetString("search")
 	from, _ := cmd.Flags().GetString("from")
 	to, _ := cmd.Flags().GetString("to")
 
-	db, err := store.Open(ctx, dataFile)
-	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
-	}
-	defer db.Close()
-
-	filter := store.CommandFilter{
-		Project: project,
-		Search:  search,
-		From:    from,
-		To:      to,
-	}
-
 	if err := model.ValidateCommandFormat(format); err != nil {
 		return err
 	}
 
-	count := 0
-	err = db.EachCommand(ctx, filter, func(entry model.CommandEntry) error {
-		count++
-		return model.WriteCommand(os.Stdout, entry, format)
-	})
+	eng, err := openV2Engine(ctx, cmd, true, os.Stderr)
 	if err != nil {
+		return err
+	}
+	defer eng.Close()
+
+	where := []string{
+		"tc.kind = 'shell'",
+		"json_extract(tc.input_json, '$.command') IS NOT NULL",
+	}
+	var qargs []any
+	if project != "" {
+		where = append(where, `se.cwd LIKE ? ESCAPE '\'`)
+		qargs = append(qargs, "%"+escapeExportLike(project)+"%")
+	}
+	if search != "" {
+		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
+		qargs = append(qargs, "%"+escapeExportLike(search)+"%")
+	}
+	if from != "" {
+		where = append(where, "COALESCE(tc.started_at, se.created_at, '') >= ?")
+		qargs = append(qargs, from)
+	}
+	if to != "" {
+		where = append(where, "COALESCE(tc.started_at, se.created_at, '') <= ?")
+		qargs = append(qargs, to+"T23:59:59Z")
+	}
+
+	rows, err := eng.store.DB().QueryContext(ctx, `
+		SELECT json_extract(tc.input_json, '$.command'),
+		       COALESCE(tc.started_at, se.created_at, '')
+		FROM tool_calls tc
+		JOIN sessions se ON se.id = tc.session_id
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY COALESCE(tc.started_at, se.created_at, '') DESC, tc.seq DESC`,
+		qargs...)
+	if err != nil {
+		return fmt.Errorf("loading commands: %w", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var entry model.CommandEntry
+		if err := rows.Scan(&entry.Command, &entry.Timestamp); err != nil {
+			return fmt.Errorf("loading commands: %w", err)
+		}
+		count++
+		if err := model.WriteCommand(os.Stdout, entry, format); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return fmt.Errorf("loading commands: %w", err)
 	}
 
 	if count == 0 {
-		fmt.Fprintln(os.Stderr, "hint: no commands found. Run 'ccpeek --index-only' first to index your Claude Code data.")
+		fmt.Fprintln(os.Stderr, "hint: no commands found. Run 'ccpeek --index-only' first to index your agent data.")
 	}
 
 	return nil

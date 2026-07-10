@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ahmedelgabri/ccpeek/internal/store"
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -43,11 +43,13 @@ func TestRunExportCommandsInvalidFormat(t *testing.T) {
 func TestRunExportCommandsNoCommandsShowsHint(t *testing.T) {
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	db, err := store.Open(ctx, dataFile)
+	// Pre-create an empty v2 store so the engine skips the first-run
+	// bootstrap ingest (which would scan real agent roots).
+	store, err := db.Open(ctx, v2DBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,32 +65,30 @@ func TestRunExportCommandsNoCommandsShowsHint(t *testing.T) {
 	}
 }
 
+// seedExportCommandsDB creates a v2 store (at the path the engine derives
+// from --data-file) holding one session with one shell tool call.
 func seedExportCommandsDB(t *testing.T) string {
 	t.Helper()
 
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	db, err := store.Open(ctx, dataFile)
+	store, err := db.Open(ctx, v2DBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer store.Close()
 
-	tx, err := db.BeginTx(ctx)
-	if err != nil {
-		t.Fatal(err)
+	stmts := []string{
+		`INSERT INTO agents (id, slug, display_name) VALUES (1, 'claude-code', 'Claude Code')`,
+		`INSERT INTO sessions (id, agent_id, external_id, cwd, created_at, source_path)
+		 VALUES (1, 1, 'sess-1', '/src/proj', '2025-01-01T00:00:00Z', '/src/sess-1.jsonl')`,
+		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, started_at)
+		 VALUES (1, 0, 'Bash', 'shell', '{"command":"ls -la"}', '2025-01-01T00:00:00Z')`,
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO projects (dir_name, display_name) VALUES ('proj', 'Project')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, session_id, project_id, source_path) VALUES (1, 'sess-1', 1, '/src/sess-1.jsonl')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tool_calls (session_id, seq, timestamp, tool_name, tool_kind, input_json) VALUES (1, 0, '2025-01-01T00:00:00Z', 'Bash', 'shell', '{"command":"ls -la"}')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
+	for _, q := range stmts {
+		if _, err := store.DB().ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	return dataFile
@@ -97,6 +97,7 @@ func seedExportCommandsDB(t *testing.T) string {
 func newExportTestCommand(dataFile, format string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
 	cmd.Flags().String("format", format, "")
 	cmd.Flags().String("project", "", "")
 	cmd.Flags().String("search", "", "")
