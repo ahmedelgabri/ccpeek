@@ -22,21 +22,24 @@ type envelope struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// Handler mounts the API routes.
-func Handler(svc *query.Service) http.Handler {
+// Handler mounts the API routes. events may be nil when live updates are
+// not running (e.g. `--watch` off); the endpoint then answers 501.
+func Handler(svc *query.Service, events *Broadcaster) http.Handler {
 	mux := http.NewServeMux()
-	h := &handlers{svc: svc}
+	h := &handlers{svc: svc, events_: events}
 	mux.HandleFunc("GET /api/v1/health", h.health)
 	mux.HandleFunc("GET /api/v1/sessions", h.sessions)
 	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}", h.session)
 	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}/transcript", h.transcript)
 	mux.HandleFunc("GET /api/v1/usage", h.usage)
 	mux.HandleFunc("GET /api/v1/search", h.search)
+	mux.HandleFunc("GET /api/v1/events", h.events)
 	return mux
 }
 
 type handlers struct {
-	svc *query.Service
+	svc     *query.Service
+	events_ *Broadcaster
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {

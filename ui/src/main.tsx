@@ -11,6 +11,14 @@ const queryClient = new QueryClient({
   },
 });
 
+// Live updates (§5.5): the server pushes "changed" over SSE whenever a
+// re-index landed new data; invalidating the cache refreshes every open
+// view. 501 (watch off) simply means no live events — nothing to do.
+const events = new EventSource("/api/v1/events");
+events.addEventListener("changed", () => {
+  void queryClient.invalidateQueries();
+});
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

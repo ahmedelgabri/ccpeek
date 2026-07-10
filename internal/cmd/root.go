@@ -15,6 +15,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/api"
 	"github.com/ahmedelgabri/ccpeek/internal/index"
+	"github.com/ahmedelgabri/ccpeek/internal/ingest"
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/scan"
 	"github.com/ahmedelgabri/ccpeek/internal/server"
@@ -208,8 +209,20 @@ func run(cmd *cobra.Command, args []string) error {
 		logf("WARNING: v2 engine unavailable, /api/v1 and /v2 disabled: %v\n", err)
 	} else {
 		defer eng.Close()
+		events := api.NewBroadcaster()
+		if watch {
+			// fsnotify-driven re-index for the v2 engine (§5.5); the v1
+			// engine keeps its interval ticker until deleted at parity.
+			go func() {
+				if err := eng.runner.Watch(ctx, v2IngestOptions(cmd), 0, func(*ingest.Report) {
+					events.Notify()
+				}); err != nil && ctx.Err() == nil {
+					logf("WARNING: v2 watch stopped: %v\n", err)
+				}
+			}()
+		}
 		mux := http.NewServeMux()
-		mux.Handle("/api/", api.Handler(eng.query))
+		mux.Handle("/api/", api.Handler(eng.query, events))
 		mux.Handle("/v2/", webui.Handler("/v2/"))
 		apiHandler = mux
 		logf("v2 UI available at %s/v2/\n", url)

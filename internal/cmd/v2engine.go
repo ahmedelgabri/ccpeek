@@ -45,7 +45,6 @@ func v2DBPath(v1DataFile string) string {
 // Zero flags, zero prompts. Subsequent opens run an incremental ingest
 // unless skipIndex is true.
 func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer) (*v2Engine, error) {
-	claudeDir, _ := cmd.Flags().GetString("claude-dir")
 	dataFile, _ := cmd.Flags().GetString("data-file")
 
 	v2Path := v2DBPath(dataFile)
@@ -79,15 +78,7 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 		return eng, nil
 	}
 
-	opts := ingest.Options{}
-	// --claude-dir keeps working as the Claude adapter's root override
-	// (§8.2 CLI compatibility). Only pass it when it differs from the
-	// default so CLAUDE_CONFIG_DIR still applies otherwise.
-	if cmd.Flags().Changed("claude-dir") {
-		opts.ConfigRoots = map[canon.AgentSlug][]string{
-			claude.Slug: {claudeDir},
-		}
-	}
+	opts := v2IngestOptions(cmd)
 	if firstRun {
 		fmt.Fprintf(logw, "First v2 start: building %s\n", v2Path)
 	}
@@ -124,3 +115,18 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 }
 
 func (e *v2Engine) Close() error { return e.store.Close() }
+
+// v2IngestOptions maps CLI flags to pipeline options. --claude-dir keeps
+// working as the Claude adapter's root override (§8.2 CLI compatibility);
+// it is only passed when explicitly set so CLAUDE_CONFIG_DIR still applies
+// otherwise.
+func v2IngestOptions(cmd *cobra.Command) ingest.Options {
+	opts := ingest.Options{}
+	if cmd.Flags().Changed("claude-dir") {
+		claudeDir, _ := cmd.Flags().GetString("claude-dir")
+		opts.ConfigRoots = map[canon.AgentSlug][]string{
+			claude.Slug: {claudeDir},
+		}
+	}
+	return opts
+}

@@ -220,6 +220,13 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Flush passes streaming through the logger wrapper (SSE at /api/v1/events).
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func statusColorCode(code int) string {
 	if !logColors {
 		return ""
