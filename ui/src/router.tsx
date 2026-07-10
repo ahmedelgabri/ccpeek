@@ -8,6 +8,7 @@ import {
 import { SessionsPage } from "./pages/Sessions";
 import { SessionDetailPage } from "./pages/SessionDetail";
 import { UsagePage } from "./pages/Usage";
+import { SearchPage } from "./pages/Search";
 
 function Layout() {
   return (
@@ -31,6 +32,13 @@ function Layout() {
             activeProps={{ className: "text-ink" }}
           >
             Usage
+          </Link>
+          <Link
+            to="/search"
+            className="hover:text-ink"
+            activeProps={{ className: "text-ink" }}
+          >
+            Search
           </Link>
         </nav>
       </header>
@@ -60,7 +68,18 @@ const usageRoute = createRoute({
   component: UsagePage,
 });
 
-const routeTree = rootRoute.addChildren([sessionsRoute, sessionRoute, usageRoute]);
+const searchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/search",
+  component: SearchPage,
+});
+
+const routeTree = rootRoute.addChildren([
+  sessionsRoute,
+  sessionRoute,
+  usageRoute,
+  searchRoute,
+]);
 
 export const router = createRouter({
   routeTree,
