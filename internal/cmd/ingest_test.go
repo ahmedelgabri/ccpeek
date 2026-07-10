@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/model"
-	"github.com/ahmedelgabri/ccpeek/internal/store"
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -17,40 +18,37 @@ func seedIngestDB(t *testing.T) string {
 
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	db, err := store.Open(ctx, dataFile)
+	store, err := db.Open(ctx, v2DBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer store.Close()
 
-	run := &model.IngestRun{
-		Mode:            "incremental",
-		Status:          "partial",
-		ClaudeDir:       "/tmp/.claude",
-		StartedAt:       "2025-01-01T00:00:00Z",
-		FinishedAt:      "2025-01-01T00:00:01Z",
-		DurationMS:      1000,
+	runID, err := store.StartRun(ctx, "incremental", `["/tmp/.claude"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := db.RunCounts{
 		FilesSeen:       10,
 		FilesChanged:    2,
 		RecordsIndexed:  4,
-		SkippedFiles:    1,
 		SkippedRows:     1,
 		ParseFailures:   1,
 		UnresolvedLinks: 1,
 		WarningCount:    2,
 	}
-	issues := []model.IngestIssue{{
-		Severity:   "warning",
-		Category:   "parse_failure",
-		SourceType: "session",
-		SourcePath: "/tmp/.claude/projects/p/s.jsonl",
-		LineNumber: 2,
-		Detail:     "invalid JSON",
-		CreatedAt:  "2025-01-01T00:00:00Z",
-	}}
-	if err := db.SaveIngestRun(ctx, run, issues); err != nil {
+	if err := store.FinishRun(ctx, runID, "partial", time.Now(), counts, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
+	issues := []canon.Issue{{
+		Agent:      "claude-code",
+		Severity:   "warning",
+		Category:   "parse_failure",
+		SourcePath: "/tmp/.claude/projects/p/s.jsonl",
+		Line:       2,
+		Detail:     "invalid JSON",
+	}}
+	if err := store.InsertIssues(ctx, runID, issues); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,6 +58,7 @@ func seedIngestDB(t *testing.T) string {
 func newIngestTestCommand(dataFile string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
 	cmd.Flags().String("format", "text", "")
 	cmd.Flags().Int("limit", 10, "")
 	cmd.Flags().Bool("latest", false, "")
@@ -106,8 +105,8 @@ func TestRunIngestLatestJSONShowsDetails(t *testing.T) {
 	}
 
 	var payload struct {
-		Run    *model.IngestRun    `json:"run"`
-		Issues []model.IngestIssue `json:"issues"`
+		Run    *db.IngestRun    `json:"run"`
+		Issues []db.IngestIssue `json:"issues"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("expected valid json output, got error %v and output %q", err, stdout)
@@ -156,11 +155,11 @@ func TestRunIngestRejectsLatestAndRunID(t *testing.T) {
 func TestRunIngestLatestWithNoRunsShowsMessage(t *testing.T) {
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	db, err := store.Open(ctx, dataFile)
+	store, err := db.Open(ctx, v2DBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 
