@@ -1,6 +1,53 @@
 # CCPeek v2 — Rewrite Plan
 
-Status: proposal · Date: 2026-07-10
+Status: **in implementation** · Date: 2026-07-10
+
+## Implementation status (updated as work lands on this branch)
+
+Done — engine and agent surface:
+
+- ✅ P0 complete: driver benchmark → modernc.org/sqlite adopted
+  (ADR-0001); canonical session-centric model (`internal/canon`); adapter
+  framework with env-aware root discovery (`internal/agent`);
+  session-centric store, schema v1 with derived/user-state separation
+  (`internal/db`); pricing with embedded LiteLLM snapshot
+  (`internal/pricing`); fixture corpus (`testdata/agents/`).
+- ✅ P1 complete: Claude Code adapter (sessions with real usage capture +
+  all 10 sidecar sources), Pi adapter (documented format, tree, reported
+  cost), agent-agnostic ingest pipeline (incremental hashing, per-source
+  transactions, pending-link resolution, workspace facet, run telemetry),
+  cost rollups (auto mode, unpriced visibility), typed query layer
+  (sessions/session/transcript/usage/search), `ccpeek query` CLI with
+  versioned JSON + exit codes, `/api/v1`, v1→v2 migration importer with
+  zero-step first-run auto-migration.
+- ✅ P3 launch set complete: Codex (cumulative token deltas), OpenCode
+  (native tokens+cost), Cursor (SQLite-per-session via SourceDatabase).
+  All five agents registered in the engine.
+- ✅ MCP server (`ccpeek mcp`, dependency-free stdio JSON-RPC) and
+  `ccpeek docs --agents` cheatsheet (§5.7 self-description).
+- ✅ Live mode: fsnotify watch + `/api/v1/events` SSE + SPA cache
+  invalidation (§5.5).
+- ✅ SPA scaffold (Vite + React + TanStack + Tailwind, embedded via
+  go:embed, mounted at `/v2/` during transition): sessions stream,
+  session detail (cost tiles, relations, artifacts, transcript with
+  sidechains), usage explorer, search.
+
+Remaining before the v2.0 cutover (UI flips from /v2/ to /):
+
+- SPA parity: artifact browsing pages (plans/todos/snapshots/memories/
+  file-history diffs), scan page + ignore toggles on user_annotations,
+  session compare, markdown/code rendering of transcript payloads
+  (server-rendered fragments per §4.1), exports, pagination/
+  virtualization for large histories, ⌘K palette, ECharts cost explorer,
+  blocks view, budgets/alerts.
+- Secret-scan port to the v2 engine (scanner exists in v1; findings go
+  to scan_findings + user_annotations natural keys).
+- Conversation tree view (session_relations + parent ids are captured).
+- v1-route 301 redirects; Playwright specs for /v2; upgrade-path CI job;
+  CI/Nix `just ui` integration; release pipeline to CGO_ENABLED=0;
+  README/docs refresh; `ccpeek skill install`.
+
+---
 
 This document is the full plan for CCPeek v2: a multi-agent, cost-aware rewrite
 of the engine with a managed migration path from v1. It is based on a deep audit
