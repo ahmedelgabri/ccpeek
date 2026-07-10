@@ -1,1 +1,7 @@
-{"id":"ses_oc001","title":"Refactor auth middleware","version":"0.6.3","time":{"created":1751713200000,"updated":1751716800000},"directory":"/home/u/demo/api"}
+{
+  "id": "ses_oc001",
+  "title": "Refactor auth middleware",
+  "version": "0.6.3",
+  "time": { "created": 1751713200000, "updated": 1751716800000 },
+  "directory": "/home/u/demo/api"
+}

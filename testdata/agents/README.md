@@ -4,10 +4,10 @@ Per-agent fixtures for the v2 adapter framework (`internal/agent`,
 `internal/adapters/*`). Each directory mirrors one agent's data root exactly
 as the adapter expects to find it on disk:
 
-| Directory | Mirrors | Format notes |
-| --- | --- | --- |
-| `claude-code/` | `~/.claude` | JSONL sessions under `projects/<encoded-cwd>/`, with real `message.usage`, `message.model`, `parentUuid`, `isSidechain`, `requestId` fields (v1's `testdata/` fixtures predate usage capture and lack them) |
-| `pi/` | `~/.pi/agent` | JSONL sessions under `sessions/<encoded-cwd>/`, per the documented spec (`pi-mono` `docs/session-format.md`, header `version` 1–3) |
+| Directory      | Mirrors       | Format notes                                                                                                                                                                                                |
+| -------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code/` | `~/.claude`   | JSONL sessions under `projects/<encoded-cwd>/`, with real `message.usage`, `message.model`, `parentUuid`, `isSidechain`, `requestId` fields (v1's `testdata/` fixtures predate usage capture and lack them) |
+| `pi/`          | `~/.pi/agent` | JSONL sessions under `sessions/<encoded-cwd>/`, per the documented spec (`pi-mono` `docs/session-format.md`, header `version` 1–3)                                                                          |
 
 Conventions:
 

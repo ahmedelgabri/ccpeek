@@ -1,1 +1,8 @@
-[{"content":"Add token bucket","status":"completed","activeForm":"Adding token bucket"},{"content":"Write tests","status":"pending"}]
+[
+  {
+    "content": "Add token bucket",
+    "status": "completed",
+    "activeForm": "Adding token bucket"
+  },
+  { "content": "Write tests", "status": "pending" }
+]

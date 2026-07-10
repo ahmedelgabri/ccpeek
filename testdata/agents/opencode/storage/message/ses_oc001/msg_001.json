@@ -1,1 +1,12 @@
-{"id":"msg_001","sessionID":"ses_oc001","role":"user","time":{"created":1751713200000},"parts":[{"type":"text","text":"Refactor the auth middleware to use context values"}]}
+{
+  "id": "msg_001",
+  "sessionID": "ses_oc001",
+  "role": "user",
+  "time": { "created": 1751713200000 },
+  "parts": [
+    {
+      "type": "text",
+      "text": "Refactor the auth middleware to use context values"
+    }
+  ]
+}

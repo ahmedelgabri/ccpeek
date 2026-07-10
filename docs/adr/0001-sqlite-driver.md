@@ -18,11 +18,11 @@ with `snippet()`, and dashboard-style aggregate joins. Run on linux/amd64
 (Xeon 2.80GHz), Go 1.25.8, modernc.org/sqlite v1.53.0, mattn/go-sqlite3
 v1.14.34:
 
-| Workload | mattn (CGO) | modernc (pure Go) | Ratio |
-|---|---|---|---|
-| Ingest | 526 ms/op (22.8k msgs/s) | 732 ms/op (16.4k msgs/s) | 1.4× slower |
-| FTS5 MATCH ×50 (12k docs) | 494 ms/op (~10 ms/query) | 1322 ms/op (~26 ms/query) | 2.7× slower |
-| Usage aggregates ×50 | 179 ms/op (~3.6 ms/query) | 460 ms/op (~9.2 ms/query) | 2.6× slower |
+| Workload                  | mattn (CGO)               | modernc (pure Go)         | Ratio       |
+| ------------------------- | ------------------------- | ------------------------- | ----------- |
+| Ingest                    | 526 ms/op (22.8k msgs/s)  | 732 ms/op (16.4k msgs/s)  | 1.4× slower |
+| FTS5 MATCH ×50 (12k docs) | 494 ms/op (~10 ms/query)  | 1322 ms/op (~26 ms/query) | 2.7× slower |
+| Usage aggregates ×50      | 179 ms/op (~3.6 ms/query) | 460 ms/op (~9.2 ms/query) | 2.6× slower |
 
 Reproduce:
 

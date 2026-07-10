@@ -78,7 +78,10 @@ interface Envelope<T> {
   error?: string;
 }
 
-async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
+async function get<T>(
+  path: string,
+  params?: Record<string, string>,
+): Promise<T> {
   const qs = params
     ? "?" +
       new URLSearchParams(
@@ -102,19 +105,31 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
-  }) => get<SessionSummary[] | null>("/sessions", filters as Record<string, string>),
+  }) =>
+    get<SessionSummary[] | null>(
+      "/sessions",
+      filters as Record<string, string>,
+    ),
 
   session: (agent: string, id: string) =>
     get<SessionDetail>(`/sessions/${agent}/${id}`),
 
-  transcript: (agent: string, id: string, opts?: { from?: string; limit?: string; full?: string }) =>
+  transcript: (
+    agent: string,
+    id: string,
+    opts?: { from?: string; limit?: string; full?: string },
+  ) =>
     get<TranscriptMessage[] | null>(
       `/sessions/${agent}/${id}/transcript`,
       opts as Record<string, string>,
     ),
 
-  usage: (filters: { group?: string; agent?: string; since?: string; until?: string }) =>
-    get<UsageRow[] | null>("/usage", filters as Record<string, string>),
+  usage: (filters: {
+    group?: string;
+    agent?: string;
+    since?: string;
+    until?: string;
+  }) => get<UsageRow[] | null>("/usage", filters as Record<string, string>),
 
   search: (q: string, limit = "20") =>
     get<SearchHit[] | null>("/search", { q, limit }),

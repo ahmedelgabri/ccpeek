@@ -97,7 +97,7 @@ and research into the storage formats of other coding agents.
   schema is a clean break (§5.2) — no attempt to evolve v1's tables in place.
   This is safe because the DB is a derived index: the primary migration path
   is re-ingest from source, plus an import step for the two things that are
-  *not* re-derivable: rows whose source files were deleted (v1's retention
+  _not_ re-derivable: rows whose source files were deleted (v1's retention
   feature) and user state (scan ignore flags). The entire flow runs
   **automatically on the first v2 start — zero manual steps**. v2 writes a
   new DB file; v1's DB is never touched, so rollback is "run the old binary."
@@ -136,7 +136,7 @@ Data layer (`internal/store`, `internal/index`):
 
 1. **No real usage capture.** The JSONL parser (`model.go` `RawJSONLLine` /
    `MessagePayload`) reads only `type, timestamp, uuid, sessionId, cwd,
-   gitBranch, message.{role,content}`. It silently discards `message.usage`
+gitBranch, message.{role,content}`. It silently discards `message.usage`
    (input/output/cache tokens), `message.model`, `costUSD`, `requestId`,
    `parentUuid`, and `isSidechain`. "Tokens" in the UI are `chars/4`
    (`projects.go:255`) — an estimate presented as a token metric, and it even
@@ -144,7 +144,7 @@ Data layer (`internal/store`, `internal/index`):
 2. **Startup backfills scan everything on every open.** `Store.migrate`
    always runs `backfillToolCalls` + `backfillSearchIndex` even at current
    schema version (`store.go:123-128`) — two full `messages` table scans with
-   JSON re-parsing on *every* start.
+   JSON re-parsing on _every_ start.
 3. **`initialSchema` drift.** The "v4 baseline" has drifted to ~v15 shape, yet
    fresh DBs still replay all 11 migrations, recreating core tables several
    times (`schema.go`).
@@ -203,7 +203,7 @@ Web layer (`internal/server`, `internal/web`):
 1. Support multiple coding agents behind one canonical data model.
 2. Accurate token accounting and cost estimation (per message → session →
    project → model → agent → day), including cache economics.
-3. Be a first-class data source *for* agents, not just a viewer of their
+3. Be a first-class data source _for_ agents, not just a viewer of their
    output: every question the UI answers is also answerable via JSON CLI,
    local HTTP API, and MCP (§5.7).
 4. Managed migration: no data loss, no user-state loss, trivial rollback.
@@ -221,11 +221,11 @@ Web layer (`internal/server`, `internal/web`):
 
 ## 4. Stack decision
 
-| Option | Pros | Cons | Verdict |
-|---|---|---|---|
-| **Go (rewrite internals)** | Single static binary; existing release infra (Homebrew/Nix/4-arch) and test culture carry over; gitleaks is a Go library; maintainer fluency; pure-Go SQLite removes CGO | Weak native UI ecosystem — solved by pairing it with a TypeScript SPA over `/api/v1` (below), not by leaving Go | **Recommended** (engine) |
-| TypeScript (Bun/Node) | Richest UI ecosystem; fastest analytics-UI iteration; ccusage precedent | Distribution regresses (large `bun compile` binaries or runtime dependency); no gitleaks equivalent — secret scanning would be lost or shelled out; whole release pipeline rebuilt | No |
-| Rust | Fast, single binary, no CGO | Slowest velocity; total rewrite incl. scanning; perf bottleneck is SQLite/IO anyway | No |
+| Option                     | Pros                                                                                                                                                                     | Cons                                                                                                                                                                               | Verdict                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| **Go (rewrite internals)** | Single static binary; existing release infra (Homebrew/Nix/4-arch) and test culture carry over; gitleaks is a Go library; maintainer fluency; pure-Go SQLite removes CGO | Weak native UI ecosystem — solved by pairing it with a TypeScript SPA over `/api/v1` (below), not by leaving Go                                                                    | **Recommended** (engine) |
+| TypeScript (Bun/Node)      | Richest UI ecosystem; fastest analytics-UI iteration; ccusage precedent                                                                                                  | Distribution regresses (large `bun compile` binaries or runtime dependency); no gitleaks equivalent — secret scanning would be lost or shelled out; whole release pipeline rebuilt | No                       |
+| Rust                       | Fast, single binary, no CGO                                                                                                                                              | Slowest velocity; total rewrite incl. scanning; perf bottleneck is SQLite/IO anyway                                                                                                | No                       |
 
 Within Go, two concrete engine changes:
 
@@ -317,13 +317,13 @@ type Adapter interface {
   2. the agent's own environment overrides, honored exactly as the agent
      itself would: `CLAUDE_CONFIG_DIR` (Claude Code), `PI_CODING_AGENT_DIR`
      (Pi), `CODEX_HOME` (Codex), `OPENCODE_DATA_DIR` (OpenCode — note: a
-     comma-separated *list* of directories); Cursor's override, if any, is
+     comma-separated _list_ of directories); Cursor's override, if any, is
      part of the P3 spike;
   3. platform defaults (`~/.claude`, `~/.pi/agent`, `~/.codex`,
      `~/.local/share/opencode`, `~/.cursor/chats`).
-  Resolved roots are recorded per ingest run (in `ingest_runs`) so "why is my
-  data missing" is diagnosable, and `ccpeek doctor` prints which roots were
-  detected, from which mechanism.
+     Resolved roots are recorded per ingest run (in `ingest_runs`) so "why is my
+     data missing" is diagnosable, and `ccpeek doctor` prints which roots were
+     detected, from which mechanism.
 - The **core pipeline** (hashing, incremental diff, transactions, diagnostics,
   FTS, secret scan) is agent-agnostic and lives once, in `internal/ingest`.
 - Each adapter is pure translation: agent format → canonical records. This is
@@ -333,25 +333,25 @@ type Adapter interface {
   facets.
 - Tool normalization moves into adapters: each maps its native tool names to a
   shared `tool_kind` taxonomy (`shell | file_read | file_write | file_edit |
-  search | discovery | subagent | web | other`), while preserving the native
+search | discovery | subagent | web | other`), while preserving the native
   name.
 
 ### 5.2 Canonical schema (v2 sketch) — session-centric
 
 **The session is the hub of the model.** Everything else is defined by its
-relationship *to a session*; directories and paths are session attributes and
+relationship _to a session_; directories and paths are session attributes and
 ingest provenance, never identity or hierarchy. This isn't just taste — it's
 what the launch agents force:
 
 - **Directory-as-container doesn't generalize.** Codex organizes sessions by
-  *date* (`sessions/YYYY/MM/DD/`) with no project directory at all; Cursor
+  _date_ (`sessions/YYYY/MM/DD/`) with no project directory at all; Cursor
   groups by opaque workspace hash; Pi and Claude encode cwd lossily into a
   dir name (Claude's `-`/`--` mangling can't round-trip paths containing
   `-`). Only the session exists in every agent.
 - **A session's directory isn't even stable.** Claude Code records `cwd` per
   message and it can change mid-session; sessions run outside any repo.
 - **v1's weakest links come from path-thinking**: plans, snapshots, and
-  paste-cache entries are indexed as loose files with *no* session
+  paste-cache entries are indexed as loose files with _no_ session
   relationship at all; todos/tasks/file-history are linked by fragile
   filename conventions buried in indexers.
 
@@ -441,14 +441,14 @@ Schema hygiene rules (fixing v1's drift):
 
 **Capture** (per assistant message, via adapters):
 
-| Agent | Source of truth | Shape |
-|---|---|---|
-| Claude Code | `message.usage` + `message.model` on assistant JSONL lines | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `service_tier`; older versions also wrote `costUSD` |
-| Pi | `usage` on assistant message entries | `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens` **plus a pre-computed `cost` breakdown** (`cost.input/output/cacheRead/cacheWrite/total`); model tracked via `model_change` entries |
-| Codex CLI | `token_count` events (cumulative) | subtract previous totals → per-turn input / cached input / output / reasoning; logs before 2025-09 have none |
-| OpenCode | per-message JSON | token + cost fields present |
-| Cursor CLI | hex-encoded JSON blobs in per-session `store.db` | usage metadata incl. input/output/cache tokens and cost — confirm exact field names in the P3 spike |
-| Gemini CLI (post-launch) | session checkpoint JSON | per-turn token stats incl. cached |
+| Agent                    | Source of truth                                            | Shape                                                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code              | `message.usage` + `message.model` on assistant JSONL lines | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `service_tier`; older versions also wrote `costUSD`                                                  |
+| Pi                       | `usage` on assistant message entries                       | `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens` **plus a pre-computed `cost` breakdown** (`cost.input/output/cacheRead/cacheWrite/total`); model tracked via `model_change` entries |
+| Codex CLI                | `token_count` events (cumulative)                          | subtract previous totals → per-turn input / cached input / output / reasoning; logs before 2025-09 have none                                                                                    |
+| OpenCode                 | per-message JSON                                           | token + cost fields present                                                                                                                                                                     |
+| Cursor CLI               | hex-encoded JSON blobs in per-session `store.db`           | usage metadata incl. input/output/cache tokens and cost — confirm exact field names in the P3 spike                                                                                             |
+| Gemini CLI (post-launch) | session checkpoint JSON                                    | per-turn token stats incl. cached                                                                                                                                                               |
 
 **Correctness details that v1-style naive parsing would get wrong:**
 
@@ -504,7 +504,7 @@ Schema hygiene rules (fixing v1's drift):
 
 ### 5.7 Agent-facing query surface (one query layer, three transports)
 
-v2 is not just a viewer *of* agent data — it is a data source *for* agents.
+v2 is not just a viewer _of_ agent data — it is a data source _for_ agents.
 A single typed query service (`internal/query`) backs every surface, so
 anything the UI can show, an agent can fetch:
 
@@ -521,16 +521,16 @@ anything the UI can show, an agent can fetch:
 
 Core operations (same shapes on all three transports):
 
-| Op | Answers |
-|---|---|
-| `search` | "have I solved this before?" — FTS with agent/project/model/tool/date filters; every hit resolves to a session deep-link |
-| `sessions` | list/filter sessions — the primary op (project facet, agent, date range, min cost, …) |
-| `session` | one session with everything related to it: usage rollup, relations (forks, resumes, sidechains), linked artifacts with evidence |
-| `transcript` | one session as compact markdown or structured JSON, with seq ranges and limits (token-budget friendly) |
-| `usage` | token/cost aggregates grouped by day, model, project, or agent |
-| `file-history` | which sessions touched a path, when, and what changed |
-| `commands` | shell-command history (v1's export, now also JSON) |
-| `scan` | secret findings as JSON (v1's `scan --format json`, folded into the same layer) |
+| Op             | Answers                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `search`       | "have I solved this before?" — FTS with agent/project/model/tool/date filters; every hit resolves to a session deep-link        |
+| `sessions`     | list/filter sessions — the primary op (project facet, agent, date range, min cost, …)                                           |
+| `session`      | one session with everything related to it: usage rollup, relations (forks, resumes, sidechains), linked artifacts with evidence |
+| `transcript`   | one session as compact markdown or structured JSON, with seq ranges and limits (token-budget friendly)                          |
+| `usage`        | token/cost aggregates grouped by day, model, project, or agent                                                                  |
+| `file-history` | which sessions touched a path, when, and what changed                                                                           |
+| `commands`     | shell-command history (v1's export, now also JSON)                                                                              |
+| `scan`         | secret findings as JSON (v1's `scan --format json`, folded into the same layer)                                                 |
 
 Design rules that make it agent-friendly rather than merely machine-readable:
 
@@ -564,18 +564,18 @@ by demand. Locations shown are platform defaults; each adapter also honors the
 agent's own relocation env vars (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
 `CODEX_HOME`, `OPENCODE_DATA_DIR`, …) per the root-discovery rules in §5.1.
 
-| Agent | Location | Format | Usage data | Phase |
-|---|---|---|---|---|
-| Claude Code | `~/.claude` (12 source types) | JSONL + sidecars | full (`message.usage`) | P1 (adapter = v1 port) |
-| Pi | `~/.pi/agent/sessions/--<cwd>--/<ts>_<uuid>.jsonl` | JSONL, typed entries, **documented + versioned spec** | full tokens **+ pre-computed cost** | P1 (second first-class adapter) |
-| OpenAI Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL event stream | cumulative `token_count` | P3 |
-| OpenCode | `~/.local/share/opencode/storage/{session,message}` | JSON per message | tokens + cost | P3 |
-| Cursor CLI | `~/.cursor/chats/{ws-hash}/{session-uuid}/store.db` | SQLite per session (`meta` + `blobs`, hex-encoded JSON) | usage metadata present; verify fields in spike | P3 |
-| — post-launch — | | | | |
-| Gemini CLI | `~/.gemini/tmp/<hash>/chats/*.json` | JSON checkpoints | per-turn tokens | backlog (first in line) |
-| Factory Droid | `~/.factory/sessions` | JSONL per workspace | verify in spike | backlog |
-| Amp | file-based threads | verify in spike | verify in spike | backlog |
-| Aider | `.aider.chat.history.md` (per repo) | markdown | weak | backlog |
+| Agent            | Location                                            | Format                                                  | Usage data                                     | Phase                           |
+| ---------------- | --------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------- | ------------------------------- |
+| Claude Code      | `~/.claude` (12 source types)                       | JSONL + sidecars                                        | full (`message.usage`)                         | P1 (adapter = v1 port)          |
+| Pi               | `~/.pi/agent/sessions/--<cwd>--/<ts>_<uuid>.jsonl`  | JSONL, typed entries, **documented + versioned spec**   | full tokens **+ pre-computed cost**            | P1 (second first-class adapter) |
+| OpenAI Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`      | JSONL event stream                                      | cumulative `token_count`                       | P3                              |
+| OpenCode         | `~/.local/share/opencode/storage/{session,message}` | JSON per message                                        | tokens + cost                                  | P3                              |
+| Cursor CLI       | `~/.cursor/chats/{ws-hash}/{session-uuid}/store.db` | SQLite per session (`meta` + `blobs`, hex-encoded JSON) | usage metadata present; verify fields in spike | P3                              |
+| — post-launch —  |                                                     |                                                         |                                                |                                 |
+| Gemini CLI       | `~/.gemini/tmp/<hash>/chats/*.json`                 | JSON checkpoints                                        | per-turn tokens                                | backlog (first in line)         |
+| Factory Droid    | `~/.factory/sessions`                               | JSONL per workspace                                     | verify in spike                                | backlog                         |
+| Amp              | file-based threads                                  | verify in spike                                         | verify in spike                                | backlog                         |
+| Aider            | `.aider.chat.history.md` (per repo)                 | markdown                                                | weak                                           | backlog                         |
 
 Notes:
 
@@ -643,7 +643,7 @@ Notes:
      integration.
 3. **Migration** (§8) — automatic, reported, reversible.
 4. **Agent query basics** — `ccpeek query {search,sessions,transcript,usage}
-   --json` plus `/api/v1` on the local server, with stable schemas, limits,
+--json` plus `/api/v1` on the local server, with stable schemas, limits,
    and exit codes (§5.7). Cheap to ship with v2.0 because the same query
    layer backs the UI.
 
@@ -776,13 +776,13 @@ GitHub release tarballs all provide the old version indefinitely.
 
 ## 9. Roadmap
 
-| Phase | Scope | Exit criteria | Est. |
-|---|---|---|---|
-| **P0 Foundations** | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); SPA scaffold spike (React-vs-Solid call, Vite dev proxy → Go API workflow, go:embed pipeline); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/` | ADRs merged; go/no-go on pure-Go SQLite; SPA stack locked; schema v2 reviewed | ~1–2 wk |
-| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); root discovery incl. agent env overrides (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, …); usage capture + pricing + cost engine + rollups; typed `internal/query` layer + `/api/v1` (§5.7); migration command + compat shims; **SPA parity build** (all v1 pages as React routes over the API, virtualized transcripts, keyboard nav); upgrade-path CI | all v1 e2e specs ported and green against the SPA; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~4–5 wk |
-| **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer with cross-filtering + brush/zoom (ECharts) + CSV/JSON; blocks view; budgets/alerts; agent surface v1: `ccpeek query` + `ccpeek usage` JSON CLIs (§5.7); command palette polish; pagination/virtualization everywhere | ship `v2.0.0` (beta → stable) | ~2–3 wk |
-| **P3 Multi-agent** | Codex, OpenCode, and Cursor adapters (spike → fixtures → implement; Cursor spike includes the SQLite `SourceRef` path); agent dimension in all UI filters; unified timeline; cross-agent compare; MCP server + skill packaging over the query layer (§5.7) | launch set complete: 5 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
-| **P4 Live & power** | fsnotify + SSE live tail; conversation tree + sidechains; file-touch history; archive/rescue; replay; redacted sharing | rolling `v2.x` releases | ongoing |
+| Phase                      | Scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Exit criteria                                                                                                                                                       | Est.    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| **P0 Foundations**         | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); SPA scaffold spike (React-vs-Solid call, Vite dev proxy → Go API workflow, go:embed pipeline); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/`                                                                                                                                                                                                     | ADRs merged; go/no-go on pure-Go SQLite; SPA stack locked; schema v2 reviewed                                                                                       | ~1–2 wk |
+| **P1 Core engine**         | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); root discovery incl. agent env overrides (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, …); usage capture + pricing + cost engine + rollups; typed `internal/query` layer + `/api/v1` (§5.7); migration command + compat shims; **SPA parity build** (all v1 pages as React routes over the API, virtualized transcripts, keyboard nav); upgrade-path CI | all v1 e2e specs ported and green against the SPA; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~4–5 wk |
+| **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer with cross-filtering + brush/zoom (ECharts) + CSV/JSON; blocks view; budgets/alerts; agent surface v1: `ccpeek query` + `ccpeek usage` JSON CLIs (§5.7); command palette polish; pagination/virtualization everywhere                                                                                                                                                                                                           | ship `v2.0.0` (beta → stable)                                                                                                                                       | ~2–3 wk |
+| **P3 Multi-agent**         | Codex, OpenCode, and Cursor adapters (spike → fixtures → implement; Cursor spike includes the SQLite `SourceRef` path); agent dimension in all UI filters; unified timeline; cross-agent compare; MCP server + skill packaging over the query layer (§5.7)                                                                                                                                                                                                                                                       | launch set complete: 5 adapters green on fixture corpus + real-world soak; `v2.1.0`                                                                                 | ~3 wk   |
+| **P4 Live & power**        | fsnotify + SSE live tail; conversation tree + sidechains; file-touch history; archive/rescue; replay; redacted sharing                                                                                                                                                                                                                                                                                                                                                                                           | rolling `v2.x` releases                                                                                                                                             | ongoing |
 
 Parallel track — **v1 quick wins** (ship as v1.10.x while P0/P1 run, all
 low-risk):
@@ -796,17 +796,17 @@ low-risk):
 
 ## 10. Risks & mitigations
 
-| Risk | Mitigation |
-|---|---|
-| modernc.org/sqlite slower or FTS5 gaps | P0 benchmark gate; fallback = keep CGO driver (plan otherwise unchanged; driver stays behind sqlx) |
-| Other agents' formats change without notice (only Pi's is documented/versioned) | version-tolerant parsers; per-version fixture corpus; ingest diagnostics surface unknown shapes as warnings, never hard failures |
-| Usage double-counting (resumed/forked sessions, cumulative counters) | dedupe by (external message id, request id); delta derivation with reset detection; unit fixtures for resume/fork cases |
-| Pricing wrong or stale | embedded snapshot + `pricing update`; unknown models shown as "unpriced," never $0; costs labeled as estimates for subscription users |
-| Rewrite stalls / scope creep | phases each ship; v1 stays maintained (quick-wins track) until v2.0 stable; P1 exit = v1 e2e suite green on the new engine |
-| SPA rewrite balloons P1 | parity pages first (lists/tables are fast in a component system), analytics deferred to P2; ported e2e suite is the objective gate; P0 spike de-risks the scaffold |
-| SPA regresses v1's speed/lightness | localhost latency ≈ 0; code-splitting + prefetch + virtualization; strict CSP and embedded assets kept; perceived-perf checks in e2e |
-| Migration bugs lose user data | new DB file (v1 untouched); upgrade-path CI; natural-key imports; beta soak before tap update |
-| Large histories (multi-GB) strain SQLite/UI | per-file transactions, rollups, server-side pagination, FTS-only text storage; optional content compression later |
+| Risk                                                                            | Mitigation                                                                                                                                                         |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| modernc.org/sqlite slower or FTS5 gaps                                          | P0 benchmark gate; fallback = keep CGO driver (plan otherwise unchanged; driver stays behind sqlx)                                                                 |
+| Other agents' formats change without notice (only Pi's is documented/versioned) | version-tolerant parsers; per-version fixture corpus; ingest diagnostics surface unknown shapes as warnings, never hard failures                                   |
+| Usage double-counting (resumed/forked sessions, cumulative counters)            | dedupe by (external message id, request id); delta derivation with reset detection; unit fixtures for resume/fork cases                                            |
+| Pricing wrong or stale                                                          | embedded snapshot + `pricing update`; unknown models shown as "unpriced," never $0; costs labeled as estimates for subscription users                              |
+| Rewrite stalls / scope creep                                                    | phases each ship; v1 stays maintained (quick-wins track) until v2.0 stable; P1 exit = v1 e2e suite green on the new engine                                         |
+| SPA rewrite balloons P1                                                         | parity pages first (lists/tables are fast in a component system), analytics deferred to P2; ported e2e suite is the objective gate; P0 spike de-risks the scaffold |
+| SPA regresses v1's speed/lightness                                              | localhost latency ≈ 0; code-splitting + prefetch + virtualization; strict CSP and embedded assets kept; perceived-perf checks in e2e                               |
+| Migration bugs lose user data                                                   | new DB file (v1 untouched); upgrade-path CI; natural-key imports; beta soak before tap update                                                                      |
+| Large histories (multi-GB) strain SQLite/UI                                     | per-file transactions, rollups, server-side pagination, FTS-only text storage; optional content compression later                                                  |
 
 ---
 

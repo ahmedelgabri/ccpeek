@@ -27,6 +27,7 @@ func (s *Sink) ArtifactLink(v canon.ArtifactLink) error {
 	s.ArtifactLinks = append(s.ArtifactLinks, v)
 	return nil
 }
+
 func (s *Sink) History(v canon.HistoryEntry) error {
 	s.HistoryItems = append(s.HistoryItems, v)
 	return nil

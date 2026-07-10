@@ -117,7 +117,7 @@ func TestShellCallPairing(t *testing.T) {
 
 func TestCounterResetTreatedAsAbsolute(t *testing.T) {
 	prev := &tokenUsage{InputTokens: 10000, TotalTokens: 12000}
-	var p = prev
+	p := prev
 	got := perTurnUsage(tokenCountInfo{Total: &tokenUsage{InputTokens: 500, TotalTokens: 600}}, &p)
 	if got.InputTokens != 500 {
 		t.Errorf("reset delta = %+v, want absolute values", got)
