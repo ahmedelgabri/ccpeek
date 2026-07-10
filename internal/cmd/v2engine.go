@@ -29,6 +29,8 @@ type v2Engine struct {
 	pricing *pricing.Table
 	query   *query.Service
 	runner  *ingest.Runner
+	// report is the bootstrap ingest run's result (nil when skipped).
+	report *ingest.Report
 }
 
 // v2DBPath places the v2 database next to the v1 file (docs/v2-plan.md
@@ -43,8 +45,9 @@ func v2DBPath(v1DataFile string) string {
 // exist yet, a full ingest of all detected agent roots runs, and — if a v1
 // database is present — its orphaned rows and user state are imported.
 // Zero flags, zero prompts. Subsequent opens run an incremental ingest
-// unless skipIndex is true.
-func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer) (*v2Engine, error) {
+// unless skipIndex is true. tweak, when non-nil, adjusts the pipeline
+// options (rebuild/prune) before the bootstrap run.
+func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*v2Engine, error) {
 	dataFile, _ := cmd.Flags().GetString("data-file")
 
 	v2Path := v2DBPath(dataFile)
@@ -79,6 +82,11 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 	}
 
 	opts := v2IngestOptions(cmd)
+	for _, t := range tweak {
+		if t != nil {
+			t(&opts)
+		}
+	}
 	if firstRun {
 		fmt.Fprintf(logw, "First v2 start: building %s\n", v2Path)
 	}
@@ -87,6 +95,7 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 		store.Close()
 		return nil, fmt.Errorf("indexing: %w", err)
 	}
+	eng.report = report
 	if report.FilesChanged > 0 {
 		fmt.Fprintf(logw, "Indexed %d changed source(s): %d sessions, %d messages, %d artifacts (%s)\n",
 			report.FilesChanged, report.Sessions, report.Messages,

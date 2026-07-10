@@ -1,7 +1,7 @@
 // Package webui embeds and serves the v2 SPA (built from ui/ by
 // `just ui`). The build output ships inside the binary via go:embed, so
-// distribution stays a single binary (docs/v2-plan.md §4.1). During the
-// transition the SPA mounts at /v2/; the cutover to / swaps mounts.
+// distribution stays a single binary (docs/v2-plan.md §4.1). Since the
+// v2.0 cutover the SPA mounts at /; /v2/ bookmarks redirect there.
 package webui
 
 import (
@@ -16,7 +16,7 @@ var dist embed.FS
 
 // Handler serves the SPA under the given URL prefix with history-routing
 // fallback: paths that aren't embedded assets (client routes like
-// /v2/sessions/…) serve index.html and let the router take over.
+// /sessions/…) serve index.html and let the router take over.
 func Handler(prefix string) http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {

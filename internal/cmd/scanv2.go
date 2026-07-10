@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,17 +14,23 @@ import (
 // not just Claude's. Exit code 2 on non-ignored findings, matching v1.
 func runScanV2(cmd *cobra.Command) error {
 	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	format, _ := cmd.Flags().GetString("format")
 	if format != "text" && format != "json" {
-		return fmt.Errorf("invalid format %q: must be text or json", format)
+		return fmt.Errorf("unsupported format %q: use text or json", format)
 	}
 
-	eng, err := openV2Engine(ctx, cmd, false, os.Stderr)
+	// Scan the index as-is (first run still bootstraps it); `ccpeek` is the
+	// indexing entry point.
+	eng, err := openV2Engine(ctx, cmd, true, os.Stderr)
 	if err != nil {
 		return err
 	}
 	defer eng.Close()
 
+	fmt.Fprintln(os.Stderr, "Scanning for secrets...")
 	scanner, err := secrets.New(eng.store)
 	if err != nil {
 		return err

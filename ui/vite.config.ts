@@ -7,7 +7,7 @@ import tailwindcss from "@tailwindcss/vite";
 // In dev, Vite proxies /api to a running `ccpeek` server.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: "/v2/",
+  base: "/",
   build: {
     outDir: "../internal/webui/dist",
     emptyOutDir: true,

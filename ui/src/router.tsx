@@ -58,14 +58,26 @@ const rootRoute = createRootRoute({ component: Layout });
 
 // Session-centric URLs (docs/v2-plan.md §8.2): /sessions/$agent/$sessionId.
 const routeTree = rootRoute.addChildren([
-  createRoute({ getParentRoute: () => rootRoute, path: "/", component: SessionsPage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: SessionsPage,
+  }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/sessions/$agent/$sessionId",
     component: SessionDetailPage,
   }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/usage", component: UsagePage }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/search", component: SearchPage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/usage",
+    component: UsagePage,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/search",
+    component: SearchPage,
+  }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/artifacts",
@@ -76,13 +88,20 @@ const routeTree = rootRoute.addChildren([
     path: "/artifacts/$agent/$kind/$name",
     component: ArtifactDetailPage,
   }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/scan", component: ScanPage }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/compare", component: ComparePage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/scan",
+    component: ScanPage,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/compare",
+    component: ComparePage,
+  }),
 ]);
 
 export const router = createRouter({
   routeTree,
-  basepath: "/v2",
 });
 
 declare module "@tanstack/react-router" {

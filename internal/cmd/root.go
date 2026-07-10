@@ -3,24 +3,16 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/api"
-	"github.com/ahmedelgabri/ccpeek/internal/index"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
-	"github.com/ahmedelgabri/ccpeek/internal/model"
-	"github.com/ahmedelgabri/ccpeek/internal/scan"
-	"github.com/ahmedelgabri/ccpeek/internal/server"
-	"github.com/ahmedelgabri/ccpeek/internal/store"
-	"github.com/ahmedelgabri/ccpeek/internal/webui"
+	"github.com/ahmedelgabri/ccpeek/internal/secrets"
 	"github.com/spf13/cobra"
 )
 
@@ -69,7 +61,6 @@ func run(cmd *cobra.Command, args []string) error {
 
 	port, _ := cmd.Flags().GetInt("port")
 	claudeDir, _ := cmd.Flags().GetString("claude-dir")
-	dataFile, _ := cmd.Flags().GetString("data-file")
 	skipIndex, _ := cmd.Flags().GetBool("skip-index")
 	indexOnly, _ := cmd.Flags().GetBool("index-only")
 	openBrowser, _ := cmd.Flags().GetBool("open")
@@ -96,22 +87,6 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid watch interval %d: must be greater than 0", watchInterval)
 	}
 
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(dataFile), 0o700); err != nil {
-		return fmt.Errorf("creating data dir: %w", err)
-	}
-
-	dbPath := dataFile
-	db, err := store.Open(ctx, dbPath)
-	if err != nil {
-		hint := ""
-		if strings.Contains(err.Error(), "locked") {
-			hint = " (is another ccpeek instance running?)"
-		}
-		return fmt.Errorf("opening database: %w%s", err, hint)
-	}
-	defer db.Close()
-
 	// logf prints to stderr unless --quiet is set
 	logf := func(format string, a ...any) {
 		if !quiet {
@@ -119,54 +94,29 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Check if the claude data directory exists
-	if _, err := os.Stat(claudeDir); os.IsNotExist(err) && !skipIndex {
-		return fmt.Errorf("claude data directory not found: %s (is Claude Code installed?)", claudeDir)
+	// An explicitly-passed --claude-dir that doesn't exist is a user
+	// mistake and must fail loudly (missing default roots just mean the
+	// agent isn't installed and are fine).
+	if cmd.Flags().Changed("claude-dir") && !skipIndex {
+		if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
+			return fmt.Errorf("claude data directory not found: %s", claudeDir)
+		}
 	}
 
-	dataChanged := false
-	if !skipIndex {
-		beforeRunID, _ := latestIngestRunID(ctx, db)
-		logf("Indexing %s -> %s\n", claudeDir, dbPath)
-		if rebuild {
-			if err := index.Run(ctx, claudeDir, db, true, os.Stderr); err != nil {
-				return fmt.Errorf("indexing failed: %w", err)
-			}
-			dataChanged = true
-		} else {
-			changed, err := index.RunIncremental(ctx, claudeDir, db)
-			if err != nil {
-				return fmt.Errorf("indexing failed: %w", err)
-			}
-			dataChanged = changed
-		}
-		if err := db.EnsureFilePermissions(); err != nil {
-			return fmt.Errorf("tightening database permissions: %w", err)
-		}
-		if run, err := ingestRunAfter(ctx, db, beforeRunID); err == nil {
-			logIngestWarnings(logf, run)
-		}
-		logf("Indexing complete.\n")
+	// v2.0: the v2 engine owns indexing and serving. The v1 database, when
+	// present, was imported on first run and stays untouched for rollback.
+	eng, err := openV2Engine(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
+		o.Rebuild = rebuild
+		o.Prune = prune
+	})
+	if err != nil {
+		return err
 	}
+	defer eng.Close()
 
-	if prune {
-		beforeRunID, _ := latestIngestRunID(ctx, db)
-		logf("Pruning deleted source files...\n")
-		if err := index.Prune(ctx, claudeDir, db, os.Stderr); err != nil {
-			return fmt.Errorf("pruning failed: %w", err)
-		}
-		if err := db.EnsureFilePermissions(); err != nil {
-			return fmt.Errorf("tightening database permissions: %w", err)
-		}
-		if run, err := ingestRunAfter(ctx, db, beforeRunID); err == nil {
-			logIngestWarnings(logf, run)
-		}
-		logf("Pruning complete.\n")
-	}
-
-	if !skipScan && (dataChanged || rebuild) {
+	if !skipScan && eng.report != nil && eng.report.FilesChanged > 0 {
 		logf("Scanning for secrets...\n")
-		scanner, err := scan.New(db)
+		scanner, err := secrets.New(eng.store)
 		if err != nil {
 			return fmt.Errorf("initializing scanner: %w", err)
 		}
@@ -174,14 +124,17 @@ func run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
-		if err := db.EnsureFilePermissions(); err != nil {
-			return fmt.Errorf("tightening database permissions: %w", err)
+		active := 0
+		for _, f := range findings {
+			if !f.Ignored {
+				active++
+			}
 		}
-		if len(findings) == 0 {
+		if active == 0 {
 			logf("  %sNo secrets detected.%s\n", colorGreen, colorReset)
 		} else {
 			logf("  %s%sWARNING%s %s%d potential secret(s) found. Run `ccpeek scan` for details.%s\n",
-				colorBold, colorYellow, colorReset, colorYellow, len(findings), colorReset)
+				colorBold, colorYellow, colorReset, colorYellow, active, colorReset)
 		}
 	}
 
@@ -193,67 +146,23 @@ func run(cmd *cobra.Command, args []string) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	logf("Serving on %s\n", url)
 
+	events := api.NewBroadcaster()
 	if watch {
-		logf("Watch mode enabled, re-indexing every %ds\n", watchInterval)
+		logf("Watch mode enabled (fsnotify; --watch-interval is a v1 no-op)\n")
+		go func() {
+			if err := eng.runner.Watch(ctx, v2IngestOptions(cmd), 0, func(*ingest.Report) {
+				events.Notify()
+			}); err != nil && ctx.Err() == nil {
+				logf("WARNING: watch stopped: %v\n", err)
+			}
+		}()
 	}
 
 	if openBrowser {
 		openURL(url)
 	}
 
-	// Transition wiring: open the v2 engine (auto-building/migrating on
-	// first run) and mount its /api/v1 plus the v2 SPA (/v2/) alongside
-	// the v1 UI. The cutover to / swaps mounts once the SPA hits parity.
-	var apiHandler http.Handler
-	if eng, err := openV2Engine(ctx, cmd, false, os.Stderr); err != nil {
-		logf("WARNING: v2 engine unavailable, /api/v1 and /v2 disabled: %v\n", err)
-	} else {
-		defer eng.Close()
-		events := api.NewBroadcaster()
-		if watch {
-			// fsnotify-driven re-index for the v2 engine (§5.5); the v1
-			// engine keeps its interval ticker until deleted at parity.
-			go func() {
-				if err := eng.runner.Watch(ctx, v2IngestOptions(cmd), 0, func(*ingest.Report) {
-					events.Notify()
-				}); err != nil && ctx.Err() == nil {
-					logf("WARNING: v2 watch stopped: %v\n", err)
-				}
-			}()
-		}
-		mux := http.NewServeMux()
-		mux.Handle("/api/", api.Handler(eng.query, events))
-		mux.Handle("/v2/", webui.Handler("/v2/"))
-		apiHandler = mux
-		logf("v2 UI available at %s/v2/\n", url)
-	}
-
-	return server.ListenAndServeWithAPI(ctx, addr, db, claudeDir, watch, time.Duration(watchInterval)*time.Second, !skipScan, apiHandler)
-}
-
-func latestIngestRunID(ctx context.Context, db *store.Store) (int64, error) {
-	run, err := db.GetLatestIngestRun(ctx)
-	if err != nil || run == nil {
-		return 0, err
-	}
-	return run.ID, nil
-}
-
-func ingestRunAfter(ctx context.Context, db *store.Store, previousID int64) (*model.IngestRun, error) {
-	run, err := db.GetLatestIngestRun(ctx)
-	if err != nil || run == nil || run.ID == previousID {
-		return nil, err
-	}
-	return run, nil
-}
-
-func logIngestWarnings(logf func(string, ...any), run *model.IngestRun) {
-	if run == nil || run.WarningCount == 0 {
-		return
-	}
-	logf("  %s%sWARNING%s %sIngest completed with %d diagnostic(s): %d skipped file(s), %d skipped row(s), %d parse failure(s), %d unresolved link(s). Run `ccpeek ingest --latest` for details.%s\n",
-		colorBold, colorYellow, colorReset, colorYellow,
-		run.WarningCount, run.SkippedFiles, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks, colorReset)
+	return serveV2(ctx, addr, buildServeHandler(api.Handler(eng.query, events)))
 }
 
 // dataDir returns the XDG data directory for ccpeek.

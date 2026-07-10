@@ -1,22 +1,36 @@
 package cmd
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
-func newScanTestCommand(dataFile, format string) *cobra.Command {
+func newScanTestCommand(t *testing.T, dataFile, format string) *cobra.Command {
+	t.Helper()
+	// Pre-create the v2 store so the engine skips the first-run bootstrap
+	// ingest (which would scan real agent roots).
+	store, err := db.Open(context.Background(), v2DBPath(dataFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
 	cmd.Flags().String("format", format, "")
 	return cmd
 }
 
 func TestRunScanRejectsInvalidFormat(t *testing.T) {
-	cmd := newScanTestCommand(filepath.Join(t.TempDir(), "ccpeek.db"), "wat")
+	cmd := newScanTestCommand(t, filepath.Join(t.TempDir(), "ccpeek.db"), "wat")
 
 	err := runScan(cmd, nil)
 	if err == nil {
@@ -28,7 +42,7 @@ func TestRunScanRejectsInvalidFormat(t *testing.T) {
 }
 
 func TestRunScanNoFindingsShowsCleanOutput(t *testing.T) {
-	cmd := newScanTestCommand(filepath.Join(t.TempDir(), "ccpeek.db"), "text")
+	cmd := newScanTestCommand(t, filepath.Join(t.TempDir(), "ccpeek.db"), "text")
 
 	stdout, stderr := captureOutputPair(t, func() error {
 		return runScan(cmd, nil)
