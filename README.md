@@ -1,16 +1,16 @@
 # CCPeek
 
-Explore your Claude Code history. A local web app that indexes and browses your
-Claude Code conversations, plans, todos, tasks, shell snapshots, file history,
-paste cache, usage data, memories, and commands.
+Explore your coding-agent history. A local web app that indexes
+**Claude Code, Pi, Codex CLI, OpenCode, and Cursor** sessions into one
+session-centric database — conversations, plans, todos, tasks, shell
+snapshots, file history, paste cache, memories, and commands — with real
+token usage and estimated cost, plus an agent-facing query surface
+(`ccpeek query`, `/api/v1`, `ccpeek mcp`) and live updates.
 
-> **v2 preview.** This branch also ships the v2 engine: a session-centric
-> index of **Claude Code, Pi, Codex CLI, OpenCode, and Cursor** with real
-> token usage and estimated cost, an agent-facing query surface
-> (`ccpeek query`, `/api/v1`, `ccpeek mcp`), live updates, and a new UI at
-> `/v2/`. It builds itself automatically on first run (your v1 database is
-> never modified) — see [docs/v2-plan.md](docs/v2-plan.md) and the
-> [v2 section](#v2-preview) below.
+> **v2.** The engine and UI described above are the v2 cutover
+> (session-centric, multi-agent). Everything initializes automatically on
+> first run and your v1 database is never modified — see
+> [docs/v2-plan.md](docs/v2-plan.md) and the [v2 section](#v2) below.
 
 https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
 
@@ -53,7 +53,7 @@ Archives include shell completions and man pages.
 ## Usage
 
 ```sh
-# Index ~/.claude and start the web UI
+# Index detected agent roots and start the web UI
 ccpeek
 
 # Open browser automatically
@@ -69,9 +69,10 @@ ccpeek --skip-index
 ccpeek --index-only
 ```
 
-The server reads Claude Code data from `~/.claude`, writes an index to
-`~/.local/share/ccpeek/ccpeek.db` (respects `$XDG_DATA_HOME`), and serves the
-web UI at `http://localhost:3000`.
+The server reads each agent's data from its default root (for Claude Code,
+`~/.claude`), writes an index to `~/.local/share/ccpeek/ccpeek2.db`
+(respects `$XDG_DATA_HOME`), and serves the web UI at
+`http://localhost:3000`.
 
 ### Flags
 
@@ -109,7 +110,7 @@ Homebrew and Nix installations include completions and man pages automatically.
 
 Scan indexed data for leaked secrets, API keys, tokens, and passwords. Uses
 gitleaks detection rules (150+ patterns). Results are stored in the database
-and viewable in the web UI at `/scan/`.
+and viewable in the web UI at `/scan`.
 
 ```sh
 ccpeek scan
@@ -117,7 +118,7 @@ ccpeek scan
 
 #### `ccpeek export commands`
 
-Export bash commands extracted from Claude Code sessions in shell history format.
+Export shell commands extracted from indexed agent sessions in shell history format.
 
 ```sh
 # Plain (one command per line)
@@ -132,25 +133,20 @@ ccpeek export commands --format bash >> ~/.bash_history && history -r
 # Append to fish history
 ccpeek export commands --format fish >> ~/.local/share/fish/fish_history
 
-# Filter by project or date range
+# Filter by workspace path or date range
 ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 ```
 
 ## What it indexes
 
-- **Projects** - Conversations grouped by project directory
-- **Plans** - Markdown plan files from Claude sessions
-- **Shell Snapshots** - Shell environment captures
-- **Commands** - Bash commands extracted from sessions
-- **Todos** - Task lists from Claude sessions
-- **Tasks** - Task groups from Claude sessions
-- **File History** - File backups from conversations
-- **Paste Cache** - Pasted content from sessions
-- **Usage Data** - Session usage insights and reports
-- **Memories** - Project-level MEMORY.md context files
+- **Sessions** - Conversations from every supported agent, with tokens and cost
+- **Artifacts** - Plans, todos, tasks, shell snapshots, paste cache, usage
+  data, memories, and file history, linked to their sessions
+- **Commands** - Shell commands extracted from sessions
+- **Usage** - Token/cost rollups by day, model, workspace, and agent
 - **Secret Scan** - Detects leaked secrets across all indexed data
 
-## v2 preview
+## v2
 
 The v2 engine indexes every supported agent into one session-centric
 database (`ccpeek2.db`, alongside the v1 file) with real token usage and
@@ -158,6 +154,10 @@ estimated cost. It initializes automatically on first use: full ingest of
 detected agent roots plus import of v1-only data (sessions whose source
 files were deleted, scan-ignore flags). Rollback is running the old
 version — the v1 database is opened read-only and never modified.
+
+The web UI serves at `/` with the JSON API at `/api/v1`. Every v1 URL
+(`/projects/…`, `/plans/`, `/commands/`, session bookmarks, the `/v2/`
+preview mount) permanently redirects to its session-centric equivalent.
 
 ```sh
 # Query as JSON (no server needed; exit 3 = valid query, no matches)
@@ -167,17 +167,18 @@ ccpeek query transcript pi <session-id> --limit 50
 ccpeek query usage --group model
 ccpeek query search "rate limiting"
 
-# Serve: v1 UI at /, v2 UI at /v2/, JSON API at /api/v1
-# (--watch adds fsnotify-driven re-indexing + SSE live updates)
+# Serve the UI + API (--watch adds fsnotify re-indexing + SSE live updates)
 ccpeek --watch
 
 # MCP server over stdio (register: claude mcp add ccpeek -- ccpeek mcp)
 ccpeek mcp
 
 # Secret-scan every agent's history (not just Claude's)
-ccpeek scan --v2
+ccpeek scan
 
-# Cheatsheet for agents/scripts
+# Shell-history export, ingest diagnostics, agent cheatsheet
+ccpeek export commands --format zsh
+ccpeek ingest --latest
 ccpeek docs --agents
 ```
 

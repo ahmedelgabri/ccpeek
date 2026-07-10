@@ -1,6 +1,6 @@
 # CCPeek v2 — Rewrite Plan
 
-Status: **in implementation** · Date: 2026-07-10
+Status: **v2.0 cutover landed** (janitorial follow-ups remain) · Date: 2026-07-10
 
 ## Implementation status (updated as work lands on this branch)
 
@@ -27,25 +27,31 @@ Done — engine and agent surface:
   `ccpeek docs --agents` cheatsheet (§5.7 self-description).
 - ✅ Live mode: fsnotify watch + `/api/v1/events` SSE + SPA cache
   invalidation (§5.5).
-- ✅ SPA scaffold (Vite + React + TanStack + Tailwind, embedded via
-  go:embed, mounted at `/v2/` during transition): sessions stream,
-  session detail (cost tiles, relations, artifacts, transcript with
-  sidechains), usage explorer, search.
+- ✅ SPA (Vite + React + TanStack + Tailwind, embedded via go:embed):
+  sessions stream with filters and pagination, session detail (cost
+  tiles, relations, artifacts, transcript with sidechains + tree view),
+  usage explorer (groups, 5h blocks, budget banner), search, unified
+  artifact browser with server-rendered markdown, scan page with ignore
+  toggles, session compare, ⌘K palette.
+- ✅ Secret-scan ported to the v2 engine (all agents' transcripts and
+  artifacts; ignore flags live in user_annotations natural keys).
+- ✅ **v2.0 cutover complete**: the SPA serves at `/`, `/api/v1` is the
+  only API, and every v1 route 301-redirects to its session-centric
+  equivalent (`/projects/{dir}/{id}` → `/sessions/claude-code/{id}`,
+  sidecar browsers → `/artifacts`, `/commands/` → `/search`, `/v2/*` →
+  `/*`). `ccpeek scan`, `ccpeek export commands`, and `ccpeek ingest`
+  run on the v2 store (`--claude-dir`/`--rebuild`/`--prune`/`--watch`
+  keep working); Playwright specs cover the SPA at `/` plus the redirect
+  map; README/docs refreshed.
 
-Remaining before the v2.0 cutover (UI flips from /v2/ to /):
+Remaining post-cutover janitorial work (does not block v2.0):
 
-- SPA parity: artifact browsing pages (plans/todos/snapshots/memories/
-  file-history diffs), scan page + ignore toggles on user_annotations,
-  session compare, markdown/code rendering of transcript payloads
-  (server-rendered fragments per §4.1), exports, pagination/
-  virtualization for large histories, ⌘K palette, ECharts cost explorer,
-  blocks view, budgets/alerts.
-- Secret-scan port to the v2 engine (scanner exists in v1; findings go
-  to scan_findings + user_annotations natural keys).
-- Conversation tree view (session_relations + parent ids are captured).
-- v1-route 301 redirects; Playwright specs for /v2; upgrade-path CI job;
-  CI/Nix `just ui` integration; release pipeline to CGO_ENABLED=0;
-  README/docs refresh; `ccpeek skill install`.
+- Delete the unreferenced v1 packages (`internal/store`, `internal/index`,
+  `internal/server`, `internal/scan`, `internal/web`, parts of
+  `internal/model`) once the v2 store has soaked.
+- Release pipeline to CGO_ENABLED=0 (pure-Go driver makes cross-gcc
+  unnecessary); upgrade-path CI job over a seeded v1 fixture db;
+  `ccpeek skill install`; ECharts cost explorer.
 
 ---
 
