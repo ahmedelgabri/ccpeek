@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"1a2b3c4d-7777-8888-9999-000011112222","timestamp":"2026-07-02T09:00:00.000Z","cwd":"/home/u/demo/api","parentSession":"9f8e7d6c-1111-2222-3333-444455556666"}
+{"type":"model_change","id":"bb000001","parentId":null,"timestamp":"2026-07-02T09:00:00.500Z","provider":"anthropic","modelId":"claude-haiku-4-5"}
+{"type":"message","id":"bb000002","parentId":"bb000001","timestamp":"2026-07-02T09:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Write tests for the rate limiter"}]}}
+{"type":"message","id":"bb000003","parentId":"bb000002","timestamp":"2026-07-02T09:00:15.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Added table-driven tests covering burst and refill behavior."}],"usage":{"input":900,"output":210,"cacheRead":0,"cacheWrite":0,"totalTokens":1110,"cost":{"input":0.0009,"output":0.00105,"cacheRead":0,"cacheWrite":0,"total":0.00195}}}}
+{"not-json — adapters must skip bad lines with a diagnostic"}
+{"type":"custom","id":"bb000004","parentId":"bb000003","timestamp":"2026-07-02T09:01:00.000Z","customType":"extension-marker","data":{"note":"unknown entry types must be tolerated"}}
