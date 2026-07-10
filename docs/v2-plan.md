@@ -21,8 +21,10 @@ and research into the storage formats of other coding agents.
   simplifies the 4-arch release matrix (no more cross-gcc), enables plain
   `go install`, and removes the `sqlite_fts5` build-tag foot-gun.
 - **v2 core = canonical agent-neutral data model + adapter framework.**
-  Claude Code becomes the first adapter; Codex CLI, Gemini CLI, and OpenCode
-  follow. Every entity gets an `agent` dimension.
+  Claude Code and Pi are the two first-class adapters built in Phase 1 —
+  implementing the framework against two very different agents from day one is
+  what proves the abstraction. Codex CLI, Gemini CLI, and OpenCode follow.
+  Every entity gets an `agent` dimension.
 - **Real token + cost accounting** becomes a first-class subsystem: capture
   `message.usage` (input/output/cache-write/cache-read/reasoning tokens) and
   `model` per message, price via an embedded LiteLLM/models.dev snapshot,
@@ -34,9 +36,9 @@ and research into the storage formats of other coding agents.
   v2 writes a new DB file; v1's DB is never touched, so rollback is "run the
   old binary."
 
-Phases: **P0 foundations → P1 core engine + Claude adapter + cost + migration →
-P2 cost/analytics UI → P3 multi-agent adapters → P4 live mode & power features.**
-Each phase ships.
+Phases: **P0 foundations → P1 core engine + Claude & Pi adapters + cost +
+migration → P2 cost/analytics UI → P3 more agent adapters → P4 live mode &
+power features.** Each phase ships.
 
 ---
 
@@ -178,7 +180,7 @@ functional gain. Revisit after Phase 3 if desired.
 ```go
 // internal/agent
 type Adapter interface {
-    Slug() string                          // "claude-code", "codex", "gemini", "opencode"
+    Slug() string                          // "claude-code", "pi", "codex", "gemini", "opencode"
     DetectRoots() []Root                   // default dirs + flag/env overrides
     Discover(root Root) ([]SourceRef, error) // files/dirs + content hashes
     Parse(src SourceRef, sink RecordSink) error // emit canonical records
@@ -265,6 +267,7 @@ Schema hygiene rules (fixing v1's drift):
 | Agent | Source of truth | Shape |
 |---|---|---|
 | Claude Code | `message.usage` + `message.model` on assistant JSONL lines | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `service_tier`; older versions also wrote `costUSD` |
+| Pi | `usage` on assistant message entries | `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens` **plus a pre-computed `cost` breakdown** (`cost.input/output/cacheRead/cacheWrite/total`); model tracked via `model_change` entries |
 | Codex CLI | `token_count` events (cumulative) | subtract previous totals → per-turn input / cached input / output / reasoning; logs before 2025-09 have none |
 | Gemini CLI | session checkpoint JSON | per-turn token stats incl. cached |
 | OpenCode | per-message JSON | token + cost fields present |
@@ -289,8 +292,9 @@ Schema hygiene rules (fixing v1's drift):
 - Cost is **computed from tokens at query time** against the pricing table
   (respecting `effective_from`), then materialized into `rollup_usage_daily`
   for dashboard speed; rollups invalidate when pricing changes. Where the agent
-  reported its own cost (`costUSD`, OpenCode), store it and offer ccusage-style
-  modes: `auto` (prefer reported) / `calculate` / `display`.
+  reported its own cost (Pi's `cost.total`, legacy `costUSD`, OpenCode), store
+  it and offer ccusage-style modes: `auto` (prefer reported) / `calculate` /
+  `display`.
 - **Honest labeling:** for subscription users (Pro/Max) dollar figures are
   "estimated API-equivalent value," not billing. The UI says so.
 
@@ -326,6 +330,7 @@ Schema hygiene rules (fixing v1's drift):
 | Agent | Location | Format | Usage data | Phase |
 |---|---|---|---|---|
 | Claude Code | `~/.claude` (12 source types) | JSONL + sidecars | full (`message.usage`) | P1 (adapter = v1 port) |
+| Pi | `~/.pi/agent/sessions/--<cwd>--/<ts>_<uuid>.jsonl` | JSONL, typed entries, **documented + versioned spec** | full tokens **+ pre-computed cost** | P1 (second first-class adapter) |
 | OpenAI Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL event stream | cumulative `token_count` | P3 |
 | Gemini CLI | `~/.gemini/tmp/<hash>/chats/*.json` | JSON checkpoints | per-turn tokens | P3 |
 | OpenCode | `~/.local/share/opencode/storage/{session,message}` | JSON per message | tokens + cost | P3 |
@@ -336,6 +341,20 @@ Schema hygiene rules (fixing v1's drift):
 
 Notes:
 
+- **Why Pi is first-class and lands in P1.** Pi is the rare agent with an
+  officially documented, versioned session format
+  (`packages/coding-agent/docs/session-format.md`, header `version` 1–3),
+  making it the lowest-risk adapter. Its data model also exercises v2's
+  canonical schema harder than Claude's does: sessions are a **tree**
+  (`id`/`parentId` per entry, in-place branching → maps to
+  `messages.parent_external_id` and the P1 conversation-tree view),
+  `model_change` entries mean the model dimension is per-entry rather than
+  per-message-field, `compaction` / `branch_summary` / `label` /
+  `session_info` entries map to `artifacts` kinds, and forked sessions carry
+  `parentSession` in the header. Its per-message `usage` includes both tokens
+  and a pre-computed cost breakdown — the first real consumer of the cost
+  engine's `auto` (reported-vs-calculated) mode. Building Claude + Pi together
+  in P1 validates the adapter interface before the messier P3 formats.
 - Each P3 adapter starts with a **format spike**: collect real fixtures across
   agent versions into `testdata/<agent>/`, then implement against fixtures.
   These formats are unstable and undocumented — version-tolerant parsing +
@@ -373,9 +392,11 @@ Notes:
 
 ### P1 — high value, fast follow
 
-4. **Conversation tree view** — render `parentUuid` branching (forks, resumed
-   sessions) and **sidechains**: link `Task` tool calls to their subagent
-   transcripts (v1 drops both fields today).
+4. **Conversation tree view** — render branching: Claude's `parentUuid`
+   (forks, resumed sessions) and Pi's native `id`/`parentId` tree with
+   in-place branches, compactions, and labels; plus **sidechains**: link
+   `Task` tool calls to their subagent transcripts (v1 drops all of this
+   today).
 5. **Cost per outcome** — join usage with Claude's own `usage_facets`
    (outcome/helpfulness/friction): "fully_achieved sessions averaged $0.42;
    abandoned ones $1.90." No other tool can do this.
@@ -479,7 +500,7 @@ GitHub release tarballs all provide the old version indefinitely.
 | Phase | Scope | Exit criteria | Est. |
 |---|---|---|---|
 | **P0 Foundations** | modernc.org/sqlite benchmark vs CGO (ingest + FTS on a large real `~/.claude`); finalize schema v2 + adapter interface (ADRs in `docs/`); pricing snapshot tooling; fixture corpus layout `testdata/<agent>/` | ADRs merged; go/no-go on pure-Go SQLite; schema v2 reviewed | ~1 wk |
-| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; usage capture + pricing + cost engine + rollups; migration command + compat shims; existing UI wired to new store; upgrade-path CI | all v1 e2e tests green on v2 engine; migration job green; real cost visible on session page | ~3 wk |
+| **P1 Core engine** | `internal/agent` + `internal/ingest` rewrite; Claude adapter at full v1 parity; **Pi adapter** (second first-class implementation, proves the framework); usage capture + pricing + cost engine + rollups; migration command + compat shims; existing UI wired to new store; upgrade-path CI | all v1 e2e tests green on v2 engine; Pi fixture corpus ingests green (tokens + reported cost); migration job green; real cost visible on session page | ~3–4 wk |
 | **P2 Cost & analytics UI** | dashboard v2 (spend tiles, stacked token timeline, cache savings); cost explorer + CSV/JSON; blocks view; budgets/alerts; `ccpeek usage` CLI; pagination everywhere; uPlot charts with keyboard/ARIA support | ship `v2.0.0` (beta → stable) | ~2 wk |
 | **P3 Multi-agent** | Codex, Gemini, OpenCode adapters (spike → fixtures → implement); agent dimension in all UI filters; unified timeline; cross-agent compare; Droid/Amp stretch | 3 adapters green on fixture corpus + real-world soak; `v2.1.0` | ~3 wk |
 | **P4 Live & power** | fsnotify + SSE live tail; conversation tree + sidechains; MCP server; file-touch history; archive/rescue; replay; redacted sharing | rolling `v2.x` releases | ongoing |
