@@ -43,6 +43,9 @@ jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 
   }
 ' "$tmp" >"$OUT"
 
+# Match the repo formatter so a refresh never reintroduces treefmt drift.
+pnpm exec prettier --write "$OUT" >/dev/null
+
 count="$(jq '.models | length' "$OUT")"
 size="$(wc -c <"$OUT")"
 echo "wrote $OUT: $count models, $size bytes"
