@@ -52,7 +52,7 @@ test-unit: css
 test-race: css
     CGO_ENABLED=1 go test -race -tags sqlite_fts5 ./...
 
-test-e2e: css
+test-e2e: css ui
     pnpm exec playwright test --config=playwright-go.config.ts
 
 test: test-unit test-e2e
