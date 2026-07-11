@@ -41,10 +41,12 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
-// RootSpec implements agent.Adapter. No documented relocation env var;
-// part of the format spike.
+// RootSpec implements agent.Adapter. Cursor documents no relocation env
+// var of its own, so ccpeek provides one — needed anywhere the real
+// ~/.cursor must not be scanned (tests, sandboxes).
 func (*Adapter) RootSpec() agent.RootSpec {
 	return agent.RootSpec{
+		EnvVars:  []string{"CCPEEK_CURSOR_DIR"},
 		Defaults: []string{"~/.cursor"},
 	}
 }
