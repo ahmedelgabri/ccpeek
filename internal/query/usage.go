@@ -7,12 +7,17 @@ import (
 
 // UsageRow is one group of the `usage` op, straight from the rollups.
 type UsageRow struct {
-	Group       string      `json:"group"` // day, model, project path, or agent slug
-	Sessions    int64       `json:"sessions"`
-	Messages    int64       `json:"messages"`
-	Tokens      TokenTotals `json:"tokens"`
-	CostUSD     float64     `json:"costUSD"`
-	HasUnpriced bool        `json:"hasUnpriced,omitempty"`
+	Group    string      `json:"group"` // day, model, project path, or agent slug
+	Sessions int64       `json:"sessions"`
+	Messages int64       `json:"messages"`
+	Tokens   TokenTotals `json:"tokens"`
+	CostUSD  float64     `json:"costUSD"`
+	// CostUSD = reported (the agent's own figure) + estimated (priced from
+	// tokens) — the closest available proxy for API-billed vs
+	// subscription-covered spend.
+	CostReportedUSD  float64 `json:"costReportedUSD"`
+	CostEstimatedUSD float64 `json:"costEstimatedUSD"`
+	HasUnpriced      bool    `json:"hasUnpriced,omitempty"`
 }
 
 // UsageFilter narrows the usage op.
@@ -72,7 +77,8 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		       SUM(r.sessions), SUM(r.messages),
 		       SUM(r.input_tokens), SUM(r.output_tokens),
 		       SUM(r.cache_read_tokens), SUM(r.cache_write_tokens),
-		       SUM(r.cost_usd),
+		       SUM(r.cost_usd), SUM(r.cost_reported_usd),
+		       SUM(r.cost_estimated_usd),
 		       MIN(r.priced)
 		FROM rollup_usage_daily r
 		JOIN agents a ON a.id = r.agent_id
@@ -93,7 +99,8 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		if err := rows.Scan(&r.Group, &r.Sessions, &r.Messages,
 			&r.Tokens.Input, &r.Tokens.Output,
 			&r.Tokens.CacheRead, &r.Tokens.CacheWrite,
-			&r.CostUSD, &minPriced); err != nil {
+			&r.CostUSD, &r.CostReportedUSD, &r.CostEstimatedUSD,
+			&minPriced); err != nil {
 			return nil, err
 		}
 		r.HasUnpriced = minPriced == 0

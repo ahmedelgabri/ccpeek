@@ -1,6 +1,9 @@
+import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { parityApi } from "../api";
+import { useHighlight } from "../highlight";
+import { SkeletonRows } from "../ui";
 
 export function ArtifactDetailPage() {
   const { agent, kind, name } = useParams({
@@ -11,10 +14,14 @@ export function ArtifactDetailPage() {
     queryKey: ["artifact", agent, kind, name],
     queryFn: () => parityApi.artifact(agent, kind, name),
   });
+  const body = useRef<HTMLDivElement>(null);
+  useHighlight(body, [data]);
 
-  if (isLoading) return <p className="text-ink-dim">Loading…</p>;
+  if (isLoading) return <SkeletonRows rows={5} />;
   if (error) return <p className="text-warn">{String(error)}</p>;
   const a = data!;
+
+  const rawURL = `/api/v1/artifacts/${agent}/${kind}/${encodeURIComponent(name)}/raw`;
 
   return (
     <div>
@@ -43,15 +50,29 @@ export function ArtifactDetailPage() {
         </div>
       )}
 
-      {a.contentHTML ? (
+      {a.kind === "usage_report" ? (
+        // Agent-produced HTML renders isolated in a sandboxed iframe (no
+        // same-origin access), exactly like v1 hosted the usage report.
+        <iframe
+          src={rawURL}
+          sandbox="allow-scripts"
+          title={`${a.name} (usage report)`}
+          className="h-[75vh] w-full rounded-lg border border-edge bg-white"
+        />
+      ) : a.contentHTML ? (
         <div
-          className="prose-invert max-w-none rounded-lg border border-edge bg-surface-1 p-4 text-sm leading-relaxed [&_a]:text-accent [&_code]:rounded [&_code]:bg-surface-2 [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:mb-2"
+          ref={body}
+          className="prose-msg max-w-none rounded-lg border border-edge bg-surface-1 p-4"
           dangerouslySetInnerHTML={{ __html: a.contentHTML }}
         />
       ) : a.content ? (
-        <pre className="overflow-x-auto rounded-lg border border-edge bg-surface-1 p-4 text-xs leading-relaxed">
-          {a.content}
-        </pre>
+        <div ref={body}>
+          <pre className="overflow-x-auto rounded-lg border border-edge bg-surface-1 p-4 text-xs leading-relaxed">
+            <code className={a.kind === "shell_snapshot" ? "language-bash" : ""}>
+              {a.content}
+            </code>
+          </pre>
+        </div>
       ) : (
         <p className="text-ink-dim">(no content)</p>
       )}

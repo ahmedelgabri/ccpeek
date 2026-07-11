@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, fmtWhen, shortPath } from "../api";
+import { useHighlight } from "../highlight";
 import {
   AgentDot,
   CopyButton,
@@ -30,6 +31,8 @@ export function CommandsPage() {
   });
   const rows = data ?? [];
   const mayHaveMore = rows.length === PAGE * pages;
+  const listRef = useRef<HTMLUListElement>(null);
+  useHighlight(listRef, [rows]);
 
   const exportURL = (format: string) => {
     const p = new URLSearchParams({ format, limit: "1000" });
@@ -84,7 +87,10 @@ export function CommandsPage() {
         <EmptyNote>No commands match.</EmptyNote>
       )}
 
-      <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+      <ul
+        ref={listRef}
+        className="divide-y divide-edge overflow-hidden rounded-md border border-edge"
+      >
         {rows.map((c, i) => (
           <li
             key={`${c.sessionId}-${c.at}-${i}`}
@@ -104,8 +110,10 @@ export function CommandsPage() {
               <span className="ml-auto tabular-nums">{fmtWhen(c.at ?? "")}</span>
               <CopyButton text={c.command} />
             </div>
-            <pre className="overflow-x-auto font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-              {c.command}
+            <pre className="overflow-x-auto text-xs leading-relaxed">
+              <code className="language-bash block break-words whitespace-pre-wrap">
+                {c.command}
+              </code>
             </pre>
           </li>
         ))}

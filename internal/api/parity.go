@@ -61,6 +61,26 @@ func (h *handlers) artifact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// artifactRaw serves an artifact's stored bytes verbatim. Agent-produced
+// HTML (the Claude usage report) ships as text/html so the UI can host it
+// in a sandboxed iframe — the same isolation v1 used; everything else is
+// text/plain, never interpreted in the app's own origin.
+func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	detail, err := h.svc.Artifact(r.Context(),
+		r.PathValue("agent"), kind, r.PathValue("name"), nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if kind == "usage_report" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	_, _ = w.Write([]byte(detail.Content))
+}
+
 func (h *handlers) scanFindings(w http.ResponseWriter, r *http.Request) {
 	includeIgnored := r.URL.Query().Get("ignored") == "1"
 	findings, err := h.svc.ScanFindings(r.Context(), includeIgnored)

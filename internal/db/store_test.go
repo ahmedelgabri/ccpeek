@@ -74,8 +74,8 @@ func TestMigrateV1AddsStatSig(t *testing.T) {
 	s, path := openTemp(t)
 	ctx := context.Background()
 
-	// Downgrade the fresh database to a v1 shape: drop the new column by
-	// rebuilding source_files without it, and stamp version 1.
+	// Downgrade the fresh database to a v1 shape: rebuild the tables later
+	// migrations touch without their added columns, and stamp version 1.
 	stmts := []string{
 		`DROP TABLE source_files`,
 		`CREATE TABLE source_files (
@@ -83,6 +83,22 @@ func TestMigrateV1AddsStatSig(t *testing.T) {
 			agent_id INTEGER NOT NULL REFERENCES agents(id),
 			content_hash TEXT NOT NULL,
 			indexed_at TEXT NOT NULL
+		)`,
+		`DROP TABLE rollup_usage_daily`,
+		`CREATE TABLE rollup_usage_daily (
+			day TEXT NOT NULL,
+			agent_id INTEGER NOT NULL,
+			workspace_id INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			sessions INTEGER NOT NULL DEFAULT 0,
+			messages INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			priced INTEGER NOT NULL DEFAULT 1,
+			PRIMARY KEY (day, agent_id, workspace_id, model)
 		)`,
 		`INSERT INTO agents (id, slug) VALUES (1, 'claude-code')`,
 		`INSERT INTO source_files (path, agent_id, content_hash, indexed_at)

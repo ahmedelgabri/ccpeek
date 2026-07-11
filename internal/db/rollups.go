@@ -65,25 +65,23 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		model                string
 		sessions, messages   int64
 		in, out, cr, cw      int64
-		cost                 float64
+		reported, estimated  float64
 		priced               bool
 	}
 	var out []rollupRow
 	for rows.Next() {
 		var r rollupRow
-		var reported float64
 		var uin, uout, ucr, ucw, unreported int64
 		if err := rows.Scan(&r.day, &r.agentID, &r.workspaceID, &r.model,
 			&r.sessions, &r.messages, &r.in, &r.out, &r.cr, &r.cw,
-			&reported, &uin, &uout, &ucr, &ucw, &unreported); err != nil {
+			&r.reported, &uin, &uout, &ucr, &ucw, &unreported); err != nil {
 			return err
 		}
-		r.cost = reported
 		r.priced = true
 		if unreported > 0 {
 			rate, ok := pricer.Lookup(r.model)
 			if ok {
-				r.cost += rate.Cost(canon.Usage{
+				r.estimated = rate.Cost(canon.Usage{
 					InputTokens: uin, OutputTokens: uout,
 					CacheReadTokens: ucr, CacheWriteTokens: ucw,
 				})
@@ -101,8 +99,9 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		INSERT INTO rollup_usage_daily
 			(day, agent_id, workspace_id, model, sessions, messages,
 			 input_tokens, output_tokens, cache_read_tokens,
-			 cache_write_tokens, cost_usd, priced)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			 cache_write_tokens, cost_usd, cost_reported_usd,
+			 cost_estimated_usd, priced)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -110,7 +109,8 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	for _, r := range out {
 		if _, err := stmt.ExecContext(ctx, r.day, r.agentID, r.workspaceID,
 			r.model, r.sessions, r.messages, r.in, r.out, r.cr, r.cw,
-			r.cost, boolInt(r.priced)); err != nil {
+			r.reported+r.estimated, r.reported, r.estimated,
+			boolInt(r.priced)); err != nil {
 			return fmt.Errorf("writing rollup: %w", err)
 		}
 	}

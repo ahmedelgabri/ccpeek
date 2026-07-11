@@ -188,7 +188,21 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	} else {
 		report.LinksPending = pending
 	}
-	if report.FilesChanged > 0 {
+	// Rollups also regenerate when they are empty despite indexed usage —
+	// schema migrations drop them (the split columns rebuild here) and this
+	// self-heals instead of leaving Usage blank until the next change.
+	needRollups := report.FilesChanged > 0
+	if !needRollups {
+		var rollups, usage int
+		if err := r.store.DB().QueryRowContext(ctx, `
+			SELECT (SELECT COUNT(*) FROM rollup_usage_daily),
+			       (SELECT COUNT(*) FROM message_usage)`).
+			Scan(&rollups, &usage); err != nil {
+			return nil, r.fail(ctx, report, started, err)
+		}
+		needRollups = rollups == 0 && usage > 0
+	}
+	if needRollups {
 		if err := r.store.RegenerateWorkspaces(ctx); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}

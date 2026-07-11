@@ -9,7 +9,7 @@ import {
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { api } from "./api";
+import { api, type UsageRow } from "./api";
 
 echarts.use([
   BarChart,
@@ -134,6 +134,113 @@ function buildOption(series: DaySeries[]) {
       emphasis: { focus: "series" },
     })),
   };
+}
+
+// GroupBars is the graph for the non-day groupings (model, agent,
+// project): horizontal cost bars, top rows first. Bars wear the fixed
+// agent colors when the category IS an agent (identity); otherwise a
+// single accent hue (magnitude across categories).
+export function GroupBars({
+  rows,
+  group,
+}: {
+  rows: UsageRow[];
+  group: string;
+}) {
+  const el = useRef<HTMLDivElement>(null);
+  const chart = useRef<echarts.ECharts>(null);
+  const top = rows
+    .filter((r) => r.costUSD > 0)
+    .slice(0, 20)
+    .reverse(); // echarts y-axis draws bottom-up
+
+  useEffect(() => {
+    if (!el.current || top.length === 0) return;
+    chart.current ??= echarts.init(el.current);
+    chart.current.setOption({
+      backgroundColor: "transparent",
+      grid: { left: 170, right: 48, top: 8, bottom: 24 },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: "#1a2030",
+        borderColor: EDGE,
+        textStyle: { color: "#d6dbe7", fontSize: 12 },
+        valueFormatter: (v: unknown) =>
+          typeof v === "number" ? `$${v.toFixed(2)}` : "",
+      },
+      xAxis: {
+        type: "value",
+        axisLabel: {
+          color: INK_DIM,
+          fontSize: 11,
+          formatter: (v: number) => `$${v}`,
+        },
+        splitLine: { lineStyle: { color: EDGE } },
+      },
+      yAxis: {
+        type: "category",
+        data: top.map((r) => r.group || "(none)"),
+        axisLine: { lineStyle: { color: EDGE } },
+        axisTick: { show: false },
+        axisLabel: {
+          color: INK_DIM,
+          fontSize: 11,
+          width: 160,
+          overflow: "truncate",
+        },
+      },
+      series: [
+        {
+          type: "bar",
+          data: top.map((r) => ({
+            value: r.costUSD,
+            itemStyle: {
+              color:
+                group === "agent"
+                  ? (AGENT_COLORS[r.group] ?? "#5c6478")
+                  : "#7aa2f7",
+            },
+          })),
+          barMaxWidth: 18,
+          itemStyle: { borderRadius: [0, 4, 4, 0] },
+          label: {
+            show: true,
+            position: "right",
+            color: INK_DIM,
+            fontSize: 10,
+            formatter: ({ value }: { value: number }) => `$${value.toFixed(2)}`,
+          },
+        },
+      ],
+    });
+    const onResize = () => chart.current?.resize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [rows, group]);
+
+  useEffect(
+    () => () => {
+      chart.current?.dispose();
+      chart.current = null;
+    },
+    [],
+  );
+
+  if (top.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-md border border-edge bg-surface-1 p-4">
+      <h2 className="mb-1 text-sm font-medium text-ink-dim">
+        Cost by {group}
+      </h2>
+      <div
+        ref={el}
+        style={{ height: Math.max(top.length * 26 + 60, 140) }}
+        role="img"
+        aria-label={`Cost by ${group}; the table below holds the same data`}
+      />
+    </div>
+  );
 }
 
 function downloadCSV(series: DaySeries[]) {

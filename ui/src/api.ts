@@ -84,6 +84,11 @@ export interface FileTouch {
   at?: string;
 }
 
+export interface KindCount {
+  kind: string;
+  count: number;
+}
+
 export interface Stats {
   sessions: number;
   messages: number;
@@ -98,6 +103,7 @@ export interface Stats {
   activity?: DayActivity[];
   workspaces?: WorkspaceStat[];
   recentFiles?: FileTouch[];
+  toolKinds?: KindCount[];
 }
 
 export interface CommandRow {
@@ -116,6 +122,8 @@ export interface ToolCallRow {
   detail?: string;
   status?: string;
   at?: string;
+  old?: string;
+  new?: string;
 }
 
 export interface UsageRow {
@@ -124,6 +132,8 @@ export interface UsageRow {
   messages: number;
   tokens: TokenTotals;
   costUSD: number;
+  costReportedUSD: number;
+  costEstimatedUSD: number;
   hasUnpriced?: boolean;
 }
 

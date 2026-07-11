@@ -8,6 +8,9 @@ import { FilterBar, SkeletonRows } from "../ui";
 const CostTimeline = lazy(() =>
   import("../CostTimeline").then((m) => ({ default: m.CostTimeline })),
 );
+const GroupBars = lazy(() =>
+  import("../CostTimeline").then((m) => ({ default: m.GroupBars })),
+);
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 
@@ -99,7 +102,11 @@ export function UsagePage() {
       ) : (
         <>
           <Suspense fallback={null}>
-            <CostTimeline since={since} agent={agent} model={model} />
+            {group === "day" ? (
+              <CostTimeline since={since} agent={agent} model={model} />
+            ) : (
+              <GroupBars rows={rows} group={group} />
+            )}
           </Suspense>
           {error && <p className="text-warn">Failed to load: {String(error)}</p>}
           {isLoading && <SkeletonRows rows={6} className="mb-4" />}
@@ -116,7 +123,14 @@ export function UsagePage() {
               <th className="px-4 py-2 text-right">tokens</th>
               <th className="px-4 py-2 text-right">cache read</th>
               <th className="px-4 py-2 text-right">cost</th>
-              <th className="w-1/3 px-4 py-2"></th>
+              <th className="w-1/3 px-4 py-2 font-normal normal-case">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-[2px] bg-accent/70" />
+                  reported
+                  <span className="ml-2 inline-block h-2 w-2 rounded-[2px] bg-accent/30" />
+                  estimated
+                </span>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-edge bg-surface-1">
@@ -157,14 +171,34 @@ export function UsagePage() {
                 <td className="px-4 py-2 text-right tabular-nums text-ink-dim">
                   {fmtTokens(r.tokens.cacheRead)}
                 </td>
-                <td className="px-4 py-2 text-right tabular-nums text-ok">
+                <td
+                  className="px-4 py-2 text-right tabular-nums text-ok"
+                  title={`reported ${fmtCost(r.costReportedUSD)} · estimated ${fmtCost(r.costEstimatedUSD)}`}
+                >
                   {fmtCost(r.costUSD)}
                 </td>
                 <td className="px-4 py-2">
                   <div
-                    className="h-2 rounded bg-accent/70"
+                    className="flex h-2 gap-[1px] overflow-hidden rounded"
                     style={{ width: `${Math.max((r.costUSD / maxCost) * 100, 1)}%` }}
-                  />
+                  >
+                    {r.costReportedUSD > 0 && (
+                      <div
+                        className="bg-accent/70"
+                        style={{
+                          width: `${(r.costReportedUSD / (r.costUSD || 1)) * 100}%`,
+                        }}
+                      />
+                    )}
+                    {r.costEstimatedUSD > 0 && (
+                      <div
+                        className="bg-accent/30"
+                        style={{
+                          width: `${(r.costEstimatedUSD / (r.costUSD || 1)) * 100}%`,
+                        }}
+                      />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

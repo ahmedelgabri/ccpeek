@@ -42,6 +42,12 @@ type FileTouch struct {
 	At        string `json:"at,omitempty"`
 }
 
+// KindCount is one slice of the tool-call distribution.
+type KindCount struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
+}
+
 // Stats is the overview: headline counts plus the relation facets the
 // dashboard renders (per-agent, per-day activity, workspaces, recent
 // file edits).
@@ -61,6 +67,7 @@ type Stats struct {
 	Activity    []DayActivity   `json:"activity,omitempty"`
 	Workspaces  []WorkspaceStat `json:"workspaces,omitempty"`
 	RecentFiles []FileTouch     `json:"recentFiles,omitempty"`
+	ToolKinds   []KindCount     `json:"toolKinds,omitempty"`
 }
 
 // Stats builds the overview in a handful of aggregate queries.
@@ -159,6 +166,24 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 			return nil, err
 		}
 		st.Workspaces = append(st.Workspaces, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = db.QueryContext(ctx, `
+		SELECT kind, COUNT(*) FROM tool_calls GROUP BY kind ORDER BY 2 DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("tool kinds: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k KindCount
+		if err := rows.Scan(&k.Kind, &k.Count); err != nil {
+			return nil, err
+		}
+		st.ToolKinds = append(st.ToolKinds, k)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -281,8 +306,13 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	return out, rows.Err()
 }
 
+// editExcerptLimit caps the old/new payloads shipped for diff rendering;
+// pathological edits fall back to "diff too large".
+const editExcerptLimit = 16 * 1024
+
 // ToolCallRow is one tool invocation of a session, with just enough
-// detail to browse (command text or file path, never the full payload).
+// detail to browse (command text or file path, never the full payload) —
+// plus the edit payloads for file_edit rows so the UI can render diffs.
 type ToolCallRow struct {
 	Seq int `json:"seq"`
 	// MessageSeq is the transcript seq of the issuing message, letting the
@@ -293,6 +323,9 @@ type ToolCallRow struct {
 	Detail     string `json:"detail,omitempty"` // shell command or file path
 	Status     string `json:"status,omitempty"`
 	At         string `json:"at,omitempty"`
+	// Old/New carry the file_edit before/after excerpts (capped).
+	Old string `json:"old,omitempty"`
+	New string `json:"new,omitempty"`
 }
 
 // SessionTools returns every tool call of one session in order.
@@ -304,8 +337,15 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	rows, err := s.store.DB().QueryContext(ctx, `
 		SELECT tc.seq, tc.message_seq, tc.name, tc.kind,
 		       COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, ''),
-		       tc.result_status, COALESCE(tc.started_at, '')
-		FROM tool_calls tc WHERE tc.session_id = ? ORDER BY tc.seq`, rowID)
+		       tc.result_status, COALESCE(tc.started_at, ''),
+		       CASE WHEN tc.kind = 'file_edit'
+		            THEN substr(COALESCE(json_extract(tc.input_json, '$.old_string'), ''), 1, ?)
+		            ELSE '' END,
+		       CASE WHEN tc.kind = 'file_edit'
+		            THEN substr(COALESCE(json_extract(tc.input_json, '$.new_string'), ''), 1, ?)
+		            ELSE '' END
+		FROM tool_calls tc WHERE tc.session_id = ? ORDER BY tc.seq`,
+		editExcerptLimit, editExcerptLimit, rowID)
 	if err != nil {
 		return nil, fmt.Errorf("listing tool calls: %w", err)
 	}
@@ -314,7 +354,8 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	var out []ToolCallRow
 	for rows.Next() {
 		var t ToolCallRow
-		if err := rows.Scan(&t.Seq, &t.MessageSeq, &t.Name, &t.Kind, &t.Detail, &t.Status, &t.At); err != nil {
+		if err := rows.Scan(&t.Seq, &t.MessageSeq, &t.Name, &t.Kind,
+			&t.Detail, &t.Status, &t.At, &t.Old, &t.New); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

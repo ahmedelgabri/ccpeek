@@ -13,6 +13,7 @@ import {
   AgentChip,
   AgentDot,
   EmptyNote,
+  KindBars,
   Panel,
   SkeletonRows,
   SkeletonTiles,
@@ -155,6 +156,16 @@ export function OverviewPage() {
             {(st.agents ?? []).length === 0 && (
               <EmptyNote>No agents detected.</EmptyNote>
             )}
+          </Panel>
+
+          <Panel label="Tool calls by kind">
+            <KindBars
+              items={(st.toolKinds ?? []).map((k) => ({
+                label: k.kind,
+                count: k.count,
+              }))}
+              fmt={fmtTokens}
+            />
           </Panel>
 
           <Panel label="Workspaces">

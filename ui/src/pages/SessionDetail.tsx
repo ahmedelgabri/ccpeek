@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { useHighlight } from "../highlight";
+import { DiffView } from "../Diff";
 import {
   api,
   fmtCost,
@@ -13,6 +15,7 @@ import {
   AgentChip,
   CopyButton,
   EmptyNote,
+  KindBars,
   SkeletonRows,
   SkeletonTiles,
   StatTile,
@@ -199,6 +202,8 @@ function Transcript({
   focusSeq?: number;
 }) {
   const [treeView, setTreeView] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  useHighlight(container, [msgs]);
   const depths = useMemo(() => computeDepths(msgs), [msgs]);
   const toolsByMsg = useMemo(() => {
     const map = new Map<number, ToolCallRow[]>();
@@ -229,7 +234,7 @@ function Transcript({
   }, [focusSeq, msgs.length]);
 
   return (
-    <div>
+    <div ref={container}>
       <div className="mb-2 flex items-center gap-3">
         {hidden > 0 && (
           <span className="font-mono text-[11px] text-ink-faint">
@@ -327,62 +332,107 @@ function Transcript({
 }
 
 function CommandsTab({ commands }: { commands: ToolCallRow[] }) {
+  const container = useRef<HTMLDivElement>(null);
+  useHighlight(container, [commands]);
   if (commands.length === 0)
     return <EmptyNote>No shell commands in this session.</EmptyNote>;
   return (
-    <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
-      {commands.map((c) => (
-        <li key={c.seq} className="flex items-start gap-3 bg-surface-1 px-3 py-2">
-          <pre className="min-w-0 flex-1 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-            {c.detail}
-          </pre>
-          <span className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums">
-            {c.at?.slice(11, 19)}
-          </span>
-          <CopyButton text={c.detail ?? ""} />
-        </li>
-      ))}
-    </ul>
+    <div ref={container}>
+      <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+        {commands.map((c) => (
+          <li
+            key={c.seq}
+            className="flex items-start gap-3 bg-surface-1 px-3 py-2"
+          >
+            <pre className="min-w-0 flex-1 text-xs leading-relaxed">
+              <code className="language-bash block break-words whitespace-pre-wrap">
+                {c.detail}
+              </code>
+            </pre>
+            <span className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums">
+              {c.at?.slice(11, 19)}
+            </span>
+            <CopyButton text={c.detail ?? ""} />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
 function ToolsTab({ tools }: { tools: ToolCallRow[] }) {
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
+  const byKind = new Map<string, number>();
+  for (const t of tools) byKind.set(t.kind, (byKind.get(t.kind) ?? 0) + 1);
+  const kinds = Array.from(byKind, ([label, count]) => ({ label, count })).sort(
+    (a, b) => b.count - a.count,
+  );
   return (
-    <div className="overflow-hidden rounded-md border border-edge">
-      <table className="w-full text-sm">
-        <thead className="bg-surface-2 text-left font-mono text-[10px] tracking-wider text-ink-faint uppercase">
-          <tr>
-            <th className="px-3 py-1.5">#</th>
-            <th className="px-3 py-1.5">tool</th>
-            <th className="px-3 py-1.5">kind</th>
-            <th className="px-3 py-1.5">detail</th>
-            <th className="px-3 py-1.5 text-right">at</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-edge bg-surface-1">
-          {tools.map((t) => (
-            <tr key={t.seq}>
-              <td className="px-3 py-1.5 font-mono text-xs text-ink-faint tabular-nums">
-                {t.seq}
-              </td>
-              <td className="px-3 py-1.5 font-mono text-xs">{t.name}</td>
-              <td className="px-3 py-1.5">
-                <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
-                  {t.kind}
-                </span>
-              </td>
-              <td className="max-w-0 truncate px-3 py-1.5 font-mono text-xs text-ink-dim">
-                {t.detail && shortPath(t.detail)}
-              </td>
-              <td className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums">
-                {t.at?.slice(11, 19)}
-              </td>
+    <div className="space-y-3">
+      <div className="rounded-md border border-edge bg-surface-1">
+        <div className="microlabel border-b border-edge px-3 py-2">
+          Calls by kind
+        </div>
+        <KindBars items={kinds} />
+      </div>
+      <div className="overflow-hidden rounded-md border border-edge">
+        <table className="w-full text-sm">
+          <thead className="bg-surface-2 text-left font-mono text-[10px] tracking-wider text-ink-faint uppercase">
+            <tr>
+              <th className="px-3 py-1.5">#</th>
+              <th className="px-3 py-1.5">tool</th>
+              <th className="px-3 py-1.5">kind</th>
+              <th className="px-3 py-1.5">detail</th>
+              <th className="px-3 py-1.5 text-right">at</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-edge bg-surface-1">
+            {tools.map((t) => (
+              <ToolRow key={t.seq} t={t} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+function ToolRow({ t }: { t: ToolCallRow }) {
+  const [open, setOpen] = useState(false);
+  const hasDiff = t.kind === "file_edit" && (t.old || t.new);
+  return (
+    <>
+      <tr
+        onClick={hasDiff ? () => setOpen((v) => !v) : undefined}
+        className={hasDiff ? "cursor-pointer hover:bg-surface-2/40" : undefined}
+      >
+        <td className="px-3 py-1.5 font-mono text-xs text-ink-faint tabular-nums">
+          {t.seq}
+        </td>
+        <td className="px-3 py-1.5 font-mono text-xs">{t.name}</td>
+        <td className="px-3 py-1.5">
+          <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
+            {t.kind}
+          </span>
+        </td>
+        <td className="max-w-0 truncate px-3 py-1.5 font-mono text-xs text-ink-dim">
+          {hasDiff && (
+            <span className="mr-1.5 text-accent">{open ? "▾" : "▸"} diff</span>
+          )}
+          {t.detail && shortPath(t.detail)}
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums">
+          {t.at?.slice(11, 19)}
+        </td>
+      </tr>
+      {hasDiff && open && (
+        <tr>
+          <td colSpan={5} className="px-3 py-2">
+            <DiffView old={t.old ?? ""} new={t.new ?? ""} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

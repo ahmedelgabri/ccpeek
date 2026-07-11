@@ -280,6 +280,38 @@ export function TokenMixBar({
   );
 }
 
+// KindBars: a horizontal magnitude chart for distributions (tool calls by
+// kind) — accent bars with mono labels, no identity colors needed.
+export function KindBars({
+  items,
+  fmt = String,
+}: {
+  items: { label: string; count: number }[];
+  fmt?: (n: number) => string;
+}) {
+  const max = Math.max(...items.map((i) => i.count), 1);
+  return (
+    <div className="space-y-1.5 px-3 py-2.5">
+      {items.map((i) => (
+        <div key={i.label} className="flex items-center gap-2">
+          <span className="w-24 shrink-0 truncate font-mono text-[11px] text-ink-dim">
+            {i.label.replaceAll("_", " ")}
+          </span>
+          <div className="h-2.5 flex-1 overflow-hidden rounded-sm bg-surface-2/50">
+            <div
+              className="h-full rounded-sm bg-accent/80"
+              style={{ width: `${Math.max((i.count / max) * 100, 1)}%` }}
+            />
+          </div>
+          <span className="w-12 shrink-0 text-right font-mono text-[11px] text-ink-faint tabular-nums">
+            {fmt(i.count)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // FilterBar: the shared date-range + agent (+ model) row every data view
 // carries. Values are controlled by the page (URL or state).
 const RANGES = [

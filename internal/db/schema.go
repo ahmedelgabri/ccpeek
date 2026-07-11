@@ -11,7 +11,7 @@ import (
 // run only the pending entries of migrations. Open-time backfills are
 // banned (docs/v2-plan.md §5.2, §8.1); backfill-style work ships as an
 // explicit migration with a version bump.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -242,6 +242,10 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 	cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 	cache_write_tokens INTEGER NOT NULL DEFAULT 0,
 	cost_usd REAL NOT NULL DEFAULT 0,
+	-- cost_usd = reported + estimated: what agents said they paid vs what
+	-- the pricing table computed for rows with no reported figure.
+	cost_reported_usd REAL NOT NULL DEFAULT 0,
+	cost_estimated_usd REAL NOT NULL DEFAULT 0,
 	priced INTEGER NOT NULL DEFAULT 1, -- 0: model unknown to the pricing table
 	PRIMARY KEY (day, agent_id, workspace_id, model)
 );
@@ -350,5 +354,21 @@ var migrations = []migration{
 		_, err := tx.ExecContext(ctx,
 			`ALTER TABLE source_files ADD COLUMN stat_sig TEXT NOT NULL DEFAULT ''`)
 		return err
+	},
+	// v2 → v3: reported/estimated cost split in the rollups. Existing rows
+	// are dropped — the ingest pipeline regenerates rollups whenever they
+	// are empty, so the next start rebuilds them with the split.
+	func(ctx context.Context, tx *sql.Tx) error {
+		stmts := []string{
+			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_reported_usd REAL NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_estimated_usd REAL NOT NULL DEFAULT 0`,
+			`DELETE FROM rollup_usage_daily`,
+		}
+		for _, q := range stmts {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
 	},
 }
