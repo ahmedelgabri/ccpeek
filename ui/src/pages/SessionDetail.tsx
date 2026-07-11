@@ -20,6 +20,7 @@ import {
   SkeletonTiles,
   StatTile,
   TokenMixBar,
+  toolColor,
 } from "../ui";
 
 const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
@@ -279,10 +280,10 @@ function Transcript({
                     ? "border-edge border-l-accent"
                     : isMeta
                       ? "border-edge border-dashed"
-                      : "border-edge border-l-edge-strong"
+                      : "border-edge border-l-assistant/60"
               } ${
                 isUser
-                  ? "bg-surface-2/60 p-3"
+                  ? "bg-[color-mix(in_oklab,var(--color-accent)_7%,var(--color-surface-1))] p-3"
                   : isMeta
                     ? "bg-transparent px-3 py-1.5"
                     : "bg-surface-1 p-3"
@@ -296,9 +297,9 @@ function Transcript({
                 <span
                   className={
                     isAssistant
-                      ? "text-accent"
+                      ? "text-assistant"
                       : isUser
-                        ? "font-medium text-ink"
+                        ? "font-medium text-accent"
                         : ""
                   }
                 >
@@ -329,32 +330,106 @@ function Transcript({
                   </div>
                 ))}
               {msgTools.length > 0 && (
-                <div
-                  className={`flex flex-wrap gap-1.5 ${m.text.trim() !== "" ? "mt-2" : ""}`}
-                >
-                  {msgTools.map((t) => (
-                    <span
-                      key={t.seq}
-                      title={t.detail}
-                      className="inline-flex max-w-full items-baseline gap-1.5 rounded border border-edge bg-surface-2/60 px-1.5 py-0.5 font-mono text-[11px]"
-                    >
-                      <span className="text-accent">{t.name}</span>
-                      {t.detail && (
-                        <span className="truncate text-ink-dim">
-                          {t.kind === "shell"
-                            ? t.detail.split("\n")[0].slice(0, 80)
-                            : shortPath(t.detail)}
-                        </span>
-                      )}
-                    </span>
-                  ))}
-                </div>
+                <MessageTools
+                  tools={msgTools}
+                  className={m.text.trim() !== "" ? "mt-2" : ""}
+                />
               )}
             </li>
           );
         })}
       </ol>
       {msgs.length === 0 && <EmptyNote>No transcript entries.</EmptyNote>}
+    </div>
+  );
+}
+
+// MessageTools renders a message's tool calls as kind-colored chips;
+// every chip with a payload expands inline — file edits into their line
+// diff, everything else into the full command/path.
+function MessageTools({
+  tools,
+  className = "",
+}: {
+  tools: ToolCallRow[];
+  className?: string;
+}) {
+  const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
+  const toggle = (seq: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+
+  return (
+    <div className={className}>
+      <div className="flex flex-wrap gap-1.5">
+        {tools.map((t) => {
+          // Expand only when there is more than the chip already shows: a
+          // diff, a full shell command, or a truncated detail.
+          const expandable =
+            (t.kind === "file_edit" && Boolean(t.old || t.new)) ||
+            (t.kind === "shell" && Boolean(t.detail)) ||
+            Boolean(t.detail && t.detail.length > 80);
+          const isOpen = open.has(t.seq);
+          return (
+            <button
+              key={t.seq}
+              onClick={expandable ? () => toggle(t.seq) : undefined}
+              title={t.detail}
+              className={`inline-flex max-w-full items-baseline gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px] ${
+                isOpen
+                  ? "border-edge-strong bg-surface-2"
+                  : "border-edge bg-surface-2/60"
+              } ${expandable ? "cursor-pointer hover:border-edge-strong" : "cursor-default"}`}
+            >
+              <span
+                aria-hidden
+                className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full"
+                style={{ background: toolColor(t.kind) }}
+              />
+              <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
+              {t.detail && (
+                <span className="truncate text-ink-dim">
+                  {t.kind === "shell"
+                    ? t.detail.split("\n")[0].slice(0, 80)
+                    : shortPath(t.detail)}
+                </span>
+              )}
+              {expandable && (
+                <span className="text-ink-faint">{isOpen ? "▾" : "▸"}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {tools
+        .filter((t) => open.has(t.seq))
+        .map((t) => (
+          <div key={t.seq} className="mt-2">
+            <div className="mb-1 font-mono text-[10px] text-ink-faint">
+              <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
+              {t.detail && t.kind !== "shell" && <> · {shortPath(t.detail)}</>}
+            </div>
+            {t.kind === "file_edit" && (t.old || t.new) ? (
+              <DiffView old={t.old ?? ""} new={t.new ?? ""} />
+            ) : (
+              <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-[11px] leading-relaxed">
+                <code
+                  className={
+                    t.kind === "shell"
+                      ? "language-bash block whitespace-pre-wrap"
+                      : "block whitespace-pre-wrap"
+                  }
+                >
+                  {t.detail}
+                </code>
+              </pre>
+            )}
+          </div>
+        ))}
     </div>
   );
 }
@@ -439,7 +514,12 @@ function ToolRow({ t }: { t: ToolCallRow }) {
         </td>
         <td className="px-3 py-1.5 font-mono text-xs">{t.name}</td>
         <td className="px-3 py-1.5">
-          <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
+          <span className="inline-flex items-center gap-1.5 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
+            <span
+              aria-hidden
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ background: toolColor(t.kind) }}
+            />
             {t.kind}
           </span>
         </td>

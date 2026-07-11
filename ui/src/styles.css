@@ -25,6 +25,21 @@
   --color-agent-codex: #c98500;
   --color-agent-opencode: #9085e9;
   --color-agent-cursor: #e66767;
+
+  /* Transcript registers: the user speaks in accent, the assistant in
+     violet. Identity never rides on color alone — glyphs, labels, and
+     card layout differ too. */
+  --color-assistant: #bb9af7;
+
+  /* Tool-call kinds (chips always carry the tool name as text). */
+  --color-tool-shell: #e0af68;
+  --color-tool-edit: #ff9e64;
+  --color-tool-write: #9ece6a;
+  --color-tool-read: #7dcfff;
+  --color-tool-search: #2ac3de;
+  --color-tool-discovery: #73daca;
+  --color-tool-web: #d55181;
+  --color-tool-subagent: #bb9af7;
 }
 
 body {

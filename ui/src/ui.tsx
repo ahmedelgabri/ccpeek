@@ -280,6 +280,24 @@ export function TokenMixBar({
   );
 }
 
+// TOOL_COLOR maps tool-call kinds to their fixed hues (CSS vars from
+// styles.css). Chips and badges always pair the color with the kind or
+// tool name as text.
+export const TOOL_COLOR: Record<string, string> = {
+  shell: "var(--color-tool-shell)",
+  file_edit: "var(--color-tool-edit)",
+  file_write: "var(--color-tool-write)",
+  file_read: "var(--color-tool-read)",
+  search: "var(--color-tool-search)",
+  discovery: "var(--color-tool-discovery)",
+  web: "var(--color-tool-web)",
+  subagent: "var(--color-tool-subagent)",
+};
+
+export function toolColor(kind: string): string {
+  return TOOL_COLOR[kind] ?? "var(--color-ink-faint)";
+}
+
 // KindBars: a horizontal magnitude chart for distributions (tool calls by
 // kind) — accent bars with mono labels, no identity colors needed.
 export function KindBars({
