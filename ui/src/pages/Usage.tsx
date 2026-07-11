@@ -9,7 +9,7 @@ import {
   parityApi,
   totalTokens,
 } from "../api";
-import { FilterBar, SkeletonRows } from "../ui";
+import { FilterBar, SkeletonRows, useTooltip } from "../ui";
 
 // Lazy so echarts ships as its own chunk, loaded only on this page.
 const CostTimeline = lazy(() =>
@@ -92,6 +92,7 @@ export function UsagePage() {
   const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
   const total = rows.reduce((acc, r) => acc + r.costUSD, 0);
   const anyUnpriced = rows.some((r) => r.hasUnpriced);
+  const tooltip = useTooltip();
   const models = (modelRows.data ?? [])
     .map((r) => r.group)
     .filter((m) => m !== "");
@@ -222,6 +223,15 @@ export function UsagePage() {
                 <td className="px-4 py-2 font-mono text-xs">
                   {!r.group ? (
                     <span className="text-ink-dim">(no {group})</span>
+                  ) : group === "day" ? (
+                    <Link
+                      to="/sessions"
+                      search={{ since: r.group, until: r.group }}
+                      title="Sessions active on this day"
+                      className="hover:text-accent"
+                    >
+                      {r.group}
+                    </Link>
                   ) : group === "agent" ? (
                     <Link
                       to="/sessions"
@@ -260,7 +270,27 @@ export function UsagePage() {
                 >
                   {fmtCost(r.costUSD)}
                 </td>
-                <td className="px-4 py-2">
+                <td
+                  className="px-4 py-2"
+                  onMouseEnter={(e) =>
+                    tooltip.show(
+                      e,
+                      <>
+                        <span className="text-ink">{r.group || group}</span>
+                        <br />
+                        reported{" "}
+                        <span className="text-ok">
+                          {fmtCost(r.costReportedUSD)}
+                        </span>
+                        {" · "}estimated{" "}
+                        <span className="text-ok">
+                          {fmtCost(r.costEstimatedUSD)}
+                        </span>
+                      </>,
+                    )
+                  }
+                  onMouseLeave={tooltip.hide}
+                >
                   <div
                     className="flex h-2 gap-[1px] overflow-hidden rounded"
                     style={{ width: `${Math.max((r.costUSD / maxCost) * 100, 1)}%` }}
@@ -290,11 +320,12 @@ export function UsagePage() {
       </div>
         </>
       )}
+      {tooltip.node}
     </div>
   );
 }
 
-function SortableTH({
+function SortableTH<K extends string>({
   label,
   k,
   sort,
@@ -302,9 +333,9 @@ function SortableTH({
   right,
 }: {
   label: string;
-  k: SortKey;
-  sort: { key: SortKey; desc: boolean } | null;
-  onSort: (k: SortKey) => void;
+  k: K;
+  sort: { key: K; desc: boolean } | null;
+  onSort: (k: K) => void;
   right?: boolean;
 }) {
   const active = sort?.key === k;
@@ -368,6 +399,18 @@ function BudgetBanner({
   );
 }
 
+type BlockSortKey = "window" | "sessions" | "tokens" | "cost";
+
+const BLOCK_SORT_VALUE: Record<
+  BlockSortKey,
+  (b: import("../api").BlockRow) => number | string
+> = {
+  window: (b) => b.start,
+  sessions: (b) => b.sessions,
+  tokens: (b) => totalTokens(b.tokens),
+  cost: (b) => b.costUSD,
+};
+
 function BlocksTable({
   blocks,
   loading,
@@ -375,6 +418,28 @@ function BlocksTable({
   blocks: import("../api").BlockRow[];
   loading: boolean;
 }) {
+  const [sort, setSort] = useState<{
+    key: BlockSortKey;
+    desc: boolean;
+  } | null>(null);
+  const toggleSort = (key: BlockSortKey) =>
+    setSort((prev) =>
+      prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true },
+    );
+  const sorted = useMemo(() => {
+    if (!sort) return blocks;
+    const value = BLOCK_SORT_VALUE[sort.key];
+    return [...blocks].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+      return sort.desc ? -cmp : cmp;
+    });
+  }, [blocks, sort]);
+
   if (loading) return <p className="text-ink-dim">Loading…</p>;
   if (blocks.length === 0)
     return <p className="text-ink-dim">No usage recorded yet.</p>;
@@ -384,15 +449,38 @@ function BlocksTable({
       <table className="w-full text-sm">
         <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-ink-dim">
           <tr>
-            <th className="px-4 py-2">5h window (UTC)</th>
-            <th className="px-4 py-2 text-right">sessions</th>
-            <th className="px-4 py-2 text-right">tokens</th>
-            <th className="px-4 py-2 text-right">cost</th>
+            <SortableTH
+              label="5h window (UTC)"
+              k="window"
+              sort={sort}
+              onSort={toggleSort}
+            />
+            <SortableTH
+              label="sessions"
+              k="sessions"
+              sort={sort}
+              onSort={toggleSort}
+              right
+            />
+            <SortableTH
+              label="tokens"
+              k="tokens"
+              sort={sort}
+              onSort={toggleSort}
+              right
+            />
+            <SortableTH
+              label="cost"
+              k="cost"
+              sort={sort}
+              onSort={toggleSort}
+              right
+            />
             <th className="w-1/3 px-4 py-2"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-edge bg-surface-1">
-          {blocks.map((b) => (
+          {sorted.map((b) => (
             <tr key={b.start} className={b.active ? "bg-surface-2/50" : ""}>
               <td className="px-4 py-2 font-mono text-xs">
                 {b.start.slice(0, 16).replace("T", " ")} –{" "}
