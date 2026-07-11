@@ -134,11 +134,17 @@ const routeTree = rootRoute.addChildren([
     component: SessionsPage,
     // Only non-empty filters serialize, keeping /sessions URLs clean.
     validateSearch: (s: Record<string, unknown>) => {
-      const out: { agent?: string; q?: string; project?: string } = {};
+      const out: {
+        agent?: string;
+        q?: string;
+        project?: string;
+        since?: string;
+      } = {};
       if (typeof s.agent === "string" && s.agent !== "") out.agent = s.agent;
       if (typeof s.q === "string" && s.q !== "") out.q = s.q;
       if (typeof s.project === "string" && s.project !== "")
         out.project = s.project;
+      if (typeof s.since === "string" && s.since !== "") out.since = s.since;
       return out;
     },
   }),

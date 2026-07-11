@@ -9,7 +9,17 @@ import {
   totalTokens,
   type DayActivity,
 } from "../api";
-import { AgentChip, AgentDot, EmptyNote, Panel, StatTile } from "../ui";
+import {
+  AgentChip,
+  AgentDot,
+  EmptyNote,
+  Panel,
+  SkeletonRows,
+  SkeletonTiles,
+  Sparkline,
+  StatTile,
+  useTooltip,
+} from "../ui";
 
 // Overview is the instrument panel: headline counters, the activity
 // heatmap, and the relation facets (agents, workspaces, latest sessions,
@@ -22,19 +32,33 @@ export function OverviewPage() {
   });
 
   const st = stats.data;
-  if (stats.isLoading) return <p className="text-ink-dim">Loading…</p>;
+  if (stats.isLoading)
+    return (
+      <div className="space-y-4">
+        <SkeletonTiles />
+        <SkeletonRows rows={8} />
+      </div>
+    );
   if (!st) return <EmptyNote>No data indexed yet.</EmptyNote>;
+
+  const last30 = (st.activity ?? []).slice(-30);
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <StatTile label="Sessions" value={String(st.sessions)} to="/sessions" />
+        <StatTile
+          label="Sessions"
+          value={String(st.sessions)}
+          to="/sessions"
+          spark={<Sparkline values={last30.map((d) => d.sessions)} />}
+        />
         <StatTile
           label="Cost / month"
           value={fmtCost(st.costMonthUSD)}
           detail={`${fmtCost(st.costUSD)} all time`}
           tone="ok"
           to="/usage"
+          spark={<Sparkline values={last30.map((d) => d.costUSD)} />}
         />
         <StatTile
           label="Tokens"
@@ -192,6 +216,7 @@ export function OverviewPage() {
 // sequential single-hue ramp (accent at four opacity steps — magnitude,
 // not identity), native tooltips, no chart library needed.
 function Heatmap({ days }: { days: DayActivity[] }) {
+  const tooltip = useTooltip();
   const byDay = new Map(days.map((d) => [d.day, d]));
   const CELL = 13;
   const GAP = 3;
@@ -226,28 +251,43 @@ function Heatmap({ days }: { days: DayActivity[] }) {
   ];
 
   return (
-    <svg
-      width={WEEKS * (CELL + GAP)}
-      height={7 * (CELL + GAP)}
-      role="img"
-      aria-label="Daily session activity heatmap"
-    >
-      {cells.map((c) => (
-        <rect
-          key={c.day}
-          x={c.week * (CELL + GAP)}
-          y={c.dow * (CELL + GAP)}
-          width={CELL}
-          height={CELL}
-          rx={2}
-          fill={FILL[level(c.d?.sessions ?? 0)]}
-        >
-          <title>
-            {c.day}: {c.d?.sessions ?? 0} session(s)
-            {c.d && c.d.costUSD > 0 ? ` · ${fmtCost(c.d.costUSD)}` : ""}
-          </title>
-        </rect>
-      ))}
-    </svg>
+    <>
+      <svg
+        width={WEEKS * (CELL + GAP)}
+        height={7 * (CELL + GAP)}
+        role="img"
+        aria-label="Daily session activity heatmap"
+      >
+        {cells.map((c) => (
+          <rect
+            key={c.day}
+            x={c.week * (CELL + GAP)}
+            y={c.dow * (CELL + GAP)}
+            width={CELL}
+            height={CELL}
+            rx={2}
+            fill={FILL[level(c.d?.sessions ?? 0)]}
+            onMouseEnter={(e) =>
+              tooltip.show(
+                e,
+                <>
+                  <span className="text-ink">{c.day}</span>
+                  <br />
+                  {c.d?.sessions ?? 0} session(s)
+                  {c.d && c.d.costUSD > 0 && (
+                    <>
+                      {" · "}
+                      <span className="text-ok">{fmtCost(c.d.costUSD)}</span>
+                    </>
+                  )}
+                </>,
+              )
+            }
+            onMouseLeave={tooltip.hide}
+          />
+        ))}
+      </svg>
+      {tooltip.node}
+    </>
   );
 }

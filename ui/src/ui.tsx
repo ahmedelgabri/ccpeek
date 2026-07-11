@@ -54,22 +54,31 @@ export function StatTile({
   detail,
   to,
   tone,
+  spark,
 }: {
   label: string;
   value: string;
   detail?: string;
   to?: string;
   tone?: "ok" | "warn";
+  spark?: ReactNode;
 }) {
   const body = (
     <>
       <div className="microlabel">{label}</div>
-      <div
-        className={`mt-1 font-mono text-xl leading-none font-medium tabular-nums ${
-          tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : "text-ink"
-        }`}
-      >
-        {value}
+      <div className="flex items-end gap-2">
+        <div
+          className={`mt-1 font-mono text-xl leading-none font-medium tabular-nums ${
+            tone === "ok"
+              ? "text-ok"
+              : tone === "warn"
+                ? "text-warn"
+                : "text-ink"
+          }`}
+        >
+          {value}
+        </div>
+        {spark && <div className="ml-auto">{spark}</div>}
       </div>
       {detail && (
         <div className="mt-1 font-mono text-[11px] text-ink-faint">
@@ -107,5 +116,256 @@ export function CopyButton({ text }: { text: string }) {
 }
 
 export function EmptyNote({ children }: { children: ReactNode }) {
-  return <p className="px-3 py-6 text-center text-sm text-ink-faint">{children}</p>;
+  return (
+    <p className="px-3 py-6 text-center text-sm text-ink-faint">{children}</p>
+  );
+}
+
+// Skeleton rows: loading states shaped like the content they replace.
+export function SkeletonRows({
+  rows = 6,
+  className = "",
+}: {
+  rows?: number;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`divide-y divide-edge overflow-hidden rounded-md border border-edge ${className}`}
+      aria-hidden
+    >
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="animate-pulse bg-surface-1 px-4 py-3">
+          <div className="mb-2 h-3 w-2/3 rounded bg-surface-2" />
+          <div className="h-2 w-1/3 rounded bg-surface-2/70" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function SkeletonTiles({ n = 6 }: { n?: number }) {
+  return (
+    <div
+      className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"
+      aria-hidden
+    >
+      {Array.from({ length: n }, (_, i) => (
+        <div
+          key={i}
+          className="animate-pulse rounded-md border border-edge bg-surface-1 px-3 py-2.5"
+        >
+          <div className="mb-2 h-2 w-1/2 rounded bg-surface-2" />
+          <div className="h-5 w-2/3 rounded bg-surface-2/70" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Hover tooltip: a cursor-anchored popup for data marks (richer than the
+// native <title> delay). Wrap the chart area and call show/hide.
+export function useTooltip() {
+  const [tip, setTip] = useState<{
+    x: number;
+    y: number;
+    content: ReactNode;
+  } | null>(null);
+  const show = (e: { clientX: number; clientY: number }, content: ReactNode) =>
+    setTip({ x: e.clientX, y: e.clientY, content });
+  const hide = () => setTip(null);
+  const node = tip ? (
+    <div
+      className="pointer-events-none fixed z-50 max-w-xs rounded-md border border-edge-strong bg-surface-2 px-2.5 py-1.5 font-mono text-[11px] leading-relaxed shadow-xl"
+      style={{
+        left: Math.min(tip.x + 12, window.innerWidth - 260),
+        top: tip.y + 14,
+      }}
+    >
+      {tip.content}
+    </div>
+  ) : null;
+  return { show, hide, node };
+}
+
+// Sparkline: an inline single-hue trend for stat tiles (magnitude, not
+// identity — accent only).
+export function Sparkline({
+  values,
+  width = 96,
+  height = 24,
+}: {
+  values: number[];
+  width?: number;
+  height?: number;
+}) {
+  if (values.length < 2) return null;
+  const max = Math.max(...values, 1);
+  const step = width / (values.length - 1);
+  const pts = values
+    .map(
+      (v, i) =>
+        `${(i * step).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`,
+    )
+    .join(" ");
+  return (
+    <svg width={width} height={height} aria-hidden className="opacity-80">
+      <polyline
+        points={pts}
+        fill="none"
+        stroke="var(--color-accent)"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// TokenMixBar: one stacked proportion bar for a session's token split —
+// sequential steps of the accent hue (magnitude of one whole, not
+// separate identities), labeled by the legend beneath it.
+const MIX = [
+  { key: "input", label: "input", color: "var(--color-accent)" },
+  {
+    key: "output",
+    label: "output",
+    color: "color-mix(in oklab, var(--color-accent) 65%, var(--color-surface-2))",
+  },
+  {
+    key: "cacheRead",
+    label: "cache read",
+    color: "color-mix(in oklab, var(--color-accent) 35%, var(--color-surface-2))",
+  },
+  {
+    key: "cacheWrite",
+    label: "cache write",
+    color: "color-mix(in oklab, var(--color-accent) 18%, var(--color-surface-2))",
+  },
+] as const;
+
+export function TokenMixBar({
+  tokens,
+  fmt,
+}: {
+  tokens: Record<(typeof MIX)[number]["key"], number>;
+  fmt: (n: number) => string;
+}) {
+  const total = MIX.reduce((acc, m) => acc + tokens[m.key], 0);
+  if (total === 0) return null;
+  return (
+    <div>
+      <div className="flex h-2 gap-[2px] overflow-hidden rounded">
+        {MIX.filter((m) => tokens[m.key] > 0).map((m) => (
+          <div
+            key={m.key}
+            style={{
+              width: `${(tokens[m.key] / total) * 100}%`,
+              background: m.color,
+            }}
+          />
+        ))}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-ink-faint">
+        {MIX.filter((m) => tokens[m.key] > 0).map((m) => (
+          <span key={m.key} className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-2 w-2 rounded-[2px]"
+              style={{ background: m.color }}
+            />
+            {m.label} {fmt(tokens[m.key])}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// FilterBar: the shared date-range + agent (+ model) row every data view
+// carries. Values are controlled by the page (URL or state).
+const RANGES = [
+  { label: "7d", days: 7 },
+  { label: "30d", days: 30 },
+  { label: "90d", days: 90 },
+  { label: "all", days: 0 },
+] as const;
+
+export function sinceForDays(days: number): string {
+  if (days === 0) return "";
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+const FILTER_AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
+
+export function FilterBar({
+  since,
+  onSince,
+  agent,
+  onAgent,
+  model,
+  models,
+  onModel,
+  children,
+}: {
+  since: string;
+  onSince: (since: string) => void;
+  agent?: string;
+  onAgent?: (agent: string) => void;
+  model?: string;
+  models?: string[];
+  onModel?: (model: string) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="ml-auto flex flex-wrap items-center gap-2">
+      <div className="flex rounded-md border border-edge font-mono text-xs">
+        {RANGES.map((r) => {
+          const value = sinceForDays(r.days);
+          const active = since === value;
+          return (
+            <button
+              key={r.label}
+              onClick={() => onSince(value)}
+              className={`px-2.5 py-1.5 first:rounded-l-md last:rounded-r-md ${
+                active ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
+              }`}
+            >
+              {r.label}
+            </button>
+          );
+        })}
+      </div>
+      {onAgent && (
+        <select
+          value={agent ?? ""}
+          onChange={(e) => onAgent(e.target.value)}
+          className="rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
+          aria-label="Filter by agent"
+        >
+          {FILTER_AGENTS.map((a) => (
+            <option key={a} value={a}>
+              {a === "" ? "all agents" : a}
+            </option>
+          ))}
+        </select>
+      )}
+      {onModel && (
+        <select
+          value={model ?? ""}
+          onChange={(e) => onModel(e.target.value)}
+          className="max-w-44 rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
+          aria-label="Filter by model"
+        >
+          <option value="">all models</option>
+          {(models ?? []).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      )}
+      {children}
+    </div>
+  );
 }

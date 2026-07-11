@@ -193,6 +193,7 @@ func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 	f := query.UsageFilter{
 		GroupBy: q.Get("group"),
 		Agent:   q.Get("agent"),
+		Model:   q.Get("model"),
 		Since:   q.Get("since"),
 		Until:   q.Get("until"),
 		Limit:   intParam(q.Get("limit")),

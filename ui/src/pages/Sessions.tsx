@@ -9,9 +9,8 @@ import {
   totalTokens,
   type SessionSummary,
 } from "../api";
-import { AgentChip, EmptyNote } from "../ui";
+import { AgentChip, EmptyNote, FilterBar, SkeletonRows } from "../ui";
 
-const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 const PAGE = 100;
 
 // The primary surface of the session-centric model: a filterable stream
@@ -24,6 +23,7 @@ export function SessionsPage() {
   const agent = search.agent ?? "";
   const q = search.q ?? "";
   const project = search.project ?? "";
+  const since = search.since ?? "";
 
   const setFilter = (patch: Record<string, string>) =>
     void navigate({
@@ -41,9 +41,9 @@ export function SessionsPage() {
     });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["sessions", agent, q, project, pages],
+    queryKey: ["sessions", agent, q, project, since, pages],
     queryFn: () =>
-      api.sessions({ agent, q, project, limit: String(PAGE * pages) }),
+      api.sessions({ agent, q, project, since, limit: String(PAGE * pages) }),
     placeholderData: (prev) => prev,
   });
 
@@ -64,30 +64,23 @@ export function SessionsPage() {
             {shortPath(project)} ✕
           </button>
         )}
-        <div className="ml-auto flex gap-2">
-          <select
-            value={agent}
-            onChange={(e) => setFilter({ agent: e.target.value })}
-            className="rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
-            aria-label="Filter by agent"
-          >
-            {AGENTS.map((a) => (
-              <option key={a} value={a}>
-                {a === "" ? "all agents" : a}
-              </option>
-            ))}
-          </select>
+        <FilterBar
+          since={since}
+          onSince={(v) => setFilter({ since: v })}
+          agent={agent}
+          onAgent={(v) => setFilter({ agent: v })}
+        >
           <input
             value={q}
             onChange={(e) => setFilter({ q: e.target.value })}
             placeholder="Filter by title…"
             className="w-56 rounded-md border border-edge bg-surface-1 px-3 py-1.5 text-sm placeholder:text-ink-faint"
           />
-        </div>
+        </FilterBar>
       </div>
 
       {error && <p className="text-warn">Failed to load: {String(error)}</p>}
-      {isLoading && <p className="text-ink-dim">Loading…</p>}
+      {isLoading && <SkeletonRows rows={8} />}
       {!isLoading && sessions.length === 0 && (
         <EmptyNote>No sessions match.</EmptyNote>
       )}

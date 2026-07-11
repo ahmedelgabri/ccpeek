@@ -2,9 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, fmtWhen, shortPath } from "../api";
-import { AgentDot, CopyButton, EmptyNote } from "../ui";
+import {
+  AgentDot,
+  CopyButton,
+  EmptyNote,
+  FilterBar,
+  SkeletonRows,
+} from "../ui";
 
-const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 const FORMATS = ["zsh", "bash", "fish", "plain"] as const;
 const PAGE = 100;
 
@@ -14,12 +19,13 @@ const PAGE = 100;
 export function CommandsPage() {
   const [q, setQ] = useState("");
   const [agent, setAgent] = useState("");
+  const [since, setSince] = useState("");
   const [pages, setPages] = useState(1);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["commands", q, agent, pages],
+    queryKey: ["commands", q, agent, since, pages],
     queryFn: () =>
-      api.commands({ q, agent, limit: String(PAGE * pages) }),
+      api.commands({ q, agent, since, limit: String(PAGE * pages) }),
     placeholderData: (prev) => prev,
   });
   const rows = data ?? [];
@@ -29,6 +35,7 @@ export function CommandsPage() {
     const p = new URLSearchParams({ format, limit: "1000" });
     if (q) p.set("q", q);
     if (agent) p.set("agent", agent);
+    if (since) p.set("since", since);
     return `/api/v1/commands?${p.toString()}`;
   };
 
@@ -36,19 +43,12 @@ export function CommandsPage() {
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">Commands</h1>
-        <div className="ml-auto flex items-center gap-2">
-          <select
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            className="rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
-            aria-label="Filter by agent"
-          >
-            {AGENTS.map((a) => (
-              <option key={a} value={a}>
-                {a === "" ? "all agents" : a}
-              </option>
-            ))}
-          </select>
+        <FilterBar
+          since={since}
+          onSince={setSince}
+          agent={agent}
+          onAgent={setAgent}
+        >
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -75,11 +75,11 @@ export function CommandsPage() {
               </div>
             </div>
           </details>
-        </div>
+        </FilterBar>
       </div>
 
       {error && <p className="text-warn">Failed to load: {String(error)}</p>}
-      {isLoading && <p className="text-ink-dim">Loading…</p>}
+      {isLoading && <SkeletonRows rows={8} />}
       {!isLoading && rows.length === 0 && (
         <EmptyNote>No commands match.</EmptyNote>
       )}

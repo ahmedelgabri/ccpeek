@@ -1,17 +1,25 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api } from "../api";
+import { api, type SearchHit } from "../api";
+
+const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
 // Global search: every hit resolves to a session (directly, or via the
 // artifact's links) — "have I solved this before?" for humans.
 export function SearchPage() {
   const [q, setQ] = useState("");
+  const [agent, setAgent] = useState("");
   const enabled = q.trim().length >= 2;
 
   const { data, isFetching } = useQuery({
-    queryKey: ["search", q],
-    queryFn: () => api.search(q),
+    queryKey: ["search", q, agent],
+    queryFn: async () => {
+      const hits = await api.search(q);
+      return agent
+        ? (hits ?? []).filter((h: SearchHit) => h.agent === agent)
+        : hits;
+    },
     enabled,
   });
 
@@ -20,13 +28,27 @@ export function SearchPage() {
   return (
     <div>
       <h1 className="mb-4 text-xl font-semibold">Search</h1>
-      <input
-        autoFocus
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search sessions, plans, todos, memories…"
-        className="mb-6 w-full rounded-lg border border-edge bg-surface-1 px-4 py-2.5 text-sm placeholder:text-ink-dim"
-      />
+      <div className="mb-6 flex gap-2">
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search sessions, plans, todos, memories…"
+          className="w-full rounded-lg border border-edge bg-surface-1 px-4 py-2.5 text-sm placeholder:text-ink-dim"
+        />
+        <select
+          value={agent}
+          onChange={(e) => setAgent(e.target.value)}
+          className="rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
+          aria-label="Filter by agent"
+        >
+          {AGENTS.map((a) => (
+            <option key={a} value={a}>
+              {a === "" ? "all agents" : a}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {enabled && !isFetching && hits.length === 0 && (
         <p className="text-ink-dim">No matches.</p>

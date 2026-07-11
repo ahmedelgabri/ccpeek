@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, fmtCost, fmtTokens, parityApi, totalTokens } from "../api";
+import { FilterBar, SkeletonRows } from "../ui";
 
 // Lazy so echarts ships as its own chunk, loaded only on this page.
 const CostTimeline = lazy(() =>
@@ -10,15 +11,24 @@ const CostTimeline = lazy(() =>
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 
-// Cost explorer v0: rollup aggregates with CSS bars. The richer
-// brush/zoom explorer (ECharts) layers on top of the same endpoint.
+// Cost explorer: rollup aggregates filterable by date range, agent, and
+// model, with the ECharts timeline over the same filters.
 export function UsagePage() {
   const [group, setGroup] = useState<(typeof GROUPS)[number]>("day");
+  const [since, setSince] = useState("");
+  const [agent, setAgent] = useState("");
+  const [model, setModel] = useState("");
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["usage", group],
-    queryFn: () => api.usage({ group }),
+    queryKey: ["usage", group, since, agent, model],
+    queryFn: () => api.usage({ group, since, agent, model }),
     enabled: group !== "blocks",
+    placeholderData: (prev) => prev,
+  });
+  // Model options come from the unfiltered model rollup.
+  const modelRows = useQuery({
+    queryKey: ["usage", "model-options"],
+    queryFn: () => api.usage({ group: "model" }),
   });
   const blocks = useQuery({
     queryKey: ["blocks"],
@@ -34,27 +44,43 @@ export function UsagePage() {
   const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
   const total = rows.reduce((acc, r) => acc + r.costUSD, 0);
   const anyUnpriced = rows.some((r) => r.hasUnpriced);
+  const models = (modelRows.data ?? [])
+    .map((r) => r.group)
+    .filter((m) => m !== "");
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">Usage</h1>
         <span className="text-sm text-ok tabular-nums">
-          {fmtCost(total)} {anyUnpriced && <span className="text-warn">(+unpriced)</span>}
+          {fmtCost(total)}{" "}
+          {anyUnpriced && <span className="text-warn">(+unpriced)</span>}
         </span>
-        <div className="ml-auto flex rounded-md border border-edge text-sm">
-          {GROUPS.map((g) => (
-            <button
-              key={g}
-              onClick={() => setGroup(g)}
-              className={`px-3 py-1.5 first:rounded-l-md last:rounded-r-md ${
-                g === group ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
-              }`}
-            >
-              {g}
-            </button>
-          ))}
-        </div>
+        <FilterBar
+          since={since}
+          onSince={setSince}
+          agent={agent}
+          onAgent={setAgent}
+          model={model}
+          models={models}
+          onModel={setModel}
+        >
+          <div className="flex rounded-md border border-edge font-mono text-xs">
+            {GROUPS.map((g) => (
+              <button
+                key={g}
+                onClick={() => setGroup(g)}
+                className={`px-2.5 py-1.5 first:rounded-l-md last:rounded-r-md ${
+                  g === group
+                    ? "bg-surface-2 text-ink"
+                    : "text-ink-dim hover:text-ink"
+                }`}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </FilterBar>
       </div>
 
       {budget.data && budget.data.monthlyUSD > 0 && (
@@ -73,10 +99,10 @@ export function UsagePage() {
       ) : (
         <>
           <Suspense fallback={null}>
-            <CostTimeline />
+            <CostTimeline since={since} agent={agent} model={model} />
           </Suspense>
           {error && <p className="text-warn">Failed to load: {String(error)}</p>}
-          {isLoading && <p className="text-ink-dim">Loading…</p>}
+          {isLoading && <SkeletonRows rows={6} className="mb-4" />}
           {!isLoading && rows.length === 0 && (
             <p className="text-ink-dim">No usage recorded yet.</p>
           )}

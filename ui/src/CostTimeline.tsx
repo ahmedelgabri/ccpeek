@@ -39,10 +39,24 @@ const EDGE = "#232b3d";
 
 type DaySeries = { agent: string; byDay: Map<string, number> };
 
-async function fetchDailyCostByAgent(): Promise<DaySeries[]> {
+interface TimelineFilters {
+  since?: string;
+  agent?: string;
+  model?: string;
+}
+
+async function fetchDailyCostByAgent(
+  f: TimelineFilters,
+): Promise<DaySeries[]> {
+  const agents = f.agent ? [f.agent] : AGENTS;
   const results = await Promise.all(
-    AGENTS.map(async (agent) => {
-      const rows = await api.usage({ group: "day", agent });
+    agents.map(async (agent) => {
+      const rows = await api.usage({
+        group: "day",
+        agent,
+        since: f.since,
+        model: f.model,
+      });
       const byDay = new Map<string, number>();
       for (const r of rows ?? []) {
         if (r.costUSD > 0) byDay.set(r.group, r.costUSD);
@@ -141,12 +155,13 @@ function downloadCSV(series: DaySeries[]) {
 }
 
 // CostTimeline is the cost explorer: daily spend stacked by agent, with
-// wheel + slider zoom (docs/v2-plan.md §7 P2). The rollup table below it
-// stays the accessible/table view of the same data.
-export function CostTimeline() {
+// wheel + slider zoom (docs/v2-plan.md §7 P2), following the page's
+// date/agent/model filters. The rollup table below it stays the
+// accessible/table view of the same data.
+export function CostTimeline({ since, agent, model }: TimelineFilters) {
   const { data } = useQuery({
-    queryKey: ["usage", "daily-by-agent"],
-    queryFn: fetchDailyCostByAgent,
+    queryKey: ["usage", "daily-by-agent", since, agent, model],
+    queryFn: () => fetchDailyCostByAgent({ since, agent, model }),
   });
   const series = useMemo(() => data ?? [], [data]);
 

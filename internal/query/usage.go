@@ -19,6 +19,7 @@ type UsageRow struct {
 type UsageFilter struct {
 	GroupBy string // day | model | project | agent
 	Agent   string
+	Model   string
 	Since   string // inclusive YYYY-MM-DD
 	Until   string // exclusive YYYY-MM-DD
 	Limit   int
@@ -51,6 +52,10 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	if f.Agent != "" {
 		where += " AND a.slug = ?"
 		args = append(args, f.Agent)
+	}
+	if f.Model != "" {
+		where += " AND r.model = ?"
+		args = append(args, f.Model)
 	}
 	if f.Since != "" {
 		where += " AND r.day >= ?"

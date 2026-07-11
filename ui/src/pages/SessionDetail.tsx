@@ -9,7 +9,15 @@ import {
   type ToolCallRow,
   type TranscriptMessage,
 } from "../api";
-import { AgentChip, CopyButton, EmptyNote, StatTile } from "../ui";
+import {
+  AgentChip,
+  CopyButton,
+  EmptyNote,
+  SkeletonRows,
+  SkeletonTiles,
+  StatTile,
+  TokenMixBar,
+} from "../ui";
 
 const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
 
@@ -40,7 +48,13 @@ export function SessionDetailPage() {
     queryFn: () => api.sessionTools(agent, sessionId),
   });
 
-  if (detail.isLoading) return <p className="text-ink-dim">Loading…</p>;
+  if (detail.isLoading)
+    return (
+      <div className="space-y-4">
+        <SkeletonTiles />
+        <SkeletonRows rows={6} />
+      </div>
+    );
   if (detail.error) return <p className="text-warn">{String(detail.error)}</p>;
   const s = detail.data!;
   const toolRows = tools.data ?? [];
@@ -79,6 +93,11 @@ export function SessionDetailPage() {
         <StatTile label="Cache read" value={fmtTokens(s.tokens.cacheRead)} />
         <StatTile label="Messages" value={String(s.messages)} />
         <StatTile label="Tool calls" value={String(s.toolCalls)} />
+      </div>
+
+      <div className="mb-4 rounded-md border border-edge bg-surface-1 px-3 py-2.5">
+        <div className="microlabel mb-2">Token mix</div>
+        <TokenMixBar tokens={s.tokens} fmt={fmtTokens} />
       </div>
 
       {s.unpricedTokens ? (

@@ -150,7 +150,7 @@ async function get<T>(
   const qs = params
     ? "?" +
       new URLSearchParams(
-        Object.entries(params).filter(([, v]) => v !== ""),
+        Object.entries(params).filter(([, v]) => v != null && v !== ""),
       ).toString()
     : "";
   const res = await fetch(`/api/v1${path}${qs}`);
@@ -192,6 +192,7 @@ export const api = {
   usage: (filters: {
     group?: string;
     agent?: string;
+    model?: string;
     since?: string;
     until?: string;
   }) => get<UsageRow[] | null>("/usage", filters as Record<string, string>),
@@ -205,6 +206,8 @@ export const api = {
     agent?: string;
     project?: string;
     q?: string;
+    since?: string;
+    until?: string;
     limit?: string;
     offset?: string;
   }) =>
