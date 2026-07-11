@@ -1,6 +1,0 @@
-{{ define "content" }}
-  <div class="mb-4">{{ backLink "/plans/" "Plans" }}</div>
-  <h1 class="text-2xl font-bold text-slate-50 mb-6">{{ .Plan.Title }}</h1>
-  <div class="prose">{{ .Content }}</div>
-{{ end }}
-{{ template "layout.html" . }}

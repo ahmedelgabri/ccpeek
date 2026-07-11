@@ -34,7 +34,7 @@
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-mzSS7Vo7/i6WfBPwBpU77fzc1ZYtSW5vmcpa0kc9R6s=";
+            vendorHash = "sha256-AcRDwfrU1wiQCIoq8Q0sPlWKlfXa9aAQrXW+NWnI+24=";
 
             tags = ["sqlite_fts5"];
 
@@ -47,14 +47,9 @@
             nativeBuildInputs = with pkgs; [
               installShellFiles
               makeWrapper
-              tailwindcss_4
             ];
 
             subPackages = ["cmd/ccpeek"];
-
-            preBuild = ''
-              tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
-            '';
 
             postInstall = ''
               # Generate shell completions before wrapping
@@ -122,7 +117,6 @@
             nodejs
             oxlint
             pnpm
-            sqlite # sqlite3 for migration fixture tooling
             tsx
             typescript
           ];
