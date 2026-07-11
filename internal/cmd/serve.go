@@ -51,8 +51,8 @@ func registerLegacyRedirects(mux *http.ServeMux, spa http.Handler) {
 		mux.Handle("GET "+p, redirect("/artifacts"))
 	}
 
-	// Command browser → search; scan/search lose their trailing slash.
-	mux.HandleFunc("GET /commands/{$}", redirect("/search"))
+	// v1's browsers map onto their v2 pages; they just lose the slash.
+	mux.HandleFunc("GET /commands/{$}", redirect("/commands"))
 	mux.HandleFunc("GET /scan/{$}", redirect("/scan"))
 	mux.HandleFunc("GET /search/{$}", func(w http.ResponseWriter, r *http.Request) {
 		target := "/search"
@@ -65,6 +65,7 @@ func registerLegacyRedirects(mux *http.ServeMux, spa http.Handler) {
 	// the handlers above bounce straight back — an infinite loop. Explicit
 	// unslashed registrations suppress that implicit redirect and serve the
 	// SPA client routes directly.
+	mux.Handle("GET /commands", spa)
 	mux.Handle("GET /scan", spa)
 	mux.Handle("GET /search", spa)
 
@@ -81,13 +82,46 @@ func registerLegacyRedirects(mux *http.ServeMux, spa http.Handler) {
 	})
 }
 
-// requestLog is the minimal access log the v1 server had; the SPA serves
-// most paths so noise stays low.
+// statusRecorder captures the response status for the access log. Flush
+// must pass through — /api/v1/events streams SSE and dies without it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// requestLog is the access log: colored status class + method + path +
+// duration (colors follow NO_COLOR / non-TTY via the shared color vars).
 func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Microsecond))
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		statusColor := colorGreen
+		switch {
+		case rec.status >= 500:
+			statusColor = colorRed
+		case rec.status >= 400:
+			statusColor = colorYellow
+		case rec.status >= 300:
+			statusColor = colorDim
+		}
+		log.Printf("%s%d%s %s%-4s%s %s %s%s%s",
+			statusColor, rec.status, colorReset,
+			colorBold, r.Method, colorReset,
+			r.URL.Path,
+			colorDim, time.Since(start).Round(time.Microsecond), colorReset)
 	})
 }
 
