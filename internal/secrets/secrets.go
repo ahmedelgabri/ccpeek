@@ -116,74 +116,127 @@ func annotationKey(f Finding) string {
 	return fmt.Sprintf("%s/%s/%d", f.NaturalKey, f.RuleID, f.Line)
 }
 
+// scanBatchSize bounds how many rows each paging query returns. The store
+// runs a single SQLite connection, and detection is regex work over every
+// row — an open cursor for the scan's whole duration would pin that
+// connection and block every concurrent API query (the serve-first
+// startup scans in the background while the UI is live). Paging releases
+// the connection between batches.
+const scanBatchSize = 500
+
 func (sc *Scanner) scanMessages(ctx context.Context, out *[]Finding) error {
-	rows, err := sc.store.DB().QueryContext(ctx, `
-		SELECT a.slug, s.external_id, m.seq, m.content
-		FROM messages m
-		JOIN sessions s ON s.id = m.session_id
-		JOIN agents a ON a.id = s.agent_id
-		ORDER BY s.id, m.seq`)
-	if err != nil {
-		return fmt.Errorf("reading messages: %w", err)
+	type row struct {
+		id        int64
+		sessionID string
+		seq       int
+		content   string
 	}
-	defer rows.Close()
-	for rows.Next() {
-		if err := ctx.Err(); err != nil {
+	lastID := int64(0)
+	for {
+		batch := make([]row, 0, scanBatchSize)
+		rows, err := sc.store.DB().QueryContext(ctx, `
+			SELECT m.id, s.external_id, m.seq, m.content
+			FROM messages m
+			JOIN sessions s ON s.id = m.session_id
+			WHERE m.id > ?
+			ORDER BY m.id
+			LIMIT ?`, lastID, scanBatchSize)
+		if err != nil {
+			return fmt.Errorf("reading messages: %w", err)
+		}
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.sessionID, &r.seq, &r.content); err != nil {
+				rows.Close()
+				return err
+			}
+			batch = append(batch, r)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
 			return err
 		}
-		var slug, sessionID, content string
-		var seq int
-		if err := rows.Scan(&slug, &sessionID, &seq, &content); err != nil {
-			return err
+		rows.Close()
+		if len(batch) == 0 {
+			return nil
 		}
-		for _, g := range sc.detector.DetectString(content) {
-			*out = append(*out, Finding{
-				RuleID:      g.RuleID,
-				Description: g.Description,
-				EntityType:  "message",
-				// v1-compatible source id: the session external id. Seq
-				// rides in the line slot's sibling field below.
-				NaturalKey:    "message/" + sessionID,
-				MatchRedacted: redact(g.Secret),
-				Line:          seq,
-			})
+
+		for _, r := range batch {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			for _, g := range sc.detector.DetectString(r.content) {
+				*out = append(*out, Finding{
+					RuleID:      g.RuleID,
+					Description: g.Description,
+					EntityType:  "message",
+					// v1-compatible source id: the session external id. Seq
+					// rides in the line slot's sibling field below.
+					NaturalKey:    "message/" + r.sessionID,
+					MatchRedacted: redact(g.Secret),
+					Line:          r.seq,
+				})
+			}
 		}
+		lastID = batch[len(batch)-1].id
 	}
-	return rows.Err()
 }
 
 func (sc *Scanner) scanArtifacts(ctx context.Context, out *[]Finding) error {
-	rows, err := sc.store.DB().QueryContext(ctx, `
-		SELECT ar.kind, ar.name, ar.content, ar.metadata_json
-		FROM artifacts ar ORDER BY ar.id`)
-	if err != nil {
-		return fmt.Errorf("reading artifacts: %w", err)
+	type row struct {
+		id                            int64
+		kind, name, content, metadata string
 	}
-	defer rows.Close()
-	for rows.Next() {
-		if err := ctx.Err(); err != nil {
+	lastID := int64(0)
+	for {
+		batch := make([]row, 0, scanBatchSize)
+		rows, err := sc.store.DB().QueryContext(ctx, `
+			SELECT ar.id, ar.kind, ar.name, ar.content, ar.metadata_json
+			FROM artifacts ar
+			WHERE ar.id > ?
+			ORDER BY ar.id
+			LIMIT ?`, lastID, scanBatchSize)
+		if err != nil {
+			return fmt.Errorf("reading artifacts: %w", err)
+		}
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.kind, &r.name, &r.content, &r.metadata); err != nil {
+				rows.Close()
+				return err
+			}
+			batch = append(batch, r)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
 			return err
 		}
-		var kind, name, content, metadata string
-		if err := rows.Scan(&kind, &name, &content, &metadata); err != nil {
-			return err
+		rows.Close()
+		if len(batch) == 0 {
+			return nil
 		}
-		text := content
-		if len(metadata) > 2 { // structured children (todos, versions) live here
-			text += "\n" + metadata
+
+		for _, r := range batch {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			text := r.content
+			if len(r.metadata) > 2 { // structured children (todos, versions) live here
+				text += "\n" + r.metadata
+			}
+			for _, g := range sc.detector.DetectString(text) {
+				*out = append(*out, Finding{
+					RuleID:        g.RuleID,
+					Description:   g.Description,
+					EntityType:    "artifact",
+					NaturalKey:    r.kind + "/" + r.name,
+					MatchRedacted: redact(g.Secret),
+					Line:          g.StartLine,
+				})
+			}
 		}
-		for _, g := range sc.detector.DetectString(text) {
-			*out = append(*out, Finding{
-				RuleID:        g.RuleID,
-				Description:   g.Description,
-				EntityType:    "artifact",
-				NaturalKey:    kind + "/" + name,
-				MatchRedacted: redact(g.Secret),
-				Line:          g.StartLine,
-			})
-		}
+		lastID = batch[len(batch)-1].id
 	}
-	return rows.Err()
 }
 
 // redact keeps just enough of a secret to recognize it.
