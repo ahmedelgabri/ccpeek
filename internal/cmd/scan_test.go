@@ -18,6 +18,7 @@ func newScanTestCommand(t *testing.T, dataFile, format string) *cobra.Command {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markInitialized(t, store)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

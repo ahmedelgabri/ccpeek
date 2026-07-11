@@ -23,6 +23,7 @@ func seedIngestDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	markInitialized(t, store)
 
 	runID, err := store.StartRun(ctx, "incremental", `["/tmp/.claude"]`)
 	if err != nil {
@@ -159,6 +160,7 @@ func TestRunIngestLatestWithNoRunsShowsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markInitialized(t, store)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

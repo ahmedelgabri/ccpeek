@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -68,75 +67,6 @@ func TestReopenIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestMigrateV1AddsStatSig proves a schema-v1 database (the v2 preview
-// builds) upgrades in place: stat_sig appears with the never-matching
-// empty default so every source re-hashes exactly once.
-func TestMigrateV1AddsStatSig(t *testing.T) {
-	s, path := openTemp(t)
-	ctx := context.Background()
-
-	// Downgrade the fresh database to a v1 shape: rebuild the tables later
-	// migrations touch without their added columns, and stamp version 1.
-	stmts := []string{
-		`DROP TABLE source_files`,
-		`CREATE TABLE source_files (
-			path TEXT PRIMARY KEY,
-			agent_id INTEGER NOT NULL REFERENCES agents(id),
-			content_hash TEXT NOT NULL,
-			indexed_at TEXT NOT NULL
-		)`,
-		`DROP TABLE rollup_usage_daily`,
-		`CREATE TABLE rollup_usage_daily (
-			day TEXT NOT NULL,
-			agent_id INTEGER NOT NULL,
-			workspace_id INTEGER NOT NULL DEFAULT 0,
-			model TEXT NOT NULL DEFAULT '',
-			sessions INTEGER NOT NULL DEFAULT 0,
-			messages INTEGER NOT NULL DEFAULT 0,
-			input_tokens INTEGER NOT NULL DEFAULT 0,
-			output_tokens INTEGER NOT NULL DEFAULT 0,
-			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-			cost_usd REAL NOT NULL DEFAULT 0,
-			priced INTEGER NOT NULL DEFAULT 1,
-			PRIMARY KEY (day, agent_id, workspace_id, model)
-		)`,
-		`INSERT INTO agents (id, slug) VALUES (1, 'claude-code')`,
-		`INSERT INTO source_files (path, agent_id, content_hash, indexed_at)
-		 VALUES ('/x/s.jsonl', 1, 'abc', '2026-01-01T00:00:00Z')`,
-	}
-	for _, q := range stmts {
-		if _, err := s.db.ExecContext(ctx, q); err != nil {
-			t.Fatalf("shaping v1 db: %v", err)
-		}
-	}
-	if err := s.writeVersion(ctx, 1); err != nil {
-		t.Fatalf("writeVersion: %v", err)
-	}
-	s.Close()
-
-	s2, err := Open(ctx, path)
-	if err != nil {
-		t.Fatalf("reopen with migration: %v", err)
-	}
-	defer s2.Close()
-
-	if v, err := s2.SchemaVersion(ctx); err != nil || v != schemaVersion {
-		t.Fatalf("version after migration = %d (err %v), want %d", v, err, schemaVersion)
-	}
-	sigs, err := s2.SourceSigs(ctx)
-	if err != nil {
-		t.Fatalf("SourceSigs: %v", err)
-	}
-	got, ok := sigs["/x/s.jsonl"]
-	if !ok {
-		t.Fatal("migrated row missing")
-	}
-	if got.ContentHash != "abc" || got.StatSig != "" {
-		t.Fatalf("migrated row = %+v, want hash abc + empty stat", got)
-	}
-}
-
 // TestReadsDontQueueBehindWrites is the serve-first responsiveness
 // contract: with the writer connection held by an open transaction (a
 // watch-mode ingest, a rollup regen, the secret scan's write phase), the
@@ -172,17 +102,39 @@ func TestReadsDontQueueBehindWrites(t *testing.T) {
 	}
 }
 
-func TestOpenFutureSchemaFails(t *testing.T) {
+// TestSchemaChangeRebuilds pins the pre-release policy: a database
+// stamped with any other schema generation is rebuilt from scratch on
+// open (sources re-ingest; the v1 import re-runs off the cleared meta).
+func TestSchemaChangeRebuilds(t *testing.T) {
 	s, path := openTemp(t)
 	ctx := context.Background()
-	if err := s.writeVersion(ctx, schemaVersion+10); err != nil {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO agents (slug) VALUES ('claude-code')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMeta(ctx, "migrated_at", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeVersion(ctx, schemaVersion+1); err != nil {
 		t.Fatalf("writeVersion: %v", err)
 	}
 	s.Close()
 
-	_, err := Open(ctx, path)
-	if !errors.Is(err, ErrFutureSchema) {
-		t.Fatalf("err = %v, want ErrFutureSchema", err)
+	s2, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen across schema change: %v", err)
+	}
+	defer s2.Close()
+	if v, err := s2.SchemaVersion(ctx); err != nil || v != schemaVersion {
+		t.Fatalf("version after rebuild = %d (err %v), want %d", v, err, schemaVersion)
+	}
+	var n int
+	if err := s2.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM agents`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("agents after rebuild = %d (err %v), want 0 (fresh store)", n, err)
+	}
+	if _, ok, _ := s2.GetMeta(ctx, "migrated_at"); ok {
+		t.Fatal("migrated_at survived the rebuild; the v1 import would be skipped")
 	}
 }
 

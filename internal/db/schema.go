@@ -1,17 +1,14 @@
 package db
 
-import (
-	"context"
-	"database/sql"
-)
-
-// schemaVersion is the current v2 schema version. Unlike v1, initialSchema
-// is ALWAYS the latest schema: fresh databases are created at
-// schemaVersion directly and never replay migrations. Existing databases
-// run only the pending entries of migrations. Open-time backfills are
-// banned (docs/v2-plan.md §5.2, §8.1); backfill-style work ships as an
-// explicit migration with a version bump.
-const schemaVersion = 3
+// schemaVersion stamps the v2 schema generation. Pre-release policy:
+// there are NO intra-v2 migrations — the schema here is always the
+// latest, and opening a database stamped with any other generation
+// rebuilds it from sources (everything in the store derives from agent
+// files that still exist; the v1 import re-runs because the rebuild
+// clears the migrated_at meta). The only migration ccpeek maintains is
+// v1 ccpeek.db → v2 (internal/migrate). Bump this on every breaking
+// schema change.
+const schemaVersion = 4
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -339,36 +336,4 @@ var derivedTables = []string{
 	"sessions",
 	"pricing",
 	"agents",
-}
-
-// migration is a single schema upgrade step. migrations[i] upgrades from
-// version i+1 to i+2. Fresh databases are created at the latest schema
-// and never replay these.
-type migration func(ctx context.Context, tx *sql.Tx) error
-
-var migrations = []migration{
-	// v1 → v2: stat fast-path for incremental ingest. Existing rows get an
-	// empty signature, which never matches — every source re-hashes once
-	// and records its stat on the next run.
-	func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`ALTER TABLE source_files ADD COLUMN stat_sig TEXT NOT NULL DEFAULT ''`)
-		return err
-	},
-	// v2 → v3: reported/estimated cost split in the rollups. Existing rows
-	// are dropped — the ingest pipeline regenerates rollups whenever they
-	// are empty, so the next start rebuilds them with the split.
-	func(ctx context.Context, tx *sql.Tx) error {
-		stmts := []string{
-			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_reported_usd REAL NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_estimated_usd REAL NOT NULL DEFAULT 0`,
-			`DELETE FROM rollup_usage_daily`,
-		}
-		for _, q := range stmts {
-			if _, err := tx.ExecContext(ctx, q); err != nil {
-				return err
-			}
-		}
-		return nil
-	},
 }

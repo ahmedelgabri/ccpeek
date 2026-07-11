@@ -46,10 +46,10 @@ Done — engine and agent surface:
 - ✅ Serve-first startup (field feedback from the first large-corpus
   run): the port binds before indexing, the bootstrap runs in the
   background with throttled stderr progress and an in-UI banner, and
-  `/api/v1/ready` gates scripts/tests on first data. Schema v2 adds a
-  size+mtime `stat_sig` to source_files so warm starts skip unchanged
-  files without re-reading multi-GB histories (content hash remains the
-  source of truth; existing v2 databases migrate in place).
+  `/api/v1/ready` gates scripts/tests on first data. source_files
+  carries a size+mtime `stat_sig` so warm starts skip unchanged files
+  without re-reading multi-GB histories (content hash remains the
+  source of truth).
 
 - ✅ Post-cutover janitorial: the v1 packages are deleted
   (`internal/store`, `internal/index`, `internal/server`,
@@ -92,7 +92,7 @@ Post-launch sprints (feedback-driven, after v2.0):
   usage + blocks tables; usage rows pivot into filtered sessions (day /
   agent / project); search hits open transcripts at the matching
   message (`?seq=`).
-- ✅ **Cost source split (schema v3)**: rollups carry
+- ✅ **Cost source split**: rollups carry
   cost_reported_usd / cost_estimated_usd (agent-reported vs priced
   tokens — the API-vs-subscription proxy); split bars with tooltips in
   the usage table; rollups self-heal when empty; non-day groupings
@@ -107,8 +107,16 @@ Post-launch sprints (feedback-driven, after v2.0):
   sandboxed iframe via `/artifacts/.../raw`.
 
 Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
-…) land post-launch per §6 as demand shows up. Current schema: v3
-(migrations run in place from any earlier v2 database).
+…) land post-launch per §6 as demand shows up.
+
+**Schema policy (pre-release):** there are no intra-v2 migrations — the
+schema in `internal/db/schema.go` is always the latest, and opening a
+database stamped with a different generation rebuilds it from sources
+(agent files on disk are the source of truth; the v1 import re-runs
+automatically). The only migration ccpeek maintains is v1 `ccpeek.db` →
+v2 (`internal/migrate`), which stays mandatory until v2 ships. This
+replaces the earlier in-place migration machinery; a real migration
+story starts with the first public v2 release.
 
 ---
 

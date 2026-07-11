@@ -54,15 +54,21 @@ func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex boo
 	dataFile, _ := cmd.Flags().GetString("data-file")
 
 	v2Path := v2DBPath(dataFile)
-	firstRun := false
-	if _, err := os.Stat(v2Path); os.IsNotExist(err) {
-		firstRun = true
-	}
-
 	store, err := db.Open(ctx, v2Path)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// First run is keyed on the migrated_at meta, not file existence: a
+	// pre-release schema bump rebuilds the database in Open, and the
+	// cleared meta makes the full bootstrap (including the v1 import)
+	// re-run.
+	_, initialized, err := store.GetMeta(ctx, "migrated_at")
+	if err != nil {
+		store.Close()
+		return nil, nil, err
+	}
+	firstRun := !initialized
 
 	table, err := pricing.Embedded()
 	if err != nil {

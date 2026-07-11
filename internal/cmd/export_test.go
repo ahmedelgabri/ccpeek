@@ -43,12 +43,13 @@ func TestRunExportCommandsInvalidFormat(t *testing.T) {
 func TestRunExportCommandsNoCommandsShowsHint(t *testing.T) {
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	// Pre-create an empty v2 store so the engine skips the first-run
-	// bootstrap ingest (which would scan real agent roots).
+	// Pre-create an initialized v2 store so the engine skips the
+	// first-run bootstrap ingest (which would scan real agent roots).
 	store, err := db.Open(ctx, v2DBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
+	markInitialized(t, store)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +78,7 @@ func seedExportCommandsDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	markInitialized(t, store)
 
 	stmts := []string{
 		`INSERT INTO agents (id, slug, display_name) VALUES (1, 'claude-code', 'Claude Code')`,
@@ -92,6 +94,17 @@ func seedExportCommandsDB(t *testing.T) string {
 	}
 
 	return dataFile
+}
+
+// markInitialized stamps migrated_at so openV2Engine treats the store as
+// past its first run — tests must never bootstrap-ingest real agent
+// roots.
+func markInitialized(t *testing.T, store *db.Store) {
+	t.Helper()
+	if err := store.SetMeta(context.Background(), "migrated_at",
+		"2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newExportTestCommand(dataFile, format string) *cobra.Command {
