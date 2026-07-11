@@ -9,7 +9,7 @@ import {
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { api, type UsageRow } from "./api";
+import { api, shortPath, type UsageRow } from "./api";
 
 echarts.use([
   BarChart,
@@ -187,8 +187,12 @@ export function GroupBars({
         axisLabel: {
           color: INK_DIM,
           fontSize: 11,
-          width: 160,
-          overflow: "truncate",
+          // Paths differentiate at the tail: shorten the home prefix and
+          // truncate from the left, never into "/Users/ahmed/code/…".
+          formatter: (v: string) => {
+            const label = group === "project" ? shortPath(v) : v;
+            return label.length > 26 ? "…" + label.slice(-25) : label;
+          },
         },
       },
       series: [
@@ -225,6 +229,7 @@ export function GroupBars({
       </h2>
       <div
         ref={el}
+        className="overflow-hidden"
         style={{ height: Math.max(top.length * 26 + 60, 140) }}
         role="img"
         aria-label={`Cost by ${group}; the table below holds the same data`}
@@ -275,6 +280,10 @@ function useEChart(
     }
     chart.current ??= echarts.init(el.current);
     chart.current.setOption(option, true);
+    // The container's height follows the data (bar count); without an
+    // explicit resize the canvas keeps its old dimensions and paints
+    // outside the panel.
+    chart.current.resize();
     const onResize = () => chart.current?.resize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);

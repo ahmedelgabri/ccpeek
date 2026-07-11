@@ -68,7 +68,7 @@ export function StatTile({
       <div className="microlabel">{label}</div>
       <div className="flex items-end gap-2">
         <div
-          className={`mt-1 font-mono text-xl leading-none font-medium tabular-nums ${
+          className={`mt-1 shrink-0 font-mono text-xl leading-none font-medium tabular-nums ${
             tone === "ok"
               ? "text-ok"
               : tone === "warn"
@@ -78,7 +78,7 @@ export function StatTile({
         >
           {value}
         </div>
-        {spark && <div className="ml-auto">{spark}</div>}
+        {spark && <div className="ml-auto w-14 min-w-0 sm:w-20">{spark}</div>}
       </div>
       {detail && (
         <div className="mt-1 font-mono text-[11px] text-ink-faint">
@@ -88,7 +88,7 @@ export function StatTile({
     </>
   );
   const cls =
-    "block rounded-md border border-edge bg-surface-1 px-3 py-2.5 transition-colors";
+    "block overflow-hidden rounded-md border border-edge bg-surface-1 px-3 py-2.5 transition-colors";
   return to ? (
     <Link to={to} className={`${cls} hover:border-edge-strong`}>
       {body}
@@ -189,7 +189,8 @@ export function useTooltip() {
 }
 
 // Sparkline: an inline single-hue trend for stat tiles (magnitude, not
-// identity — accent only).
+// identity — accent only). Scales to its container so long values never
+// push it out of the tile.
 export function Sparkline({
   values,
   width = 96,
@@ -209,13 +210,19 @@ export function Sparkline({
     )
     .join(" ");
   return (
-    <svg width={width} height={height} aria-hidden className="opacity-80">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden
+      className="h-6 w-full opacity-80"
+    >
       <polyline
         points={pts}
         fill="none"
         stroke="var(--color-accent)"
         strokeWidth="1.5"
         strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
       />
     </svg>
   );

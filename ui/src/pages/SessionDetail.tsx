@@ -99,10 +99,16 @@ export function SessionDetailPage() {
         <StatTile label="Tool calls" value={String(s.toolCalls)} />
       </div>
 
-      <div className="mb-4 rounded-md border border-edge bg-surface-1 px-3 py-2.5">
-        <div className="microlabel mb-2">Token mix</div>
-        <TokenMixBar tokens={s.tokens} fmt={fmtTokens} />
-      </div>
+      {s.tokens.input +
+        s.tokens.output +
+        s.tokens.cacheRead +
+        s.tokens.cacheWrite >
+        0 && (
+        <div className="mb-4 rounded-md border border-edge bg-surface-1 px-3 py-2.5">
+          <div className="microlabel mb-2">Token mix</div>
+          <TokenMixBar tokens={s.tokens} fmt={fmtTokens} />
+        </div>
+      )}
 
       {s.unpricedTokens ? (
         <p className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
@@ -203,6 +209,16 @@ function Transcript({
   focusSeq?: number;
 }) {
   const [treeView, setTreeView] = useState(false);
+  // Meta entries (toolResult, system, …) render as one-line excerpts;
+  // clicking reveals the full stored text.
+  const [openMeta, setOpenMeta] = useState<ReadonlySet<number>>(new Set());
+  const toggleMeta = (seq: number) =>
+    setOpenMeta((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
   const container = useRef<HTMLDivElement>(null);
   useHighlight(container, [msgs]);
   const depths = useMemo(() => computeDepths(msgs), [msgs]);
@@ -292,7 +308,16 @@ function Transcript({
               }`}
             >
               <div
-                className={`flex gap-2 font-mono text-[11px] text-ink-faint ${isMeta ? "" : "mb-1"}`}
+                onClick={
+                  isMeta && m.text.trim() !== ""
+                    ? () => toggleMeta(m.seq)
+                    : undefined
+                }
+                className={`flex gap-2 font-mono text-[11px] text-ink-faint ${isMeta ? "" : "mb-1"} ${
+                  isMeta && m.text.trim() !== ""
+                    ? "cursor-pointer hover:text-ink-dim"
+                    : ""
+                }`}
               >
                 <span
                   className={
@@ -309,14 +334,26 @@ function Transcript({
                 </span>
                 {m.model && <span>{m.model}</span>}
                 {isMeta && m.text.trim() !== "" && (
-                  <span className="truncate text-ink-faint italic">
-                    {m.text.slice(0, 120)}
-                  </span>
+                  <>
+                    <span className="text-accent">
+                      {openMeta.has(m.seq) ? "▾" : "▸"}
+                    </span>
+                    {!openMeta.has(m.seq) && (
+                      <span className="truncate text-ink-faint italic">
+                        {m.text.slice(0, 120)}
+                      </span>
+                    )}
+                  </>
                 )}
                 <span className="ml-auto tabular-nums">
                   #{m.seq} · {m.createdAt.slice(11, 19)}
                 </span>
               </div>
+              {isMeta && openMeta.has(m.seq) && (
+                <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+                  {m.text}
+                </pre>
+              )}
               {!isMeta &&
                 m.text.trim() !== "" &&
                 (m.html ? (

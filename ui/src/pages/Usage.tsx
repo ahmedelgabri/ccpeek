@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -20,6 +20,19 @@ const GroupBars = lazy(() =>
 );
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
+
+type SortKey = "group" | "sessions" | "tokens" | "cacheRead" | "cost";
+
+const SORT_VALUE: Record<
+  SortKey,
+  (r: import("../api").UsageRow) => number | string
+> = {
+  group: (r) => r.group,
+  sessions: (r) => r.sessions,
+  tokens: (r) => totalTokens(r.tokens),
+  cacheRead: (r) => r.tokens.cacheRead,
+  cost: (r) => r.costUSD,
+};
 
 // Cost explorer: rollup aggregates filterable by date range, agent, and
 // model, with the ECharts timeline over the same filters.
@@ -52,7 +65,30 @@ export function UsagePage() {
     queryFn: () => parityApi.budget(),
   });
 
-  const rows = data ?? [];
+  // Sorting: null keeps the server order (day desc / cost desc); a click
+  // cycles asc↔desc per column.
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean } | null>(
+    null,
+  );
+  const toggleSort = (key: SortKey) =>
+    setSort((prev) =>
+      prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true },
+    );
+
+  const unsorted = data ?? [];
+  const rows = useMemo(() => {
+    if (!sort) return unsorted;
+    const value = SORT_VALUE[sort.key];
+    return [...unsorted].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+      return sort.desc ? -cmp : cmp;
+    });
+  }, [unsorted, sort]);
   const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
   const total = rows.reduce((acc, r) => acc + r.costUSD, 0);
   const anyUnpriced = rows.some((r) => r.hasUnpriced);
@@ -136,11 +172,40 @@ export function UsagePage() {
         <table className="w-full text-sm">
           <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-ink-dim">
             <tr>
-              <th className="px-4 py-2">{group}</th>
-              <th className="px-4 py-2 text-right">sessions</th>
-              <th className="px-4 py-2 text-right">tokens</th>
-              <th className="px-4 py-2 text-right">cache read</th>
-              <th className="px-4 py-2 text-right">cost</th>
+              <SortableTH
+                label={group}
+                k="group"
+                sort={sort}
+                onSort={toggleSort}
+              />
+              <SortableTH
+                label="sessions"
+                k="sessions"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              <SortableTH
+                label="tokens"
+                k="tokens"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              <SortableTH
+                label="cache read"
+                k="cacheRead"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              <SortableTH
+                label="cost"
+                k="cost"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
               <th className="w-1/3 px-4 py-2 font-normal normal-case">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-[2px] bg-accent/70" />
@@ -226,6 +291,42 @@ export function UsagePage() {
         </>
       )}
     </div>
+  );
+}
+
+function SortableTH({
+  label,
+  k,
+  sort,
+  onSort,
+  right,
+}: {
+  label: string;
+  k: SortKey;
+  sort: { key: SortKey; desc: boolean } | null;
+  onSort: (k: SortKey) => void;
+  right?: boolean;
+}) {
+  const active = sort?.key === k;
+  return (
+    <th
+      aria-sort={
+        active ? (sort.desc ? "descending" : "ascending") : undefined
+      }
+      className={`px-4 py-2 ${right ? "text-right" : ""}`}
+    >
+      <button
+        onClick={() => onSort(k)}
+        className={`inline-flex items-center gap-1 uppercase hover:text-ink ${
+          active ? "text-ink" : ""
+        }`}
+      >
+        {label}
+        <span className="text-[9px]">
+          {active ? (sort.desc ? "▼" : "▲") : "△"}
+        </span>
+      </button>
+    </th>
   );
 }
 
