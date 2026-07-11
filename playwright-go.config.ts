@@ -14,7 +14,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4322",
   },
   webServer: {
-    command: `CGO_ENABLED=1 go run -tags sqlite_fts5 ./cmd/ccpeek --claude-dir testdata --port 4322 --data-file ${testDb} --rebuild`,
+    command: `go run ./cmd/ccpeek --claude-dir testdata --port 4322 --data-file ${testDb} --rebuild`,
     // The server binds before the first index pass finishes; readiness
     // flips to 200 once data is queryable, so tests never race the ingest.
     url: "http://127.0.0.1:4322/api/v1/ready",

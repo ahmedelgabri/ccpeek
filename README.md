@@ -34,7 +34,7 @@ nix profile install github:ahmedelgabri/ccpeek
 
 ### Go install
 
-Requires Go 1.25+, Node.js, and pnpm (for building CSS):
+Requires Go 1.25+, Node.js, and pnpm (for building the web UI):
 
 ```sh
 # Clone and build
@@ -202,11 +202,11 @@ or install Go 1.25+, Node.js, pnpm, and [just](https://github.com/casey/just) ma
 ```sh
 pnpm install
 
-# Run dev server (builds CSS, opens browser)
+# Run dev server (builds the UI, opens browser)
 just dev
 
-# Watch CSS changes
-just css-watch
+# Vite dev server with HMR against a running ccpeek
+just ui-dev
 
 # Run all tests
 just test

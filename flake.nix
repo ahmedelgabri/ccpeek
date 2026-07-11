@@ -28,6 +28,43 @@
       }: {
         packages = {
           default = self'.packages.ccpeek;
+
+          # The SPA, built from ui/ and embedded into the Go binary below —
+          # a binary without it serves an empty UI. pnpm dependencies are a
+          # fixed-output derivation; bump its hash when ui/pnpm-lock.yaml
+          # changes.
+          ccpeek-ui = pkgs.stdenv.mkDerivation (finalAttrs: {
+            pname = "ccpeek-ui";
+            version = self'.packages.ccpeek.version;
+
+            src = lib.cleanSource ./ui;
+
+            nativeBuildInputs = with pkgs; [
+              nodejs
+              pnpm_10.configHook
+            ];
+
+            pnpmDeps = pkgs.pnpm_10.fetchDeps {
+              inherit (finalAttrs) pname version src;
+              fetcherVersion = 2;
+              hash = "sha256-VYWmLk4V+kd3s4hv2YN/9ZDgcayNNMn9O0CXrHhRO3s=";
+            };
+
+            buildPhase = ''
+              runHook preBuild
+              # The config's outDir points outside ui/ (../internal/webui/dist),
+              # which doesn't exist in this sandbox — override it.
+              pnpm exec vite build --outDir dist --emptyOutDir
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              cp -r dist $out
+              runHook postInstall
+            '';
+          });
+
           ccpeek = pkgs.buildGoModule {
             pname = "ccpeek";
             version = "1.10.0";
@@ -35,8 +72,6 @@
             src = lib.cleanSource ./.;
 
             vendorHash = "sha256-AcRDwfrU1wiQCIoq8Q0sPlWKlfXa9aAQrXW+NWnI+24=";
-
-            tags = ["sqlite_fts5"];
 
             ldflags = [
               "-s"
@@ -50,6 +85,10 @@
             ];
 
             subPackages = ["cmd/ccpeek"];
+
+            preBuild = ''
+              cp -r ${self'.packages.ccpeek-ui}/. internal/webui/dist/
+            '';
 
             postInstall = ''
               # Generate shell completions before wrapping

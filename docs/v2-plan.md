@@ -51,14 +51,21 @@ Done — engine and agent surface:
   files without re-reading multi-GB histories (content hash remains the
   source of truth; existing v2 databases migrate in place).
 
-Remaining post-cutover janitorial work (does not block v2.0):
+- ✅ Post-cutover janitorial: the v1 packages are deleted
+  (`internal/store`, `internal/index`, `internal/server`,
+  `internal/scan`, `internal/web`, the driver benchmark;
+  `internal/model` shrank to the shell-history export formats), which
+  dropped mattn/go-sqlite3, sqlx, and chroma — every build is now
+  CGO_ENABLED=0 with no build tags (justfile, CI, release
+  cross-compiles without gcc). The Nix package and the release archives
+  build and embed the SPA (a `ccpeek-ui` derivation via pnpm.fetchDeps;
+  binaries built without it served an empty UI).
 
-- Delete the unreferenced v1 packages (`internal/store`, `internal/index`,
-  `internal/server`, `internal/scan`, `internal/web`, parts of
-  `internal/model`) once the v2 store has soaked.
-- Release pipeline to CGO_ENABLED=0 (pure-Go driver makes cross-gcc
-  unnecessary); upgrade-path CI job over a seeded v1 fixture db;
-  `ccpeek skill install`; ECharts cost explorer.
+Remaining follow-ups (nice-to-haves):
+
+- Upgrade-path CI job over a seeded v1 fixture db (the importer is
+  unit-tested in internal/migrate; this would cover the CLI wiring).
+- `ccpeek skill install`; ECharts cost explorer.
 
 ---
 

@@ -15,7 +15,7 @@ All tasks are managed via [just](https://github.com/casey/just). Install tools w
 | `just ui`        | Build the SPA (`ui/` -> `internal/webui/dist`, embedded via go:embed)         |
 | `just ui-dev`    | Vite dev server with HMR, proxying `/api` to a running ccpeek server          |
 | `just test`      | Run all tests (unit + e2e)                                                    |
-| `just test-unit` | `go test -tags sqlite_fts5 ./...`                                             |
+| `just test-unit` | `go test ./...`                                                               |
 | `just test-e2e`  | Playwright e2e tests (builds the UI first, starts the Go server on port 4322) |
 | `just lint`      | oxlint with type checking                                                     |
 | `just format`    | treefmt via `nix fmt` (gofumpt + prettier + alejandra)                        |
