@@ -13,6 +13,9 @@ importers:
       "@tanstack/react-router":
         specifier: ^1.170.17
         version: 1.170.17(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      echarts:
+        specifier: ^6.1.0
+        version: 6.1.0
       react:
         specifier: ^19.2.7
         version: 19.2.7
@@ -680,6 +683,12 @@ packages:
       }
     engines: { node: ">=8" }
 
+  echarts@6.1.0:
+    resolution:
+      {
+        integrity: sha512-q0yaFPggC9FUdsWH4blavRWFmxdrIodbkoKNAjJudAI6CA9gNPxHtV2RcZNEepZVlk4yvBYkOkbk6HIVpIyHZA==,
+      }
+
   enhanced-resolve@5.21.6:
     resolution:
       {
@@ -943,6 +952,12 @@ packages:
       }
     engines: { node: ">=12.0.0" }
 
+  tslib@2.3.0:
+    resolution:
+      {
+        integrity: sha512-N82ooyxVNm6h1riLCoyS9e3fuJ3AMG2zIZs2Gd1ATcSFjSA23Q0fzjjZeh0jbJvWVDZ0cJT8yaNNaaXHzueNjg==,
+      }
+
   tslib@2.8.1:
     resolution:
       {
@@ -1010,6 +1025,12 @@ packages:
         optional: true
       yaml:
         optional: true
+
+  zrender@6.1.0:
+    resolution:
+      {
+        integrity: sha512-oEGMDB6pOP2S6OwRR4PdVv610zrjnA3Bh+JnSG12fYJlBKjtNAoEb5fSUoCOOINlH96I2fU38/A2UpRKs67xYQ==,
+      }
 
 snapshots:
   "@emnapi/core@1.11.1":
@@ -1293,6 +1314,11 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
+  echarts@6.1.0:
+    dependencies:
+      tslib: 2.3.0
+      zrender: 6.1.0
+
   enhanced-resolve@5.21.6:
     dependencies:
       graceful-fs: 4.2.11
@@ -1423,6 +1449,8 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.5)
       picomatch: 4.0.5
 
+  tslib@2.3.0: {}
+
   tslib@2.8.1:
     optional: true
 
@@ -1463,3 +1491,7 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
       jiti: 2.7.0
+
+  zrender@6.1.0:
+    dependencies:
+      tslib: 2.3.0

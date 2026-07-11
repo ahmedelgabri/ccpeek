@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCost, fmtTokens, parityApi, totalTokens } from "../api";
+
+// Lazy so echarts ships as its own chunk, loaded only on this page.
+const CostTimeline = lazy(() =>
+  import("../CostTimeline").then((m) => ({ default: m.CostTimeline })),
+);
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 
@@ -66,6 +71,9 @@ export function UsagePage() {
         />
       ) : (
         <>
+          <Suspense fallback={null}>
+            <CostTimeline />
+          </Suspense>
           {error && <p className="text-warn">Failed to load: {String(error)}</p>}
           {isLoading && <p className="text-ink-dim">Loading…</p>}
           {!isLoading && rows.length === 0 && (

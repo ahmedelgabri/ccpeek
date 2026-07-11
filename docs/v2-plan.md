@@ -61,11 +61,16 @@ Done — engine and agent surface:
   build and embed the SPA (a `ccpeek-ui` derivation via pnpm.fetchDeps;
   binaries built without it served an empty UI).
 
-Remaining follow-ups (nice-to-haves):
+- ✅ Follow-ups closed: the upgrade path is covered at the CLI wiring
+  (a cmd test seeds a v1 db and asserts the first-run import + its
+  idempotence, running in CI with every push); `ccpeek skill install`
+  drops the agent skill into `~/.claude/skills` (or `--dir`); and the
+  Usage page gained the ECharts cost explorer — daily spend stacked by
+  agent with wheel/slider zoom, CSV export, and the rollup table as the
+  accessible view (echarts loads as a lazy chunk only on that page).
 
-- Upgrade-path CI job over a seeded v1 fixture db (the importer is
-  unit-tested in internal/migrate; this would cover the CLI wiring).
-- `ccpeek skill install`; ECharts cost explorer.
+Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
+…) land post-launch per §6 as demand shows up.
 
 ---
 
