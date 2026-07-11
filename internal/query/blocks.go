@@ -39,7 +39,7 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 	}
 
 	// created_at is RFC3339 text; unixepoch() handles it in SQLite ≥3.38.
-	rows, err := s.store.DB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT (unixepoch(m.created_at) / %d) AS win, m.model,
 		       COUNT(DISTINCT se.id), COUNT(*),
 		       SUM(u.input_tokens), SUM(u.output_tokens),

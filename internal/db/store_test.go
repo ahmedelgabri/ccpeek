@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openTemp(t *testing.T) (*Store, string) {
@@ -133,6 +134,41 @@ func TestMigrateV1AddsStatSig(t *testing.T) {
 	}
 	if got.ContentHash != "abc" || got.StatSig != "" {
 		t.Fatalf("migrated row = %+v, want hash abc + empty stat", got)
+	}
+}
+
+// TestReadsDontQueueBehindWrites is the serve-first responsiveness
+// contract: with the writer connection held by an open transaction (a
+// watch-mode ingest, a rollup regen, the secret scan's write phase), the
+// read pool must still answer immediately.
+func TestReadsDontQueueBehindWrites(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO agents (slug) VALUES ('claude-code')`); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO agents (slug) VALUES ('pi')`); err != nil {
+		t.Fatal(err)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var n int
+	if err := s.ReadDB().QueryRowContext(readCtx,
+		`SELECT COUNT(*) FROM agents`).Scan(&n); err != nil {
+		t.Fatalf("read blocked behind open write tx: %v", err)
+	}
+	// WAL snapshot isolation: the uncommitted insert is invisible.
+	if n != 1 {
+		t.Fatalf("read saw %d agents, want 1 (committed state only)", n)
 	}
 }
 

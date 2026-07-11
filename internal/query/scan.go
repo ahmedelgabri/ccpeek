@@ -23,7 +23,7 @@ type ScanFinding struct {
 // ScanFindings lists stored findings; includeIgnored controls whether
 // user-dismissed rows appear.
 func (s *Service) ScanFindings(ctx context.Context, includeIgnored bool) ([]ScanFinding, error) {
-	rows, err := s.store.DB().QueryContext(ctx, `
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT f.id, f.rule_id, f.description, f.entity_type, f.natural_key,
 		       f.match_redacted, f.line_number, f.scanned_at,
 		       EXISTS (

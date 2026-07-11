@@ -23,7 +23,7 @@ func (s *Service) GetBudget(ctx context.Context) (*Budget, error) {
 	b := &Budget{Month: time.Now().UTC().Format("2006-01")}
 
 	var raw string
-	err := s.store.DB().QueryRowContext(ctx, `
+	err := s.store.ReadDB().QueryRowContext(ctx, `
 		SELECT value_json FROM user_annotations
 		WHERE entity_type = 'global' AND natural_key = 'budget' AND kind = 'budget'`).
 		Scan(&raw)

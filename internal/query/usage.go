@@ -43,7 +43,8 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	case "project":
 		groupExpr, orderExpr = "COALESCE(w.canonical_path, '')", "SUM(r.cost_usd) DESC"
 	default:
-		return nil, fmt.Errorf("unknown group %q (want day|model|project|agent)", f.GroupBy)
+		return nil, fmt.Errorf("%w: unknown group %q (want day|model|project|agent)",
+			ErrBadRequest, f.GroupBy)
 	}
 	if f.Limit <= 0 {
 		f.Limit = 100
@@ -72,7 +73,7 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	}
 	args = append(args, f.Limit)
 
-	rows, err := s.store.DB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s AS grp,
 		       SUM(r.sessions), SUM(r.messages),
 		       SUM(r.input_tokens), SUM(r.output_tokens),

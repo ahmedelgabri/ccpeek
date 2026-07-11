@@ -24,10 +24,13 @@ import (
 // ErrFutureSchema means the database was created by a newer ccpeek.
 var ErrFutureSchema = errors.New("database schema is newer than this ccpeek version")
 
-// Store wraps the SQLite handle.
+// Store wraps the SQLite handles: one writer connection plus a reader
+// pool, so queries stay responsive while ingest/scan transactions run
+// (WAL readers never block on the writer).
 type Store struct {
-	db   *sql.DB
-	path string // "" for in-memory
+	db     *sql.DB
+	readDB *sql.DB
+	path   string // "" for in-memory
 }
 
 // Open opens (creating or migrating as needed) the v2 database at path.
@@ -44,11 +47,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-	// Single connection: SQLite has one writer anyway, and this removes
-	// SQLITE_BUSY handling from every call site.
+	// Single writer connection: SQLite has one writer anyway, and this
+	// removes SQLITE_BUSY handling from every write site.
 	sqlDB.SetMaxOpenConns(1)
 
-	s := &Store{db: sqlDB, path: path}
+	s := &Store{db: sqlDB, readDB: sqlDB, path: path}
 	if err := s.migrate(ctx); err != nil {
 		sqlDB.Close()
 		return nil, err
@@ -58,15 +61,40 @@ func Open(ctx context.Context, path string) (*Store, error) {
 			sqlDB.Close()
 			return nil, err
 		}
+		// A separate read pool — long ingest/rollup/scan transactions on
+		// the writer must not queue API queries behind them (a watch-mode
+		// re-index of a large session used to stall every request for its
+		// whole duration). In-memory stores keep the single handle: a
+		// second pool would open a different database.
+		readDB, err := sql.Open("sqlite", dsn+"&_pragma=query_only(1)")
+		if err != nil {
+			sqlDB.Close()
+			return nil, fmt.Errorf("opening read pool: %w", err)
+		}
+		readDB.SetMaxOpenConns(4)
+		s.readDB = readDB
 	}
 	return s, nil
 }
 
-// Close closes the underlying handle.
-func (s *Store) Close() error { return s.db.Close() }
+// Close closes the underlying handles.
+func (s *Store) Close() error {
+	var err error
+	if s.readDB != s.db {
+		err = s.readDB.Close()
+	}
+	if cerr := s.db.Close(); cerr != nil {
+		err = cerr
+	}
+	return err
+}
 
-// DB exposes the handle to sibling v2 packages (ingest, query).
+// DB exposes the writer handle to sibling v2 packages (ingest, query).
 func (s *Store) DB() *sql.DB { return s.db }
+
+// ReadDB exposes the reader pool: use it for every pure read so queries
+// never wait behind write transactions.
+func (s *Store) ReadDB() *sql.DB { return s.readDB }
 
 // SchemaVersion reports the stored schema version.
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {

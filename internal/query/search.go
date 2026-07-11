@@ -46,7 +46,7 @@ func (s *Service) Search(ctx context.Context, q string, f SearchFilter) ([]Searc
 	}
 	args = append(args, f.Limit)
 
-	rows, err := s.store.DB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT d.doc_type, COALESCE(sa.slug, aa.slug, ''),
 		       COALESCE(se.external_id, ''), d.seq,
 		       COALESCE(ar.name, ''), d.title,

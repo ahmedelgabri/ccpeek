@@ -87,7 +87,7 @@ func (sc *Scanner) Run(ctx context.Context) ([]Finding, error) {
 
 	// Resolve ignore flags (user state survives rescans and rebuilds).
 	ignored := map[string]bool{}
-	rows, err := sqlDB.QueryContext(ctx, `
+	rows, err := sc.store.ReadDB().QueryContext(ctx, `
 		SELECT natural_key FROM user_annotations
 		WHERE entity_type = 'scan_finding' AND kind = 'scan_ignore'`)
 	if err != nil {
@@ -134,7 +134,7 @@ func (sc *Scanner) scanMessages(ctx context.Context, out *[]Finding) error {
 	lastID := int64(0)
 	for {
 		batch := make([]row, 0, scanBatchSize)
-		rows, err := sc.store.DB().QueryContext(ctx, `
+		rows, err := sc.store.ReadDB().QueryContext(ctx, `
 			SELECT m.id, s.external_id, m.seq, m.content
 			FROM messages m
 			JOIN sessions s ON s.id = m.session_id
@@ -190,7 +190,7 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, out *[]Finding) error {
 	lastID := int64(0)
 	for {
 		batch := make([]row, 0, scanBatchSize)
-		rows, err := sc.store.DB().QueryContext(ctx, `
+		rows, err := sc.store.ReadDB().QueryContext(ctx, `
 			SELECT ar.id, ar.kind, ar.name, ar.content, ar.metadata_json
 			FROM artifacts ar
 			WHERE ar.id > ?

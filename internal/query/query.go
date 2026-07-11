@@ -21,6 +21,10 @@ import (
 // ErrNotFound marks lookups for entities that don't exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrBadRequest marks caller mistakes (invalid filter values) as opposed
+// to internal failures — transports map it to 400 vs 500.
+var ErrBadRequest = errors.New("bad request")
+
 // Service executes queries against the v2 store.
 type Service struct {
 	store  *db.Store
@@ -109,7 +113,7 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	}
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := s.store.DB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT a.slug, se.id, se.external_id, se.title,
 		       COALESCE(se.created_at, ''), COALESCE(se.modified_at, ''),
 		       se.cwd, se.git_branch,
@@ -151,7 +155,7 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 
 // attachCost computes a session's token totals and auto-mode cost.
 func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary) error {
-	rows, err := s.store.DB().QueryContext(ctx, `
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.model,
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
@@ -228,7 +232,7 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 	}
 
 	detail := &SessionDetail{}
-	err = s.store.DB().QueryRowContext(ctx, `
+	err = s.store.ReadDB().QueryRowContext(ctx, `
 		SELECT a.slug, se.external_id, se.title,
 		       COALESCE(se.created_at, ''), COALESCE(se.modified_at, ''),
 		       se.cwd, se.git_branch,
@@ -246,7 +250,7 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		return nil, err
 	}
 
-	rows, err := s.store.DB().QueryContext(ctx, `
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT r.kind, 'out', other.external_id
 		FROM session_relations r JOIN sessions other ON other.id = r.to_session_id
 		WHERE r.from_session_id = ?
@@ -269,7 +273,7 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		return nil, err
 	}
 
-	arts, err := s.store.DB().QueryContext(ctx, `
+	arts, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT ar.kind, ar.name, ass.relation, ass.evidence
 		FROM artifact_sessions ass
 		JOIN artifacts ar ON ar.id = ass.artifact_id
@@ -290,7 +294,7 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		return nil, err
 	}
 
-	models, err := s.store.DB().QueryContext(ctx, `
+	models, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT DISTINCT model FROM messages
 		WHERE session_id = ? AND model <> '' ORDER BY model`, rowID)
 	if err != nil {
@@ -346,7 +350,7 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 	if opts.Limit > 1000 {
 		opts.Limit = 1000
 	}
-	rows, err := s.store.DB().QueryContext(ctx, `
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.seq, m.external_id, m.parent_external_id,
 		       m.role, m.kind, COALESCE(m.created_at, ''), m.model,
 		       m.is_sidechain, d.text_content, m.content
@@ -382,7 +386,7 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 
 func (s *Service) sessionRowID(ctx context.Context, agentSlug, externalID string) (int64, error) {
 	var id int64
-	err := s.store.DB().QueryRowContext(ctx, `
+	err := s.store.ReadDB().QueryRowContext(ctx, `
 		SELECT se.id FROM sessions se
 		JOIN agents a ON a.id = se.agent_id
 		WHERE a.slug = ? AND se.external_id = ?`, agentSlug, externalID).Scan(&id)

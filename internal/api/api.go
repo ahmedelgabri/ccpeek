@@ -201,7 +201,13 @@ func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.svc.Usage(r.Context(), f)
 	if err != nil {
-		writeBadRequest(w, err)
+		// Only caller mistakes are 400s; a canceled request or store
+		// failure must not masquerade as one in the access log.
+		if errors.Is(err, query.ErrBadRequest) {
+			writeBadRequest(w, err)
+		} else {
+			writeError(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, rows)

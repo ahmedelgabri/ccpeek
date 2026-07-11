@@ -49,7 +49,7 @@ func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactS
 	}
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := s.store.DB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT a.slug, ar.kind, ar.name, LENGTH(ar.content),
 		       (SELECT COUNT(*) FROM artifact_sessions ass WHERE ass.artifact_id = ar.id)
 		FROM artifacts ar
@@ -88,7 +88,7 @@ type ArtifactDetail struct {
 func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, render func(kind, content string) string) (*ArtifactDetail, error) {
 	d := &ArtifactDetail{}
 	var id int64
-	err := s.store.DB().QueryRowContext(ctx, `
+	err := s.store.ReadDB().QueryRowContext(ctx, `
 		SELECT ar.id, a.slug, ar.kind, ar.name, LENGTH(ar.content),
 		       ar.content, ar.metadata_json
 		FROM artifacts ar
@@ -109,7 +109,7 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 		d.ContentHTML = render(d.Kind, d.Content)
 	}
 
-	rows, err := s.store.DB().QueryContext(ctx, `
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT se.external_id
 		FROM artifact_sessions ass
 		JOIN sessions se ON se.id = ass.session_id

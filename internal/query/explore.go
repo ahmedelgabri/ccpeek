@@ -72,7 +72,7 @@ type Stats struct {
 
 // Stats builds the overview in a handful of aggregate queries.
 func (s *Service) Stats(ctx context.Context) (*Stats, error) {
-	db := s.store.DB()
+	db := s.store.ReadDB()
 	st := &Stats{}
 
 	err := db.QueryRowContext(ctx, `
@@ -280,7 +280,7 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	}
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := s.store.DB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT json_extract(tc.input_json, '$.command'),
 		       COALESCE(tc.started_at, se.created_at, ''),
 		       a.slug, se.external_id, se.cwd
@@ -334,7 +334,7 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.store.DB().QueryContext(ctx, `
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT tc.seq, tc.message_seq, tc.name, tc.kind,
 		       COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, ''),
 		       tc.result_status, COALESCE(tc.started_at, ''),
