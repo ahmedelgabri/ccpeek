@@ -187,6 +187,9 @@ ccpeek scan
 ccpeek export commands --format zsh
 ccpeek ingest --latest
 ccpeek docs --agents
+
+# Install the ccpeek skill into ~/.claude/skills (or --dir for another harness)
+ccpeek skill install
 ```
 
 Agent data roots resolve as: explicit config > the agent's own env
