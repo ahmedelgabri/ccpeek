@@ -59,9 +59,13 @@ ccpeek migrate
 
 ## HTTP (when the ccpeek server is running; localhost only)
 
+GET /api/v1/stats             (overview: counts, per-agent, activity, files)
 GET /api/v1/sessions?agent=&project=&since=&until=&q=&limit=&offset=
 GET /api/v1/sessions/{agent}/{id}
 GET /api/v1/sessions/{agent}/{id}/transcript?from=&limit=&full=
+GET /api/v1/sessions/{agent}/{id}/tools
+GET /api/v1/commands?agent=&project=&q=&since=&until=&limit=&offset=
+    (&format=zsh|bash|fish|plain streams a shell history file)
 GET /api/v1/usage?group=&agent=&since=&until=
 GET /api/v1/search?q=&agent=&limit=
 GET /api/v1/events            (SSE: "changed" when data updates)

@@ -320,6 +320,9 @@ type TranscriptMessage struct {
 	Model       string `json:"model,omitempty"`
 	IsSidechain bool   `json:"isSidechain,omitempty"`
 	Text        string `json:"text"`
+	// HTML is Text rendered as sanitized markdown; the HTTP layer fills it
+	// for the web UI, the CLI/MCP transports leave it empty.
+	HTML string `json:"html,omitempty"`
 	// Content carries the raw agent payload only when the caller opts in.
 	Content string `json:"content,omitempty"`
 }

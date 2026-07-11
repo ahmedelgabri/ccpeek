@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/query"
 	"github.com/spf13/cobra"
 )
 
@@ -38,18 +39,22 @@ func init() {
 	exportCmd.PersistentFlags().String("project", "", "Filter by workspace path (substring of the session cwd)")
 	exportCmd.PersistentFlags().String("search", "", "Filter by command text")
 	exportCmd.PersistentFlags().String("from", "", "Filter from date (YYYY-MM-DD)")
-	exportCmd.PersistentFlags().String("to", "", "Filter to date (YYYY-MM-DD)")
+	exportCmd.PersistentFlags().String("to", "", "Filter to date (YYYY-MM-DD, inclusive)")
 
 	exportCmd.AddCommand(exportCommandsCmd)
 	rootCmd.AddCommand(exportCmd)
 }
 
-// escapeExportLike escapes LIKE wildcards so user filters match literally.
-func escapeExportLike(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return s
+// exclusiveUpperBound turns an inclusive YYYY-MM-DD into the next day,
+// matching the query layer's `< until` semantics.
+func exclusiveUpperBound(to string) string {
+	if to == "" {
+		return ""
+	}
+	if t, err := time.Parse("2006-01-02", to); err == nil {
+		return t.AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	return to
 }
 
 func runExportCommands(cmd *cobra.Command, args []string) error {
@@ -74,54 +79,30 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 	}
 	defer eng.Close()
 
-	where := []string{
-		"tc.kind = 'shell'",
-		"json_extract(tc.input_json, '$.command') IS NOT NULL",
-	}
-	var qargs []any
-	if project != "" {
-		where = append(where, `se.cwd LIKE ? ESCAPE '\'`)
-		qargs = append(qargs, "%"+escapeExportLike(project)+"%")
-	}
-	if search != "" {
-		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
-		qargs = append(qargs, "%"+escapeExportLike(search)+"%")
-	}
-	if from != "" {
-		where = append(where, "COALESCE(tc.started_at, se.created_at, '') >= ?")
-		qargs = append(qargs, from)
-	}
-	if to != "" {
-		where = append(where, "COALESCE(tc.started_at, se.created_at, '') <= ?")
-		qargs = append(qargs, to+"T23:59:59Z")
-	}
-
-	rows, err := eng.store.DB().QueryContext(ctx, `
-		SELECT json_extract(tc.input_json, '$.command'),
-		       COALESCE(tc.started_at, se.created_at, '')
-		FROM tool_calls tc
-		JOIN sessions se ON se.id = tc.session_id
-		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY COALESCE(tc.started_at, se.created_at, '') DESC, tc.seq DESC`,
-		qargs...)
-	if err != nil {
-		return fmt.Errorf("loading commands: %w", err)
-	}
-	defer rows.Close()
-
+	const page = 1000
 	count := 0
-	for rows.Next() {
-		var entry model.CommandEntry
-		if err := rows.Scan(&entry.Command, &entry.Timestamp); err != nil {
+	for offset := 0; ; offset += page {
+		rows, err := eng.query.Commands(ctx, query.CommandsFilter{
+			Project: project,
+			Query:   search,
+			Since:   from,
+			Until:   exclusiveUpperBound(to),
+			Limit:   page,
+			Offset:  offset,
+		})
+		if err != nil {
 			return fmt.Errorf("loading commands: %w", err)
 		}
-		count++
-		if err := model.WriteCommand(os.Stdout, entry, format); err != nil {
-			return err
+		for _, r := range rows {
+			count++
+			entry := model.CommandEntry{Command: r.Command, Timestamp: r.At}
+			if err := model.WriteCommand(os.Stdout, entry, format); err != nil {
+				return err
+			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("loading commands: %w", err)
+		if len(rows) < page {
+			break
+		}
 	}
 
 	if count == 0 {

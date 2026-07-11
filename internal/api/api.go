@@ -7,9 +7,11 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
 
@@ -32,9 +34,12 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool) http.Ha
 	h := &handlers{svc: svc, events_: events, ready: ready}
 	mux.HandleFunc("GET /api/v1/health", h.health)
 	mux.HandleFunc("GET /api/v1/ready", h.readiness)
+	mux.HandleFunc("GET /api/v1/stats", h.stats)
 	mux.HandleFunc("GET /api/v1/sessions", h.sessions)
 	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}", h.session)
 	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}/transcript", h.transcript)
+	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}/tools", h.sessionTools)
+	mux.HandleFunc("GET /api/v1/commands", h.commands)
 	mux.HandleFunc("GET /api/v1/usage", h.usage)
 	mux.HandleFunc("GET /api/v1/search", h.search)
 	mux.HandleFunc("GET /api/v1/events", h.events)
@@ -116,7 +121,71 @@ func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	// The web UI renders prose messages as markdown; tool records and
+	// system events stay literal.
+	for i := range msgs {
+		if msgs[i].Kind == "message" {
+			msgs[i].HTML = renderMarkdown(msgs[i].Text)
+		}
+	}
 	writeJSON(w, http.StatusOK, msgs)
+}
+
+func (h *handlers) sessionTools(w http.ResponseWriter, r *http.Request) {
+	tools, err := h.svc.SessionTools(r.Context(), r.PathValue("agent"), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tools)
+}
+
+func (h *handlers) stats(w http.ResponseWriter, r *http.Request) {
+	st, err := h.svc.Stats(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := query.CommandsFilter{
+		Agent:   q.Get("agent"),
+		Project: q.Get("project"),
+		Query:   q.Get("q"),
+		Since:   q.Get("since"),
+		Until:   q.Get("until"),
+		Limit:   intParam(q.Get("limit")),
+		Offset:  intParam(q.Get("offset")),
+	}
+	rows, err := h.svc.Commands(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// ?format=zsh|bash|fish|plain streams a shell history file instead of
+	// JSON — the UI's "export to shell" button.
+	if format := q.Get("format"); format != "" {
+		if err := model.ValidateCommandFormat(format); err != nil {
+			writeBadRequest(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=%q", "ccpeek-commands."+format))
+		// History files read oldest-first; the list endpoint is newest-first.
+		for i := len(rows) - 1; i >= 0; i-- {
+			entry := model.CommandEntry{Command: rows[i].Command, Timestamp: rows[i].At}
+			if err := model.WriteCommand(w, entry, format); err != nil {
+				return
+			}
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {

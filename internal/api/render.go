@@ -24,9 +24,22 @@ func renderArtifact(kind, content string) string {
 	if !proseKinds[kind] || content == "" {
 		return ""
 	}
+	return renderMarkdown(content)
+}
+
+// renderMarkdownLimit skips rendering for pathological payloads (pasted
+// megabyte blobs); the UI falls back to preformatted text.
+const renderMarkdownLimit = 128 * 1024
+
+// renderMarkdown converts markdown to sanitized HTML ("" on failure or
+// oversized input).
+func renderMarkdown(text string) string {
+	if text == "" || len(text) > renderMarkdownLimit {
+		return ""
+	}
 	var buf bytes.Buffer
-	if err := md.Convert([]byte(content), &buf); err != nil {
-		log.Printf("markdown render failed for %s artifact: %v", kind, err)
+	if err := md.Convert([]byte(text), &buf); err != nil {
+		log.Printf("markdown render failed: %v", err)
 		return ""
 	}
 	return buf.String()
