@@ -405,9 +405,11 @@ function MessageTools({
       <div className="flex flex-wrap gap-1.5">
         {tools.map((t) => {
           // Expand only when there is more than the chip already shows: a
-          // diff, a full shell command, or a truncated detail.
+          // diff (edits and writes both carry payloads), a full shell
+          // command, or a truncated detail.
           const expandable =
-            (t.kind === "file_edit" && Boolean(t.old || t.new)) ||
+            ((t.kind === "file_edit" || t.kind === "file_write") &&
+              Boolean(t.old || t.new)) ||
             (t.kind === "shell" && Boolean(t.detail)) ||
             Boolean(t.detail && t.detail.length > 80);
           const isOpen = open.has(t.seq);
@@ -450,7 +452,8 @@ function MessageTools({
               <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
               {t.detail && t.kind !== "shell" && <> · {shortPath(t.detail)}</>}
             </div>
-            {t.kind === "file_edit" && (t.old || t.new) ? (
+            {(t.kind === "file_edit" || t.kind === "file_write") &&
+            (t.old || t.new) ? (
               <DiffView old={t.old ?? ""} new={t.new ?? ""} />
             ) : (
               <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-[11px] leading-relaxed">
@@ -539,7 +542,8 @@ function ToolsTab({ tools }: { tools: ToolCallRow[] }) {
 
 function ToolRow({ t }: { t: ToolCallRow }) {
   const [open, setOpen] = useState(false);
-  const hasDiff = t.kind === "file_edit" && (t.old || t.new);
+  const hasDiff =
+    (t.kind === "file_edit" || t.kind === "file_write") && (t.old || t.new);
   return (
     <>
       <tr
@@ -585,7 +589,9 @@ interface FileGroup {
   path: string;
   reads: number;
   writes: number;
-  edits: ToolCallRow[];
+  edits: number;
+  // changes holds the edit/write rows with payloads, for diff expansion.
+  changes: ToolCallRow[];
 }
 
 function groupFiles(tools: ToolCallRow[]): FileGroup[] {
@@ -596,15 +602,22 @@ function groupFiles(tools: ToolCallRow[]): FileGroup[] {
       path: t.detail,
       reads: 0,
       writes: 0,
-      edits: [],
+      edits: 0,
+      changes: [],
     };
     if (t.kind === "file_read") g.reads++;
     if (t.kind === "file_write") g.writes++;
-    if (t.kind === "file_edit") g.edits.push(t);
+    if (t.kind === "file_edit") g.edits++;
+    if (
+      (t.kind === "file_edit" || t.kind === "file_write") &&
+      (t.old || t.new)
+    ) {
+      g.changes.push(t);
+    }
     map.set(t.detail, g);
   }
   return Array.from(map.values()).sort(
-    (a, b) => b.writes + b.edits.length - (a.writes + a.edits.length),
+    (a, b) => b.writes + b.edits - (a.writes + a.edits),
   );
 }
 
@@ -622,7 +635,7 @@ function FilesTab({ files }: { files: FileGroup[] }) {
 
 function FileRow({ f }: { f: FileGroup }) {
   const [open, setOpen] = useState(false);
-  const diffs = f.edits.filter((e) => e.old || e.new);
+  const diffs = f.changes;
   return (
     <li className="bg-surface-1">
       <div
@@ -638,9 +651,7 @@ function FileRow({ f }: { f: FileGroup }) {
         )}
         <span className="truncate font-mono text-xs">{shortPath(f.path)}</span>
         <span className="ml-auto flex shrink-0 gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
-          {f.edits.length > 0 && (
-            <span className="text-warn">{f.edits.length} edits</span>
-          )}
+          {f.edits > 0 && <span className="text-warn">{f.edits} edits</span>}
           {f.writes > 0 && <span className="text-ok">{f.writes} writes</span>}
           {f.reads > 0 && <span>{f.reads} reads</span>}
         </span>
@@ -651,7 +662,8 @@ function FileRow({ f }: { f: FileGroup }) {
           {diffs.map((e) => (
             <div key={e.seq}>
               <div className="mb-1 font-mono text-[10px] text-ink-faint tabular-nums">
-                edit #{e.seq} · {e.at?.slice(11, 19)}
+                {e.kind === "file_write" ? "write" : "edit"} #{e.seq} ·{" "}
+                {e.at?.slice(11, 19)}
               </div>
               <DiffView old={e.old ?? ""} new={e.new ?? ""} />
             </div>

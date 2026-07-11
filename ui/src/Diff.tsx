@@ -1,11 +1,30 @@
-// Line diff for file_edit tool calls: an LCS over the old/new excerpts,
-// rendered as classic removed/added rows. Payloads are already capped
-// server-side (16 KB each), so the quadratic DP stays cheap.
+// Line diff for file changes: an LCS over the old/new excerpts, rendered
+// as classic removed/added rows. Payloads are already capped server-side
+// (16 KB each), so the quadratic DP stays cheap.
 const MAX_LINES = 400;
+// Pure additions/deletions (file writes) skip the LCS entirely, so they
+// can render much longer before truncating.
+const MAX_PURE_LINES = 1200;
 
 type Op = { kind: " " | "-" | "+"; text: string };
 
+// pureOps renders a one-sided change (whole-file write or wipe) without
+// the quadratic DP, truncating with a marker instead of giving up.
+function pureOps(lines: string[], kind: "-" | "+"): Op[] {
+  const shown = lines.slice(0, MAX_PURE_LINES);
+  const ops: Op[] = shown.map((text) => ({ kind, text }));
+  if (lines.length > MAX_PURE_LINES) {
+    ops.push({
+      kind: " ",
+      text: `… ${lines.length - MAX_PURE_LINES} more lines`,
+    });
+  }
+  return ops;
+}
+
 function diffLines(oldText: string, newText: string): Op[] | null {
+  if (oldText === "") return pureOps(newText.split("\n"), "+");
+  if (newText === "") return pureOps(oldText.split("\n"), "-");
   const a = oldText.split("\n");
   const b = newText.split("\n");
   if (a.length > MAX_LINES || b.length > MAX_LINES) return null;

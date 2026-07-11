@@ -312,7 +312,9 @@ const editExcerptLimit = 16 * 1024
 
 // ToolCallRow is one tool invocation of a session, with just enough
 // detail to browse (command text or file path, never the full payload) —
-// plus the edit payloads for file_edit rows so the UI can render diffs.
+// plus change payloads so the UI can render diffs: old/new for
+// file_edit, the written content as New for file_write (an all-addition
+// diff).
 type ToolCallRow struct {
 	Seq int `json:"seq"`
 	// MessageSeq is the transcript seq of the issuing message, letting the
@@ -323,7 +325,7 @@ type ToolCallRow struct {
 	Detail     string `json:"detail,omitempty"` // shell command or file path
 	Status     string `json:"status,omitempty"`
 	At         string `json:"at,omitempty"`
-	// Old/New carry the file_edit before/after excerpts (capped).
+	// Old/New carry the change excerpts (capped).
 	Old string `json:"old,omitempty"`
 	New string `json:"new,omitempty"`
 }
@@ -343,9 +345,11 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 		            ELSE '' END,
 		       CASE WHEN tc.kind = 'file_edit'
 		            THEN substr(COALESCE(json_extract(tc.input_json, '$.new_string'), ''), 1, ?)
+		            WHEN tc.kind = 'file_write'
+		            THEN substr(COALESCE(json_extract(tc.input_json, '$.content'), ''), 1, ?)
 		            ELSE '' END
 		FROM tool_calls tc WHERE tc.session_id = ? ORDER BY tc.seq`,
-		editExcerptLimit, editExcerptLimit, rowID)
+		editExcerptLimit, editExcerptLimit, editExcerptLimit, rowID)
 	if err != nil {
 		return nil, fmt.Errorf("listing tool calls: %w", err)
 	}
