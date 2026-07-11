@@ -138,10 +138,12 @@ const routeTree = rootRoute.addChildren([
         agent?: string;
         q?: string;
         project?: string;
+        model?: string;
         since?: string;
         until?: string;
       } = {};
       if (typeof s.agent === "string" && s.agent !== "") out.agent = s.agent;
+      if (typeof s.model === "string" && s.model !== "") out.model = s.model;
       if (typeof s.q === "string" && s.q !== "") out.q = s.q;
       if (typeof s.project === "string" && s.project !== "")
         out.project = s.project;

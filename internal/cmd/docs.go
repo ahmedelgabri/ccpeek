@@ -31,8 +31,9 @@ Exit codes: 0 = results, 1 = error, 3 = valid query but no matches.
 
 ## CLI (no server needed; re-indexes incrementally first, --no-index to skip)
 
-ccpeek query sessions [--agent SLUG] [--project PATH] [--since YYYY-MM-DD]
-    [--until YYYY-MM-DD] [--title SUBSTR] [--limit N] [--offset N]
+ccpeek query sessions [--agent SLUG] [--project PATH] [--model MODEL]
+    [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--title SUBSTR]
+    [--limit N] [--offset N]
   List sessions newest-first with tokens and cost per session.
   costUSD is a lower bound when unpricedTokens > 0.
 
@@ -60,7 +61,7 @@ ccpeek migrate
 ## HTTP (when the ccpeek server is running; localhost only)
 
 GET /api/v1/stats             (overview: counts, per-agent, activity, files)
-GET /api/v1/sessions?agent=&project=&since=&until=&q=&limit=&offset=
+GET /api/v1/sessions?agent=&project=&model=&since=&until=&q=&limit=&offset=
 GET /api/v1/sessions/{agent}/{id}
 GET /api/v1/sessions/{agent}/{id}/transcript?from=&limit=&full=
 GET /api/v1/sessions/{agent}/{id}/tools

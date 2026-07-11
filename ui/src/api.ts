@@ -175,6 +175,7 @@ export const api = {
   sessions: (filters: {
     agent?: string;
     project?: string;
+    model?: string;
     q?: string;
     since?: string;
     until?: string;

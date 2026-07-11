@@ -59,6 +59,7 @@ var querySessionsCmd = &cobra.Command{
 		f := query.SessionsFilter{}
 		f.Agent, _ = cmd.Flags().GetString("agent")
 		f.Project, _ = cmd.Flags().GetString("project")
+		f.Model, _ = cmd.Flags().GetString("model")
 		f.Since, _ = cmd.Flags().GetString("since")
 		f.Until, _ = cmd.Flags().GetString("until")
 		f.Query, _ = cmd.Flags().GetString("title")
@@ -228,6 +229,7 @@ func init() {
 		queryCmd.AddCommand(c)
 	}
 	querySessionsCmd.Flags().String("project", "", "Filter by workspace path")
+	querySessionsCmd.Flags().String("model", "", "Filter to sessions that used a model")
 	querySessionsCmd.Flags().String("since", "", "Only sessions modified on/after YYYY-MM-DD")
 	querySessionsCmd.Flags().String("until", "", "Only sessions modified before YYYY-MM-DD")
 	querySessionsCmd.Flags().String("title", "", "Substring filter on session title")

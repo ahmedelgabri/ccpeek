@@ -1,6 +1,6 @@
 # CCPeek v2 — Rewrite Plan
 
-Status: **v2.0 cutover landed** (janitorial follow-ups remain) · Date: 2026-07-10
+Status: **v2.0 complete + post-launch UI/perf sprints landed** · Date: 2026-07-12
 
 ## Implementation status (updated as work lands on this branch)
 
@@ -69,8 +69,46 @@ Done — engine and agent surface:
   agent with wheel/slider zoom, CSV export, and the rollup table as the
   accessible view (echarts loads as a lazy chunk only on that page).
 
+Post-launch sprints (feedback-driven, after v2.0):
+
+- ✅ **Instrument-panel UI overhaul**: sidebar shell (IBM Plex Mono/Sans),
+  Overview dashboard at `/` (stat tiles with sparklines, activity
+  heatmap with hover tooltips, per-agent totals, workspace facet,
+  recent-file-edits feed, tool-calls-by-kind bars), day-grouped
+  sessions stream, global `/commands` browser with copy/session links
+  and zsh/bash/fish exports (`/api/v1/commands?format=`), SVG favicon,
+  skeleton loading states.
+- ✅ **Session detail as a hub**: deep-linkable tabs (transcript /
+  commands / tools / files / artifacts), markdown-rendered transcripts
+  (server-side goldmark), three visual registers (user accent /
+  assistant violet / meta dashed one-liners that expand to the full
+  stored text), kind-colored tool chips that expand inline (line diffs
+  for edits, addition diffs for writes, highlighted commands), token-mix
+  bar, per-file change lists with diffs, syntax highlighting
+  (highlight.js lazy chunk, palette-mapped theme).
+- ✅ **Filters and drill-downs everywhere**: from→to date pickers +
+  agent (+ model on Usage AND Sessions — `SessionsFilter.Model` flows
+  through CLI/API/MCP) on every data view; sortable columns on the
+  usage + blocks tables; usage rows pivot into filtered sessions (day /
+  agent / project); search hits open transcripts at the matching
+  message (`?seq=`).
+- ✅ **Cost source split (schema v3)**: rollups carry
+  cost_reported_usd / cost_estimated_usd (agent-reported vs priced
+  tokens — the API-vs-subscription proxy); split bars with tooltips in
+  the usage table; rollups self-heal when empty; non-day groupings
+  render an ECharts bar chart (tail-truncated path labels, agent
+  colors for agent categories).
+- ✅ **Perf/correctness from field reports**: a `query_only` read pool
+  (4 conns) alongside the single writer so API queries never queue
+  behind watch-mode ingest/rollups/scan (regression-tested); the secret
+  scanner pages its reads; `/api/v1/usage` distinguishes 400 vs 500 via
+  `query.ErrBadRequest`; ECharts instances re-create on stale DOM +
+  resize on data-shape changes; the usage-report artifact renders in a
+  sandboxed iframe via `/artifacts/.../raw`.
+
 Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
-…) land post-launch per §6 as demand shows up.
+…) land post-launch per §6 as demand shows up. Current schema: v3
+(migrations run in place from any earlier v2 database).
 
 ---
 

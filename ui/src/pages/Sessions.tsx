@@ -24,6 +24,7 @@ export function SessionsPage() {
   const agent = search.agent ?? "";
   const q = search.q ?? "";
   const project = search.project ?? "";
+  const model = search.model ?? "";
   const since = search.since ?? "";
   const until = search.until ?? "";
 
@@ -43,18 +44,27 @@ export function SessionsPage() {
     });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["sessions", agent, q, project, since, until, pages],
+    queryKey: ["sessions", agent, q, project, model, since, until, pages],
     queryFn: () =>
       api.sessions({
         agent,
         q,
         project,
+        model,
         since,
         until: inclusiveUntil(until),
         limit: String(PAGE * pages),
       }),
     placeholderData: (prev) => prev,
   });
+  // Model options come from the model rollup, same source as Usage.
+  const modelRows = useQuery({
+    queryKey: ["usage", "model-options"],
+    queryFn: () => api.usage({ group: "model" }),
+  });
+  const models = (modelRows.data ?? [])
+    .map((r) => r.group)
+    .filter((m) => m !== "");
 
   const sessions = data ?? [];
   const mayHaveMore = sessions.length === PAGE * pages;
@@ -79,6 +89,9 @@ export function SessionsPage() {
           onRange={(sv, uv) => setFilter({ since: sv, until: uv })}
           agent={agent}
           onAgent={(v) => setFilter({ agent: v })}
+          model={model}
+          models={models}
+          onModel={(v) => setFilter({ model: v })}
         >
           <input
             value={q}

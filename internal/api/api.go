@@ -87,6 +87,7 @@ func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 	f := query.SessionsFilter{
 		Agent:   q.Get("agent"),
 		Project: q.Get("project"),
+		Model:   q.Get("model"),
 		Since:   q.Get("since"),
 		Until:   q.Get("until"),
 		Query:   q.Get("q"),

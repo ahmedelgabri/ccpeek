@@ -66,6 +66,7 @@ type SessionSummary struct {
 type SessionsFilter struct {
 	Agent   string // slug, "" = all
 	Project string // workspace canonical path, "" = all
+	Model   string // sessions with ≥1 message on this model
 	Since   string // inclusive YYYY-MM-DD on modified_at
 	Until   string // exclusive YYYY-MM-DD upper bound on modified_at
 	Query   string // substring on title
@@ -94,6 +95,11 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 			JOIN workspaces w ON w.id = sw.workspace_id
 			WHERE w.canonical_path = ?)`)
 		args = append(args, f.Project)
+	}
+	if f.Model != "" {
+		where = append(where, `se.id IN (
+			SELECT DISTINCT m.session_id FROM messages m WHERE m.model = ?)`)
+		args = append(args, f.Model)
 	}
 	if f.Since != "" {
 		where = append(where, `se.modified_at >= ?`)

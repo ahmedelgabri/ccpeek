@@ -162,6 +162,7 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 			Agent   string `json:"agent"`
 			ID      string `json:"id"`
 			Project string `json:"project"`
+			Model   string `json:"model"`
 			Since   string `json:"since"`
 			Until   string `json:"until"`
 			Query   string `json:"query"`
@@ -181,8 +182,8 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 	switch call.Name {
 	case "sessions":
 		data, err = s.svc.Sessions(ctx, query.SessionsFilter{
-			Agent: a.Agent, Project: a.Project, Since: a.Since,
-			Until: a.Until, Query: a.Query, Limit: a.Limit,
+			Agent: a.Agent, Project: a.Project, Model: a.Model,
+			Since: a.Since, Until: a.Until, Query: a.Query, Limit: a.Limit,
 		})
 	case "session":
 		data, err = s.svc.Session(ctx, a.Agent, a.ID)
