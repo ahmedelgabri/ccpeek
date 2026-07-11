@@ -11,7 +11,7 @@ import (
 // run only the pending entries of migrations. Open-time backfills are
 // banned (docs/v2-plan.md §5.2, §8.1); backfill-style work ships as an
 // explicit migration with a version bump.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -186,10 +186,15 @@ CREATE TABLE IF NOT EXISTS history (
 );
 CREATE INDEX IF NOT EXISTS idx_history_ts ON history(timestamp DESC);
 
+-- stat_sig is a cheap size+mtime fingerprint checked before content
+-- hashing: matching stat means "unchanged" without reading a byte, so
+-- warm startups don't re-read multi-GB histories. Content hash stays the
+-- source of truth when the stat differs.
 CREATE TABLE IF NOT EXISTS source_files (
 	path TEXT PRIMARY KEY,
 	agent_id INTEGER NOT NULL REFERENCES agents(id),
 	content_hash TEXT NOT NULL,
+	stat_sig TEXT NOT NULL DEFAULT '',
 	indexed_at TEXT NOT NULL
 );
 
@@ -333,8 +338,17 @@ var derivedTables = []string{
 }
 
 // migration is a single schema upgrade step. migrations[i] upgrades from
-// version i+1 to i+2. Empty at v2 launch by design: fresh databases are
-// created at the latest schema and never replay history.
+// version i+1 to i+2. Fresh databases are created at the latest schema
+// and never replay these.
 type migration func(ctx context.Context, tx *sql.Tx) error
 
-var migrations []migration
+var migrations = []migration{
+	// v1 → v2: stat fast-path for incremental ingest. Existing rows get an
+	// empty signature, which never matches — every source re-hashes once
+	// and records its stat on the next run.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`ALTER TABLE source_files ADD COLUMN stat_sig TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
+}

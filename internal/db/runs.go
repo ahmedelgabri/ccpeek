@@ -202,22 +202,38 @@ func (s *Store) ListRunIssues(ctx context.Context, runID int64) ([]IngestIssue, 
 	return out, rows.Err()
 }
 
-// SourceHashes returns the stored content hash for every known source path.
-func (s *Store) SourceHashes(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT path, content_hash FROM source_files`)
+// SourceSig is the stored change-detection state for one source path.
+type SourceSig struct {
+	ContentHash string
+	StatSig     string
+}
+
+// SourceSigs returns the stored signatures for every known source path.
+func (s *Store) SourceSigs(ctx context.Context) (map[string]SourceSig, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path, content_hash, stat_sig FROM source_files`)
 	if err != nil {
-		return nil, fmt.Errorf("reading source hashes: %w", err)
+		return nil, fmt.Errorf("reading source signatures: %w", err)
 	}
 	defer rows.Close()
-	out := make(map[string]string)
+	out := make(map[string]SourceSig)
 	for rows.Next() {
-		var path, hash string
-		if err := rows.Scan(&path, &hash); err != nil {
+		var path string
+		var sig SourceSig
+		if err := rows.Scan(&path, &sig.ContentHash, &sig.StatSig); err != nil {
 			return nil, err
 		}
-		out[path] = hash
+		out[path] = sig
 	}
 	return out, rows.Err()
+}
+
+// TouchSourceStat refreshes only the stat signature of a known source —
+// the content proved unchanged after a stat mismatch (e.g. a tool rewrote
+// the file with identical bytes), so re-parsing was skipped.
+func (s *Store) TouchSourceStat(ctx context.Context, path, statSig string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE source_files SET stat_sig = ? WHERE path = ?`, statSig, path)
+	return err
 }
 
 // RegenerateWorkspaces rebuilds the derived workspace facet from

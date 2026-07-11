@@ -40,6 +40,24 @@ type Options struct {
 	// Home is the user's home directory for ~-expansion; defaults to
 	// os.UserHomeDir.
 	Home string
+	// Progress, when non-nil, receives pipeline progress: one event per
+	// root after discovery (Root=true, Total set) and one per source after
+	// it is hashed. Callbacks run on the ingest goroutine — keep them
+	// cheap and throttle any output on the consumer side.
+	Progress func(Progress)
+}
+
+// Progress is one pipeline progress event.
+type Progress struct {
+	Agent canon.AgentSlug
+	// Root is true for root-discovery events; Path is then the root
+	// directory and Total the number of sources discovered under it.
+	Root  bool
+	Path  string
+	Total int
+	// Seen/Changed count sources across the whole run so far.
+	Seen    int
+	Changed int
 }
 
 // Report summarizes one pipeline run.
@@ -105,7 +123,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	report.RunID = runID
 
-	known, err := r.store.SourceHashes(ctx)
+	known, err := r.store.SourceSigs(ctx)
 	if err != nil {
 		return nil, r.fail(ctx, report, started, err)
 	}
@@ -124,30 +142,29 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 			continue
 		}
 		sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
+		if opts.Progress != nil {
+			opts.Progress(Progress{
+				Agent: rr.adapter.Slug(), Root: true, Path: rr.root.Path,
+				Total: len(sources), Seen: report.FilesSeen, Changed: report.FilesChanged,
+			})
+		}
 
 		for _, src := range sources {
 			if err := ctx.Err(); err != nil {
 				return nil, r.fail(ctx, report, started, err)
 			}
 			report.FilesSeen++
-			hash, err := hashSource(src)
-			if err != nil {
-				report.Issues = append(report.Issues, canon.Issue{
-					Agent: rr.adapter.Slug(), Severity: canon.SeverityWarn,
-					Category: "io", SourcePath: src.Path,
-					Detail: fmt.Sprintf("hashing failed: %v", err),
-				})
-				continue
-			}
-			if known[src.Path] == hash {
-				continue // unchanged
-			}
-			report.FilesChanged++
-			if err := r.ingestSource(ctx, rr.adapter, src, hash, report); err != nil {
+			if err := r.ingestIfChanged(ctx, rr.adapter, src, known[src.Path], report); err != nil {
 				report.Issues = append(report.Issues, canon.Issue{
 					Agent: rr.adapter.Slug(), Severity: canon.SeverityError,
 					Category: "parse", SourcePath: src.Path,
 					Detail: err.Error(),
+				})
+			}
+			if opts.Progress != nil {
+				opts.Progress(Progress{
+					Agent: rr.adapter.Slug(), Path: src.Path,
+					Seen: report.FilesSeen, Changed: report.FilesChanged,
 				})
 			}
 		}
@@ -198,8 +215,42 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	return report, nil
 }
 
+// ingestIfChanged applies the two-tier change check for one source: a
+// cheap size+mtime fingerprint first (no bytes read on match — this is
+// what keeps warm startups over multi-GB histories fast), then the
+// content hash as the source of truth. Hash-check failures are recorded
+// as warnings here, parse failures as errors by the caller.
+func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent.SourceRef, prior db.SourceSig, report *Report) error {
+	statSig, statErr := statFingerprint(src)
+	if statErr == nil && statSig != "" && prior.StatSig == statSig {
+		return nil // unchanged by stat — skip without reading content
+	}
+
+	hash, err := hashSource(src)
+	if err != nil {
+		report.Issues = append(report.Issues, canon.Issue{
+			Agent: a.Slug(), Severity: canon.SeverityWarn,
+			Category: "io", SourcePath: src.Path,
+			Detail: fmt.Sprintf("hashing failed: %v", err),
+		})
+		return nil
+	}
+	if statErr != nil {
+		statSig = "" // unknown stat must never match next run
+	}
+
+	if prior.ContentHash == hash {
+		// Identical bytes behind a new stat (e.g. rewritten in place):
+		// refresh the fingerprint so the fast path works next run.
+		return r.store.TouchSourceStat(ctx, src.Path, statSig)
+	}
+
+	report.FilesChanged++
+	return r.ingestSource(ctx, a, src, hash, statSig, report)
+}
+
 // ingestSource parses one changed source inside its own transaction.
-func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.SourceRef, hash string, report *Report) error {
+func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.SourceRef, hash, statSig string, report *Report) error {
 	w, err := r.store.BeginWrite(ctx)
 	if err != nil {
 		return err
@@ -210,7 +261,7 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	if err := a.Parse(ctx, src, sink); err != nil {
 		return err
 	}
-	if err := w.RecordSourceFile(src.Path, a.Slug(), hash); err != nil {
+	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig); err != nil {
 		return err
 	}
 	return w.Commit()
@@ -284,6 +335,45 @@ func rootSummary(roots []resolvedRoot) []map[string]string {
 		})
 	}
 	return out
+}
+
+// statFingerprint builds the cheap first-tier change signal: size+mtime
+// for files, and a digest of sorted child (name, size, mtime) for
+// directories. No content is read. An equal fingerprint means "assume
+// unchanged"; anything else falls through to the content hash.
+func statFingerprint(src agent.SourceRef) (string, error) {
+	if src.Kind != agent.SourceDir {
+		fi, err := os.Stat(src.Path)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("f:%d:%d", fi.Size(), fi.ModTime().UnixNano()), nil
+	}
+
+	entries, err := os.ReadDir(src.Path)
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(entries))
+	infos := make(map[string]os.FileInfo, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			return "", err
+		}
+		names = append(names, e.Name())
+		infos[e.Name()] = fi
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		fi := infos[name]
+		fmt.Fprintf(h, "%s\x00%d\x00%d\x01", name, fi.Size(), fi.ModTime().UnixNano())
+	}
+	return "d:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // hashSource fingerprints a source: files (including per-session SQLite

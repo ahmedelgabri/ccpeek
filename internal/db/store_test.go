@@ -67,6 +67,59 @@ func TestReopenIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestMigrateV1AddsStatSig proves a schema-v1 database (the v2 preview
+// builds) upgrades in place: stat_sig appears with the never-matching
+// empty default so every source re-hashes exactly once.
+func TestMigrateV1AddsStatSig(t *testing.T) {
+	s, path := openTemp(t)
+	ctx := context.Background()
+
+	// Downgrade the fresh database to a v1 shape: drop the new column by
+	// rebuilding source_files without it, and stamp version 1.
+	stmts := []string{
+		`DROP TABLE source_files`,
+		`CREATE TABLE source_files (
+			path TEXT PRIMARY KEY,
+			agent_id INTEGER NOT NULL REFERENCES agents(id),
+			content_hash TEXT NOT NULL,
+			indexed_at TEXT NOT NULL
+		)`,
+		`INSERT INTO agents (id, slug) VALUES (1, 'claude-code')`,
+		`INSERT INTO source_files (path, agent_id, content_hash, indexed_at)
+		 VALUES ('/x/s.jsonl', 1, 'abc', '2026-01-01T00:00:00Z')`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("shaping v1 db: %v", err)
+		}
+	}
+	if err := s.writeVersion(ctx, 1); err != nil {
+		t.Fatalf("writeVersion: %v", err)
+	}
+	s.Close()
+
+	s2, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen with migration: %v", err)
+	}
+	defer s2.Close()
+
+	if v, err := s2.SchemaVersion(ctx); err != nil || v != schemaVersion {
+		t.Fatalf("version after migration = %d (err %v), want %d", v, err, schemaVersion)
+	}
+	sigs, err := s2.SourceSigs(ctx)
+	if err != nil {
+		t.Fatalf("SourceSigs: %v", err)
+	}
+	got, ok := sigs["/x/s.jsonl"]
+	if !ok {
+		t.Fatal("migrated row missing")
+	}
+	if got.ContentHash != "abc" || got.StatSig != "" {
+		t.Fatalf("migrated row = %+v, want hash abc + empty stat", got)
+	}
+}
+
 func TestOpenFutureSchemaFails(t *testing.T) {
 	s, path := openTemp(t)
 	ctx := context.Background()

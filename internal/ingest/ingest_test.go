@@ -2,9 +2,11 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
@@ -201,6 +203,52 @@ func TestChangedFileReingestsWithoutDuplication(t *testing.T) {
 	}
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM sessions`); n != 5 {
 		t.Errorf("sessions = %d, want 5 (upsert, not duplicate)", n)
+	}
+}
+
+// TestTouchedFileWithSameContentSkipsReingest covers the middle tier of
+// change detection: a stat change (rewritten mtime) with identical bytes
+// must not re-parse — and must refresh the stat signature so the next run
+// takes the cheap path again.
+func TestTouchedFileWithSameContentSkipsReingest(t *testing.T) {
+	runner, store := newRunner(t)
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(tmp, "claude-code", "projects", "-home-u-demo-api",
+		"22222222-aaaa-bbbb-cccc-222222222222.jsonl")
+	future := time.Now().Add(2 * time.Hour)
+	if err := os.Chtimes(target, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := runner.Run(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FilesChanged != 0 {
+		t.Fatalf("files changed = %d after touch-only, want 0", report.FilesChanged)
+	}
+
+	// The stat signature was refreshed: a third run skips on stat alone.
+	sigs, err := store.SourceSigs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("f:%d:%d", fi.Size(), fi.ModTime().UnixNano())
+	if got := sigs[target].StatSig; got != want {
+		t.Errorf("stat sig after touch = %q, want %q", got, want)
 	}
 }
 

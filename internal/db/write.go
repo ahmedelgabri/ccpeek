@@ -393,20 +393,22 @@ func (w *Writer) InsertHistory(h canon.HistoryEntry) error {
 	return nil
 }
 
-// RecordSourceFile stores the content hash for incremental comparison.
-func (w *Writer) RecordSourceFile(path string, agent canon.AgentSlug, contentHash string) error {
+// RecordSourceFile stores the content hash and stat signature for
+// incremental comparison.
+func (w *Writer) RecordSourceFile(path string, agent canon.AgentSlug, contentHash, statSig string) error {
 	agentID, err := w.EnsureAgent(agent)
 	if err != nil {
 		return err
 	}
 	_, err = w.tx.ExecContext(w.ctx, `
-		INSERT INTO source_files (path, agent_id, content_hash, indexed_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO source_files (path, agent_id, content_hash, stat_sig, indexed_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			agent_id = excluded.agent_id,
 			content_hash = excluded.content_hash,
+			stat_sig = excluded.stat_sig,
 			indexed_at = excluded.indexed_at`,
-		path, agentID, contentHash, time.Now().UTC().Format(time.RFC3339))
+		path, agentID, contentHash, statSig, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
