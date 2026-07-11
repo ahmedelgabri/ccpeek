@@ -43,6 +43,13 @@ Done — engine and agent surface:
   run on the v2 store (`--claude-dir`/`--rebuild`/`--prune`/`--watch`
   keep working); Playwright specs cover the SPA at `/` plus the redirect
   map; README/docs refreshed.
+- ✅ Serve-first startup (field feedback from the first large-corpus
+  run): the port binds before indexing, the bootstrap runs in the
+  background with throttled stderr progress and an in-UI banner, and
+  `/api/v1/ready` gates scripts/tests on first data. Schema v2 adds a
+  size+mtime `stat_sig` to source_files so warm starts skip unchanged
+  files without re-reading multi-GB histories (content hash remains the
+  source of truth; existing v2 databases migrate in place).
 
 Remaining post-cutover janitorial work (does not block v2.0):
 

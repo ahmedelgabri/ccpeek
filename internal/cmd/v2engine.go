@@ -39,15 +39,18 @@ func v2DBPath(v1DataFile string) string {
 	return filepath.Join(filepath.Dir(v1DataFile), "ccpeek2.db")
 }
 
-// openV2Engine opens (creating + auto-migrating if needed) the v2 engine.
+// openV2EngineDeferred opens the v2 store and services WITHOUT ingesting,
+// and returns the bootstrap step as a closure. bootstrap is nil when
+// nothing needs to run (skipIndex on an existing database); otherwise the
+// caller decides whether to run it synchronously (CLI commands) or in the
+// background (the serving path, so the UI is reachable immediately).
 //
 // First-run contract (docs/v2-plan.md §8.1): when the v2 database does not
-// exist yet, a full ingest of all detected agent roots runs, and — if a v1
-// database is present — its orphaned rows and user state are imported.
-// Zero flags, zero prompts. Subsequent opens run an incremental ingest
-// unless skipIndex is true. tweak, when non-nil, adjusts the pipeline
-// options (rebuild/prune) before the bootstrap run.
-func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*v2Engine, error) {
+// exist yet, bootstrap runs a full ingest of all detected agent roots and
+// — if a v1 database is present — imports its orphaned rows and user
+// state. Zero flags, zero prompts. tweak, when non-nil, adjusts the
+// pipeline options (rebuild/prune/progress) before the run.
+func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*v2Engine, func(context.Context) error, error) {
 	dataFile, _ := cmd.Flags().GetString("data-file")
 
 	v2Path := v2DBPath(dataFile)
@@ -58,13 +61,13 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 
 	store, err := db.Open(ctx, v2Path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	table, err := pricing.Embedded()
 	if err != nil {
 		store.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	// The full launch set (docs/v2-plan.md §6): Claude Code, Pi, Codex,
 	// OpenCode, Cursor.
@@ -78,7 +81,7 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 	}
 
 	if skipIndex && !firstRun {
-		return eng, nil
+		return eng, nil, nil
 	}
 
 	opts := v2IngestOptions(cmd)
@@ -87,38 +90,58 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 			t(&opts)
 		}
 	}
-	if firstRun {
-		fmt.Fprintf(logw, "First v2 start: building %s\n", v2Path)
-	}
-	report, err := eng.runner.Run(ctx, opts)
-	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("indexing: %w", err)
-	}
-	eng.report = report
-	if report.FilesChanged > 0 {
-		fmt.Fprintf(logw, "Indexed %d changed source(s): %d sessions, %d messages, %d artifacts (%s)\n",
-			report.FilesChanged, report.Sessions, report.Messages,
-			report.Artifacts, report.Duration.Round(time.Millisecond))
-	}
 
-	if firstRun {
-		if _, err := os.Stat(dataFile); err == nil {
-			fmt.Fprintf(logw, "Importing v1 data from %s\n", dataFile)
-			mreport, err := migrate.ImportV1(ctx, store, dataFile)
-			if err != nil {
-				// Import failure must not brick the new engine; the v1 DB is
-				// untouched and the import can be re-run with `ccpeek migrate`.
-				fmt.Fprintf(logw, "WARNING: v1 import failed (re-run with `ccpeek migrate`): %v\n", err)
-			} else {
-				fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages), %d artifacts, %d ignore flags\n",
-					mreport.OrphanSessions, mreport.OrphanMessages,
-					mreport.OrphanArtifacts, mreport.IgnoreFlags)
-				b, _ := json.Marshal(mreport)
-				_ = store.SetMeta(ctx, "v1_import_report", string(b))
-			}
+	bootstrap := func(ctx context.Context) error {
+		if firstRun {
+			fmt.Fprintf(logw, "First v2 start: building %s\n", v2Path)
 		}
-		_ = store.SetMeta(ctx, "migrated_at", time.Now().UTC().Format(time.RFC3339))
+		report, err := eng.runner.Run(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("indexing: %w", err)
+		}
+		eng.report = report
+		if report.FilesChanged > 0 {
+			fmt.Fprintf(logw, "Indexed %d changed source(s): %d sessions, %d messages, %d artifacts (%s)\n",
+				report.FilesChanged, report.Sessions, report.Messages,
+				report.Artifacts, report.Duration.Round(time.Millisecond))
+		}
+
+		if firstRun {
+			if _, err := os.Stat(dataFile); err == nil {
+				fmt.Fprintf(logw, "Importing v1 data from %s\n", dataFile)
+				mreport, err := migrate.ImportV1(ctx, store, dataFile)
+				if err != nil {
+					// Import failure must not brick the new engine; the v1 DB is
+					// untouched and the import can be re-run with `ccpeek migrate`.
+					fmt.Fprintf(logw, "WARNING: v1 import failed (re-run with `ccpeek migrate`): %v\n", err)
+				} else {
+					fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages), %d artifacts, %d ignore flags\n",
+						mreport.OrphanSessions, mreport.OrphanMessages,
+						mreport.OrphanArtifacts, mreport.IgnoreFlags)
+					b, _ := json.Marshal(mreport)
+					_ = store.SetMeta(ctx, "v1_import_report", string(b))
+				}
+			}
+			_ = store.SetMeta(ctx, "migrated_at", time.Now().UTC().Format(time.RFC3339))
+		}
+		return nil
+	}
+	return eng, bootstrap, nil
+}
+
+// openV2Engine opens the engine and runs any needed bootstrap ingest
+// synchronously — the right shape for CLI commands that answer from the
+// index. The serving path uses openV2EngineDeferred instead.
+func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*v2Engine, error) {
+	eng, bootstrap, err := openV2EngineDeferred(ctx, cmd, skipIndex, logw, tweak...)
+	if err != nil {
+		return nil, err
+	}
+	if bootstrap != nil {
+		if err := bootstrap(ctx); err != nil {
+			eng.Close()
+			return nil, err
+		}
 	}
 	return eng, nil
 }

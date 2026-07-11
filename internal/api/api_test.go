@@ -46,7 +46,7 @@ func newHandler(t *testing.T) http.Handler {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return Handler(query.New(store, table), nil)
+	return Handler(query.New(store, table), nil, nil)
 }
 
 func get(t *testing.T, h http.Handler, path string) (int, envelope) {

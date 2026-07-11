@@ -23,11 +23,15 @@ type envelope struct {
 }
 
 // Handler mounts the API routes. events may be nil when live updates are
-// not running (e.g. `--watch` off); the endpoint then answers 501.
-func Handler(svc *query.Service, events *Broadcaster) http.Handler {
+// not running (e.g. `--watch` off); the endpoint then answers 501. ready
+// reports whether the initial index pass has completed — nil means
+// "always ready"; while false, /api/v1/ready answers 503 so scripts (and
+// the e2e web server wait) can block on first data.
+func Handler(svc *query.Service, events *Broadcaster, ready func() bool) http.Handler {
 	mux := http.NewServeMux()
-	h := &handlers{svc: svc, events_: events}
+	h := &handlers{svc: svc, events_: events, ready: ready}
 	mux.HandleFunc("GET /api/v1/health", h.health)
+	mux.HandleFunc("GET /api/v1/ready", h.readiness)
 	mux.HandleFunc("GET /api/v1/sessions", h.sessions)
 	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}", h.session)
 	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}/transcript", h.transcript)
@@ -47,10 +51,29 @@ func Handler(svc *query.Service, events *Broadcaster) http.Handler {
 type handlers struct {
 	svc     *query.Service
 	events_ *Broadcaster
+	ready   func() bool
+}
+
+func (h *handlers) isReady() bool {
+	return h.ready == nil || h.ready()
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "ok",
+		"indexing": !h.isReady(),
+	})
+}
+
+// readiness answers 200 once the initial index pass has completed and 503
+// before that — the server itself is up the whole time (queries answer
+// from whatever is already indexed).
+func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
+	if h.isReady() {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+		return
+	}
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "indexing"})
 }
 
 func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {

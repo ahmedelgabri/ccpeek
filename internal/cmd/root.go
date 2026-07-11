@@ -3,12 +3,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/api"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
@@ -105,16 +108,24 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// v2.0: the v2 engine owns indexing and serving. The v1 database, when
 	// present, was imported on first run and stays untouched for rollback.
-	eng, err := openV2Engine(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
+	eng, bootstrap, err := openV2EngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
 		o.Rebuild = rebuild
 		o.Prune = prune
+		if !quiet {
+			o.Progress = newProgressLogger(os.Stderr)
+		}
 	})
 	if err != nil {
 		return err
 	}
 	defer eng.Close()
 
-	if !skipScan && eng.report != nil && eng.report.FilesChanged > 0 {
+	// runScan reports rather than fails: on the serving path a scan
+	// problem must not take the server down.
+	runScan := func(ctx context.Context) error {
+		if skipScan || eng.report == nil || eng.report.FilesChanged == 0 {
+			return nil
+		}
 		logf("Scanning for secrets...\n")
 		scanner, err := secrets.New(eng.store)
 		if err != nil {
@@ -136,33 +147,77 @@ func run(cmd *cobra.Command, args []string) error {
 			logf("  %s%sWARNING%s %s%d potential secret(s) found. Run `ccpeek scan` for details.%s\n",
 				colorBold, colorYellow, colorReset, colorYellow, active, colorReset)
 		}
-	}
-
-	if indexOnly {
 		return nil
 	}
 
+	if indexOnly {
+		if bootstrap != nil {
+			if err := bootstrap(ctx); err != nil {
+				return err
+			}
+		}
+		return runScan(ctx)
+	}
+
+	// Serve first: the port is reachable immediately and the first index
+	// pass (minutes on a large history) runs behind it, streaming into the
+	// UI via SSE when done. /api/v1/ready flips to 200 at that point.
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	logf("Serving on %s\n", url)
 
 	events := api.NewBroadcaster()
-	if watch {
-		logf("Watch mode enabled (fsnotify; --watch-interval is a v1 no-op)\n")
-		go func() {
+	var ready atomic.Bool
+	go func() {
+		if bootstrap != nil {
+			err := bootstrap(ctx)
+			ready.Store(true) // ready even on failure: the server answers from what exists
+			events.Notify()
+			if err != nil {
+				if ctx.Err() == nil {
+					logf("WARNING: indexing failed: %v\n", err)
+				}
+				return
+			}
+			if err := runScan(ctx); err != nil && ctx.Err() == nil {
+				logf("WARNING: %v\n", err)
+			}
+		} else {
+			ready.Store(true)
+		}
+		if watch {
+			logf("Watch mode enabled (fsnotify; --watch-interval is a v1 no-op)\n")
 			if err := eng.runner.Watch(ctx, v2IngestOptions(cmd), 0, func(*ingest.Report) {
 				events.Notify()
 			}); err != nil && ctx.Err() == nil {
 				logf("WARNING: watch stopped: %v\n", err)
 			}
-		}()
-	}
+		}
+	}()
 
 	if openBrowser {
 		openURL(url)
 	}
 
-	return serveV2(ctx, addr, buildServeHandler(api.Handler(eng.query, events)))
+	return serveV2(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load)))
+}
+
+// newProgressLogger prints ingest progress to w: one line per discovered
+// root and a throttled counter line while sources are hashed/parsed, so a
+// first run over a multi-GB history never looks hung.
+func newProgressLogger(w io.Writer) func(ingest.Progress) {
+	var last time.Time
+	return func(p ingest.Progress) {
+		if p.Root {
+			fmt.Fprintf(w, "Indexing %s: %s (%d sources)\n", p.Agent, p.Path, p.Total)
+			return
+		}
+		if time.Since(last) < 2*time.Second {
+			return
+		}
+		last = time.Now()
+		fmt.Fprintf(w, "  … %d sources checked, %d changed (%s)\n", p.Seen, p.Changed, p.Path)
+	}
 }
 
 // dataDir returns the XDG data directory for ccpeek.

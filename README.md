@@ -159,6 +159,13 @@ The web UI serves at `/` with the JSON API at `/api/v1`. Every v1 URL
 (`/projects/…`, `/plans/`, `/commands/`, session bookmarks, the `/v2/`
 preview mount) permanently redirects to its session-centric equivalent.
 
+The server binds its port immediately; indexing runs behind it with
+progress on stderr, and the UI fills in live as data lands
+(`/api/v1/ready` answers 200 once the first pass completes). After the
+first full build, unchanged files are skipped via a size+mtime check
+without re-reading them, so warm startups are fast even on multi-GB
+histories.
+
 ```sh
 # Query as JSON (no server needed; exit 3 = valid query, no matches)
 ccpeek query sessions --agent codex --since 2026-07-01
@@ -184,7 +191,8 @@ ccpeek docs --agents
 
 Agent data roots resolve as: explicit config > the agent's own env
 override (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `CODEX_HOME`,
-`OPENCODE_DATA_DIR`) > platform defaults.
+`OPENCODE_DATA_DIR`; Cursor has none, so ccpeek honors
+`CCPEEK_CURSOR_DIR`) > platform defaults.
 
 ## Development
 

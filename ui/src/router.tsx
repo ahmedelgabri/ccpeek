@@ -5,6 +5,7 @@ import {
   Link,
   Outlet,
 } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { SessionsPage } from "./pages/Sessions";
 import { SessionDetailPage } from "./pages/SessionDetail";
 import { UsagePage } from "./pages/Usage";
@@ -23,6 +24,28 @@ const NAV = [
   { to: "/compare", label: "Compare" },
   { to: "/search", label: "Search" },
 ] as const;
+
+// IndexingBanner shows while the server's initial index pass runs — the
+// UI is up immediately (serve-first startup) and fills in live once data
+// lands, so empty pages need the explanation.
+function IndexingBanner() {
+  const { data } = useQuery({
+    queryKey: ["health"],
+    queryFn: async () => {
+      const res = await fetch("/api/v1/health");
+      const body = (await res.json()) as { data?: { indexing?: boolean } };
+      return body.data ?? {};
+    },
+    refetchInterval: (query) => (query.state.data?.indexing ? 1500 : false),
+  });
+  if (!data?.indexing) return null;
+  return (
+    <div className="mb-6 rounded-lg border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
+      Indexing your agent history — the first pass over a large corpus can take
+      a few minutes. Pages fill in live when it finishes.
+    </div>
+  );
+}
 
 function Layout() {
   return (
@@ -48,6 +71,7 @@ function Layout() {
           ⌘K
         </kbd>
       </header>
+      <IndexingBanner />
       <Outlet />
       <Palette />
     </div>
