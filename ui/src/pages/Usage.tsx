@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { api, fmtCost, fmtTokens, parityApi, totalTokens } from "../api";
 
 // Lazy so echarts ships as its own chunk, loaded only on this page.
@@ -96,7 +97,27 @@ export function UsagePage() {
             {rows.map((r) => (
               <tr key={r.group || "(none)"}>
                 <td className="px-4 py-2 font-mono text-xs">
-                  {r.group || <span className="text-ink-dim">(no {group})</span>}
+                  {!r.group ? (
+                    <span className="text-ink-dim">(no {group})</span>
+                  ) : group === "agent" ? (
+                    <Link
+                      to="/sessions"
+                      search={{ agent: r.group }}
+                      className="hover:text-accent"
+                    >
+                      {r.group}
+                    </Link>
+                  ) : group === "project" ? (
+                    <Link
+                      to="/sessions"
+                      search={{ project: r.group }}
+                      className="hover:text-accent"
+                    >
+                      {r.group}
+                    </Link>
+                  ) : (
+                    r.group
+                  )}
                   {r.hasUnpriced && (
                     <span className="ml-2 text-warn" title="Contains unpriced tokens">
                       ●

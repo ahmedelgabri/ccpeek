@@ -4,18 +4,27 @@ import { test, expect } from "@playwright/test";
 // (docs/v2-plan.md §8.2: the v2.0 cutover serves the SPA at the root).
 
 test.describe("v2 SPA", () => {
-  test("serves the shell and lists sessions", async ({ page }) => {
+  test("serves the overview shell", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveTitle("CCPeek");
-    // Fixture corpus sessions render in the stream with cost badges.
+    // Headline stat tiles render (fixture corpus has sessions).
+    await expect(
+      page.getByText("Sessions", { exact: true }).first(),
+    ).toBeVisible();
+  });
+
+  test("lists sessions grouped by day", async ({ page }) => {
+    await page.goto("/sessions");
     await expect(page.locator("ul li a").first()).toBeVisible();
   });
 
   test("navigates to a session detail with transcript", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/sessions");
     await page.locator("ul li a").first().click();
     await expect(page).toHaveURL(/\/sessions\//);
-    await expect(page.getByText("Transcript")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /transcript/ }),
+    ).toBeVisible();
     // Stat tiles include cost.
     await expect(page.getByText("Cost")).toBeVisible();
   });
@@ -38,6 +47,16 @@ test.describe("v2 SPA", () => {
     await page.getByPlaceholder(/Search sessions/).fill("hello");
     await expect(page.locator("ul li").first()).toBeVisible();
   });
+
+  test("commands browser lists shell commands", async ({ page }) => {
+    await page.goto("/commands");
+    await expect(
+      page
+        .locator("ul li pre")
+        .first()
+        .or(page.getByText("No commands match.")),
+    ).toBeVisible();
+  });
 });
 
 test.describe("/api/v1", () => {
@@ -52,5 +71,18 @@ test.describe("/api/v1", () => {
   test("usage endpoint rejects bogus groups", async ({ request }) => {
     const res = await request.get("/api/v1/usage?group=bogus");
     expect(res.status()).toBe(400);
+  });
+
+  test("stats endpoint returns overview counts", async ({ request }) => {
+    const res = await request.get("/api/v1/stats");
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.data.sessions).toBeGreaterThan(0);
+  });
+
+  test("commands endpoint exports shell history", async ({ request }) => {
+    const res = await request.get("/api/v1/commands?format=zsh&limit=5");
+    expect(res.ok()).toBeTruthy();
+    expect(res.headers()["content-type"]).toContain("text/plain");
   });
 });

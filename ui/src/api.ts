@@ -52,7 +52,70 @@ export interface TranscriptMessage {
   model?: string;
   isSidechain?: boolean;
   text: string;
+  html?: string;
   content?: string;
+}
+
+export interface AgentStat {
+  agent: string;
+  sessions: number;
+  lastActive?: string;
+  tokens: number;
+  costUSD: number;
+}
+
+export interface DayActivity {
+  day: string;
+  sessions: number;
+  costUSD: number;
+}
+
+export interface WorkspaceStat {
+  path: string;
+  sessions: number;
+  lastActive?: string;
+}
+
+export interface FileTouch {
+  path: string;
+  kind: string;
+  agent: string;
+  sessionId: string;
+  at?: string;
+}
+
+export interface Stats {
+  sessions: number;
+  messages: number;
+  toolCalls: number;
+  commands: number;
+  artifacts: number;
+  scanFindings: number;
+  tokens: number;
+  costUSD: number;
+  costMonthUSD: number;
+  agents?: AgentStat[];
+  activity?: DayActivity[];
+  workspaces?: WorkspaceStat[];
+  recentFiles?: FileTouch[];
+}
+
+export interface CommandRow {
+  command: string;
+  at?: string;
+  agent: string;
+  sessionId: string;
+  cwd?: string;
+}
+
+export interface ToolCallRow {
+  seq: number;
+  messageSeq: number;
+  name: string;
+  kind: string;
+  detail?: string;
+  status?: string;
+  at?: string;
 }
 
 export interface UsageRow {
@@ -135,7 +198,40 @@ export const api = {
 
   search: (q: string, limit = "20") =>
     get<SearchHit[] | null>("/search", { q, limit }),
+
+  stats: () => get<Stats>("/stats"),
+
+  commands: (filters: {
+    agent?: string;
+    project?: string;
+    q?: string;
+    limit?: string;
+    offset?: string;
+  }) =>
+    get<CommandRow[] | null>("/commands", filters as Record<string, string>),
+
+  sessionTools: (agent: string, id: string) =>
+    get<ToolCallRow[] | null>(`/sessions/${agent}/${id}/tools`),
 };
+
+// The validated per-agent palette (also defined as CSS vars in
+// styles.css) — color follows the agent everywhere in the UI.
+export const AGENT_COLOR: Record<string, string> = {
+  "claude-code": "var(--color-agent-claude)",
+  pi: "var(--color-agent-pi)",
+  codex: "var(--color-agent-codex)",
+  opencode: "var(--color-agent-opencode)",
+  cursor: "var(--color-agent-cursor)",
+};
+
+export function fmtWhen(ts: string): string {
+  if (!ts) return "";
+  return ts.slice(0, 16).replace("T", " ");
+}
+
+export function shortPath(p: string): string {
+  return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
+}
 
 export function fmtCost(usd: number, unpriced?: number): string {
   const cost = usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`;

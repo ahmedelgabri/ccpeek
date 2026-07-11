@@ -50,9 +50,10 @@ export function SearchPage() {
               <Link
                 to="/sessions/$agent/$sessionId"
                 params={{ agent: h.agent, sessionId: h.sessionId }}
+                search={{ seq: h.seq }}
                 className="mt-1 inline-block text-xs text-accent hover:underline"
               >
-                open session →
+                open at match →
               </Link>
             )}
           </li>

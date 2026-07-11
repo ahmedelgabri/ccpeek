@@ -1,0 +1,124 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { api, fmtWhen, shortPath } from "../api";
+import { AgentDot, CopyButton, EmptyNote } from "../ui";
+
+const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
+const FORMATS = ["zsh", "bash", "fish", "plain"] as const;
+const PAGE = 100;
+
+// Global command browser: every shell command any agent ran, newest
+// first, each row linking back to its session — plus one-click export
+// into real shell history files (same formats as `ccpeek export`).
+export function CommandsPage() {
+  const [q, setQ] = useState("");
+  const [agent, setAgent] = useState("");
+  const [pages, setPages] = useState(1);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["commands", q, agent, pages],
+    queryFn: () =>
+      api.commands({ q, agent, limit: String(PAGE * pages) }),
+    placeholderData: (prev) => prev,
+  });
+  const rows = data ?? [];
+  const mayHaveMore = rows.length === PAGE * pages;
+
+  const exportURL = (format: string) => {
+    const p = new URLSearchParams({ format, limit: "1000" });
+    if (q) p.set("q", q);
+    if (agent) p.set("agent", agent);
+    return `/api/v1/commands?${p.toString()}`;
+  };
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold">Commands</h1>
+        <div className="ml-auto flex items-center gap-2">
+          <select
+            value={agent}
+            onChange={(e) => setAgent(e.target.value)}
+            className="rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
+            aria-label="Filter by agent"
+          >
+            {AGENTS.map((a) => (
+              <option key={a} value={a}>
+                {a === "" ? "all agents" : a}
+              </option>
+            ))}
+          </select>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Filter commands…"
+            className="w-64 rounded-md border border-edge bg-surface-1 px-3 py-1.5 text-sm placeholder:text-ink-faint"
+          />
+          <details className="relative">
+            <summary className="cursor-pointer list-none rounded-md border border-edge px-3 py-1.5 font-mono text-xs text-ink-dim hover:text-ink">
+              export ▾
+            </summary>
+            <div className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-md border border-edge bg-surface-1 font-mono text-xs shadow-lg">
+              {FORMATS.map((f) => (
+                <a
+                  key={f}
+                  href={exportURL(f)}
+                  download
+                  className="block px-3 py-1.5 text-ink-dim hover:bg-surface-2 hover:text-ink"
+                >
+                  {f} history
+                </a>
+              ))}
+              <div className="border-t border-edge px-3 py-1.5 text-[10px] text-ink-faint">
+                current filters, ≤1000
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      {error && <p className="text-warn">Failed to load: {String(error)}</p>}
+      {isLoading && <p className="text-ink-dim">Loading…</p>}
+      {!isLoading && rows.length === 0 && (
+        <EmptyNote>No commands match.</EmptyNote>
+      )}
+
+      <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+        {rows.map((c, i) => (
+          <li
+            key={`${c.sessionId}-${c.at}-${i}`}
+            className="group bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
+          >
+            <div className="mb-1 flex items-center gap-2 font-mono text-[11px] text-ink-faint">
+              <AgentDot agent={c.agent} />
+              {c.cwd && <span className="truncate">{shortPath(c.cwd)}</span>}
+              <Link
+                to="/sessions/$agent/$sessionId"
+                params={{ agent: c.agent, sessionId: c.sessionId }}
+                search={{ tab: "commands" }}
+                className="hover:text-accent"
+              >
+                session {c.sessionId.slice(0, 8)}
+              </Link>
+              <span className="ml-auto tabular-nums">{fmtWhen(c.at ?? "")}</span>
+              <CopyButton text={c.command} />
+            </div>
+            <pre className="overflow-x-auto font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+              {c.command}
+            </pre>
+          </li>
+        ))}
+      </ul>
+
+      {mayHaveMore && (
+        <button
+          onClick={() => setPages((p) => p + 1)}
+          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink"
+        >
+          load more
+        </button>
+      )}
+    </div>
+  );
+}

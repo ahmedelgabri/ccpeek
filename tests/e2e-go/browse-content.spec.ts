@@ -38,7 +38,7 @@ test.describe("browse artifacts", () => {
 
 test.describe("browse sessions", () => {
   test("filter narrows the session stream", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/sessions");
     const rows = page.locator("ul li a");
     await expect(rows.first()).toBeVisible();
 
@@ -57,6 +57,8 @@ test.describe("browse sessions", () => {
     const chip = page.locator("a[href*='/sessions/']").first();
     await chip.click();
     await expect(page).toHaveURL(/\/sessions\//);
-    await expect(page.getByText("Transcript")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /transcript/ }),
+    ).toBeVisible();
   });
 });

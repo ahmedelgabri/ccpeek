@@ -1,12 +1,31 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
-import { api, fmtCost, fmtTokens, type TranscriptMessage } from "../api";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import {
+  api,
+  fmtCost,
+  fmtTokens,
+  shortPath,
+  type ToolCallRow,
+  type TranscriptMessage,
+} from "../api";
+import { AgentChip, CopyButton, EmptyNote, StatTile } from "../ui";
+
+const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
 
 // The gathering point of the session-centric model: one session with its
-// transcript, usage, relations, and linked artifacts.
+// transcript, commands, tool calls, files touched, usage, relations, and
+// linked artifacts — each facet a deep-linkable tab (?tab=).
 export function SessionDetailPage() {
-  const { agent, sessionId } = useParams({ from: "/sessions/$agent/$sessionId" });
+  const { agent, sessionId } = useParams({
+    from: "/sessions/$agent/$sessionId",
+  });
+  const search = useSearch({ from: "/sessions/$agent/$sessionId" });
+  const navigate = useNavigate({ from: "/sessions/$agent/$sessionId" });
+  const tab =
+    search.tab && (TABS as readonly string[]).includes(search.tab)
+      ? search.tab
+      : "transcript";
 
   const detail = useQuery({
     queryKey: ["session", agent, sessionId],
@@ -14,37 +33,52 @@ export function SessionDetailPage() {
   });
   const transcript = useQuery({
     queryKey: ["transcript", agent, sessionId],
-    queryFn: () => api.transcript(agent, sessionId, { limit: "500" }),
+    queryFn: () => api.transcript(agent, sessionId, { limit: "1000" }),
   });
-  const [treeView, setTreeView] = useState(false);
-  const depths = useMemo(
-    () => computeDepths(transcript.data ?? []),
-    [transcript.data],
-  );
+  const tools = useQuery({
+    queryKey: ["tools", agent, sessionId],
+    queryFn: () => api.sessionTools(agent, sessionId),
+  });
 
   if (detail.isLoading) return <p className="text-ink-dim">Loading…</p>;
   if (detail.error) return <p className="text-warn">{String(detail.error)}</p>;
   const s = detail.data!;
+  const toolRows = tools.data ?? [];
+  const commands = toolRows.filter((t) => t.kind === "shell" && t.detail);
+  const files = groupFiles(toolRows);
 
   return (
     <div>
       <div className="mb-1 flex items-baseline gap-3">
-        <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-accent">
-          {s.agent}
-        </span>
-        <h1 className="truncate text-xl font-semibold">{s.title || "(untitled)"}</h1>
+        <AgentChip agent={s.agent} />
+        <h1 className="truncate text-xl font-semibold">
+          {s.title || "(untitled)"}
+        </h1>
       </div>
-      <p className="mb-4 text-xs text-ink-dim">
-        {s.cwd} {s.gitBranch && <>· ⎇ {s.gitBranch}</>} · {s.id}
+      <p className="mb-4 font-mono text-xs text-ink-faint">
+        {s.cwd && (
+          <Link
+            to="/sessions"
+            search={{ project: s.cwd }}
+            className="hover:text-accent"
+          >
+            {shortPath(s.cwd)}
+          </Link>
+        )}
+        {s.gitBranch && <> · ⎇ {s.gitBranch}</>} · {s.id}
       </p>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        <Stat label="Cost" value={fmtCost(s.costUSD, s.unpricedTokens)} accent />
-        <Stat label="Input" value={fmtTokens(s.tokens.input)} />
-        <Stat label="Output" value={fmtTokens(s.tokens.output)} />
-        <Stat label="Cache read" value={fmtTokens(s.tokens.cacheRead)} />
-        <Stat label="Cache write" value={fmtTokens(s.tokens.cacheWrite)} />
-        <Stat label="Messages" value={String(s.messages)} />
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-6">
+        <StatTile
+          label="Cost"
+          value={fmtCost(s.costUSD, s.unpricedTokens)}
+          tone="ok"
+        />
+        <StatTile label="Input" value={fmtTokens(s.tokens.input)} />
+        <StatTile label="Output" value={fmtTokens(s.tokens.output)} />
+        <StatTile label="Cache read" value={fmtTokens(s.tokens.cacheRead)} />
+        <StatTile label="Messages" value={String(s.messages)} />
+        <StatTile label="Tool calls" value={String(s.toolCalls)} />
       </div>
 
       {s.unpricedTokens ? (
@@ -54,10 +88,13 @@ export function SessionDetailPage() {
         </p>
       ) : null}
 
-      {(s.relations?.length || s.artifacts?.length || s.models?.length) && (
-        <div className="mb-6 flex flex-wrap gap-2 text-xs">
+      {(s.relations?.length || s.models?.length) && (
+        <div className="mb-4 flex flex-wrap gap-2 text-xs">
           {s.models?.map((m) => (
-            <span key={m} className="rounded-full border border-edge px-2 py-1 text-ink-dim">
+            <span
+              key={m}
+              className="rounded border border-edge px-2 py-0.5 font-mono text-ink-dim"
+            >
               {m}
             </span>
           ))}
@@ -66,31 +103,123 @@ export function SessionDetailPage() {
               key={`${r.kind}-${r.sessionId}`}
               to="/sessions/$agent/$sessionId"
               params={{ agent: s.agent, sessionId: r.sessionId }}
-              className="rounded-full border border-accent/40 px-2 py-1 text-accent hover:bg-surface-2"
+              className="rounded border border-accent/40 px-2 py-0.5 font-mono text-accent hover:bg-surface-2"
             >
               {r.direction === "out" ? r.kind : `${r.kind} (incoming)`} →{" "}
               {r.sessionId.slice(0, 8)}
             </Link>
           ))}
-          {s.artifacts?.map((a) => (
-            <span
-              key={`${a.kind}-${a.name}`}
-              title={`${a.relation} (${a.evidence})`}
-              className="rounded-full border border-edge px-2 py-1 text-ink-dim"
-            >
-              {a.kind}: {a.name.length > 30 ? a.name.slice(0, 30) + "…" : a.name}
-            </span>
-          ))}
         </div>
       )}
 
+      <div className="mb-3 flex rounded-md border border-edge font-mono text-xs">
+        {TABS.map((t) => {
+          const count =
+            t === "commands"
+              ? commands.length
+              : t === "tools"
+                ? toolRows.length
+                : t === "files"
+                  ? files.length
+                  : t === "artifacts"
+                    ? (s.artifacts?.length ?? 0)
+                    : null;
+          return (
+            <button
+              key={t}
+              onClick={() =>
+                void navigate({
+                  search: t === "transcript" ? {} : { tab: t },
+                  replace: true,
+                })
+              }
+              className={`px-3 py-1.5 first:rounded-l-md last:rounded-r-md ${
+                t === tab
+                  ? "bg-surface-2 text-ink"
+                  : "text-ink-dim hover:text-ink"
+              }`}
+            >
+              {t}
+              {count !== null && count > 0 && (
+                <span className="ml-1.5 text-ink-faint tabular-nums">
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "transcript" && (
+        <Transcript
+          msgs={transcript.data ?? []}
+          tools={toolRows}
+          focusSeq={search.seq}
+        />
+      )}
+      {tab === "commands" && <CommandsTab commands={commands} />}
+      {tab === "tools" && <ToolsTab tools={toolRows} />}
+      {tab === "files" && <FilesTab files={files} />}
+      {tab === "artifacts" && (
+        <ArtifactsTab
+          agent={s.agent}
+          artifacts={s.artifacts ?? []}
+        />
+      )}
+    </div>
+  );
+}
+
+function Transcript({
+  msgs,
+  tools,
+  focusSeq,
+}: {
+  msgs: TranscriptMessage[];
+  tools: ToolCallRow[];
+  focusSeq?: number;
+}) {
+  const [treeView, setTreeView] = useState(false);
+  const depths = useMemo(() => computeDepths(msgs), [msgs]);
+  const toolsByMsg = useMemo(() => {
+    const map = new Map<number, ToolCallRow[]>();
+    for (const t of tools) {
+      const list = map.get(t.messageSeq) ?? [];
+      list.push(t);
+      map.set(t.messageSeq, list);
+    }
+    return map;
+  }, [tools]);
+
+  // Tool-only messages carry no prose: fold them into their tool chips
+  // and drop rows that have neither text nor tools (unless deep-linked).
+  const visible = msgs.filter(
+    (m) =>
+      m.text.trim() !== "" ||
+      (toolsByMsg.get(m.seq)?.length ?? 0) > 0 ||
+      m.seq === focusSeq,
+  );
+  const hidden = msgs.length - visible.length;
+
+  // Search hits deep-link to ?seq=N: scroll it into view once loaded.
+  useEffect(() => {
+    if (focusSeq === undefined || msgs.length === 0) return;
+    document
+      .getElementById(`seq-${focusSeq}`)
+      ?.scrollIntoView({ block: "center" });
+  }, [focusSeq, msgs.length]);
+
+  return (
+    <div>
       <div className="mb-2 flex items-center gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-dim">
-          Transcript
-        </h2>
+        {hidden > 0 && (
+          <span className="font-mono text-[11px] text-ink-faint">
+            {hidden} empty entries folded
+          </span>
+        )}
         <button
           onClick={() => setTreeView((v) => !v)}
-          className={`ml-auto rounded-md border border-edge px-2 py-1 text-xs ${
+          className={`ml-auto rounded-md border border-edge px-2 py-1 font-mono text-xs ${
             treeView ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
           }`}
         >
@@ -98,36 +227,225 @@ export function SessionDetailPage() {
         </button>
       </div>
       <ol className="space-y-2">
-        {(transcript.data ?? []).map((m) => (
-          <li
-            key={m.seq}
-            style={
-              treeView
-                ? { marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px` }
-                : undefined
-            }
-            className={`rounded-lg border border-edge p-3 ${
-              m.role === "user" ? "bg-surface-2" : "bg-surface-1"
-            } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
-              m.isSidechain && treeView ? "border-dashed" : ""
-            }`}
-          >
-            <div className="mb-1 flex gap-2 text-xs text-ink-dim">
-              <span className={m.role === "assistant" ? "text-accent" : ""}>
-                {m.isSidechain ? "↳ " : ""}
-                {m.role}
-                {m.kind !== "message" ? ` · ${m.kind}` : ""}
-              </span>
-              {m.model && <span>{m.model}</span>}
-              <span className="ml-auto">{m.createdAt.slice(11, 19)}</span>
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed">
-              {m.text || <span className="text-ink-dim">(no text content)</span>}
-            </div>
-          </li>
-        ))}
+        {visible.map((m) => {
+          const msgTools = toolsByMsg.get(m.seq) ?? [];
+          return (
+            <li
+              key={m.seq}
+              id={`seq-${m.seq}`}
+              style={
+                treeView
+                  ? {
+                      marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px`,
+                    }
+                  : undefined
+              }
+              className={`rounded-md border p-3 ${
+                m.seq === focusSeq ? "border-accent" : "border-edge"
+              } ${m.role === "user" ? "bg-surface-2/60" : "bg-surface-1"} ${
+                m.isSidechain && !treeView ? "ml-8 border-dashed" : ""
+              } ${m.isSidechain && treeView ? "border-dashed" : ""}`}
+            >
+              <div className="mb-1 flex gap-2 font-mono text-[11px] text-ink-faint">
+                <span
+                  className={
+                    m.role === "assistant"
+                      ? "text-accent"
+                      : m.role === "user"
+                        ? "text-ink-dim"
+                        : ""
+                  }
+                >
+                  {m.isSidechain ? "↳ " : ""}
+                  {m.role}
+                  {m.kind !== "message" ? ` · ${m.kind}` : ""}
+                </span>
+                {m.model && <span>{m.model}</span>}
+                <span className="ml-auto tabular-nums">
+                  #{m.seq} · {m.createdAt.slice(11, 19)}
+                </span>
+              </div>
+              {m.text.trim() !== "" &&
+                (m.html ? (
+                  <div
+                    className="prose-msg"
+                    dangerouslySetInnerHTML={{ __html: m.html }}
+                  />
+                ) : (
+                  <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                    {m.text}
+                  </div>
+                ))}
+              {msgTools.length > 0 && (
+                <div
+                  className={`flex flex-wrap gap-1.5 ${m.text.trim() !== "" ? "mt-2" : ""}`}
+                >
+                  {msgTools.map((t) => (
+                    <span
+                      key={t.seq}
+                      title={t.detail}
+                      className="inline-flex max-w-full items-baseline gap-1.5 rounded border border-edge bg-surface-2/60 px-1.5 py-0.5 font-mono text-[11px]"
+                    >
+                      <span className="text-accent">{t.name}</span>
+                      {t.detail && (
+                        <span className="truncate text-ink-dim">
+                          {t.kind === "shell"
+                            ? t.detail.split("\n")[0].slice(0, 80)
+                            : shortPath(t.detail)}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ol>
+      {msgs.length === 0 && <EmptyNote>No transcript entries.</EmptyNote>}
     </div>
+  );
+}
+
+function CommandsTab({ commands }: { commands: ToolCallRow[] }) {
+  if (commands.length === 0)
+    return <EmptyNote>No shell commands in this session.</EmptyNote>;
+  return (
+    <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+      {commands.map((c) => (
+        <li key={c.seq} className="flex items-start gap-3 bg-surface-1 px-3 py-2">
+          <pre className="min-w-0 flex-1 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+            {c.detail}
+          </pre>
+          <span className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums">
+            {c.at?.slice(11, 19)}
+          </span>
+          <CopyButton text={c.detail ?? ""} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ToolsTab({ tools }: { tools: ToolCallRow[] }) {
+  if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
+  return (
+    <div className="overflow-hidden rounded-md border border-edge">
+      <table className="w-full text-sm">
+        <thead className="bg-surface-2 text-left font-mono text-[10px] tracking-wider text-ink-faint uppercase">
+          <tr>
+            <th className="px-3 py-1.5">#</th>
+            <th className="px-3 py-1.5">tool</th>
+            <th className="px-3 py-1.5">kind</th>
+            <th className="px-3 py-1.5">detail</th>
+            <th className="px-3 py-1.5 text-right">at</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-edge bg-surface-1">
+          {tools.map((t) => (
+            <tr key={t.seq}>
+              <td className="px-3 py-1.5 font-mono text-xs text-ink-faint tabular-nums">
+                {t.seq}
+              </td>
+              <td className="px-3 py-1.5 font-mono text-xs">{t.name}</td>
+              <td className="px-3 py-1.5">
+                <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
+                  {t.kind}
+                </span>
+              </td>
+              <td className="max-w-0 truncate px-3 py-1.5 font-mono text-xs text-ink-dim">
+                {t.detail && shortPath(t.detail)}
+              </td>
+              <td className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums">
+                {t.at?.slice(11, 19)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface FileGroup {
+  path: string;
+  reads: number;
+  writes: number;
+  edits: number;
+}
+
+function groupFiles(tools: ToolCallRow[]): FileGroup[] {
+  const map = new Map<string, FileGroup>();
+  for (const t of tools) {
+    if (!t.detail || !t.kind.startsWith("file_")) continue;
+    const g = map.get(t.detail) ?? {
+      path: t.detail,
+      reads: 0,
+      writes: 0,
+      edits: 0,
+    };
+    if (t.kind === "file_read") g.reads++;
+    if (t.kind === "file_write") g.writes++;
+    if (t.kind === "file_edit") g.edits++;
+    map.set(t.detail, g);
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => b.writes + b.edits - (a.writes + a.edits),
+  );
+}
+
+function FilesTab({ files }: { files: FileGroup[] }) {
+  if (files.length === 0)
+    return <EmptyNote>No files touched in this session.</EmptyNote>;
+  return (
+    <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+      {files.map((f) => (
+        <li
+          key={f.path}
+          className="flex items-baseline gap-3 bg-surface-1 px-3 py-1.5"
+        >
+          <span className="truncate font-mono text-xs">{shortPath(f.path)}</span>
+          <span className="ml-auto flex shrink-0 gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
+            {f.edits > 0 && <span className="text-warn">{f.edits} edits</span>}
+            {f.writes > 0 && <span className="text-ok">{f.writes} writes</span>}
+            {f.reads > 0 && <span>{f.reads} reads</span>}
+          </span>
+          <CopyButton text={f.path} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ArtifactsTab({
+  agent,
+  artifacts,
+}: {
+  agent: string;
+  artifacts: { kind: string; name: string; relation: string; evidence: string }[];
+}) {
+  if (artifacts.length === 0)
+    return <EmptyNote>No artifacts linked to this session.</EmptyNote>;
+  return (
+    <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+      {artifacts.map((a) => (
+        <li key={`${a.kind}-${a.name}`}>
+          <Link
+            to="/artifacts/$agent/$kind/$name"
+            params={{ agent, kind: a.kind, name: a.name }}
+            className="flex items-baseline gap-3 bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
+          >
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+              {a.kind.replaceAll("_", " ")}
+            </span>
+            <span className="truncate font-mono text-xs">{a.name}</span>
+            <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-faint">
+              {a.relation} · {a.evidence}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -147,8 +465,7 @@ function computeDepths(msgs: TranscriptMessage[]): Map<number, number> {
     const parent = m.parentId ? byExternal.get(m.parentId) : undefined;
     if (parent) {
       const parentDepth = bySeq.get(parent.seq) ?? 0;
-      depth =
-        prev && parent.seq !== prev.seq ? parentDepth + 1 : parentDepth;
+      depth = prev && parent.seq !== prev.seq ? parentDepth + 1 : parentDepth;
     } else if (m.isSidechain) {
       depth = 1;
     }
@@ -156,15 +473,4 @@ function computeDepths(msgs: TranscriptMessage[]): Map<number, number> {
     prev = m;
   }
   return bySeq;
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="rounded-lg border border-edge bg-surface-1 px-3 py-2">
-      <div className="text-xs text-ink-dim">{label}</div>
-      <div className={`text-lg font-semibold tabular-nums ${accent ? "text-ok" : ""}`}>
-        {value}
-      </div>
-    </div>
-  );
 }

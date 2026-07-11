@@ -6,17 +6,19 @@ test.describe("navigation", () => {
     await expect(page).toHaveTitle("CCPeek");
   });
 
-  test("header navigation links work", async ({ page }) => {
+  test("sidebar navigation links work", async ({ page }) => {
     await page.goto("/");
 
-    const nav = page.locator("nav");
+    const nav = page.locator("aside nav");
     const links = [
+      { text: "Sessions", url: "/sessions" },
+      { text: "Commands", url: "/commands" },
       { text: "Usage", url: "/usage" },
       { text: "Artifacts", url: "/artifacts" },
       { text: "Scan", url: "/scan" },
       { text: "Compare", url: "/compare" },
       { text: "Search", url: "/search" },
-      { text: "Sessions", url: "/" },
+      { text: "Overview", url: "/" },
     ];
 
     for (const { text, url } of links) {
@@ -27,10 +29,13 @@ test.describe("navigation", () => {
 
   test("client routes survive a full page load", async ({ page }) => {
     // History-routing fallback: a deep link must serve the SPA shell, not
-    // 404 — and /scan and /search must not ping-pong with their legacy
-    // trailing-slash redirects.
+    // 404 — and /commands, /scan, and /search must not ping-pong with
+    // their legacy trailing-slash redirects.
     await page.goto("/usage");
     await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
+
+    await page.goto("/commands");
+    await expect(page.getByRole("heading", { name: "Commands" })).toBeVisible();
 
     await page.goto("/scan");
     await expect(
@@ -64,7 +69,7 @@ test.describe("legacy v1 redirects", () => {
     { from: "/usage-data/", to: "/artifacts" },
     { from: "/memories/", to: "/artifacts" },
     { from: "/file-history/", to: "/artifacts" },
-    { from: "/commands/", to: "/search" },
+    { from: "/commands/", to: "/commands" },
     { from: "/scan/", to: "/scan" },
     { from: "/search/?q=hello", to: "/search?q=hello" },
     { from: "/v2/", to: "/" },
@@ -88,6 +93,8 @@ test.describe("legacy v1 redirects", () => {
     await expect(page).toHaveURL(
       "/sessions/claude-code/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     );
-    await expect(page.getByText("Transcript")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /transcript/ }),
+    ).toBeVisible();
   });
 });

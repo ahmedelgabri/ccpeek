@@ -1,19 +1,91 @@
 @import "tailwindcss";
 
+/* Instrument-panel tokens: deep ink surfaces, hairline edges, one
+   phosphor accent, and the validated per-agent palette (worst adjacent
+   CVD ΔE 15.7 on surface-1; see CostTimeline). IBM Plex carries the
+   industrial voice — Mono for data, Sans for prose. */
 @theme {
-  --color-surface: #0b0e14;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --color-surface: #0a0d13;
   --color-surface-1: #11151f;
   --color-surface-2: #1a2030;
   --color-edge: #232b3d;
+  --color-edge-strong: #303a52;
   --color-ink: #d6dbe7;
   --color-ink-dim: #8b93a7;
+  --color-ink-faint: #5c6478;
   --color-accent: #7aa2f7;
   --color-ok: #9ece6a;
   --color-warn: #e0af68;
+
+  --color-agent-claude: #3987e5;
+  --color-agent-pi: #199e70;
+  --color-agent-codex: #c98500;
+  --color-agent-opencode: #9085e9;
+  --color-agent-cursor: #e66767;
 }
 
 body {
-  @apply bg-surface text-ink antialiased;
-  font-family:
-    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  @apply bg-surface font-sans text-ink antialiased;
+}
+
+/* Micro-label: the uppercase mono captions that title every panel. */
+.microlabel {
+  @apply font-mono text-[10px] font-medium tracking-[0.14em] text-ink-faint uppercase;
+}
+
+/* Rendered markdown inside transcript bubbles and artifact bodies. */
+.prose-msg {
+  @apply text-sm leading-relaxed;
+}
+.prose-msg p {
+  @apply mb-2 last:mb-0;
+}
+.prose-msg h1,
+.prose-msg h2,
+.prose-msg h3 {
+  @apply mt-3 mb-1.5 font-semibold first:mt-0;
+}
+.prose-msg h1 {
+  @apply text-base;
+}
+.prose-msg ul,
+.prose-msg ol {
+  @apply mb-2 ml-5;
+}
+.prose-msg ul {
+  @apply list-disc;
+}
+.prose-msg ol {
+  @apply list-decimal;
+}
+.prose-msg li {
+  @apply mb-0.5;
+}
+.prose-msg a {
+  @apply text-accent underline decoration-accent/40 underline-offset-2;
+}
+.prose-msg blockquote {
+  @apply mb-2 border-l-2 border-edge-strong pl-3 text-ink-dim;
+}
+.prose-msg code {
+  @apply rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.85em];
+}
+.prose-msg pre {
+  @apply mb-2 overflow-x-auto rounded-md border border-edge bg-surface px-3 py-2;
+}
+.prose-msg pre code {
+  @apply bg-transparent p-0 text-xs leading-relaxed;
+}
+.prose-msg table {
+  @apply mb-2 w-full text-xs;
+}
+.prose-msg th,
+.prose-msg td {
+  @apply border border-edge px-2 py-1 text-left;
+}
+.prose-msg hr {
+  @apply my-3 border-edge;
 }
