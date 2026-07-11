@@ -11,6 +11,10 @@ export default defineConfig({
   build: {
     outDir: "../internal/webui/dist",
     emptyOutDir: true,
+    // Assets ship embedded in the binary and serve from localhost, so
+    // chunk size is a non-issue (docs/v2-plan.md §4.1) — the echarts
+    // chunk trips the default 500 kB warning.
+    chunkSizeWarningLimit: 1024,
   },
   server: {
     proxy: {
