@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, fmtWhen, shortPath } from "../api";
+import { api, fmtWhen, inclusiveUntil, shortPath } from "../api";
 import { useHighlight } from "../highlight";
 import {
   AgentDot,
@@ -21,12 +21,19 @@ export function CommandsPage() {
   const [q, setQ] = useState("");
   const [agent, setAgent] = useState("");
   const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
   const [pages, setPages] = useState(1);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["commands", q, agent, since, pages],
+    queryKey: ["commands", q, agent, since, until, pages],
     queryFn: () =>
-      api.commands({ q, agent, since, limit: String(PAGE * pages) }),
+      api.commands({
+        q,
+        agent,
+        since,
+        until: inclusiveUntil(until),
+        limit: String(PAGE * pages),
+      }),
     placeholderData: (prev) => prev,
   });
   const rows = data ?? [];
@@ -39,6 +46,7 @@ export function CommandsPage() {
     if (q) p.set("q", q);
     if (agent) p.set("agent", agent);
     if (since) p.set("since", since);
+    if (until) p.set("until", inclusiveUntil(until));
     return `/api/v1/commands?${p.toString()}`;
   };
 
@@ -48,7 +56,11 @@ export function CommandsPage() {
         <h1 className="text-xl font-semibold">Commands</h1>
         <FilterBar
           since={since}
-          onSince={setSince}
+          until={until}
+          onRange={(sv, uv) => {
+            setSince(sv);
+            setUntil(uv);
+          }}
           agent={agent}
           onAgent={setAgent}
         >

@@ -1,7 +1,14 @@
 import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, fmtCost, fmtTokens, parityApi, totalTokens } from "../api";
+import {
+  api,
+  fmtCost,
+  fmtTokens,
+  inclusiveUntil,
+  parityApi,
+  totalTokens,
+} from "../api";
 import { FilterBar, SkeletonRows } from "../ui";
 
 // Lazy so echarts ships as its own chunk, loaded only on this page.
@@ -19,12 +26,14 @@ const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 export function UsagePage() {
   const [group, setGroup] = useState<(typeof GROUPS)[number]>("day");
   const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["usage", group, since, agent, model],
-    queryFn: () => api.usage({ group, since, agent, model }),
+    queryKey: ["usage", group, since, until, agent, model],
+    queryFn: () =>
+      api.usage({ group, since, until: inclusiveUntil(until), agent, model }),
     enabled: group !== "blocks",
     placeholderData: (prev) => prev,
   });
@@ -61,7 +70,11 @@ export function UsagePage() {
         </span>
         <FilterBar
           since={since}
-          onSince={setSince}
+          until={until}
+          onRange={(sv, uv) => {
+            setSince(sv);
+            setUntil(uv);
+          }}
           agent={agent}
           onAgent={setAgent}
           model={model}
@@ -103,7 +116,12 @@ export function UsagePage() {
         <>
           <Suspense fallback={null}>
             {group === "day" ? (
-              <CostTimeline since={since} agent={agent} model={model} />
+              <CostTimeline
+                since={since}
+                until={inclusiveUntil(until)}
+                agent={agent}
+                model={model}
+              />
             ) : (
               <GroupBars rows={rows} group={group} />
             )}

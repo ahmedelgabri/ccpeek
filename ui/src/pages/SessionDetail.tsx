@@ -253,6 +253,14 @@ function Transcript({
       <ol className="space-y-2">
         {visible.map((m) => {
           const msgTools = toolsByMsg.get(m.seq) ?? [];
+          // Three visual registers: the user's prompts (accent rule,
+          // raised surface), the assistant's replies (quiet card), and
+          // meta entries — system events, summaries, tool-only rows —
+          // (compact, dimmed, dashed).
+          const isUser = m.role === "user" && m.kind === "message";
+          const isAssistant = m.role === "assistant";
+          const isMeta = !isUser && !isAssistant;
+          const glyph = isUser ? "❯" : isAssistant ? "✦" : "·";
           return (
             <li
               key={m.seq}
@@ -264,32 +272,52 @@ function Transcript({
                     }
                   : undefined
               }
-              className={`rounded-md border p-3 ${
-                m.seq === focusSeq ? "border-accent" : "border-edge"
-              } ${m.role === "user" ? "bg-surface-2/60" : "bg-surface-1"} ${
-                m.isSidechain && !treeView ? "ml-8 border-dashed" : ""
-              } ${m.isSidechain && treeView ? "border-dashed" : ""}`}
+              className={`rounded-md border border-l-2 ${
+                m.seq === focusSeq
+                  ? "border-accent"
+                  : isUser
+                    ? "border-edge border-l-accent"
+                    : isMeta
+                      ? "border-edge border-dashed"
+                      : "border-edge border-l-edge-strong"
+              } ${
+                isUser
+                  ? "bg-surface-2/60 p-3"
+                  : isMeta
+                    ? "bg-transparent px-3 py-1.5"
+                    : "bg-surface-1 p-3"
+              } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
+                m.isSidechain && treeView ? "border-dashed" : ""
+              }`}
             >
-              <div className="mb-1 flex gap-2 font-mono text-[11px] text-ink-faint">
+              <div
+                className={`flex gap-2 font-mono text-[11px] text-ink-faint ${isMeta ? "" : "mb-1"}`}
+              >
                 <span
                   className={
-                    m.role === "assistant"
+                    isAssistant
                       ? "text-accent"
-                      : m.role === "user"
-                        ? "text-ink-dim"
+                      : isUser
+                        ? "font-medium text-ink"
                         : ""
                   }
                 >
                   {m.isSidechain ? "↳ " : ""}
-                  {m.role}
+                  {glyph} {m.role}
                   {m.kind !== "message" ? ` · ${m.kind}` : ""}
                 </span>
                 {m.model && <span>{m.model}</span>}
+                {isMeta && m.text.trim() !== "" && (
+                  <span className="truncate text-ink-faint italic">
+                    {m.text.slice(0, 120)}
+                  </span>
+                )}
                 <span className="ml-auto tabular-nums">
                   #{m.seq} · {m.createdAt.slice(11, 19)}
                 </span>
               </div>
-              {m.text.trim() !== "" &&
+              {!isMeta &&
+                m.text.trim() !== "" &&
                 (m.html ? (
                   <div
                     className="prose-msg"
@@ -440,7 +468,7 @@ interface FileGroup {
   path: string;
   reads: number;
   writes: number;
-  edits: number;
+  edits: ToolCallRow[];
 }
 
 function groupFiles(tools: ToolCallRow[]): FileGroup[] {
@@ -451,15 +479,15 @@ function groupFiles(tools: ToolCallRow[]): FileGroup[] {
       path: t.detail,
       reads: 0,
       writes: 0,
-      edits: 0,
+      edits: [],
     };
     if (t.kind === "file_read") g.reads++;
     if (t.kind === "file_write") g.writes++;
-    if (t.kind === "file_edit") g.edits++;
+    if (t.kind === "file_edit") g.edits.push(t);
     map.set(t.detail, g);
   }
   return Array.from(map.values()).sort(
-    (a, b) => b.writes + b.edits - (a.writes + a.edits),
+    (a, b) => b.writes + b.edits.length - (a.writes + a.edits.length),
   );
 }
 
@@ -469,20 +497,51 @@ function FilesTab({ files }: { files: FileGroup[] }) {
   return (
     <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
       {files.map((f) => (
-        <li
-          key={f.path}
-          className="flex items-baseline gap-3 bg-surface-1 px-3 py-1.5"
-        >
-          <span className="truncate font-mono text-xs">{shortPath(f.path)}</span>
-          <span className="ml-auto flex shrink-0 gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
-            {f.edits > 0 && <span className="text-warn">{f.edits} edits</span>}
-            {f.writes > 0 && <span className="text-ok">{f.writes} writes</span>}
-            {f.reads > 0 && <span>{f.reads} reads</span>}
-          </span>
-          <CopyButton text={f.path} />
-        </li>
+        <FileRow key={f.path} f={f} />
       ))}
     </ul>
+  );
+}
+
+function FileRow({ f }: { f: FileGroup }) {
+  const [open, setOpen] = useState(false);
+  const diffs = f.edits.filter((e) => e.old || e.new);
+  return (
+    <li className="bg-surface-1">
+      <div
+        onClick={diffs.length > 0 ? () => setOpen((v) => !v) : undefined}
+        className={`flex items-baseline gap-3 px-3 py-1.5 ${
+          diffs.length > 0 ? "cursor-pointer hover:bg-surface-2/40" : ""
+        }`}
+      >
+        {diffs.length > 0 && (
+          <span className="shrink-0 font-mono text-[11px] text-accent">
+            {open ? "▾" : "▸"}
+          </span>
+        )}
+        <span className="truncate font-mono text-xs">{shortPath(f.path)}</span>
+        <span className="ml-auto flex shrink-0 gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
+          {f.edits.length > 0 && (
+            <span className="text-warn">{f.edits.length} edits</span>
+          )}
+          {f.writes > 0 && <span className="text-ok">{f.writes} writes</span>}
+          {f.reads > 0 && <span>{f.reads} reads</span>}
+        </span>
+        <CopyButton text={f.path} />
+      </div>
+      {open && (
+        <div className="space-y-2 border-t border-edge px-3 py-2">
+          {diffs.map((e) => (
+            <div key={e.seq}>
+              <div className="mb-1 font-mono text-[10px] text-ink-faint tabular-nums">
+                edit #{e.seq} · {e.at?.slice(11, 19)}
+              </div>
+              <DiffView old={e.old ?? ""} new={e.new ?? ""} />
+            </div>
+          ))}
+        </div>
+      )}
+    </li>
   );
 }
 

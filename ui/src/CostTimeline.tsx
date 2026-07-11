@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as echarts from "echarts/core";
 import { BarChart } from "echarts/charts";
@@ -41,6 +41,7 @@ type DaySeries = { agent: string; byDay: Map<string, number> };
 
 interface TimelineFilters {
   since?: string;
+  until?: string;
   agent?: string;
   model?: string;
 }
@@ -55,6 +56,7 @@ async function fetchDailyCostByAgent(
         group: "day",
         agent,
         since: f.since,
+        until: f.until,
         model: f.model,
       });
       const byDay = new Map<string, number>();
@@ -148,16 +150,15 @@ export function GroupBars({
   group: string;
 }) {
   const el = useRef<HTMLDivElement>(null);
-  const chart = useRef<echarts.ECharts>(null);
   const top = rows
     .filter((r) => r.costUSD > 0)
     .slice(0, 20)
     .reverse(); // echarts y-axis draws bottom-up
 
-  useEffect(() => {
-    if (!el.current || top.length === 0) return;
-    chart.current ??= echarts.init(el.current);
-    chart.current.setOption({
+  const option =
+    top.length === 0
+      ? null
+      : {
       backgroundColor: "transparent",
       grid: { left: 170, right: 48, top: 8, bottom: 24 },
       tooltip: {
@@ -213,19 +214,8 @@ export function GroupBars({
           },
         },
       ],
-    });
-    const onResize = () => chart.current?.resize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [rows, group]);
-
-  useEffect(
-    () => () => {
-      chart.current?.dispose();
-      chart.current = null;
-    },
-    [],
-  );
+    };
+  useEChart(el, option, [rows, group]);
 
   if (top.length === 0) return null;
   return (
@@ -261,28 +251,35 @@ function downloadCSV(series: DaySeries[]) {
   URL.revokeObjectURL(a.href);
 }
 
-// CostTimeline is the cost explorer: daily spend stacked by agent, with
-// wheel + slider zoom (docs/v2-plan.md §7 P2), following the page's
-// date/agent/model filters. The rollup table below it stays the
-// accessible/table view of the same data.
-export function CostTimeline({ since, agent, model }: TimelineFilters) {
-  const { data } = useQuery({
-    queryKey: ["usage", "daily-by-agent", since, agent, model],
-    queryFn: () => fetchDailyCostByAgent({ since, agent, model }),
-  });
-  const series = useMemo(() => data ?? [], [data]);
-
-  const el = useRef<HTMLDivElement>(null);
+// useEChart binds an ECharts instance to a container that may unmount
+// and remount (filter changes swap queries and views). The instance is
+// re-created whenever it is bound to a stale DOM node — reusing one
+// across remounts renders into a detached element, i.e. a blank chart —
+// and options apply with notMerge so removed series actually disappear.
+function useEChart(
+  el: RefObject<HTMLDivElement | null>,
+  option: Parameters<echarts.ECharts["setOption"]>[0] | null,
+  deps: unknown[],
+) {
   const chart = useRef<echarts.ECharts>(null);
 
   useEffect(() => {
-    if (!el.current || series.length === 0) return;
+    if (!el.current) return;
+    if (chart.current && chart.current.getDom() !== el.current) {
+      chart.current.dispose();
+      chart.current = null;
+    }
+    if (!option) {
+      chart.current?.clear();
+      return;
+    }
     chart.current ??= echarts.init(el.current);
-    chart.current.setOption(buildOption(series));
+    chart.current.setOption(option, true);
     const onResize = () => chart.current?.resize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [series]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 
   useEffect(
     () => () => {
@@ -291,8 +288,24 @@ export function CostTimeline({ since, agent, model }: TimelineFilters) {
     },
     [],
   );
+}
 
-  if (series.length === 0) return null;
+// CostTimeline is the cost explorer: daily spend stacked by agent, with
+// wheel + slider zoom (docs/v2-plan.md §7 P2), following the page's
+// date/agent/model filters. The rollup table below it stays the
+// accessible/table view of the same data.
+export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["usage", "daily-by-agent", since, until, agent, model],
+    queryFn: () => fetchDailyCostByAgent({ since, until, agent, model }),
+    placeholderData: (prev) => prev,
+  });
+  const series = useMemo(() => data ?? [], [data]);
+
+  const el = useRef<HTMLDivElement>(null);
+  useEChart(el, series.length > 0 ? buildOption(series) : null, [series]);
+
+  if (series.length === 0 && !isLoading) return null;
 
   return (
     <div className="mb-4 rounded-lg border border-edge bg-surface-1 p-4">

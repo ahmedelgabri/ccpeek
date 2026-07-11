@@ -314,25 +314,12 @@ export function KindBars({
 
 // FilterBar: the shared date-range + agent (+ model) row every data view
 // carries. Values are controlled by the page (URL or state).
-const RANGES = [
-  { label: "7d", days: 7 },
-  { label: "30d", days: 30 },
-  { label: "90d", days: 90 },
-  { label: "all", days: 0 },
-] as const;
-
-export function sinceForDays(days: number): string {
-  if (days === 0) return "";
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
 const FILTER_AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
 export function FilterBar({
   since,
-  onSince,
+  until,
+  onRange,
   agent,
   onAgent,
   model,
@@ -341,7 +328,8 @@ export function FilterBar({
   children,
 }: {
   since: string;
-  onSince: (since: string) => void;
+  until: string;
+  onRange: (since: string, until: string) => void;
   agent?: string;
   onAgent?: (agent: string) => void;
   model?: string;
@@ -349,24 +337,37 @@ export function FilterBar({
   onModel?: (model: string) => void;
   children?: ReactNode;
 }) {
+  const dateCls =
+    "rounded-md border border-edge bg-surface-1 px-2 py-1 font-mono text-xs text-ink-dim [color-scheme:dark] focus:text-ink";
   return (
     <div className="ml-auto flex flex-wrap items-center gap-2">
-      <div className="flex rounded-md border border-edge font-mono text-xs">
-        {RANGES.map((r) => {
-          const value = sinceForDays(r.days);
-          const active = since === value;
-          return (
-            <button
-              key={r.label}
-              onClick={() => onSince(value)}
-              className={`px-2.5 py-1.5 first:rounded-l-md last:rounded-r-md ${
-                active ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
-              }`}
-            >
-              {r.label}
-            </button>
-          );
-        })}
+      <div className="flex items-center gap-1.5">
+        <input
+          type="date"
+          value={since}
+          max={until || undefined}
+          onChange={(e) => onRange(e.target.value, until)}
+          className={dateCls}
+          aria-label="From date"
+        />
+        <span className="font-mono text-xs text-ink-faint">→</span>
+        <input
+          type="date"
+          value={until}
+          min={since || undefined}
+          onChange={(e) => onRange(since, e.target.value)}
+          className={dateCls}
+          aria-label="To date"
+        />
+        {(since || until) && (
+          <button
+            onClick={() => onRange("", "")}
+            className="rounded border border-edge px-1.5 py-1 font-mono text-[10px] text-ink-faint hover:text-ink"
+            title="Clear date range"
+          >
+            ✕
+          </button>
+        )}
       </div>
       {onAgent && (
         <select

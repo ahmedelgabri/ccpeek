@@ -5,6 +5,7 @@ import {
   api,
   fmtCost,
   fmtTokens,
+  inclusiveUntil,
   shortPath,
   totalTokens,
   type SessionSummary,
@@ -24,6 +25,7 @@ export function SessionsPage() {
   const q = search.q ?? "";
   const project = search.project ?? "";
   const since = search.since ?? "";
+  const until = search.until ?? "";
 
   const setFilter = (patch: Record<string, string>) =>
     void navigate({
@@ -41,9 +43,16 @@ export function SessionsPage() {
     });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["sessions", agent, q, project, since, pages],
+    queryKey: ["sessions", agent, q, project, since, until, pages],
     queryFn: () =>
-      api.sessions({ agent, q, project, since, limit: String(PAGE * pages) }),
+      api.sessions({
+        agent,
+        q,
+        project,
+        since,
+        until: inclusiveUntil(until),
+        limit: String(PAGE * pages),
+      }),
     placeholderData: (prev) => prev,
   });
 
@@ -66,7 +75,8 @@ export function SessionsPage() {
         )}
         <FilterBar
           since={since}
-          onSince={(v) => setFilter({ since: v })}
+          until={until}
+          onRange={(sv, uv) => setFilter({ since: sv, until: uv })}
           agent={agent}
           onAgent={(v) => setFilter({ agent: v })}
         >
