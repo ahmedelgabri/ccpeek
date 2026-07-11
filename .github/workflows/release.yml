@@ -24,7 +24,9 @@ jobs:
       - name: Get version from flake.nix
         id: version
         run: |
-          VERSION=$(grep 'version = ' flake.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
+          # Match only the quoted assignment: the ccpeek-ui derivation
+          # carries an unquoted `version = self'...` reference above it.
+          VERSION=$(grep 'version = "' flake.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
           echo "version=$VERSION" >>$GITHUB_OUTPUT
       - name: Check if tag exists
         id: check_tag
