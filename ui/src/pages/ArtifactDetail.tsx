@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { parityApi } from "../api";
 import { useHighlight } from "../highlight";
 import { SkeletonRows } from "../ui";
@@ -9,6 +9,7 @@ export function ArtifactDetailPage() {
   const { agent, kind, name } = useParams({
     from: "/artifacts/$agent/$kind/$name",
   });
+  const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["artifact", agent, kind, name],
@@ -16,6 +17,26 @@ export function ArtifactDetailPage() {
   });
   const body = useRef<HTMLDivElement>(null);
   useHighlight(body, [data]);
+
+  // Memory files cross-link with relative markdown links
+  // ("[Title](sibling.md)"), but artifact names carry a directory prefix
+  // ("-Users-x-proj/MEMORY.md") the bare href loses — resolve clicks
+  // against the current artifact's prefix instead of the SPA URL.
+  const onContentClick = (e: React.MouseEvent) => {
+    const anchor = (e.target as HTMLElement).closest("a");
+    if (!anchor) return;
+    const href = anchor.getAttribute("href") ?? "";
+    if (href === "" || /^([a-z][a-z0-9+.-]*:|\/|#)/i.test(href)) return;
+    e.preventDefault();
+    const dir = name.includes("/")
+      ? name.slice(0, name.lastIndexOf("/") + 1)
+      : "";
+    const sibling = dir + decodeURIComponent(href).replace(/^\.\//, "");
+    void navigate({
+      to: "/artifacts/$agent/$kind/$name",
+      params: { agent, kind, name: sibling },
+    });
+  };
 
   if (isLoading) return <SkeletonRows rows={5} />;
   if (error) return <p className="text-warn">{String(error)}</p>;
@@ -62,6 +83,7 @@ export function ArtifactDetailPage() {
       ) : a.contentHTML ? (
         <div
           ref={body}
+          onClick={onContentClick}
           className="prose-msg max-w-none rounded-lg border border-edge bg-surface-1 p-4"
           dangerouslySetInnerHTML={{ __html: a.contentHTML }}
         />

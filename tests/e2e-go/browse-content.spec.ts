@@ -26,6 +26,21 @@ test.describe("browse artifacts", () => {
     await expect(rows.first().getByText("plan", { exact: true })).toBeVisible();
   });
 
+  test("memory cross-links resolve to sibling artifacts", async ({ page }) => {
+    // Memory files link to siblings with relative markdown links; the
+    // artifact name carries a directory prefix the bare href loses, so
+    // the app must resolve clicks against the current artifact's prefix.
+    await page.goto(
+      "/artifacts/claude-code/memory/" +
+        encodeURIComponent("test-project/MEMORY.md"),
+    );
+    await page.getByRole("link", { name: "conventions" }).click();
+    await expect(page).toHaveURL(/memory\/test-project%2Fconventions\.md/);
+    await expect(
+      page.getByRole("heading", { name: "Coding Conventions" }),
+    ).toBeVisible();
+  });
+
   test("a plan renders as prose, not raw markdown", async ({ page }) => {
     await page.goto("/artifacts");
     await page.getByLabel("Filter by kind").selectOption("plan");

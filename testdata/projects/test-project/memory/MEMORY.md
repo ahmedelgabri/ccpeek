@@ -10,3 +10,7 @@
 
 - Prefer simple solutions over complex ones
 - Always run tests before committing
+
+## Related
+
+See [conventions](conventions.md) for style rules.
