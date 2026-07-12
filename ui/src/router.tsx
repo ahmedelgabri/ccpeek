@@ -32,23 +32,36 @@ const NAV: { to: string; label: string; exact?: boolean }[] = [
 ];
 
 // IndexingBanner shows while the server's initial index pass runs — the
-// UI is up immediately (serve-first startup) and fills in live once data
-// lands, so empty pages need the explanation.
+// UI is up immediately (serve-first startup), pages fill in live as data
+// lands (SSE notifies fire during the pass), and the banner carries the
+// real counter so the wait never looks hung.
 function IndexingBanner() {
   const { data } = useQuery({
     queryKey: ["health"],
     queryFn: async () => {
       const res = await fetch("/api/v1/health");
-      const body = (await res.json()) as { data?: { indexing?: boolean } };
+      const body = (await res.json()) as {
+        data?: {
+          indexing?: boolean;
+          progress?: { agent: string; seen: number; changed: number };
+        };
+      };
       return body.data ?? {};
     },
     refetchInterval: (query) => (query.state.data?.indexing ? 1500 : false),
   });
   if (!data?.indexing) return null;
+  const p = data.progress;
   return (
-    <div className="mb-6 rounded-md border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
-      Indexing your agent history — the first pass over a large corpus can take
-      a few minutes. Pages fill in live when it finishes.
+    <div className="mb-6 flex items-baseline gap-3 rounded-md border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
+      <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse self-center rounded-full bg-accent" />
+      <span>Indexing your agent history — pages fill in live as data lands.</span>
+      {p && p.seen > 0 && (
+        <span className="ml-auto shrink-0 font-mono text-xs text-ink-faint tabular-nums">
+          {p.agent} · {p.seen.toLocaleString()} sources checked ·{" "}
+          {p.changed.toLocaleString()} indexed
+        </span>
+      )}
     </div>
   );
 }

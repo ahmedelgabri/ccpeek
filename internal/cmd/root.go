@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -106,13 +107,45 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Progress from the bootstrap pass feeds three consumers: the stderr
+	// logger, /api/v1/health (the UI banner shows live counts), and
+	// throttled SSE notifies so pages fill in while the first pass is
+	// still running instead of sitting on zeros until it finishes.
+	events := api.NewBroadcaster()
+	var (
+		progMu     sync.Mutex
+		prog       api.IndexProgress
+		lastNotify time.Time
+	)
+	readProgress := func() api.IndexProgress {
+		progMu.Lock()
+		defer progMu.Unlock()
+		return prog
+	}
+
 	// v2.0: the v2 engine owns indexing and serving. The v1 database, when
 	// present, was imported on first run and stays untouched for rollback.
 	eng, bootstrap, err := openV2EngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
 		o.Rebuild = rebuild
 		o.Prune = prune
+		var logProgress func(ingest.Progress)
 		if !quiet {
-			o.Progress = newProgressLogger(os.Stderr)
+			logProgress = newProgressLogger(os.Stderr)
+		}
+		o.Progress = func(p ingest.Progress) {
+			progMu.Lock()
+			prog = api.IndexProgress{Agent: string(p.Agent), Seen: p.Seen, Changed: p.Changed}
+			notify := time.Since(lastNotify) > 2*time.Second
+			if notify {
+				lastNotify = time.Now()
+			}
+			progMu.Unlock()
+			if notify {
+				events.Notify()
+			}
+			if logProgress != nil {
+				logProgress(p)
+			}
 		}
 	})
 	if err != nil {
@@ -168,7 +201,6 @@ func run(cmd *cobra.Command, args []string) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	logf("Serving on %s\n", url)
 
-	events := api.NewBroadcaster()
 	var ready atomic.Bool
 	go func() {
 		if bootstrap != nil {
@@ -181,9 +213,13 @@ func run(cmd *cobra.Command, args []string) error {
 				}
 				return
 			}
-			if err := runScan(ctx); err != nil && ctx.Err() == nil {
-				logf("WARNING: %v\n", err)
-			}
+			// The scan is derived data over already-ingested rows — it must
+			// never delay watch mode picking up new appends.
+			go func() {
+				if err := runScan(ctx); err != nil && ctx.Err() == nil {
+					logf("WARNING: %v\n", err)
+				}
+			}()
 		} else {
 			ready.Store(true)
 		}
@@ -201,7 +237,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return serveV2(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load)))
+	return serveV2(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress)))
 }
 
 // newProgressLogger prints ingest progress to w: one line per discovered

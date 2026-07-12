@@ -24,14 +24,24 @@ type envelope struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// IndexProgress is a live snapshot of the initial index pass, surfaced
+// through /api/v1/health while /api/v1/ready still answers 503, so the
+// UI can show real progress instead of a static banner.
+type IndexProgress struct {
+	Agent   string `json:"agent"`
+	Seen    int    `json:"seen"`
+	Changed int    `json:"changed"`
+}
+
 // Handler mounts the API routes. events may be nil when live updates are
 // not running (e.g. `--watch` off); the endpoint then answers 501. ready
 // reports whether the initial index pass has completed — nil means
 // "always ready"; while false, /api/v1/ready answers 503 so scripts (and
-// the e2e web server wait) can block on first data.
-func Handler(svc *query.Service, events *Broadcaster, ready func() bool) http.Handler {
+// the e2e web server wait) can block on first data. progress, when
+// non-nil, feeds the index-pass state into the health payload.
+func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress) http.Handler {
 	mux := http.NewServeMux()
-	h := &handlers{svc: svc, events_: events, ready: ready}
+	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress}
 	mux.HandleFunc("GET /api/v1/health", h.health)
 	mux.HandleFunc("GET /api/v1/ready", h.readiness)
 	mux.HandleFunc("GET /api/v1/stats", h.stats)
@@ -55,9 +65,10 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool) http.Ha
 }
 
 type handlers struct {
-	svc     *query.Service
-	events_ *Broadcaster
-	ready   func() bool
+	svc      *query.Service
+	events_  *Broadcaster
+	ready    func() bool
+	progress func() IndexProgress
 }
 
 func (h *handlers) isReady() bool {
@@ -65,10 +76,14 @@ func (h *handlers) isReady() bool {
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"status":   "ok",
 		"indexing": !h.isReady(),
-	})
+	}
+	if !h.isReady() && h.progress != nil {
+		payload["progress"] = h.progress()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // readiness answers 200 once the initial index pass has completed and 503
