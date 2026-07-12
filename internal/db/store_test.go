@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -102,39 +103,100 @@ func TestReadsDontQueueBehindWrites(t *testing.T) {
 	}
 }
 
-// TestSchemaChangeRebuilds pins the pre-release policy: a database
-// stamped with any other schema generation is rebuilt from scratch on
-// open (sources re-ingest; the v1 import re-runs off the cleared meta).
-func TestSchemaChangeRebuilds(t *testing.T) {
+// TestMigrateChainPreservesData proves an old-generation database (the
+// v2 preview builds) upgrades in place through the whole migration
+// chain — the store is an archive, so upgrades must never drop retained
+// rows.
+func TestMigrateChainPreservesData(t *testing.T) {
 	s, path := openTemp(t)
 	ctx := context.Background()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (slug) VALUES ('claude-code')`); err != nil {
-		t.Fatal(err)
+
+	// Downgrade the fresh database to the v1 shape: rebuild the tables
+	// later migrations touch without their added columns, seed retained
+	// data, and stamp version 1.
+	stmts := []string{
+		`DROP TABLE source_files`,
+		`CREATE TABLE source_files (
+			path TEXT PRIMARY KEY,
+			agent_id INTEGER NOT NULL REFERENCES agents(id),
+			content_hash TEXT NOT NULL,
+			indexed_at TEXT NOT NULL
+		)`,
+		`DROP TABLE rollup_usage_daily`,
+		`CREATE TABLE rollup_usage_daily (
+			day TEXT NOT NULL,
+			agent_id INTEGER NOT NULL,
+			workspace_id INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			sessions INTEGER NOT NULL DEFAULT 0,
+			messages INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			priced INTEGER NOT NULL DEFAULT 1,
+			PRIMARY KEY (day, agent_id, workspace_id, model)
+		)`,
+		`INSERT INTO agents (id, slug) VALUES (1, 'claude-code')`,
+		// A retained session whose source file no longer exists — exactly
+		// what a rebuild-from-sources would destroy.
+		`INSERT INTO sessions (agent_id, external_id, source_path)
+		 VALUES (1, 'ghost-session', '/gone/ghost.jsonl')`,
+		`INSERT INTO source_files (path, agent_id, content_hash, indexed_at)
+		 VALUES ('/x/s.jsonl', 1, 'abc', '2026-01-01T00:00:00Z')`,
 	}
-	if err := s.SetMeta(ctx, "migrated_at", "2026-01-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
+	for _, q := range stmts {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("shaping v1 db: %v", err)
+		}
 	}
-	if err := s.writeVersion(ctx, schemaVersion+1); err != nil {
+	if err := s.writeVersion(ctx, 1); err != nil {
 		t.Fatalf("writeVersion: %v", err)
 	}
 	s.Close()
 
 	s2, err := Open(ctx, path)
 	if err != nil {
-		t.Fatalf("reopen across schema change: %v", err)
+		t.Fatalf("reopen with migration: %v", err)
 	}
 	defer s2.Close()
+
 	if v, err := s2.SchemaVersion(ctx); err != nil || v != schemaVersion {
-		t.Fatalf("version after rebuild = %d (err %v), want %d", v, err, schemaVersion)
+		t.Fatalf("version after migration = %d (err %v), want %d", v, err, schemaVersion)
 	}
 	var n int
 	if err := s2.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM agents`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("agents after rebuild = %d (err %v), want 0 (fresh store)", n, err)
+		`SELECT COUNT(*) FROM sessions WHERE external_id = 'ghost-session'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("retained session after migration = %d (err %v), want 1", n, err)
 	}
-	if _, ok, _ := s2.GetMeta(ctx, "migrated_at"); ok {
-		t.Fatal("migrated_at survived the rebuild; the v1 import would be skipped")
+	sigs, err := s2.SourceSigs(ctx)
+	if err != nil {
+		t.Fatalf("SourceSigs: %v", err)
+	}
+	got, ok := sigs["/x/s.jsonl"]
+	if !ok || got.ContentHash != "abc" || got.StatSig != "" {
+		t.Fatalf("migrated source row = %+v (ok=%v), want hash abc + empty stat", got, ok)
+	}
+	// The cost-split columns exist and read as zero for migrated rows.
+	if _, err := s2.db.ExecContext(ctx, `
+		INSERT INTO rollup_usage_daily (day, agent_id, cost_usd, cost_reported_usd, cost_estimated_usd)
+		VALUES ('2026-01-01', 1, 1.0, 0.4, 0.6)`); err != nil {
+		t.Fatalf("cost-split columns missing after migration: %v", err)
+	}
+}
+
+func TestOpenFutureSchemaFails(t *testing.T) {
+	s, path := openTemp(t)
+	ctx := context.Background()
+	if err := s.writeVersion(ctx, schemaVersion+10); err != nil {
+		t.Fatalf("writeVersion: %v", err)
+	}
+	s.Close()
+
+	_, err := Open(ctx, path)
+	if !errors.Is(err, ErrFutureSchema) {
+		t.Fatalf("err = %v, want ErrFutureSchema", err)
 	}
 }
 

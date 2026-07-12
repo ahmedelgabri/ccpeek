@@ -109,14 +109,17 @@ Post-launch sprints (feedback-driven, after v2.0):
 Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
 …) land post-launch per §6 as demand shows up.
 
-**Schema policy (pre-release):** there are no intra-v2 migrations — the
-schema in `internal/db/schema.go` is always the latest, and opening a
-database stamped with a different generation rebuilds it from sources
-(agent files on disk are the source of truth; the v1 import re-runs
-automatically). The only migration ccpeek maintains is v1 `ccpeek.db` →
-v2 (`internal/migrate`), which stays mandatory until v2 ships. This
-replaces the earlier in-place migration machinery; a real migration
-story starts with the first public v2 release.
+**Schema policy:** the store is an archive, not a cache — it retains
+sessions whose source files were cleaned up (prune is opt-in),
+v1-imported orphans, and user annotations, none of which a
+rebuild-from-sources could restore. Schema changes therefore always
+ship as in-place migrations (`internal/db/schema.go`), even
+pre-release; a rebuild is never an acceptable upgrade path, and
+migrating in place keeps startup instant. The initial schema is always
+the latest (fresh databases never replay migrations), open performs no
+backfills, and a database from a newer ccpeek refuses to open. The v1
+`ccpeek.db` → v2 importer (`internal/migrate`) is a separate, mandatory
+one-time migration.
 
 ---
 

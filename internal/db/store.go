@@ -2,12 +2,12 @@
 // (pure-Go driver, ADR-0001) holding canonical records, usage/cost data,
 // and user state.
 //
-// Discipline carried from docs/v2-plan.md §5.2 and §8.1: the schema here
-// is always the latest; opening a current database performs no scans, no
-// backfills, no repairs. Pre-release there are no intra-v2 migrations —
-// a schema-generation mismatch rebuilds the store from sources (see
-// schemaVersion). Derived data and user state are disjoint —
-// ResetDerived (--rebuild) never touches user_annotations.
+// Discipline carried from docs/v2-plan.md §5.2 and §8.1: initialSchema is
+// always the latest schema; migrations run only for existing older
+// databases; opening a current database performs no scans, no backfills,
+// no repairs. The store is an archive, not a cache — see schemaVersion
+// for why migrations are mandatory. Derived data and user state are
+// disjoint — ResetDerived (--rebuild) never touches user_annotations.
 package db
 
 import (
@@ -52,28 +52,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	s := &Store{db: sqlDB, readDB: sqlDB, path: path}
 	if err := s.migrate(ctx); err != nil {
 		sqlDB.Close()
-		if !errors.Is(err, errSchemaMismatch) || path == ":memory:" {
-			return nil, err
-		}
-		// Pre-release schema change: rebuild from scratch. Everything in
-		// the store derives from agent files still on disk; dropping the
-		// database re-ingests them, and the cleared migrated_at meta makes
-		// the engine re-run the v1 import.
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			if rerr := os.Remove(path + suffix); rerr != nil && !os.IsNotExist(rerr) {
-				return nil, fmt.Errorf("rebuilding store for new schema: %w", rerr)
-			}
-		}
-		sqlDB, err = sql.Open("sqlite", dsn)
-		if err != nil {
-			return nil, fmt.Errorf("reopening database: %w", err)
-		}
-		sqlDB.SetMaxOpenConns(1)
-		s = &Store{db: sqlDB, readDB: sqlDB, path: path}
-		if err := s.migrate(ctx); err != nil {
-			sqlDB.Close()
-			return nil, err
-		}
+		return nil, err
 	}
 	if path != ":memory:" {
 		if err := s.ensureFilePermissions(); err != nil {
@@ -142,10 +121,8 @@ func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 	return err
 }
 
-// errSchemaMismatch signals a database stamped with a different schema
-// generation. Pre-release there are no intra-v2 migrations: Open reacts
-// by rebuilding the store from sources (see the schemaVersion comment).
-var errSchemaMismatch = errors.New("schema generation mismatch")
+// ErrFutureSchema means the database was created by a newer ccpeek.
+var ErrFutureSchema = errors.New("database schema is newer than this ccpeek version")
 
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
@@ -157,20 +134,52 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 
-	switch current {
-	case 0:
+	switch {
+	case current == 0:
 		// Fresh database: create the latest schema directly.
 		if err := s.createAll(ctx); err != nil {
 			return err
 		}
 		return s.writeVersion(ctx, schemaVersion)
-	case schemaVersion:
-		// Current generation: nothing to do — by design, no backfills here.
+
+	case current > schemaVersion:
+		return fmt.Errorf("%w: database at v%d, binary supports v%d",
+			ErrFutureSchema, current, schemaVersion)
+
+	case current < schemaVersion:
+		for v := current; v < schemaVersion; v++ {
+			if err := s.applyMigration(ctx, v); err != nil {
+				return fmt.Errorf("migrating schema v%d→v%d: %w", v, v+1, err)
+			}
+		}
 		return nil
+
 	default:
-		return fmt.Errorf("%w: database at generation %d, binary at %d",
-			errSchemaMismatch, current, schemaVersion)
+		// Current version: nothing to do — by design, no backfills here.
+		return nil
 	}
+}
+
+func (s *Store) applyMigration(ctx context.Context, from int) error {
+	idx := from - 1
+	if idx < 0 || idx >= len(migrations) {
+		return fmt.Errorf("no migration registered from v%d", from)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := migrations[idx](ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO meta (key, value) VALUES ('schema_version', ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		strconv.Itoa(from+1)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) createAll(ctx context.Context) error {
