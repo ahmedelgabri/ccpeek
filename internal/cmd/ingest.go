@@ -53,7 +53,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 
 	// Diagnostics inspect past runs; kicking off a new ingest here would
 	// bury the run being investigated.
-	eng, err := openV2Engine(ctx, cmd, true, os.Stderr)
+	eng, err := openEngine(ctx, cmd, true, os.Stderr)
 	if err != nil {
 		return err
 	}

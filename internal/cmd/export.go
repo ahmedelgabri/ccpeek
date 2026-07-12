@@ -73,7 +73,7 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	eng, err := openV2Engine(ctx, cmd, true, os.Stderr)
+	eng, err := openEngine(ctx, cmd, true, os.Stderr)
 	if err != nil {
 		return err
 	}

@@ -21,7 +21,7 @@ stdout carries the protocol; all logging goes to stderr.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		// stdout is the MCP transport — everything else goes to stderr.
-		eng, err := openV2Engine(ctx, cmd, false, os.Stderr)
+		eng, err := openEngine(ctx, cmd, false, os.Stderr)
 		if err != nil {
 			return err
 		}

@@ -44,7 +44,7 @@ export function ScanPage() {
       {error && <p className="text-warn">Failed to load: {String(error)}</p>}
       {isLoading && <p className="text-ink-dim">Loading…</p>}
       {!isLoading && findings.length === 0 && (
-        <p className="text-ok">No secrets detected. Run `ccpeek scan --v2` to rescan.</p>
+        <p className="text-ok">No secrets detected. Run `ccpeek scan` to rescan.</p>
       )}
 
       <ul className="divide-y divide-edge overflow-hidden rounded-lg border border-edge">

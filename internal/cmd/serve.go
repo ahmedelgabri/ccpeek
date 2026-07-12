@@ -51,7 +51,7 @@ func registerLegacyRedirects(mux *http.ServeMux, spa http.Handler) {
 		mux.Handle("GET "+p, redirect("/artifacts"))
 	}
 
-	// v1's browsers map onto their v2 pages; they just lose the slash.
+	// The legacy browsers map onto their current pages; they just lose the slash.
 	mux.HandleFunc("GET /commands/{$}", redirect("/commands"))
 	mux.HandleFunc("GET /scan/{$}", redirect("/scan"))
 	mux.HandleFunc("GET /search/{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -125,9 +125,9 @@ func requestLog(next http.Handler) http.Handler {
 	})
 }
 
-// serveV2 runs the HTTP server with graceful shutdown, mirroring v1's
+// serve runs the HTTP server with graceful shutdown, mirroring v1's
 // timeouts.
-func serveV2(ctx context.Context, addr string, handler http.Handler) error {
+func serve(ctx context.Context, addr string, handler http.Handler) error {
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,

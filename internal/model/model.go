@@ -1,6 +1,6 @@
 // Package model holds the shell-history export formats shared by
 // `ccpeek export commands`. The v1 data model that used to live here was
-// retired with the v1 engine; the v2 canonical model is internal/canon.
+// retired with the v1 engine; the canonical model is internal/canon.
 package model
 
 import (

@@ -43,9 +43,9 @@ func TestRunExportCommandsInvalidFormat(t *testing.T) {
 func TestRunExportCommandsNoCommandsShowsHint(t *testing.T) {
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	// Pre-create an initialized v2 store so the engine skips the
+	// Pre-create an initialized store so the engine skips the
 	// first-run bootstrap ingest (which would scan real agent roots).
-	store, err := db.Open(ctx, v2DBPath(dataFile))
+	store, err := db.Open(ctx, storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,14 +66,14 @@ func TestRunExportCommandsNoCommandsShowsHint(t *testing.T) {
 	}
 }
 
-// seedExportCommandsDB creates a v2 store (at the path the engine derives
+// seedExportCommandsDB creates a store (at the path the engine derives
 // from --data-file) holding one session with one shell tool call.
 func seedExportCommandsDB(t *testing.T) string {
 	t.Helper()
 
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	store, err := db.Open(ctx, v2DBPath(dataFile))
+	store, err := db.Open(ctx, storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func seedExportCommandsDB(t *testing.T) string {
 	return dataFile
 }
 
-// markInitialized stamps migrated_at so openV2Engine treats the store as
+// markInitialized stamps migrated_at so openEngine treats the store as
 // past its first run — tests must never bootstrap-ingest real agent
 // roots.
 func markInitialized(t *testing.T, store *db.Store) {

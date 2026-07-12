@@ -18,7 +18,7 @@ func seedIngestDB(t *testing.T) string {
 
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	store, err := db.Open(ctx, v2DBPath(dataFile))
+	store, err := db.Open(ctx, storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestRunIngestRejectsLatestAndRunID(t *testing.T) {
 func TestRunIngestLatestWithNoRunsShowsMessage(t *testing.T) {
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	store, err := db.Open(ctx, v2DBPath(dataFile))
+	store, err := db.Open(ctx, storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}

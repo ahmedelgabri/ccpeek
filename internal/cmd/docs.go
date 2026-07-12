@@ -55,7 +55,7 @@ ccpeek query search TERMS... [--agent SLUG] [--limit N]
   Snippets mark matches with [ and ]; hits carry sessionId + seq.
 
 ccpeek migrate
-  Rebuild the v2 index and re-run the v1 import (also automatic on
+  Rebuild the index and re-run the v1 import (also automatic on
   first run).
 
 ## HTTP (when the ccpeek server is running; localhost only)

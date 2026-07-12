@@ -1,4 +1,4 @@
-// Package db is the ccpeek v2 store: a session-centric SQLite database
+// Package db is the ccpeek store: a session-centric SQLite database
 // (pure-Go driver, ADR-0001) holding canonical records, usage/cost data,
 // and user state.
 //
@@ -32,7 +32,7 @@ type Store struct {
 	path   string // "" for in-memory
 }
 
-// Open opens (creating or migrating as needed) the v2 database at path.
+// Open opens (creating or migrating as needed) the database at path.
 // Pass ":memory:" for an in-memory store (tests).
 func Open(ctx context.Context, path string) (*Store, error) {
 	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
@@ -88,7 +88,7 @@ func (s *Store) Close() error {
 	return err
 }
 
-// DB exposes the writer handle to sibling v2 packages (ingest, query).
+// DB exposes the writer handle to sibling packages (ingest, query).
 func (s *Store) DB() *sql.DB { return s.db }
 
 // ReadDB exposes the reader pool: use it for every pure read so queries

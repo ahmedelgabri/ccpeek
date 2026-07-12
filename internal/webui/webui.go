@@ -1,4 +1,4 @@
-// Package webui embeds and serves the v2 SPA (built from ui/ by
+// Package webui embeds and serves the SPA (built from ui/ by
 // `just ui`). The build output ships inside the binary via go:embed, so
 // distribution stays a single binary (docs/v2-plan.md §4.1). Since the
 // v2.0 cutover the SPA mounts at /; /v2/ bookmarks redirect there.

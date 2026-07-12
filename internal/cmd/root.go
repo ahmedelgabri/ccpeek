@@ -123,9 +123,9 @@ func run(cmd *cobra.Command, args []string) error {
 		return prog
 	}
 
-	// v2.0: the v2 engine owns indexing and serving. The v1 database, when
+	// The engine owns indexing and serving. The legacy v1 database, when
 	// present, was imported on first run and stays untouched for rollback.
-	eng, bootstrap, err := openV2EngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
+	eng, bootstrap, err := openEngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
 		o.Rebuild = rebuild
 		o.Prune = prune
 		var logProgress func(ingest.Progress)
@@ -225,7 +225,7 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 		if watch {
 			logf("Watch mode enabled (fsnotify; --watch-interval is a v1 no-op)\n")
-			if err := eng.runner.Watch(ctx, v2IngestOptions(cmd), 0, func(*ingest.Report) {
+			if err := eng.runner.Watch(ctx, ingestOptions(cmd), 0, func(*ingest.Report) {
 				events.Notify()
 			}); err != nil && ctx.Err() == nil {
 				logf("WARNING: watch stopped: %v\n", err)
@@ -237,7 +237,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return serveV2(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress)))
+	return serve(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress)))
 }
 
 // newProgressLogger prints ingest progress to w: one line per discovered

@@ -1,5 +1,5 @@
 // Package api serves /api/v1: versioned JSON over the query service,
-// mirroring the `ccpeek query` CLI 1:1 (docs/v2-plan.md §5.7). The v2 web
+// mirroring the `ccpeek query` CLI 1:1 (docs/v2-plan.md §5.7). The web
 // UI is this API's first client, which keeps the agent-facing surface
 // complete by construction. Local-only, like everything else.
 package api

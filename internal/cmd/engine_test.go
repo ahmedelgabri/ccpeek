@@ -87,7 +87,7 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eng, err := openV2Engine(ctx, cmd, false, io.Discard)
+	eng, err := openEngine(ctx, cmd, false, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 
 	// A second open of the same data-file must not re-import (idempotent
 	// upgrade: migrated_at gates the first-run path).
-	eng2, err := openV2Engine(ctx, cmd, false, io.Discard)
+	eng2, err := openEngine(ctx, cmd, false, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

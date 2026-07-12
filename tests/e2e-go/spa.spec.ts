@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-// Smoke coverage for the v2 SPA served at / and its /api/v1 backend
+// Smoke coverage for the SPA served at / and its /api/v1 backend
 // (docs/v2-plan.md §8.2: the v2.0 cutover serves the SPA at the root).
 
-test.describe("v2 SPA", () => {
+test.describe("SPA", () => {
   test("serves the overview shell", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveTitle("CCPeek");

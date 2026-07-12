@@ -50,7 +50,7 @@ var querySessionsCmd = &cobra.Command{
 	Short: "List sessions (newest first)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openV2Engine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ var querySessionCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openV2Engine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -104,7 +104,7 @@ var queryTranscriptCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openV2Engine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ var querySearchCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openV2Engine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ var queryUsageCmd = &cobra.Command{
 	Short: "Token/cost aggregates grouped by day, model, project, or agent",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openV2Engine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ v2 start; the command exists to re-run or troubleshoot it. The v1
 database is opened read-only and never modified.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openV2Engine(ctx, cmd, false, os.Stderr)
+		eng, err := openEngine(ctx, cmd, false, os.Stderr)
 		if err != nil {
 			return err
 		}

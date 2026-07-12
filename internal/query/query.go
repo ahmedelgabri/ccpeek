@@ -25,7 +25,7 @@ var ErrNotFound = errors.New("not found")
 // to internal failures — transports map it to 400 vs 500.
 var ErrBadRequest = errors.New("bad request")
 
-// Service executes queries against the v2 store.
+// Service executes queries against the store.
 type Service struct {
 	store  *db.Store
 	pricer db.Pricer

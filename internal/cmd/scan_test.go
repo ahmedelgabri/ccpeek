@@ -12,9 +12,9 @@ import (
 
 func newScanTestCommand(t *testing.T, dataFile, format string) *cobra.Command {
 	t.Helper()
-	// Pre-create the v2 store so the engine skips the first-run bootstrap
+	// Pre-create the store so the engine skips the first-run bootstrap
 	// ingest (which would scan real agent roots).
-	store, err := db.Open(context.Background(), v2DBPath(dataFile))
+	store, err := db.Open(context.Background(), storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}

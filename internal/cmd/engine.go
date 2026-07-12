@@ -23,8 +23,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// v2Engine bundles the open v2 store with its services.
-type v2Engine struct {
+// engine bundles the open store with its services.
+type engine struct {
 	store   *db.Store
 	pricing *pricing.Table
 	query   *query.Service
@@ -33,28 +33,28 @@ type v2Engine struct {
 	report *ingest.Report
 }
 
-// v2DBPath places the v2 database next to the v1 file (docs/v2-plan.md
-// §8.2: distinct name so neither binary can corrupt the other's store).
-func v2DBPath(v1DataFile string) string {
-	return filepath.Join(filepath.Dir(v1DataFile), "ccpeek2.db")
+// storeDBPath places the store next to the legacy v1 file (docs/v2-plan.md
+// §8.2: a distinct name so neither binary can corrupt the other's store).
+func storeDBPath(dataFile string) string {
+	return filepath.Join(filepath.Dir(dataFile), "ccpeek2.db")
 }
 
-// openV2EngineDeferred opens the v2 store and services WITHOUT ingesting,
-// and returns the bootstrap step as a closure. bootstrap is nil when
-// nothing needs to run (skipIndex on an existing database); otherwise the
-// caller decides whether to run it synchronously (CLI commands) or in the
+// openEngineDeferred opens the store and services WITHOUT ingesting, and
+// returns the bootstrap step as a closure. bootstrap is nil when nothing
+// needs to run (skipIndex on an existing database); otherwise the caller
+// decides whether to run it synchronously (CLI commands) or in the
 // background (the serving path, so the UI is reachable immediately).
 //
-// First-run contract (docs/v2-plan.md §8.1): when the v2 database does not
+// First-run contract (docs/v2-plan.md §8.1): when the database does not
 // exist yet, bootstrap runs a full ingest of all detected agent roots and
-// — if a v1 database is present — imports its orphaned rows and user
-// state. Zero flags, zero prompts. tweak, when non-nil, adjusts the
+// — if a legacy v1 database is present — imports its orphaned rows and
+// user state. Zero flags, zero prompts. tweak, when non-nil, adjusts the
 // pipeline options (rebuild/prune/progress) before the run.
-func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*v2Engine, func(context.Context) error, error) {
+func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*engine, func(context.Context) error, error) {
 	dataFile, _ := cmd.Flags().GetString("data-file")
 
-	v2Path := v2DBPath(dataFile)
-	store, err := db.Open(ctx, v2Path)
+	storePath := storeDBPath(dataFile)
+	store, err := db.Open(ctx, storePath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -79,7 +79,7 @@ func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex boo
 	// OpenCode, Cursor.
 	runner := ingest.New(store, table,
 		claude.New(), pi.New(), codex.New(), opencode.New(), cursor.New())
-	eng := &v2Engine{
+	eng := &engine{
 		store:   store,
 		pricing: table,
 		query:   query.New(store, table),
@@ -90,7 +90,7 @@ func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex boo
 		return eng, nil, nil
 	}
 
-	opts := v2IngestOptions(cmd)
+	opts := ingestOptions(cmd)
 	for _, t := range tweak {
 		if t != nil {
 			t(&opts)
@@ -99,7 +99,7 @@ func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex boo
 
 	bootstrap := func(ctx context.Context) error {
 		if firstRun {
-			fmt.Fprintf(logw, "First v2 start: building %s\n", v2Path)
+			fmt.Fprintf(logw, "First start: building %s\n", storePath)
 		}
 		report, err := eng.runner.Run(ctx, opts)
 		if err != nil {
@@ -135,11 +135,11 @@ func openV2EngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex boo
 	return eng, bootstrap, nil
 }
 
-// openV2Engine opens the engine and runs any needed bootstrap ingest
+// openEngine opens the engine and runs any needed bootstrap ingest
 // synchronously — the right shape for CLI commands that answer from the
-// index. The serving path uses openV2EngineDeferred instead.
-func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*v2Engine, error) {
-	eng, bootstrap, err := openV2EngineDeferred(ctx, cmd, skipIndex, logw, tweak...)
+// index. The serving path uses openEngineDeferred instead.
+func openEngine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*engine, error) {
+	eng, bootstrap, err := openEngineDeferred(ctx, cmd, skipIndex, logw, tweak...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,13 +152,13 @@ func openV2Engine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw 
 	return eng, nil
 }
 
-func (e *v2Engine) Close() error { return e.store.Close() }
+func (e *engine) Close() error { return e.store.Close() }
 
-// v2IngestOptions maps CLI flags to pipeline options. --claude-dir keeps
+// ingestOptions maps CLI flags to pipeline options. --claude-dir keeps
 // working as the Claude adapter's root override (§8.2 CLI compatibility);
 // it is only passed when explicitly set so CLAUDE_CONFIG_DIR still applies
 // otherwise.
-func v2IngestOptions(cmd *cobra.Command) ingest.Options {
+func ingestOptions(cmd *cobra.Command) ingest.Options {
 	opts := ingest.Options{}
 	if cmd.Flags().Changed("claude-dir") {
 		claudeDir, _ := cmd.Flags().GetString("claude-dir")

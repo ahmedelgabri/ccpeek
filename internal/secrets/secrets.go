@@ -1,4 +1,4 @@
-// Package secrets scans v2-indexed content for leaked credentials with
+// Package secrets scans indexed content for leaked credentials with
 // gitleaks' default ruleset — across EVERY agent's transcripts and
 // artifacts, not just Claude's (docs/v2-plan.md §6: nothing else scans
 // your Codex/Cursor history for keys).
@@ -48,7 +48,7 @@ type Report struct {
 	ArtifactsScanned int
 }
 
-// Scanner runs gitleaks over the v2 store.
+// Scanner runs gitleaks over the store.
 type Scanner struct {
 	detector *detect.Detector
 	store    *db.Store
