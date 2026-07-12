@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useHighlight } from "../highlight";
@@ -49,13 +56,21 @@ export function SessionDetailPage() {
     queryKey: ["session", agent, sessionId],
     queryFn: () => api.session(agent, sessionId),
   });
-  const focusSeq = search.seq;
-  // A deep link (?seq=N from search) anchors the window a little before
-  // the target so it isn't flush against the top and there is immediate
-  // context to scroll up into; browsing with no target starts at seq 0.
-  // The anchor is part of the query key so each deep link is its own list
-  // — jumping to seq 3000 loads the page AROUND 3000, never the 3000
-  // messages before it.
+  // The deep-link target (?seq=N) is captured once per session: it anchors
+  // the query window and is the one-time scroll target. It must NOT track
+  // the live search param, because scroll-spy rewrites ?seq as the reader
+  // moves — feeding that back would re-anchor the window on every scroll.
+  const entrySeq = useRef({ session: sessionId, seq: search.seq });
+  if (entrySeq.current.session !== sessionId) {
+    entrySeq.current = { session: sessionId, seq: search.seq };
+  }
+  const focusSeq = entrySeq.current.seq;
+
+  // Anchor the window a little before the target so it isn't flush against
+  // the top and there is immediate context to scroll up into; browsing
+  // with no target starts at seq 0. The anchor is part of the query key so
+  // each deep link is its own list — jumping to seq 3000 loads the page
+  // AROUND 3000, never the 3000 messages before it.
   const anchor = focusSeq !== undefined ? Math.max(0, focusSeq - 100) : 0;
   const transcript = useInfiniteQuery({
     queryKey: ["transcript", agent, sessionId, anchor],
@@ -79,6 +94,29 @@ export function SessionDetailPage() {
     () => (transcript.data?.pages ?? []).flatMap((p) => p ?? []),
     [transcript.data],
   );
+
+  // The URL carries the message the reader is on: scroll-spy replaces ?seq
+  // as they move (no history spam, no scroll reset — and it never
+  // re-anchors, since the window anchor was captured once above), and a
+  // per-message permalink writes ?seq and copies a shareable link.
+  const lastSeqInURL = useRef<number | undefined>(search.seq);
+  const putSeqInURL = useCallback(
+    (seq: number, copy = false) => {
+      if (!copy && lastSeqInURL.current === seq) return;
+      lastSeqInURL.current = seq;
+      void navigate({
+        search: (prev: { tab?: string; seq?: number }) => ({ ...prev, seq }),
+        replace: true,
+        resetScroll: false,
+      });
+      if (copy) {
+        const link = `${window.location.origin}${window.location.pathname}?seq=${seq}`;
+        void navigator.clipboard?.writeText(link);
+      }
+    },
+    [navigate],
+  );
+
   const tools = useQuery({
     queryKey: ["tools", agent, sessionId],
     queryFn: () => api.sessionTools(agent, sessionId),
@@ -213,6 +251,7 @@ export function SessionDetailPage() {
 
       {tab === "transcript" && (
         <Transcript
+          key={sessionId}
           msgs={msgs}
           tools={toolRows}
           focusSeq={focusSeq}
@@ -224,6 +263,8 @@ export function SessionDetailPage() {
           hasOlder={transcript.hasPreviousPage}
           loadingOlder={transcript.isFetchingPreviousPage}
           onLoadOlder={() => void transcript.fetchPreviousPage()}
+          onScrollSeq={(seq) => putSeqInURL(seq)}
+          onPermalink={(seq) => putSeqInURL(seq, true)}
         />
       )}
       {tab === "commands" && <CommandsTab commands={commands} />}
@@ -251,6 +292,8 @@ function Transcript({
   hasOlder,
   loadingOlder,
   onLoadOlder,
+  onScrollSeq,
+  onPermalink,
 }: {
   msgs: TranscriptMessage[];
   tools: ToolCallRow[];
@@ -263,8 +306,11 @@ function Transcript({
   hasOlder: boolean;
   loadingOlder: boolean;
   onLoadOlder: () => void;
+  onScrollSeq: (seq: number) => void;
+  onPermalink: (seq: number) => void;
 }) {
   const [treeView, setTreeView] = useState(false);
+  const [copiedSeq, setCopiedSeq] = useState<number | null>(null);
   // Meta entries (toolResult, system, …) render as one-line excerpts;
   // clicking reveals the full stored text.
   const [openMeta, setOpenMeta] = useState<ReadonlySet<number>>(new Set());
@@ -366,6 +412,64 @@ function Transcript({
     obs.observe(node);
     return () => obs.disconnect();
   }, [hasOlder, loadingOlder, focusDone, onLoadOlder]);
+
+  // Scroll-spy: keep the URL pointed at the topmost message in view so the
+  // address bar is always a shareable link to the reader's spot. Gated on a
+  // real scroll so a fresh page load doesn't inject ?seq=0; the target of a
+  // deep link already sits in the URL until then. A thin band at the top of
+  // the viewport marks the "current" row.
+  const userScrolled = useRef(false);
+  // A permalink click pins the URL to that message; scroll-spy stays quiet
+  // for a beat afterwards so a layout settle doesn't overwrite it. Real
+  // scrolling resumes tracking.
+  const spyResumeAt = useRef(0);
+  useEffect(() => {
+    const onScroll = () => {
+      userScrolled.current = true;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  const inBand = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const node = container.current;
+    if (!node) return;
+    const rows = node.querySelectorAll<HTMLElement>("li[id^='seq-']");
+    if (rows.length === 0) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const seq = Number((e.target as HTMLElement).id.slice(4));
+          if (e.isIntersecting) inBand.current.add(seq);
+          else inBand.current.delete(seq);
+        }
+        if (
+          userScrolled.current &&
+          Date.now() >= spyResumeAt.current &&
+          inBand.current.size > 0
+        ) {
+          onScrollSeq(Math.min(...inBand.current));
+        }
+      },
+      // Only the top ~12% of the viewport counts as "current".
+      { rootMargin: "0px 0px -88% 0px" },
+    );
+    rows.forEach((r) => obs.observe(r));
+    return () => {
+      obs.disconnect();
+      inBand.current.clear();
+    };
+  }, [msgs, onScrollSeq]);
+
+  const copyPermalink = (seq: number) => {
+    spyResumeAt.current = Date.now() + 800;
+    onPermalink(seq);
+    setCopiedSeq(seq);
+    window.setTimeout(
+      () => setCopiedSeq((cur) => (cur === seq ? null : cur)),
+      1200,
+    );
+  };
 
   return (
     <div ref={container}>
@@ -474,8 +578,22 @@ function Transcript({
                     )}
                   </>
                 )}
-                <span className="ml-auto tabular-nums">
-                  #{m.seq} · {m.createdAt.slice(11, 19)}
+                <span className="ml-auto flex items-center gap-1 tabular-nums">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyPermalink(m.seq);
+                    }}
+                    title="Copy link to this message"
+                    className={
+                      copiedSeq === m.seq
+                        ? "text-ok"
+                        : "hover:text-accent"
+                    }
+                  >
+                    {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
+                  </button>
+                  {m.createdAt && <span>· {m.createdAt.slice(11, 19)}</span>}
                 </span>
               </div>
               {isMeta && openMeta.has(m.seq) && (
