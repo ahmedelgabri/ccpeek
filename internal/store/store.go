@@ -179,7 +179,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	// Record final version
-	_, err = s.db.ExecContext(ctx,
+	_, err = s.db.ExecContext(
+		ctx,
 		`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)`,
 		strconv.Itoa(schemaVersion),
 	)

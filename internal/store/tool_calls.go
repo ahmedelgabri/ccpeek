@@ -194,7 +194,8 @@ func (s *Store) InsertToolCalls(ctx context.Context, tx *sqlx.Tx, dbSessionID in
 	defer stmt.Close()
 
 	for _, call := range calls {
-		if _, err := stmt.ExecContext(ctx,
+		if _, err := stmt.ExecContext(
+			ctx,
 			dbSessionID,
 			call.Seq,
 			call.Timestamp,

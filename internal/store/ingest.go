@@ -15,7 +15,8 @@ func (s *Store) SaveIngestRun(ctx context.Context, run *model.IngestRun, issues 
 	}
 	defer tx.Rollback()
 
-	res, err := tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(
+		ctx, `
 		INSERT INTO ingest_runs (
 			mode, status, claude_dir, started_at, finished_at, duration_ms,
 			files_seen, files_changed, records_indexed, skipped_files, skipped_rows,
@@ -46,7 +47,8 @@ func (s *Store) SaveIngestRun(ctx context.Context, run *model.IngestRun, issues 
 
 		for i := range issues {
 			issues[i].RunID = runID
-			if _, err := stmt.ExecContext(ctx,
+			if _, err := stmt.ExecContext(
+				ctx,
 				issues[i].RunID,
 				issues[i].Severity,
 				issues[i].Category,

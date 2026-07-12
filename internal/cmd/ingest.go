@@ -122,7 +122,8 @@ func printIngestRunList(runs []model.IngestRun) {
 
 	fmt.Printf("%-4s %-11s %-8s %-20s %6s %7s %7s\n", "ID", "MODE", "STATUS", "FINISHED", "WARN", "FILES", "INDEXED")
 	for _, run := range runs {
-		fmt.Printf("%-4d %-11s %-8s %-20s %6d %7s %7d\n",
+		fmt.Printf(
+			"%-4d %-11s %-8s %-20s %6d %7s %7d\n",
 			run.ID,
 			run.Mode,
 			run.Status,

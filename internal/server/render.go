@@ -360,7 +360,8 @@ type templates struct {
 
 func loadTemplates(fsys fs.FS) (*templates, error) {
 	// Parse the shared base templates (layout + partials).
-	base, err := template.New("").Funcs(funcMap).ParseFS(fsys,
+	base, err := template.New("").Funcs(funcMap).ParseFS(
+		fsys,
 		"templates/layout.html",
 		"templates/partials/nav.html",
 		"templates/partials/pagination.html",

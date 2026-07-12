@@ -81,7 +81,8 @@ func (s *Store) GetPlan(ctx context.Context, fileNameWithoutExt string) (*model.
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	err := s.db.GetContext(ctx, &row,
+	err := s.db.GetContext(
+		ctx, &row,
 		`SELECT file_name, title, size_bytes, content FROM plans
 		 WHERE file_name = ? OR REPLACE(file_name, '.md', '') = ?`,
 		fileNameWithoutExt+".md", fileNameWithoutExt,
@@ -118,7 +119,8 @@ func (s *Store) GetShellSnapshot(ctx context.Context, fileNameWithoutExt string)
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	err := s.db.GetContext(ctx, &row,
+	err := s.db.GetContext(
+		ctx, &row,
 		`SELECT file_name, timestamp, size_bytes, content FROM shell_snapshots
 		 WHERE file_name = ? OR REPLACE(file_name, '.sh', '') = ?`,
 		fileNameWithoutExt+".sh", fileNameWithoutExt,
@@ -179,7 +181,8 @@ func (s *Store) GetTodo(ctx context.Context, fileNameWithoutExt string) (*model.
 		ProjectDir  sql.NullString `db:"project_dir"`
 		ProjectName sql.NullString `db:"project_name"`
 	}
-	err := s.db.GetContext(ctx, &todoRow, `
+	err := s.db.GetContext(
+		ctx, &todoRow, `
 		SELECT t.id, t.file_name, t.item_count, t.statuses,
 			   s.session_id AS session_id_text,
 			   p.dir_name AS project_dir,
@@ -525,7 +528,8 @@ func (s *Store) GetSessionMessages(ctx context.Context, dirName, sessionID strin
 		Cwd       string `db:"cwd"`
 		GitBranch string `db:"git_branch"`
 	}
-	if err := s.db.SelectContext(ctx, &rows, `
+	if err := s.db.SelectContext(
+		ctx, &rows, `
 		SELECT type, role, timestamp, uuid, content, cwd, git_branch
 		FROM messages WHERE session_id = ? ORDER BY seq LIMIT ? OFFSET ?`,
 		dbID, limit, offset,
@@ -1053,7 +1057,8 @@ func (s *Store) GetPasteCache(ctx context.Context, fileNameWithoutExt string) (*
 		SizeBytes int64  `db:"size_bytes"`
 		Content   string `db:"content"`
 	}
-	err := s.db.GetContext(ctx, &row,
+	err := s.db.GetContext(
+		ctx, &row,
 		`SELECT file_name, size_bytes, content FROM paste_cache
 		 WHERE file_name = ? OR REPLACE(file_name, '.txt', '') = ?`,
 		fileNameWithoutExt+".txt", fileNameWithoutExt,
