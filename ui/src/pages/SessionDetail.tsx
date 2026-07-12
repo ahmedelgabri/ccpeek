@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useHighlight } from "../highlight";
@@ -49,42 +49,36 @@ export function SessionDetailPage() {
     queryKey: ["session", agent, sessionId],
     queryFn: () => api.session(agent, sessionId),
   });
+  const focusSeq = search.seq;
+  // A deep link (?seq=N from search) anchors the window a little before
+  // the target so it isn't flush against the top and there is immediate
+  // context to scroll up into; browsing with no target starts at seq 0.
+  // The anchor is part of the query key so each deep link is its own list
+  // — jumping to seq 3000 loads the page AROUND 3000, never the 3000
+  // messages before it.
+  const anchor = focusSeq !== undefined ? Math.max(0, focusSeq - 100) : 0;
   const transcript = useInfiniteQuery({
-    queryKey: ["transcript", agent, sessionId],
+    queryKey: ["transcript", agent, sessionId, anchor],
     queryFn: ({ pageParam }) =>
       api.transcript(agent, sessionId, {
         from: String(pageParam),
         limit: String(TRANSCRIPT_PAGE),
       }),
-    initialPageParam: 0,
-    // A short page means the tail was reached; a full page means there may
-    // be more, starting just past the last seq we got.
+    initialPageParam: anchor,
+    // A full page implies more ahead, continuing just past the last seq.
     getNextPageParam: (last) =>
       last && last.length === TRANSCRIPT_PAGE
         ? last[last.length - 1].seq + 1
         : undefined,
+    // Older messages sit one page-width before the current first page's
+    // start; nothing precedes seq 0.
+    getPreviousPageParam: (_first, _all, firstParam) =>
+      firstParam > 0 ? Math.max(0, firstParam - TRANSCRIPT_PAGE) : undefined,
   });
   const msgs = useMemo(
     () => (transcript.data?.pages ?? []).flatMap((p) => p ?? []),
     [transcript.data],
   );
-
-  // A deep link (?seq=N from search) may land past the first page: keep
-  // pulling pages until the target seq is loaded, then the Transcript
-  // scrolls it into view.
-  useEffect(() => {
-    if (search.seq === undefined) return;
-    const loaded = msgs.length > 0 && msgs[msgs.length - 1].seq >= search.seq;
-    if (!loaded && transcript.hasNextPage && !transcript.isFetchingNextPage) {
-      void transcript.fetchNextPage();
-    }
-  }, [
-    search.seq,
-    msgs,
-    transcript.hasNextPage,
-    transcript.isFetchingNextPage,
-    transcript.fetchNextPage, // stable across renders (react-query memoizes it)
-  ]);
   const tools = useQuery({
     queryKey: ["tools", agent, sessionId],
     queryFn: () => api.sessionTools(agent, sessionId),
@@ -221,12 +215,15 @@ export function SessionDetailPage() {
         <Transcript
           msgs={msgs}
           tools={toolRows}
-          focusSeq={search.seq}
+          focusSeq={focusSeq}
           total={s.messages}
           loading={transcript.isLoading}
           hasMore={transcript.hasNextPage}
           loadingMore={transcript.isFetchingNextPage}
           onLoadMore={() => void transcript.fetchNextPage()}
+          hasOlder={transcript.hasPreviousPage}
+          loadingOlder={transcript.isFetchingPreviousPage}
+          onLoadOlder={() => void transcript.fetchPreviousPage()}
         />
       )}
       {tab === "commands" && <CommandsTab commands={commands} />}
@@ -251,6 +248,9 @@ function Transcript({
   hasMore,
   loadingMore,
   onLoadMore,
+  hasOlder,
+  loadingOlder,
+  onLoadOlder,
 }: {
   msgs: TranscriptMessage[];
   tools: ToolCallRow[];
@@ -260,6 +260,9 @@ function Transcript({
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  onLoadOlder: () => void;
 }) {
   const [treeView, setTreeView] = useState(false);
   // Meta entries (toolResult, system, …) render as one-line excerpts;
@@ -295,30 +298,74 @@ function Transcript({
   );
   const hidden = msgs.length - visible.length;
 
-  // Search hits deep-link to ?seq=N: scroll it into view once loaded.
+  // Deep link (?seq=N): scroll the target into view once, when it first
+  // lands in the loaded window. A ref (not state) gates it so later page
+  // loads don't yank the reader back to the anchor. focusDone also unlocks
+  // the older-direction observer, so the anchored page settles before we
+  // start auto-filling context above it.
+  const focused = useRef(false);
+  const [focusDone, setFocusDone] = useState(focusSeq === undefined);
   useEffect(() => {
-    if (focusSeq === undefined || msgs.length === 0) return;
-    document
-      .getElementById(`seq-${focusSeq}`)
-      ?.scrollIntoView({ block: "center" });
-  }, [focusSeq, msgs.length]);
+    focused.current = false;
+    setFocusDone(focusSeq === undefined);
+  }, [focusSeq]);
+  useEffect(() => {
+    if (focusSeq === undefined || focused.current) return;
+    const el = document.getElementById(`seq-${focusSeq}`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    focused.current = true;
+    setFocusDone(true);
+  }, [focusSeq, msgs]);
 
-  // Infinite scroll: pull the next page as the sentinel nears the
-  // viewport. The button below is the explicit, accessible fallback.
-  const sentinel = useRef<HTMLDivElement>(null);
+  // Prepending older messages grows the document above the viewport, which
+  // would jump the reader downward. Capture the height just before an older
+  // fetch and restore the scroll offset by the delta once it commits.
+  const beforeOlder = useRef<number | null>(null);
+  const loadOlder = () => {
+    if (loadingOlder) return;
+    beforeOlder.current = document.documentElement.scrollHeight;
+    onLoadOlder();
+  };
+  useLayoutEffect(() => {
+    if (beforeOlder.current === null) return;
+    const delta = document.documentElement.scrollHeight - beforeOlder.current;
+    beforeOlder.current = null;
+    if (delta > 0) window.scrollBy(0, delta);
+  }, [msgs]);
+
+  // Two sentinels drive the infinite scroll: the bottom pulls newer pages,
+  // the top pulls older ones (once the deep-link scroll has settled). Each
+  // has an explicit button below/above as the accessible fallback.
+  const topSentinel = useRef<HTMLDivElement>(null);
+  const bottomSentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!hasMore || loadingMore) return;
-    const node = sentinel.current;
+    const node = bottomSentinel.current;
     if (!node) return;
     const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) onLoadMore();
-      },
+      (entries) => entries[0]?.isIntersecting && onLoadMore(),
       { rootMargin: "800px" },
     );
     obs.observe(node);
     return () => obs.disconnect();
   }, [hasMore, loadingMore, onLoadMore]);
+  useEffect(() => {
+    if (!hasOlder || loadingOlder || !focusDone) return;
+    const node = topSentinel.current;
+    if (!node) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          beforeOlder.current = document.documentElement.scrollHeight;
+          onLoadOlder();
+        }
+      },
+      { rootMargin: "800px" },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [hasOlder, loadingOlder, focusDone, onLoadOlder]);
 
   return (
     <div ref={container}>
@@ -338,6 +385,17 @@ function Transcript({
           tree view
         </button>
       </div>
+      {hasOlder && (
+        <div ref={topSentinel} className="mb-3 flex justify-center">
+          <button
+            onClick={loadOlder}
+            disabled={loadingOlder}
+            className="rounded-md border border-edge px-3 py-1.5 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
+          >
+            {loadingOlder ? "Loading…" : "Load older"}
+          </button>
+        </div>
+      )}
       <ol className="space-y-2">
         {visible.map((m) => {
           const msgTools = toolsByMsg.get(m.seq) ?? [];
@@ -448,7 +506,7 @@ function Transcript({
         })}
       </ol>
       {hasMore && (
-        <div ref={sentinel} className="mt-3 flex justify-center">
+        <div ref={bottomSentinel} className="mt-3 flex justify-center">
           <button
             onClick={onLoadMore}
             disabled={loadingMore}
@@ -456,7 +514,7 @@ function Transcript({
           >
             {loadingMore
               ? "Loading…"
-              : `Load more — ${msgs.length} of ${total}`}
+              : `Load newer — ${msgs.length} of ${total}`}
           </button>
         </div>
       )}
