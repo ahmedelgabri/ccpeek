@@ -10,11 +10,17 @@ import (
 // dbSink adapts db.Writer to the agent.RecordSink contract for one source's
 // transaction. Adapters emit a Session before its Messages/ToolCalls; the
 // sink tracks the session row ids it has upserted in this source.
+//
+// In append mode (tail parse of a cursor-capable source) the session's
+// existing children are kept — the adapter emitted only new records — and
+// the session row is advanced rather than re-upserted, so attributes
+// derived from the already-parsed prefix (title, created_at) survive.
 type dbSink struct {
 	writer     *db.Writer
 	agent      canon.AgentSlug
 	sourceHash string
 	report     *Report
+	append     bool
 
 	sessionIDs  map[string]int64 // session external id → row id
 	artifactIDs map[artifactKey]int64
@@ -29,11 +35,19 @@ func (s *dbSink) Session(sess canon.Session) error {
 	if sess.Agent == "" {
 		sess.Agent = s.agent
 	}
-	id, err := s.writer.UpsertSession(sess, s.sourceHash)
-	if err != nil {
-		return err
+	var (
+		id  int64
+		err error
+	)
+	if s.append {
+		id, err = s.writer.AdvanceSession(sess, s.sourceHash)
+	} else {
+		id, err = s.writer.UpsertSession(sess, s.sourceHash)
+		if err == nil {
+			err = s.writer.ClearSessionChildren(id)
+		}
 	}
-	if err := s.writer.ClearSessionChildren(id); err != nil {
+	if err != nil {
 		return err
 	}
 	if s.sessionIDs == nil {
@@ -69,6 +83,14 @@ func (s *dbSink) ToolCall(tc canon.ToolCall) error {
 	}
 	s.report.ToolCalls++
 	return nil
+}
+
+func (s *dbSink) ToolResult(res canon.ToolResult) error {
+	id, ok := s.sessionIDs[res.SessionExternalID]
+	if !ok {
+		return fmt.Errorf("adapter emitted tool result before session %q", res.SessionExternalID)
+	}
+	return s.writer.UpdateToolCallResult(id, res)
 }
 
 func (s *dbSink) SessionRelation(rel canon.SessionRelation) error {

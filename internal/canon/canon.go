@@ -149,6 +149,7 @@ type ToolCall struct {
 	SessionExternalID string
 	MessageSeq        int    // seq of the issuing message within the session
 	Seq               int    // order within the session's tool calls
+	ExternalID        string // agent-native call id (tool_use block id), "" if none
 	Name              string // agent-native tool name, preserved
 	Kind              ToolKind
 	Input             json.RawMessage
@@ -156,6 +157,17 @@ type ToolCall struct {
 	ResultExcerpt     string // bounded excerpt, not the full blob
 	FilePath          string // primary file argument, when the tool has one
 	StartedAt         time.Time
+}
+
+// ToolResult attaches a late outcome to an already-emitted tool call by
+// its agent-native call id. Adapters emit it when a result appears in
+// source bytes parsed after the issuing call was indexed (append-cursor
+// ingest); results paired within one parse stay on the ToolCall itself.
+type ToolResult struct {
+	SessionExternalID string
+	CallExternalID    string
+	Status            string // ok | error
+	Excerpt           string
 }
 
 // ArtifactKind names a sidecar artifact type.

@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -260,10 +261,29 @@ func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent
 	}
 
 	report.FilesChanged++
+
+	// Cursor-capable sources try an append parse first: only the bytes
+	// added since the stored cursor are decoded and only new records are
+	// written — the difference between re-parsing a whole multi-thousand
+	// message session and reading its last few lines. A cursor the source
+	// can't resume from (rewritten prefix, missing session row) falls back
+	// to a full parse, which records a fresh cursor.
+	if tp, ok := a.(agent.TailParser); ok && prior.ParseState != "" {
+		var state agent.TailState
+		if err := json.Unmarshal([]byte(prior.ParseState), &state); err == nil && state.Offset > 0 {
+			err := r.ingestTail(ctx, a, tp, src, state, hash, statSig, report)
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, agent.ErrTailInvalid) && !errors.Is(err, db.ErrUnknownSession) {
+				return err
+			}
+		}
+	}
 	return r.ingestSource(ctx, a, src, hash, statSig, report)
 }
 
-// ingestSource parses one changed source inside its own transaction.
+// ingestSource fully parses one changed source inside its own transaction.
 func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.SourceRef, hash, statSig string, report *Report) error {
 	w, err := r.store.BeginWrite(ctx)
 	if err != nil {
@@ -272,13 +292,54 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	defer w.Rollback()
 
 	sink := &dbSink{writer: w, agent: a.Slug(), sourceHash: hash, report: report}
-	if err := a.Parse(ctx, src, sink); err != nil {
+	parseState := ""
+	if tp, ok := a.(agent.TailParser); ok {
+		state, err := tp.ParseTail(ctx, src, agent.TailState{}, sink)
+		if err != nil {
+			return err
+		}
+		parseState = marshalTailState(state)
+	} else if err := a.Parse(ctx, src, sink); err != nil {
 		return err
 	}
-	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig); err != nil {
+	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, parseState); err != nil {
 		return err
 	}
 	return w.Commit()
+}
+
+// ingestTail parses only the bytes appended since state, in its own
+// transaction. Errors roll everything back, so a failed tail attempt
+// leaves the source exactly as the last successful parse recorded it.
+func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailParser, src agent.SourceRef, state agent.TailState, hash, statSig string, report *Report) error {
+	w, err := r.store.BeginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+
+	sink := &dbSink{writer: w, agent: a.Slug(), sourceHash: hash, report: report, append: true}
+	newState, err := tp.ParseTail(ctx, src, state, sink)
+	if err != nil {
+		return err
+	}
+	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, marshalTailState(newState)); err != nil {
+		return err
+	}
+	return w.Commit()
+}
+
+// marshalTailState serializes a cursor for source_files.parse_state; a
+// zero state (the source has no cursor semantics) stores as "".
+func marshalTailState(state agent.TailState) string {
+	if state.Offset == 0 {
+		return ""
+	}
+	buf, err := json.Marshal(state)
+	if err != nil {
+		return ""
+	}
+	return string(buf)
 }
 
 func (r *Runner) resolveRoots(opts Options) ([]resolvedRoot, []canon.Issue) {

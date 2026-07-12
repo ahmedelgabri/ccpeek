@@ -116,6 +116,33 @@ func (w *Writer) UpsertSession(sess canon.Session, contentHash string) (int64, e
 	return id, nil
 }
 
+// AdvanceSession updates an existing session from attributes folded out
+// of newly-appended source bytes only: modification time, branch, and
+// content hash move forward; creation-time attributes (created_at, and
+// title/cwd once set) stay as the full parse recorded them — the tail
+// never saw the lines they came from. Returns ErrUnknownSession when the
+// session was never fully parsed; callers fall back to a full parse.
+func (w *Writer) AdvanceSession(sess canon.Session, contentHash string) (int64, error) {
+	id, err := w.sessionID(sess.Agent, sess.ExternalID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := w.tx.ExecContext(w.ctx, `
+		UPDATE sessions SET
+			modified_at = COALESCE(?, modified_at),
+			git_branch = CASE WHEN ? <> '' THEN ? ELSE git_branch END,
+			title = CASE WHEN title = '' THEN ? ELSE title END,
+			cwd = CASE WHEN cwd = '' THEN ? ELSE cwd END,
+			source_path = ?,
+			content_hash = ?
+		WHERE id = ?`,
+		timeText(sess.ModifiedAt), sess.GitBranch, sess.GitBranch,
+		sess.Title, sess.CWD, sess.SourcePath, contentHash, id); err != nil {
+		return 0, fmt.Errorf("advancing session %s/%s: %w", sess.Agent, sess.ExternalID, err)
+	}
+	return id, nil
+}
+
 // ClearSessionChildren removes messages, tool calls, and search documents
 // for a session prior to re-inserting them when its source changed.
 func (w *Writer) ClearSessionChildren(sessionID int64) error {
@@ -240,13 +267,27 @@ func (w *Writer) InsertToolCall(sessionID int64, tc canon.ToolCall) error {
 	}
 	_, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO tool_calls
-			(session_id, message_seq, seq, name, kind, input_json,
+			(session_id, message_seq, seq, external_id, name, kind, input_json,
 			 result_status, result_excerpt, file_path, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, tc.MessageSeq, tc.Seq, tc.Name, string(kind), input,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, tc.MessageSeq, tc.Seq, tc.ExternalID, tc.Name, string(kind), input,
 		tc.ResultStatus, tc.ResultExcerpt, tc.FilePath, timeText(tc.StartedAt))
 	if err != nil {
 		return fmt.Errorf("inserting tool call seq %d (%s): %w", tc.Seq, tc.Name, err)
+	}
+	return nil
+}
+
+// UpdateToolCallResult attaches a late result to a stored tool call by
+// its agent-native call id. A miss is not an error: the call may predate
+// the external_id column or belong to source bytes that never parsed.
+func (w *Writer) UpdateToolCallResult(sessionID int64, res canon.ToolResult) error {
+	_, err := w.tx.ExecContext(w.ctx, `
+		UPDATE tool_calls SET result_status = ?, result_excerpt = ?
+		WHERE session_id = ? AND external_id = ?`,
+		res.Status, res.Excerpt, sessionID, res.CallExternalID)
+	if err != nil {
+		return fmt.Errorf("updating tool call result %s: %w", res.CallExternalID, err)
 	}
 	return nil
 }
@@ -393,22 +434,23 @@ func (w *Writer) InsertHistory(h canon.HistoryEntry) error {
 	return nil
 }
 
-// RecordSourceFile stores the content hash and stat signature for
-// incremental comparison.
-func (w *Writer) RecordSourceFile(path string, agent canon.AgentSlug, contentHash, statSig string) error {
+// RecordSourceFile stores the content hash, stat signature, and append
+// cursor for incremental comparison.
+func (w *Writer) RecordSourceFile(path string, agent canon.AgentSlug, contentHash, statSig, parseState string) error {
 	agentID, err := w.EnsureAgent(agent)
 	if err != nil {
 		return err
 	}
 	_, err = w.tx.ExecContext(w.ctx, `
-		INSERT INTO source_files (path, agent_id, content_hash, stat_sig, indexed_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO source_files (path, agent_id, content_hash, stat_sig, parse_state, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			agent_id = excluded.agent_id,
 			content_hash = excluded.content_hash,
 			stat_sig = excluded.stat_sig,
+			parse_state = excluded.parse_state,
 			indexed_at = excluded.indexed_at`,
-		path, agentID, contentHash, statSig, time.Now().UTC().Format(time.RFC3339))
+		path, agentID, contentHash, statSig, parseState, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 

@@ -9,6 +9,7 @@ type Sink struct {
 	Relations     []canon.SessionRelation
 	Messages      []canon.Message
 	ToolCalls     []canon.ToolCall
+	ToolResults   []canon.ToolResult
 	Artifacts     []canon.Artifact
 	ArtifactLinks []canon.ArtifactLink
 	HistoryItems  []canon.HistoryEntry
@@ -22,6 +23,10 @@ func (s *Sink) SessionRelation(v canon.SessionRelation) error {
 }
 func (s *Sink) Message(v canon.Message) error   { s.Messages = append(s.Messages, v); return nil }
 func (s *Sink) ToolCall(v canon.ToolCall) error { s.ToolCalls = append(s.ToolCalls, v); return nil }
+func (s *Sink) ToolResult(v canon.ToolResult) error {
+	s.ToolResults = append(s.ToolResults, v)
+	return nil
+}
 func (s *Sink) Artifact(v canon.Artifact) error { s.Artifacts = append(s.Artifacts, v); return nil }
 func (s *Sink) ArtifactLink(v canon.ArtifactLink) error {
 	s.ArtifactLinks = append(s.ArtifactLinks, v)

@@ -11,6 +11,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
@@ -58,6 +59,7 @@ type RecordSink interface {
 	SessionRelation(canon.SessionRelation) error
 	Message(canon.Message) error
 	ToolCall(canon.ToolCall) error
+	ToolResult(canon.ToolResult) error
 	Artifact(canon.Artifact) error
 	ArtifactLink(canon.ArtifactLink) error
 	History(canon.HistoryEntry) error
@@ -95,4 +97,32 @@ type RootSpec struct {
 	EnvIsList bool
 	ListSep   string // separator when EnvIsList; "," if empty
 	Defaults  []string
+}
+
+// TailState is the resume cursor for append-only sources: how many bytes
+// a previous parse consumed, a hash proving those bytes are unchanged,
+// and the sequence counters new records continue from. The pipeline
+// stores it opaquely (source_files.parse_state) and hands it back on the
+// next parse of the same source.
+type TailState struct {
+	Offset     int64  `json:"offset"`
+	PrefixHash string `json:"prefixHash"`
+	MessageSeq int    `json:"messageSeq"`
+	ToolSeq    int    `json:"toolSeq"`
+	LineNo     int    `json:"lineNo"` // lines consumed, so tail diagnostics report absolute lines
+}
+
+// ErrTailInvalid means a source cannot be resumed from its stored cursor
+// (it shrank, or the already-parsed prefix was rewritten). The pipeline
+// falls back to a full re-parse of the source.
+var ErrTailInvalid = errors.New("source cannot be resumed from its cursor")
+
+// TailParser is an optional adapter capability for append-only sources
+// (e.g. Claude Code's session JSONL): parse only the bytes added since
+// state and return the advanced cursor. A zero state means "parse
+// everything" and is how full parses of cursor-capable sources record
+// their initial cursor. Sources without cursor semantics (sidecars)
+// return a zero state.
+type TailParser interface {
+	ParseTail(ctx context.Context, src SourceRef, state TailState, sink RecordSink) (TailState, error)
 }

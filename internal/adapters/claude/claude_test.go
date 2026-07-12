@@ -2,6 +2,8 @@ package claude
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -245,5 +247,179 @@ func TestParseResumedSessionKeepsDedupeKeys(t *testing.T) {
 	// Branch changes fold to the last seen value.
 	if sink.Sessions[0].GitBranch != "feat/limits" {
 		t.Errorf("branch = %q, want feat/limits", sink.Sessions[0].GitBranch)
+	}
+}
+
+// tailFixture builds a session file in a temp root for cursor tests. The
+// initial content ends with an unanswered tool_use so a later-appended
+// tool_result must pair across the parse boundary.
+func tailFixture(t *testing.T) (agent.SourceRef, string) {
+	t.Helper()
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "projects", "-home-u-app")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(proj, "99999999-aaaa-bbbb-cccc-999999999999.jsonl")
+	initial := `{"type":"user","uuid":"u-1","sessionId":"99999999-aaaa-bbbb-cccc-999999999999","cwd":"/home/u/app","gitBranch":"main","timestamp":"2026-07-01T10:00:00.000Z","message":{"role":"user","content":"start the job"}}
+{"type":"assistant","uuid":"a-1","parentUuid":"u-1","timestamp":"2026-07-01T10:00:05.000Z","message":{"id":"msg_1","role":"assistant","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"ls"}}]}}
+`
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: dir, Origin: agent.RootFromDefault},
+		Path: path,
+		Kind: agent.SourceFile,
+	}
+	return src, path
+}
+
+func appendTo(t *testing.T, path, data string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(data); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+func TestParseTailEmitsOnlyAppendedRecords(t *testing.T) {
+	src, path := tailFixture(t)
+	ctx := context.Background()
+
+	first := &agenttest.Sink{}
+	state, err := New().ParseTail(ctx, src, agent.TailState{}, first)
+	if err != nil {
+		t.Fatalf("full ParseTail: %v", err)
+	}
+	fi, _ := os.Stat(path)
+	if state.Offset != fi.Size() || state.MessageSeq != 2 || state.ToolSeq != 1 {
+		t.Fatalf("initial cursor = %+v, want offset %d, 2 messages, 1 call", state, fi.Size())
+	}
+	if len(first.Messages) != 2 || len(first.ToolCalls) != 1 || len(first.ToolResults) != 0 {
+		t.Fatalf("full parse emitted %d/%d/%d msgs/calls/results",
+			len(first.Messages), len(first.ToolCalls), len(first.ToolResults))
+	}
+	if first.ToolCalls[0].ExternalID != "toolu_01" {
+		t.Errorf("call external id = %q", first.ToolCalls[0].ExternalID)
+	}
+
+	// The appended entries: the result for the pre-boundary call, then a
+	// fresh call answered within the tail.
+	appendTo(t, path, `{"type":"user","uuid":"u-2","parentUuid":"a-1","timestamp":"2026-07-01T10:01:00.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"file.txt"}]}}
+{"type":"assistant","uuid":"a-2","parentUuid":"u-2","timestamp":"2026-07-01T10:01:05.000Z","message":{"id":"msg_2","role":"assistant","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_02","name":"Read","input":{"file_path":"x.go"}}]}}
+{"type":"user","uuid":"u-3","parentUuid":"a-2","timestamp":"2026-07-01T10:01:10.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","content":"boom","is_error":true}]}}
+`)
+
+	second := &agenttest.Sink{}
+	newState, err := New().ParseTail(ctx, src, state, second)
+	if err != nil {
+		t.Fatalf("tail ParseTail: %v", err)
+	}
+	fi, _ = os.Stat(path)
+	if newState.Offset != fi.Size() {
+		t.Errorf("cursor offset = %d, want %d", newState.Offset, fi.Size())
+	}
+
+	// Only the three appended messages, with continued sequence numbers.
+	if len(second.Messages) != 3 {
+		t.Fatalf("tail emitted %d messages, want 3", len(second.Messages))
+	}
+	if second.Messages[0].Seq != 2 || second.Messages[2].Seq != 4 {
+		t.Errorf("tail message seqs = %d..%d, want 2..4",
+			second.Messages[0].Seq, second.Messages[2].Seq)
+	}
+
+	// The new call pairs its result in-batch and continues the tool seq.
+	if len(second.ToolCalls) != 1 {
+		t.Fatalf("tail emitted %d tool calls, want 1", len(second.ToolCalls))
+	}
+	call := second.ToolCalls[0]
+	if call.Seq != 1 || call.ExternalID != "toolu_02" || call.ResultStatus != "error" {
+		t.Errorf("tail call = %+v", call)
+	}
+
+	// The pre-boundary call's result crosses as a ToolResult record.
+	if len(second.ToolResults) != 1 {
+		t.Fatalf("tail emitted %d tool results, want 1", len(second.ToolResults))
+	}
+	res := second.ToolResults[0]
+	if res.CallExternalID != "toolu_01" || res.Status != "ok" || res.Excerpt != "file.txt" {
+		t.Errorf("late result = %+v", res)
+	}
+
+	// Session attributes folded from the tail: modification advances.
+	if len(second.Sessions) != 1 || second.Sessions[0].ModifiedAt.IsZero() {
+		t.Fatalf("tail sessions = %+v", second.Sessions)
+	}
+}
+
+func TestParseTailRejectsRewrittenPrefix(t *testing.T) {
+	src, path := tailFixture(t)
+	ctx := context.Background()
+
+	state, err := New().ParseTail(ctx, src, agent.TailState{}, &agenttest.Sink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite a byte inside the already-parsed prefix.
+	data, _ := os.ReadFile(path)
+	data[10] ^= 0xff
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New().ParseTail(ctx, src, state, &agenttest.Sink{}); !errors.Is(err, agent.ErrTailInvalid) {
+		t.Fatalf("rewritten prefix error = %v, want ErrTailInvalid", err)
+	}
+
+	// A truncated file (shorter than the cursor) is also unresumable.
+	if err := os.WriteFile(path, data[:20], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New().ParseTail(ctx, src, state, &agenttest.Sink{}); !errors.Is(err, agent.ErrTailInvalid) {
+		t.Fatalf("truncated file error = %v, want ErrTailInvalid", err)
+	}
+}
+
+func TestParseTailLeavesPartialLineForNextPass(t *testing.T) {
+	src, path := tailFixture(t)
+	ctx := context.Background()
+
+	state, err := New().ParseTail(ctx, src, agent.TailState{}, &agenttest.Sink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A mid-write append: no trailing newline yet.
+	appendTo(t, path, `{"type":"user","uuid":"u-2","message":{"role":"user","content":"half-writ`)
+	sink := &agenttest.Sink{}
+	mid, err := New().ParseTail(ctx, src, state, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mid.Offset != state.Offset || len(sink.Messages) != 0 {
+		t.Fatalf("partial line consumed: offset %d→%d, %d messages",
+			state.Offset, mid.Offset, len(sink.Messages))
+	}
+
+	// The write completes; the next pass picks up the whole line.
+	appendTo(t, path, `ten"},"timestamp":"2026-07-01T10:02:00.000Z"}`+"\n")
+	sink = &agenttest.Sink{}
+	done, err := New().ParseTail(ctx, src, mid, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Messages) != 1 || sink.Messages[0].Seq != 2 {
+		t.Fatalf("completed line parse = %d messages (seq %v), want 1 at seq 2",
+			len(sink.Messages), sink.Messages)
+	}
+	fi, _ := os.Stat(path)
+	if done.Offset != fi.Size() {
+		t.Errorf("final offset = %d, want %d", done.Offset, fi.Size())
 	}
 }

@@ -206,11 +206,12 @@ func (s *Store) ListRunIssues(ctx context.Context, runID int64) ([]IngestIssue, 
 type SourceSig struct {
 	ContentHash string
 	StatSig     string
+	ParseState  string // append cursor (agent.TailState JSON), "" if none
 }
 
 // SourceSigs returns the stored signatures for every known source path.
 func (s *Store) SourceSigs(ctx context.Context) (map[string]SourceSig, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT path, content_hash, stat_sig FROM source_files`)
+	rows, err := s.db.QueryContext(ctx, `SELECT path, content_hash, stat_sig, parse_state FROM source_files`)
 	if err != nil {
 		return nil, fmt.Errorf("reading source signatures: %w", err)
 	}
@@ -219,7 +220,7 @@ func (s *Store) SourceSigs(ctx context.Context) (map[string]SourceSig, error) {
 	for rows.Next() {
 		var path string
 		var sig SourceSig
-		if err := rows.Scan(&path, &sig.ContentHash, &sig.StatSig); err != nil {
+		if err := rows.Scan(&path, &sig.ContentHash, &sig.StatSig, &sig.ParseState); err != nil {
 			return nil, err
 		}
 		out[path] = sig

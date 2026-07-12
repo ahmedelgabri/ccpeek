@@ -138,6 +138,21 @@ func TestMigrateChainPreservesData(t *testing.T) {
 			priced INTEGER NOT NULL DEFAULT 1,
 			PRIMARY KEY (day, agent_id, workspace_id, model)
 		)`,
+		`DROP TABLE tool_calls`,
+		`CREATE TABLE tool_calls (
+			id INTEGER PRIMARY KEY,
+			session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+			message_seq INTEGER NOT NULL DEFAULT 0,
+			seq INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'other',
+			input_json TEXT NOT NULL DEFAULT '{}',
+			result_status TEXT NOT NULL DEFAULT '',
+			result_excerpt TEXT NOT NULL DEFAULT '',
+			file_path TEXT NOT NULL DEFAULT '',
+			started_at TEXT,
+			UNIQUE (session_id, seq)
+		)`,
 		`INSERT INTO agents (id, slug) VALUES (1, 'claude-code')`,
 		// A retained session whose source file no longer exists — exactly
 		// what a rebuild-from-sources would destroy.
@@ -175,14 +190,20 @@ func TestMigrateChainPreservesData(t *testing.T) {
 		t.Fatalf("SourceSigs: %v", err)
 	}
 	got, ok := sigs["/x/s.jsonl"]
-	if !ok || got.ContentHash != "abc" || got.StatSig != "" {
-		t.Fatalf("migrated source row = %+v (ok=%v), want hash abc + empty stat", got, ok)
+	if !ok || got.ContentHash != "abc" || got.StatSig != "" || got.ParseState != "" {
+		t.Fatalf("migrated source row = %+v (ok=%v), want hash abc + empty stat/cursor", got, ok)
 	}
 	// The cost-split columns exist and read as zero for migrated rows.
 	if _, err := s2.db.ExecContext(ctx, `
 		INSERT INTO rollup_usage_daily (day, agent_id, cost_usd, cost_reported_usd, cost_estimated_usd)
 		VALUES ('2026-01-01', 1, 1.0, 0.4, 0.6)`); err != nil {
 		t.Fatalf("cost-split columns missing after migration: %v", err)
+	}
+	// The tool-call external id column exists on migrated rows.
+	if _, err := s2.db.ExecContext(ctx, `
+		INSERT INTO tool_calls (session_id, seq, name, external_id)
+		SELECT id, 0, 'Bash', 'toolu_x' FROM sessions WHERE external_id = 'ghost-session'`); err != nil {
+		t.Fatalf("tool_calls.external_id missing after migration: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,5 +318,167 @@ func copyDir(t *testing.T, src, dst string) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAppendParsesOnlyNewBytes proves the cursor path end-to-end: an
+// append re-parses nothing before the cursor, keeps the session's
+// creation-time attributes, applies a cross-boundary tool result to the
+// stored call, and advances the stored cursor.
+func TestAppendParsesOnlyNewBytes(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(tmp, "claude-code", "projects", "-home-u-demo-api",
+		"11111111-aaaa-bbbb-cccc-111111111111.jsonl")
+	var title, createdAt string
+	row := store.DB().QueryRowContext(ctx, `
+		SELECT title, created_at FROM sessions WHERE external_id = '11111111-aaaa-bbbb-cccc-111111111111'`)
+	if err := row.Scan(&title, &createdAt); err != nil {
+		t.Fatal(err)
+	}
+	sigs, err := store.SourceSigs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursorBefore := sigs[target].ParseState
+	if cursorBefore == "" {
+		t.Fatal("no cursor recorded for the session source after a full parse")
+	}
+	msgIDsBefore := queryInt(t, store, `
+		SELECT COALESCE(SUM(m.id), 0) FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.external_id = '11111111-aaaa-bbbb-cccc-111111111111'`)
+
+	// Append a new tool call and, crucially, a result for a call that was
+	// already indexed by the full parse (external id tu-002 from the
+	// fixture) — it must update the stored row across the parse boundary.
+	appendLines := `{"parentUuid":"u-105","isSidechain":false,"cwd":"/home/u/demo/api","sessionId":"11111111-aaaa-bbbb-cccc-111111111111","gitBranch":"main","type":"assistant","message":{"id":"msg_z","role":"assistant","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_late","name":"Bash","input":{"command":"go test"}}]},"uuid":"a-late","timestamp":"2026-07-01T14:00:00.000Z"}` + "\n" +
+		`{"parentUuid":"a-late","isSidechain":false,"cwd":"/home/u/demo/api","sessionId":"11111111-aaaa-bbbb-cccc-111111111111","gitBranch":"main","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-002","content":"refreshed output"}]},"uuid":"u-late","timestamp":"2026-07-01T14:00:05.000Z"}` + "\n"
+	f, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(appendLines); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	report, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FilesChanged != 1 || report.Messages != 2 {
+		t.Fatalf("append run changed=%d messages=%d, want 1/2 (only the appended entries parsed)",
+			report.FilesChanged, report.Messages)
+	}
+
+	// Pre-existing message rows are untouched, not cleared and re-inserted.
+	msgIDsAfter := queryInt(t, store, `
+		SELECT COALESCE(SUM(m.id), 0) FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.external_id = '11111111-aaaa-bbbb-cccc-111111111111'
+		  AND m.external_id NOT IN ('a-late', 'u-late')`)
+	if msgIDsAfter != msgIDsBefore {
+		t.Errorf("pre-existing message row ids changed (%d → %d): session was re-parsed, not appended",
+			msgIDsBefore, msgIDsAfter)
+	}
+
+	// Creation-time attributes survive; modification advances.
+	var title2, createdAt2, modifiedAt2 string
+	row = store.DB().QueryRowContext(ctx, `
+		SELECT title, created_at, modified_at FROM sessions WHERE external_id = '11111111-aaaa-bbbb-cccc-111111111111'`)
+	if err := row.Scan(&title2, &createdAt2, &modifiedAt2); err != nil {
+		t.Fatal(err)
+	}
+	if title2 != title || createdAt2 != createdAt {
+		t.Errorf("append rewrote creation attributes: title %q→%q, created %q→%q",
+			title, title2, createdAt, createdAt2)
+	}
+	if modifiedAt2 != "2026-07-01T14:00:05Z" {
+		t.Errorf("modified_at = %q, want the appended entry's timestamp", modifiedAt2)
+	}
+
+	// The new call landed with its external id and continued seq.
+	if n := queryInt(t, store, `
+		SELECT COUNT(*) FROM tool_calls WHERE external_id = 'toolu_late' AND seq = 2`); n != 1 {
+		t.Errorf("appended tool call rows = %d, want 1 at seq 2", n)
+	}
+
+	// The cross-boundary result reached the stored call.
+	var status, excerpt string
+	row = store.DB().QueryRowContext(ctx,
+		`SELECT result_status, result_excerpt FROM tool_calls WHERE external_id = 'tu-002'`)
+	if err := row.Scan(&status, &excerpt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "ok" || excerpt != "refreshed output" {
+		t.Errorf("cross-boundary result = %q %q, want ok/refreshed output", status, excerpt)
+	}
+
+	// The cursor advanced.
+	sigs, err = store.SourceSigs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sigs[target].ParseState == cursorBefore {
+		t.Error("cursor did not advance after the append")
+	}
+}
+
+// TestRewrittenPrefixFallsBackToFullParse: when the already-parsed bytes
+// change (history rewritten, not appended), the cursor is invalid and the
+// source re-parses fully — without duplicating rows.
+func TestRewrittenPrefixFallsBackToFullParse(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	before := queryInt(t, store, `SELECT COUNT(*) FROM messages`)
+
+	// Rewrite the file's first line (change the recorded branch).
+	target := filepath.Join(tmp, "claude-code", "projects", "-home-u-demo-api",
+		"22222222-aaaa-bbbb-cccc-222222222222.jsonl")
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := []byte(strings.Replace(string(data), `"gitBranch":"feat/limits"`, `"gitBranch":"feat/limitz"`, 1))
+	if len(rewritten) != len(data) || string(rewritten) == string(data) {
+		t.Fatal("fixture rewrite did not apply as a same-length prefix change")
+	}
+	if err := os.WriteFile(target, rewritten, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FilesChanged != 1 {
+		t.Fatalf("files changed = %d, want 1", report.FilesChanged)
+	}
+	if report.Status != "ok" {
+		t.Fatalf("status = %q, issues: %v", report.Status, report.Issues)
+	}
+	after := queryInt(t, store, `SELECT COUNT(*) FROM messages`)
+	if after != before {
+		t.Errorf("messages %d → %d after prefix rewrite, want unchanged (full re-parse, no dupes)", before, after)
 	}
 }

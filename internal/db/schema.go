@@ -15,7 +15,7 @@ import (
 // (prune is opt-in), v1-imported orphans, and user annotations, none of
 // which a rebuild-from-sources could restore. Migrating in place also
 // keeps startup instant instead of re-ingesting the corpus.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -118,6 +118,9 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 	session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
 	message_seq INTEGER NOT NULL DEFAULT 0,
 	seq INTEGER NOT NULL,
+	-- Agent-native call id (e.g. a tool_use block id): lets a result that
+	-- arrives in later-appended source bytes attach to its call.
+	external_id TEXT NOT NULL DEFAULT '',
 	name TEXT NOT NULL,
 	kind TEXT NOT NULL DEFAULT 'other',
 	input_json TEXT NOT NULL DEFAULT '{}',
@@ -199,6 +202,10 @@ CREATE TABLE IF NOT EXISTS source_files (
 	agent_id INTEGER NOT NULL REFERENCES agents(id),
 	content_hash TEXT NOT NULL,
 	stat_sig TEXT NOT NULL DEFAULT '',
+	-- Append cursor (agent.TailState JSON) for adapters that can resume
+	-- parsing at the byte where the last pass stopped; '' means the next
+	-- change re-parses the whole source.
+	parse_state TEXT NOT NULL DEFAULT '',
 	indexed_at TEXT NOT NULL
 );
 
@@ -401,5 +408,20 @@ var migrations = []migration{
 				PRIMARY KEY (entity_type, entity_key)
 			)`)
 		return err
+	},
+	// v5 → v6: append-cursor ingest. Existing sources have no cursor and
+	// no per-call external ids, so their next change re-parses the whole
+	// source once and records a cursor for the runs after.
+	func(ctx context.Context, tx *sql.Tx) error {
+		stmts := []string{
+			`ALTER TABLE source_files ADD COLUMN parse_state TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE tool_calls ADD COLUMN external_id TEXT NOT NULL DEFAULT ''`,
+		}
+		for _, q := range stmts {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
 	},
 }

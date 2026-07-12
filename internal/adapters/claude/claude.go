@@ -12,8 +12,11 @@ package claude
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,20 +143,48 @@ type contentBlock struct {
 // in sidecar.go. Individual bad lines become diagnostics, never file
 // failures.
 func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
-	if kind := classify(src.Root, src.Path); kind != srcSession {
-		return a.parseSidecar(ctx, kind, src, sink)
-	}
-	return a.parseSession(ctx, src, sink)
+	_, err := a.ParseTail(ctx, src, agent.TailState{}, sink)
+	return err
 }
 
-// parseSession reads one session JSONL file and emits Session, Message,
-// and ToolCall records.
-func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
+// ParseTail implements agent.TailParser: session JSONL is append-only, so
+// a stored cursor lets a changed source parse only its new bytes. A zero
+// state parses everything and returns the initial cursor. Sidecars have
+// no cursor semantics and always parse fully.
+func (a *Adapter) ParseTail(ctx context.Context, src agent.SourceRef, state agent.TailState, sink agent.RecordSink) (agent.TailState, error) {
+	if kind := classify(src.Root, src.Path); kind != srcSession {
+		return agent.TailState{}, a.parseSidecar(ctx, kind, src, sink)
+	}
+	return a.parseSession(ctx, src, state, sink)
+}
+
+// parseSession reads one session JSONL file from the cursor (or the
+// start) and emits Session, Message, ToolCall, and ToolResult records.
+// Only complete lines are consumed: a partially-written trailing line
+// stays ahead of the returned cursor for the next pass.
+func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state agent.TailState, sink agent.RecordSink) (agent.TailState, error) {
 	f, err := os.Open(src.Path)
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", src.Path, err)
+		return state, fmt.Errorf("opening %s: %w", src.Path, err)
 	}
 	defer f.Close()
+
+	hasher := sha256.New()
+	r := bufio.NewReaderSize(f, 64*1024)
+	resuming := state.Offset > 0
+	if resuming {
+		// The cursor is only valid if the bytes it covers are unchanged:
+		// re-hash the prefix and compare. Cheap relative to parsing — no
+		// JSON is decoded.
+		if n, err := io.CopyN(hasher, r, state.Offset); err != nil || n < state.Offset {
+			return agent.TailState{}, agent.ErrTailInvalid // file shrank
+		}
+		if hex.EncodeToString(hasher.Sum(nil)) != state.PrefixHash {
+			return agent.TailState{}, agent.ErrTailInvalid // prefix rewritten
+		}
+	} else {
+		state = agent.TailState{}
+	}
 
 	sessionID := strings.TrimSuffix(filepath.Base(src.Path), ".jsonl")
 	sess := canon.Session{
@@ -163,80 +194,121 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, sink ag
 	}
 
 	var (
-		messages   []canon.Message
-		toolCalls  []canon.ToolCall
-		pendingUse = map[string]int{} // tool_use block id → index into toolCalls
+		messages    []canon.Message
+		toolCalls   []canon.ToolCall
+		lateResults []canon.ToolResult
+		pendingUse  = map[string]int{} // tool_use block id → index into toolCalls
 	)
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
-	lineNo := 0
-	for scanner.Scan() {
+	offset := state.Offset
+	lineNo := state.LineNo
+	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return state, err
 		}
+		raw, rerr := readLine(r)
+		if rerr != nil && rerr != io.EOF {
+			return state, fmt.Errorf("reading %s: %w", src.Path, rerr)
+		}
+		if len(raw) == 0 || raw[len(raw)-1] != '\n' {
+			// Partial trailing line (mid-write): leave it for the next pass.
+			break
+		}
+		hasher.Write(raw)
+		offset += int64(len(raw))
 		lineNo++
-		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
+
+		line := strings.TrimSpace(string(raw))
+		if line == "" {
 			continue
 		}
-		var raw rawLine
-		if err := json.Unmarshal(line, &raw); err != nil {
+		var entry rawLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			if serr := sink.Issue(canon.Issue{
 				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
 				SourcePath: src.Path, Line: lineNo,
 				Detail: fmt.Sprintf("skipping unparseable line: %v", err),
 			}); serr != nil {
-				return serr
+				return state, serr
 			}
 			continue
 		}
-		switch raw.Type {
+		switch entry.Type {
 		case "user", "assistant", "system":
 		default:
 			continue // progress lines and future types are not transcript entries
 		}
-		if raw.SessionID != "" && sess.ExternalID == "" {
-			sess.ExternalID = raw.SessionID
+		if entry.SessionID != "" && sess.ExternalID == "" {
+			sess.ExternalID = entry.SessionID
 		}
 
-		msg, calls := a.convertLine(raw, len(messages))
-		a.foldSession(&sess, raw, msg)
+		msg, calls := a.convertLine(entry, state.MessageSeq+len(messages))
+		a.foldSession(&sess, entry, msg)
 
 		for _, c := range calls {
 			c.call.SessionExternalID = sess.ExternalID
-			c.call.Seq = len(toolCalls)
+			c.call.Seq = state.ToolSeq + len(toolCalls)
 			if c.useID != "" {
 				pendingUse[c.useID] = len(toolCalls)
 			}
 			toolCalls = append(toolCalls, c.call)
 		}
-		a.pairResults(raw, pendingUse, toolCalls)
+		lateResults = a.pairResults(entry, pendingUse, toolCalls, resuming, sess.ExternalID, lateResults)
 
 		msg.SessionExternalID = sess.ExternalID
 		messages = append(messages, msg)
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanning %s: %w", src.Path, err)
+
+	newState := agent.TailState{
+		Offset:     offset,
+		PrefixHash: hex.EncodeToString(hasher.Sum(nil)),
+		MessageSeq: state.MessageSeq + len(messages),
+		ToolSeq:    state.ToolSeq + len(toolCalls),
+		LineNo:     lineNo,
 	}
 	if len(messages) == 0 {
-		return nil // not a transcript (empty or all-noise file); nothing to emit
+		// Not a transcript (or nothing new): nothing to emit, but the
+		// cursor still advances past what was read.
+		return newState, nil
 	}
 
 	if err := sink.Session(sess); err != nil {
-		return err
+		return state, err
 	}
 	for _, m := range messages {
 		if err := sink.Message(m); err != nil {
-			return err
+			return state, err
 		}
 	}
 	for _, c := range toolCalls {
 		if err := sink.ToolCall(c); err != nil {
-			return err
+			return state, err
 		}
 	}
-	return nil
+	for _, res := range lateResults {
+		if err := sink.ToolResult(res); err != nil {
+			return state, err
+		}
+	}
+	return newState, nil
+}
+
+// readLine returns the next line including its trailing newline, so the
+// caller can hash and count exactly the bytes consumed. A final unterminated
+// line is returned (without a trailing newline) alongside io.EOF.
+func readLine(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		line = append(line, frag...)
+		if err == bufio.ErrBufferFull {
+			if len(line) > maxLineBytes {
+				return line, fmt.Errorf("line exceeds %d bytes", maxLineBytes)
+			}
+			continue
+		}
+		return line, err
+	}
 }
 
 // emittedCall carries a tool call together with the tool_use block id it
@@ -302,6 +374,7 @@ func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []emittedCal
 			useID: block.ID,
 			call: canon.ToolCall{
 				MessageSeq: seq,
+				ExternalID: block.ID,
 				Name:       block.Name,
 				Kind:       normalizeTool(block.Name),
 				Input:      block.Input,
@@ -339,27 +412,39 @@ func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Messag
 }
 
 // pairResults attaches tool_result blocks in this line to the pending
-// tool_use they answer.
-func (a *Adapter) pairResults(raw rawLine, pending map[string]int, calls []canon.ToolCall) {
+// tool_use they answer. When resuming from a cursor, a result whose
+// tool_use sits in the already-indexed prefix can't be paired in memory —
+// it is collected as a canon.ToolResult for the sink to apply to the
+// stored call instead.
+func (a *Adapter) pairResults(raw rawLine, pending map[string]int, calls []canon.ToolCall, resuming bool, sessionID string, late []canon.ToolResult) []canon.ToolResult {
 	var payload rawMessage
 	if len(raw.Message) == 0 || json.Unmarshal(raw.Message, &payload) != nil {
-		return
+		return late
 	}
 	for _, block := range blocks(payload.Content) {
 		if block.Type != "tool_result" || block.ToolUseID == "" {
-			continue
-		}
-		idx, ok := pending[block.ToolUseID]
-		if !ok {
 			continue
 		}
 		status := "ok"
 		if block.IsError {
 			status = "error"
 		}
+		idx, ok := pending[block.ToolUseID]
+		if !ok {
+			if resuming {
+				late = append(late, canon.ToolResult{
+					SessionExternalID: sessionID,
+					CallExternalID:    block.ToolUseID,
+					Status:            status,
+					Excerpt:           excerpt(block.Content),
+				})
+			}
+			continue
+		}
 		calls[idx].ResultStatus = status
 		calls[idx].ResultExcerpt = excerpt(block.Content)
 	}
+	return late
 }
 
 func blocks(content json.RawMessage) []contentBlock {
