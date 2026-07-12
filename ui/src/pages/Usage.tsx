@@ -21,6 +21,37 @@ const GroupBars = lazy(() =>
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 
+// pivotSearch builds the /sessions filter for a usage row: the row's own
+// dimension plus every filter already active on this page, so drilling
+// down never widens the scope.
+function pivotSearch(
+  group: string,
+  value: string,
+  active: { agent: string; model: string; since: string; until: string },
+): Record<string, string> {
+  const search: Record<string, string> = {};
+  if (active.agent) search.agent = active.agent;
+  if (active.model) search.model = active.model;
+  if (active.since) search.since = active.since;
+  if (active.until) search.until = active.until;
+  switch (group) {
+    case "day":
+      search.since = value;
+      search.until = value;
+      break;
+    case "agent":
+      search.agent = value;
+      break;
+    case "model":
+      search.model = value;
+      break;
+    case "project":
+      search.project = value;
+      break;
+  }
+  return search;
+}
+
 type SortKey = "group" | "sessions" | "tokens" | "cacheRead" | "cost";
 
 const SORT_VALUE: Record<
@@ -223,33 +254,20 @@ export function UsagePage() {
                 <td className="px-4 py-2 font-mono text-xs">
                   {!r.group ? (
                     <span className="text-ink-dim">(no {group})</span>
-                  ) : group === "day" ? (
-                    <Link
-                      to="/sessions"
-                      search={{ since: r.group, until: r.group }}
-                      title="Sessions active on this day"
-                      className="hover:text-accent"
-                    >
-                      {r.group}
-                    </Link>
-                  ) : group === "agent" ? (
-                    <Link
-                      to="/sessions"
-                      search={{ agent: r.group }}
-                      className="hover:text-accent"
-                    >
-                      {r.group}
-                    </Link>
-                  ) : group === "project" ? (
-                    <Link
-                      to="/sessions"
-                      search={{ project: r.group }}
-                      className="hover:text-accent"
-                    >
-                      {r.group}
-                    </Link>
                   ) : (
-                    r.group
+                    <Link
+                      to="/sessions"
+                      search={pivotSearch(group, r.group, {
+                        agent,
+                        model,
+                        since,
+                        until,
+                      })}
+                      title="Sessions matching this row (and the active filters)"
+                      className="hover:text-accent"
+                    >
+                      {r.group}
+                    </Link>
                   )}
                   {r.hasUnpriced && (
                     <span className="ml-2 text-warn" title="Contains unpriced tokens">
