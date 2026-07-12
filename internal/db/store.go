@@ -6,8 +6,9 @@
 // always the latest schema; migrations run only for existing older
 // databases; opening a current database performs no scans, no backfills,
 // no repairs. The store is an archive, not a cache — see schemaVersion
-// for why migrations are mandatory. Derived data and user state are
-// disjoint — ResetDerived (--rebuild) never touches user_annotations.
+// for the migration policy (none pre-release, mandatory after v2.0).
+// Derived data and user state are disjoint — ResetDerived (--rebuild)
+// never touches user_annotations.
 package db
 
 import (
@@ -124,6 +125,10 @@ func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 // ErrFutureSchema means the database was created by a newer ccpeek.
 var ErrFutureSchema = errors.New("database schema is newer than this ccpeek version")
 
+// ErrNoMigrationPath means the database is older than this build supports
+// upgrading from (a pre-release database with no compatibility promise).
+var ErrNoMigrationPath = errors.New("no migration path from this database version")
+
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
@@ -146,6 +151,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("%w: database at v%d, binary supports v%d",
 			ErrFutureSchema, current, schemaVersion)
 
+	case current < baseVersion:
+		return fmt.Errorf("%w: database at v%d, this build upgrades from v%d — pre-release databases must be re-created (delete %s and its -wal/-shm files)",
+			ErrNoMigrationPath, current, baseVersion, s.path)
+
 	case current < schemaVersion:
 		for v := current; v < schemaVersion; v++ {
 			if err := s.applyMigration(ctx, v); err != nil {
@@ -161,7 +170,7 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 func (s *Store) applyMigration(ctx context.Context, from int) error {
-	idx := from - 1
+	idx := from - baseVersion
 	if idx < 0 || idx >= len(migrations) {
 		return fmt.Errorf("no migration registered from v%d", from)
 	}

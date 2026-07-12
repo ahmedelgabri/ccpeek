@@ -10,12 +10,24 @@ import (
 // directly and never replay migrations; existing databases run only the
 // pending entries of migrations. Open-time backfills stay banned.
 //
-// Migrations are mandatory even pre-release: the store is an archive,
-// not a cache — it retains sessions whose source files were cleaned up
+// Policy until the v2.0 release: schema changes edit initialSchema
+// directly and bump this constant — no migration entries. A database
+// stamped with an older version refuses to open with instructions to
+// delete it (pre-release builds have no compatibility promise). From the
+// release onward, migrations are mandatory: the store is an archive, not
+// a cache — it retains sessions whose source files were cleaned up
 // (prune is opt-in), v1-imported orphans, and user annotations, none of
-// which a rebuild-from-sources could restore. Migrating in place also
-// keeps startup instant instead of re-ingesting the corpus.
+// which a rebuild-from-sources could restore — so every schema change
+// then ships as an entry in migrations, and migrating in place keeps
+// startup instant instead of re-ingesting the corpus.
 const schemaVersion = 6
+
+// baseVersion is the oldest schema version this build can upgrade from:
+// migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
+// len(migrations) == schemaVersion - baseVersion always holds. Until the
+// v2.0 release it tracks schemaVersion (no upgrade path); at the release
+// it freezes at the released baseline and never moves again.
+const baseVersion = 6
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -364,64 +376,12 @@ var derivedTables = []string{
 }
 
 // migration is a single schema upgrade step. migrations[i] upgrades from
-// version i+1 to i+2. Fresh databases are created at the latest schema
-// and never replay these.
+// version baseVersion+i to baseVersion+i+1. Fresh databases are created
+// at the latest schema and never replay these.
 type migration func(ctx context.Context, tx *sql.Tx) error
 
-var migrations = []migration{
-	// v1 → v2: stat fast-path for incremental ingest. Existing rows get an
-	// empty signature, which never matches — every source re-hashes once
-	// and records its stat on the next run.
-	func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`ALTER TABLE source_files ADD COLUMN stat_sig TEXT NOT NULL DEFAULT ''`)
-		return err
-	},
-	// v2 → v3: reported/estimated cost split in the rollups. Existing rows
-	// are dropped — the ingest pipeline regenerates rollups whenever they
-	// are empty, so the next start rebuilds them with the split.
-	func(ctx context.Context, tx *sql.Tx) error {
-		stmts := []string{
-			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_reported_usd REAL NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_estimated_usd REAL NOT NULL DEFAULT 0`,
-			`DELETE FROM rollup_usage_daily`,
-		}
-		for _, q := range stmts {
-			if _, err := tx.ExecContext(ctx, q); err != nil {
-				return err
-			}
-		}
-		return nil
-	},
-	// v3 → v4: no structural change (v4 was stamped during a brief
-	// rebuild-on-mismatch experiment; databases created then are already
-	// at the current shape).
-	func(ctx context.Context, tx *sql.Tx) error { return nil },
-	// v4 → v5: incremental secret scanning. scan_state starts empty, so
-	// the next scan examines everything once and is incremental after.
-	func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			CREATE TABLE IF NOT EXISTS scan_state (
-				entity_type TEXT NOT NULL,
-				entity_key TEXT NOT NULL,
-				content_hash TEXT NOT NULL DEFAULT '',
-				PRIMARY KEY (entity_type, entity_key)
-			)`)
-		return err
-	},
-	// v5 → v6: append-cursor ingest. Existing sources have no cursor and
-	// no per-call external ids, so their next change re-parses the whole
-	// source once and records a cursor for the runs after.
-	func(ctx context.Context, tx *sql.Tx) error {
-		stmts := []string{
-			`ALTER TABLE source_files ADD COLUMN parse_state TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE tool_calls ADD COLUMN external_id TEXT NOT NULL DEFAULT ''`,
-		}
-		for _, q := range stmts {
-			if _, err := tx.ExecContext(ctx, q); err != nil {
-				return err
-			}
-		}
-		return nil
-	},
-}
+// migrations is intentionally empty until the v2.0 release: pre-release
+// schema changes go straight into initialSchema (see schemaVersion). The
+// first released schema becomes the baseline; every change after it
+// appends an entry here and bumps schemaVersion.
+var migrations = []migration{}

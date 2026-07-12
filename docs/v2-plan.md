@@ -132,14 +132,19 @@ Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
 **Schema policy:** the store is an archive, not a cache — it retains
 sessions whose source files were cleaned up (prune is opt-in),
 v1-imported orphans, and user annotations, none of which a
-rebuild-from-sources could restore. Schema changes therefore always
-ship as in-place migrations (`internal/db/schema.go`), even
-pre-release; a rebuild is never an acceptable upgrade path, and
-migrating in place keeps startup instant. The initial schema is always
-the latest (fresh databases never replay migrations), open performs no
-backfills, and a database from a newer ccpeek refuses to open. The v1
-`ccpeek.db` → v2 importer (`internal/migrate`) is a separate, mandatory
-one-time migration.
+rebuild-from-sources could restore. The migration machinery lives in
+`internal/db` (`migrations` slice anchored at `baseVersion`,
+transactional apply, version stamping) but stays dormant until the v2.0
+release: pre-release schema changes edit the initial schema directly
+and bump `schemaVersion`/`baseVersion` together, and a database stamped
+older than the baseline refuses to open with re-create instructions —
+never a silent wipe. From the release onward the baseline freezes and
+every schema change ships as a migration entry; a rebuild is never an
+acceptable upgrade path, and migrating in place keeps startup instant.
+The initial schema is always the latest (fresh databases never replay
+migrations), open performs no backfills, and a database from a newer
+ccpeek refuses to open. The v1 `ccpeek.db` → v2 importer
+(`internal/migrate`) is a separate, mandatory one-time migration.
 
 ---
 
