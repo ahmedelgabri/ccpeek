@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useHighlight } from "../highlight";
 import { DiffView } from "../Diff";
@@ -25,6 +25,12 @@ import {
 
 const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
 
+// The transcript pages forward through the API's from/limit window (the
+// server caps a single response at 1000 rows). A session can run to many
+// thousands of messages, so we fetch a page at a time and append rather
+// than truncating at the first thousand.
+const TRANSCRIPT_PAGE = 1000;
+
 // The gathering point of the session-centric model: one session with its
 // transcript, commands, tool calls, files touched, usage, relations, and
 // linked artifacts — each facet a deep-linkable tab (?tab=).
@@ -43,10 +49,42 @@ export function SessionDetailPage() {
     queryKey: ["session", agent, sessionId],
     queryFn: () => api.session(agent, sessionId),
   });
-  const transcript = useQuery({
+  const transcript = useInfiniteQuery({
     queryKey: ["transcript", agent, sessionId],
-    queryFn: () => api.transcript(agent, sessionId, { limit: "1000" }),
+    queryFn: ({ pageParam }) =>
+      api.transcript(agent, sessionId, {
+        from: String(pageParam),
+        limit: String(TRANSCRIPT_PAGE),
+      }),
+    initialPageParam: 0,
+    // A short page means the tail was reached; a full page means there may
+    // be more, starting just past the last seq we got.
+    getNextPageParam: (last) =>
+      last && last.length === TRANSCRIPT_PAGE
+        ? last[last.length - 1].seq + 1
+        : undefined,
   });
+  const msgs = useMemo(
+    () => (transcript.data?.pages ?? []).flatMap((p) => p ?? []),
+    [transcript.data],
+  );
+
+  // A deep link (?seq=N from search) may land past the first page: keep
+  // pulling pages until the target seq is loaded, then the Transcript
+  // scrolls it into view.
+  useEffect(() => {
+    if (search.seq === undefined) return;
+    const loaded = msgs.length > 0 && msgs[msgs.length - 1].seq >= search.seq;
+    if (!loaded && transcript.hasNextPage && !transcript.isFetchingNextPage) {
+      void transcript.fetchNextPage();
+    }
+  }, [
+    search.seq,
+    msgs,
+    transcript.hasNextPage,
+    transcript.isFetchingNextPage,
+    transcript.fetchNextPage, // stable across renders (react-query memoizes it)
+  ]);
   const tools = useQuery({
     queryKey: ["tools", agent, sessionId],
     queryFn: () => api.sessionTools(agent, sessionId),
@@ -181,9 +219,14 @@ export function SessionDetailPage() {
 
       {tab === "transcript" && (
         <Transcript
-          msgs={transcript.data ?? []}
+          msgs={msgs}
           tools={toolRows}
           focusSeq={search.seq}
+          total={s.messages}
+          loading={transcript.isLoading}
+          hasMore={transcript.hasNextPage}
+          loadingMore={transcript.isFetchingNextPage}
+          onLoadMore={() => void transcript.fetchNextPage()}
         />
       )}
       {tab === "commands" && <CommandsTab commands={commands} />}
@@ -203,10 +246,20 @@ function Transcript({
   msgs,
   tools,
   focusSeq,
+  total,
+  loading,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: {
   msgs: TranscriptMessage[];
   tools: ToolCallRow[];
   focusSeq?: number;
+  total: number;
+  loading: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
 }) {
   const [treeView, setTreeView] = useState(false);
   // Meta entries (toolResult, system, …) render as one-line excerpts;
@@ -250,14 +303,32 @@ function Transcript({
       ?.scrollIntoView({ block: "center" });
   }, [focusSeq, msgs.length]);
 
+  // Infinite scroll: pull the next page as the sentinel nears the
+  // viewport. The button below is the explicit, accessible fallback.
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore || loadingMore) return;
+    const node = sentinel.current;
+    if (!node) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { rootMargin: "800px" },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [hasMore, loadingMore, onLoadMore]);
+
   return (
     <div ref={container}>
       <div className="mb-2 flex items-center gap-3">
-        {hidden > 0 && (
-          <span className="font-mono text-[11px] text-ink-faint">
-            {hidden} empty entries folded
-          </span>
-        )}
+        <span className="font-mono text-[11px] text-ink-faint">
+          {total > msgs.length
+            ? `${msgs.length} of ${total} messages`
+            : `${total} messages`}
+          {hidden > 0 && ` · ${hidden} empty folded`}
+        </span>
         <button
           onClick={() => setTreeView((v) => !v)}
           className={`ml-auto rounded-md border border-edge px-2 py-1 font-mono text-xs ${
@@ -376,7 +447,23 @@ function Transcript({
           );
         })}
       </ol>
-      {msgs.length === 0 && <EmptyNote>No transcript entries.</EmptyNote>}
+      {hasMore && (
+        <div ref={sentinel} className="mt-3 flex justify-center">
+          <button
+            onClick={onLoadMore}
+            disabled={loadingMore}
+            className="rounded-md border border-edge px-3 py-1.5 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
+          >
+            {loadingMore
+              ? "Loading…"
+              : `Load more — ${msgs.length} of ${total}`}
+          </button>
+        </div>
+      )}
+      {loading && msgs.length === 0 && <SkeletonRows rows={6} />}
+      {!loading && msgs.length === 0 && (
+        <EmptyNote>No transcript entries.</EmptyNote>
+      )}
     </div>
   );
 }
