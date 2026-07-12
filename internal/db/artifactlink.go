@@ -133,3 +133,114 @@ func (s *Store) LinkPlanArtifacts(ctx context.Context) (int, error) {
 	}
 	return linked, nil
 }
+
+// MemoryPathSuffix maps a memory artifact's name ("<projectDir>/<file>")
+// to the tail of the on-disk path a tool call writes it at
+// (".../projects/<projectDir>/memory/<file>"); ok=false when the name
+// has no directory component.
+func MemoryPathSuffix(name string) (string, bool) {
+	dir, base, found := strings.Cut(name, "/")
+	if !found || dir == "" || base == "" {
+		return "", false
+	}
+	return "/projects/" + dir + "/memory/" + base, true
+}
+
+// LinkMemoryArtifacts connects memory artifacts to the sessions that
+// wrote them: memory files are created and updated through file_write /
+// file_edit tool calls whose file_path lands inside the project's memory
+// directory, so the call's path is direct provenance. Like the plan
+// resolver, only unlinked memories are examined, and a memory written by
+// several sessions over time links to each.
+func (s *Store) LinkMemoryArtifacts(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ar.id, ar.agent_id, ar.name FROM artifacts ar
+		WHERE ar.kind = 'memory'
+		  AND NOT EXISTS (SELECT 1 FROM artifact_sessions ass WHERE ass.artifact_id = ar.id)`)
+	if err != nil {
+		return 0, fmt.Errorf("listing unlinked memories: %w", err)
+	}
+	type memory struct {
+		id      int64
+		agentID int64
+		suffix  string
+	}
+	var memories []memory
+	for rows.Next() {
+		var m memory
+		var name string
+		if err := rows.Scan(&m.id, &m.agentID, &name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if suffix, ok := MemoryPathSuffix(name); ok {
+			m.suffix = suffix
+			memories = append(memories, m)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(memories) == 0 {
+		return 0, nil
+	}
+
+	rows, err = s.db.QueryContext(ctx, `
+		SELECT DISTINCT se.agent_id, tc.session_id, tc.file_path
+		FROM tool_calls tc
+		JOIN sessions se ON se.id = tc.session_id
+		WHERE tc.kind IN ('file_write', 'file_edit')
+		  AND tc.file_path LIKE '%/memory/%'`)
+	if err != nil {
+		return 0, fmt.Errorf("listing memory writes: %w", err)
+	}
+	type write struct {
+		agentID   int64
+		sessionID int64
+		path      string
+	}
+	var writes []write
+	for rows.Next() {
+		var w write
+		if err := rows.Scan(&w.agentID, &w.sessionID, &w.path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		writes = append(writes, w)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	linked := 0
+	for _, m := range memories {
+		for _, w := range writes {
+			if w.agentID != m.agentID || !strings.HasSuffix(w.path, m.suffix) {
+				continue
+			}
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO artifact_sessions (artifact_id, session_id, relation, evidence)
+				VALUES (?, ?, ?, ?)
+				ON CONFLICT(artifact_id, session_id, relation) DO NOTHING`,
+				m.id, w.sessionID,
+				string(canon.LinkProducedBy), string(canon.EvidenceContentRef))
+			if err != nil {
+				return 0, fmt.Errorf("linking memory %d: %w", m.id, err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				linked++
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return linked, nil
+}

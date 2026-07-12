@@ -197,5 +197,40 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 			return nil, err
 		}
 	}
+
+	// Memories anchor to the last file_write/file_edit that targeted their
+	// on-disk path in each linked session — the call that actually wrote
+	// this memory, scanning in seq order so the final update wins.
+	if kind == "memory" && len(d.SessionIDs) > 0 {
+		if suffix, ok := db.MemoryPathSuffix(name); ok {
+			mrows, err := s.store.ReadDB().QueryContext(ctx, `
+				SELECT se.external_id, tc.message_seq, tc.file_path
+				FROM artifact_sessions ass
+				JOIN tool_calls tc ON tc.session_id = ass.session_id
+				JOIN sessions se ON se.id = tc.session_id
+				WHERE ass.artifact_id = ? AND tc.kind IN ('file_write', 'file_edit')
+				ORDER BY tc.seq`, id)
+			if err != nil {
+				return nil, err
+			}
+			defer mrows.Close()
+			for mrows.Next() {
+				var sid, path string
+				var seq int
+				if err := mrows.Scan(&sid, &seq, &path); err != nil {
+					return nil, err
+				}
+				if strings.HasSuffix(path, suffix) {
+					if d.SessionAnchors == nil {
+						d.SessionAnchors = map[string]int{}
+					}
+					d.SessionAnchors[sid] = seq
+				}
+			}
+			if err := mrows.Err(); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return d, nil
 }

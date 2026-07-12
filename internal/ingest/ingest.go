@@ -190,10 +190,15 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		report.LinksPending = pending
 	}
 	// Plans land on disk as slug-named markdown with no session id; link
-	// them to the ExitPlanMode call that produced them by plan text. Runs
-	// every pass and self-heals — only unlinked plans are examined, so a
-	// settled corpus costs one small query.
+	// them to the ExitPlanMode call that produced them by plan text.
+	// Memories link to the sessions whose file_write/file_edit calls
+	// targeted their path. Both run every pass and self-heal — only
+	// unlinked artifacts are examined, so a settled corpus costs two
+	// small queries.
 	if _, err := r.store.LinkPlanArtifacts(ctx); err != nil {
+		return nil, r.fail(ctx, report, started, err)
+	}
+	if _, err := r.store.LinkMemoryArtifacts(ctx); err != nil {
 		return nil, r.fail(ctx, report, started, err)
 	}
 	// Rollups also regenerate when they are empty despite indexed usage —

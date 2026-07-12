@@ -162,3 +162,68 @@ func TestPlanAnchorMatchesItsOwnCall(t *testing.T) {
 		t.Errorf("plan sessionIds = %v", plan.SessionIDs)
 	}
 }
+
+// TestMemoryAnchorPointsAtItsWrite: a memory anchors to the last write
+// that targeted its path, not other memory writes in the same session.
+func TestMemoryAnchorPointsAtItsWrite(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "sess-mem",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, tc := range []canon.ToolCall{
+		{
+			MessageSeq: 2, Name: "Write", Kind: canon.ToolFileWrite,
+			FilePath: "/h/.claude/projects/-p/memory/MEMORY.md",
+		},
+		{
+			MessageSeq: 7, Name: "Edit", Kind: canon.ToolFileEdit,
+			FilePath: "/h/.claude/projects/-p/memory/MEMORY.md",
+		},
+		{
+			MessageSeq: 9, Name: "Write", Kind: canon.ToolFileWrite,
+			FilePath: "/h/.claude/projects/-p/memory/unrelated.md",
+		},
+	} {
+		tc.Seq = i
+		if err := w.InsertToolCall(sessID, tc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactMemory, Name: "-p/MEMORY.md",
+		Content: "# notes",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkMemoryArtifacts(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := New(store, table).Artifact(ctx, "claude-code", "memory", "-p/MEMORY.md", nil)
+	if err != nil {
+		t.Fatalf("Artifact(memory): %v", err)
+	}
+	if got := mem.SessionAnchors["sess-mem"]; got != 7 {
+		t.Errorf("memory anchor = %d, want 7 (its own last edit, not the unrelated write)", got)
+	}
+}
