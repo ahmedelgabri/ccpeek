@@ -5,6 +5,7 @@ import {
   Link,
   Outlet,
 } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
@@ -17,6 +18,7 @@ import { ArtifactDetailPage } from "./pages/ArtifactDetail";
 import { ScanPage } from "./pages/Scan";
 import { ComparePage } from "./pages/Compare";
 import { Palette } from "./Palette";
+import { getThemePref, setThemePref, type ThemePref } from "./theme";
 
 // The sidebar mirrors the entity map: activity first, then the session
 // hub, then what hangs off it.
@@ -66,6 +68,36 @@ function IndexingBanner() {
   );
 }
 
+// ThemeToggle cycles system → light → dark. The preference persists in
+// localStorage and applies before hydration (index.html), so it holds
+// across restarts without a flash.
+const THEME_ORDER: ThemePref[] = ["system", "light", "dark"];
+const THEME_GLYPH: Record<ThemePref, string> = {
+  system: "◐",
+  light: "☀",
+  dark: "☾",
+};
+
+function ThemeToggle() {
+  const [pref, setPref] = useState<ThemePref>(getThemePref);
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(pref) + 1) % 3];
+  return (
+    <button
+      onClick={() => {
+        setThemePref(next);
+        setPref(next);
+      }}
+      className="microlabel flex items-center gap-2 transition-colors hover:text-ink"
+      title={`Theme: ${pref} — click for ${next}`}
+    >
+      <span aria-hidden className="text-xs leading-none">
+        {THEME_GLYPH[pref]}
+      </span>
+      theme · {pref}
+    </button>
+  );
+}
+
 function Layout() {
   return (
     <div className="flex min-h-screen">
@@ -99,6 +131,7 @@ function Layout() {
           ))}
         </nav>
         <div className="mt-auto space-y-2 px-4 pb-4">
+          <ThemeToggle />
           <div className="microlabel flex items-center gap-2">
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
             local · 127.0.0.1

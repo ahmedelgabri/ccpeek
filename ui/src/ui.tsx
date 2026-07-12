@@ -363,7 +363,7 @@ export function FilterBar({
   children?: ReactNode;
 }) {
   const dateCls =
-    "rounded-md border border-edge bg-surface-1 px-2 py-1 font-mono text-xs text-ink-dim [color-scheme:dark] focus:text-ink";
+    "rounded-md border border-edge bg-surface-1 px-2 py-1 font-mono text-xs text-ink-dim focus:text-ink";
   return (
     <div className="ml-auto flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1.5">

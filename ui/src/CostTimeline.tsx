@@ -10,6 +10,7 @@ import {
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { api, shortPath, type UsageRow } from "./api";
+import { cssColor, useResolvedTheme } from "./theme";
 
 echarts.use([
   BarChart,
@@ -24,18 +25,30 @@ echarts.use([
 // without (say) pi never repaints the survivors. The set is validated
 // (scripts in the dataviz method) against the surface-1 background:
 // worst adjacent CVD ΔE 15.7, all ≥3:1 contrast.
-const AGENT_COLORS: Record<string, string> = {
-  "claude-code": "#3987e5",
-  pi: "#199e70",
-  codex: "#c98500",
-  opencode: "#9085e9",
-  cursor: "#e66767",
-};
-const AGENTS = Object.keys(AGENT_COLORS);
+const AGENTS = ["claude-code", "pi", "codex", "opencode", "cursor"];
 
-const SURFACE = "#11151f"; // --color-surface-1: the card the chart sits on
-const INK_DIM = "#8b93a7";
-const EDGE = "#232b3d";
+// Canvas renderers can't consume CSS variables, so the palette resolves
+// from the design tokens at option-build time — the components re-build
+// on theme changes (useResolvedTheme) to pick up the other scheme.
+function chartPalette() {
+  return {
+    agents: Object.fromEntries(
+      AGENTS.map((a) => [a, cssColor(`--color-agent-${a.split("-")[0]}`)]),
+    ) as Record<string, string>,
+    surface: cssColor("--color-surface-1"),
+    surface2: cssColor("--color-surface-2"),
+    ink: cssColor("--color-ink"),
+    inkDim: cssColor("--color-ink-dim"),
+    inkFaint: cssColor("--color-ink-faint"),
+    edge: cssColor("--color-edge"),
+    accent: cssColor("--color-accent"),
+  };
+}
+type ChartPalette = ReturnType<typeof chartPalette>;
+
+function withAlpha(rgb: string, alpha: number): string {
+  return rgb.replace("rgb(", "rgba(").replace(")", `, ${alpha})`);
+}
 
 type DaySeries = { agent: string; byDay: Map<string, number> };
 
@@ -69,7 +82,7 @@ async function fetchDailyCostByAgent(
   return results.filter((s) => s.byDay.size > 0);
 }
 
-function buildOption(series: DaySeries[]) {
+function buildOption(series: DaySeries[], pal: ChartPalette) {
   const days = Array.from(
     new Set(series.flatMap((s) => Array.from(s.byDay.keys()))),
   ).sort();
@@ -83,32 +96,32 @@ function buildOption(series: DaySeries[]) {
       icon: "roundRect",
       itemWidth: 10,
       itemHeight: 10,
-      textStyle: { color: INK_DIM, fontSize: 12 },
+      textStyle: { color: pal.inkDim, fontSize: 12 },
     },
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "shadow" },
-      backgroundColor: "#1a2030", // --color-surface-2
-      borderColor: EDGE,
-      textStyle: { color: "#d6dbe7", fontSize: 12 },
+      backgroundColor: pal.surface2,
+      borderColor: pal.edge,
+      textStyle: { color: pal.ink, fontSize: 12 },
       valueFormatter: (v: unknown) =>
         typeof v === "number" && v > 0 ? `$${v.toFixed(2)}` : "—",
     },
     xAxis: {
       type: "category",
       data: days,
-      axisLine: { lineStyle: { color: EDGE } },
+      axisLine: { lineStyle: { color: pal.edge } },
       axisTick: { show: false },
-      axisLabel: { color: INK_DIM, fontSize: 11 },
+      axisLabel: { color: pal.inkDim, fontSize: 11 },
     },
     yAxis: {
       type: "value",
       axisLabel: {
-        color: INK_DIM,
+        color: pal.inkDim,
         fontSize: 11,
         formatter: (v: number) => `$${v}`,
       },
-      splitLine: { lineStyle: { color: EDGE } },
+      splitLine: { lineStyle: { color: pal.edge } },
     },
     dataZoom: [
       { type: "inside" },
@@ -116,11 +129,11 @@ function buildOption(series: DaySeries[]) {
         type: "slider",
         height: 20,
         bottom: 8,
-        borderColor: EDGE,
-        backgroundColor: SURFACE,
-        fillerColor: "rgba(122,162,247,0.15)",
-        handleStyle: { color: INK_DIM },
-        textStyle: { color: INK_DIM, fontSize: 10 },
+        borderColor: pal.edge,
+        backgroundColor: pal.surface,
+        fillerColor: withAlpha(pal.accent, 0.15),
+        handleStyle: { color: pal.inkDim },
+        textStyle: { color: pal.inkDim, fontSize: 10 },
       },
     ],
     series: series.map((s) => ({
@@ -128,10 +141,10 @@ function buildOption(series: DaySeries[]) {
       type: "bar",
       stack: "cost",
       data: days.map((d) => s.byDay.get(d) ?? 0),
-      color: AGENT_COLORS[s.agent],
+      color: pal.agents[s.agent],
       // 2px surface gap between stacked segments so adjacency never
       // rides on hue alone.
-      itemStyle: { borderColor: SURFACE, borderWidth: 1 },
+      itemStyle: { borderColor: pal.surface, borderWidth: 1 },
       barMaxWidth: 28,
       emphasis: { focus: "series" },
     })),
@@ -150,6 +163,8 @@ export function GroupBars({
   group: string;
 }) {
   const el = useRef<HTMLDivElement>(null);
+  const theme = useResolvedTheme();
+  const pal = chartPalette();
   const top = rows
     .filter((r) => r.costUSD > 0)
     .slice(0, 20)
@@ -164,28 +179,28 @@ export function GroupBars({
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#1a2030",
-        borderColor: EDGE,
-        textStyle: { color: "#d6dbe7", fontSize: 12 },
+        backgroundColor: pal.surface2,
+        borderColor: pal.edge,
+        textStyle: { color: pal.ink, fontSize: 12 },
         valueFormatter: (v: unknown) =>
           typeof v === "number" ? `$${v.toFixed(2)}` : "",
       },
       xAxis: {
         type: "value",
         axisLabel: {
-          color: INK_DIM,
+          color: pal.inkDim,
           fontSize: 11,
           formatter: (v: number) => `$${v}`,
         },
-        splitLine: { lineStyle: { color: EDGE } },
+        splitLine: { lineStyle: { color: pal.edge } },
       },
       yAxis: {
         type: "category",
         data: top.map((r) => r.group || "(none)"),
-        axisLine: { lineStyle: { color: EDGE } },
+        axisLine: { lineStyle: { color: pal.edge } },
         axisTick: { show: false },
         axisLabel: {
-          color: INK_DIM,
+          color: pal.inkDim,
           fontSize: 11,
           // Paths differentiate at the tail: shorten the home prefix and
           // truncate from the left, never into "/Users/ahmed/code/…".
@@ -203,8 +218,8 @@ export function GroupBars({
             itemStyle: {
               color:
                 group === "agent"
-                  ? (AGENT_COLORS[r.group] ?? "#5c6478")
-                  : "#7aa2f7",
+                  ? (pal.agents[r.group] ?? pal.inkFaint)
+                  : pal.accent,
             },
           })),
           barMaxWidth: 18,
@@ -212,14 +227,14 @@ export function GroupBars({
           label: {
             show: true,
             position: "right",
-            color: INK_DIM,
+            color: pal.inkDim,
             fontSize: 10,
             formatter: ({ value }: { value: number }) => `$${value.toFixed(2)}`,
           },
         },
       ],
     };
-  useEChart(el, option, [rows, group]);
+  useEChart(el, option, [rows, group, theme]);
 
   if (top.length === 0) return null;
   return (
@@ -312,7 +327,11 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
   const series = useMemo(() => data ?? [], [data]);
 
   const el = useRef<HTMLDivElement>(null);
-  useEChart(el, series.length > 0 ? buildOption(series) : null, [series]);
+  const theme = useResolvedTheme();
+  useEChart(el, series.length > 0 ? buildOption(series, chartPalette()) : null, [
+    series,
+    theme,
+  ]);
 
   if (series.length === 0 && !isLoading) return null;
 

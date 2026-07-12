@@ -1,45 +1,63 @@
 @import "tailwindcss";
 
-/* Instrument-panel tokens: deep ink surfaces, hairline edges, one
-   phosphor accent, and the validated per-agent palette (worst adjacent
-   CVD ΔE 15.7 on surface-1; see CostTimeline). IBM Plex carries the
-   industrial voice — Mono for data, Sans for prose. */
+/* Instrument-panel tokens: ink surfaces, hairline edges, one phosphor
+   accent, and the validated per-agent palette (worst adjacent CVD ΔE
+   15.7 on surface-1; see CostTimeline). IBM Plex carries the industrial
+   voice — Mono for data, Sans for prose.
+
+   Every color is a light-dark() pair: the resolved value follows the
+   root's color-scheme, which defaults to the system preference and is
+   pinned by the theme toggle via data-theme (see theme.ts). Light
+   values keep each token's hue and role, darkened to hold ≥4.5:1 as
+   text on the light card surface. */
 @theme {
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 
-  --color-surface: #0a0d13;
-  --color-surface-1: #11151f;
-  --color-surface-2: #1a2030;
-  --color-edge: #232b3d;
-  --color-edge-strong: #303a52;
-  --color-ink: #d6dbe7;
-  --color-ink-dim: #8b93a7;
-  --color-ink-faint: #5c6478;
-  --color-accent: #7aa2f7;
-  --color-ok: #9ece6a;
-  --color-warn: #e0af68;
+  --color-surface: light-dark(#f3f5f9, #0a0d13);
+  --color-surface-1: light-dark(#fbfcfe, #11151f);
+  --color-surface-2: light-dark(#e7ebf3, #1a2030);
+  --color-edge: light-dark(#d9dfe9, #232b3d);
+  --color-edge-strong: light-dark(#b8c2d3, #303a52);
+  --color-ink: light-dark(#232a3b, #d6dbe7);
+  --color-ink-dim: light-dark(#5a6377, #8b93a7);
+  --color-ink-faint: light-dark(#8a92a5, #5c6478);
+  --color-accent: light-dark(#3060c9, #7aa2f7);
+  --color-ok: light-dark(#4f7d23, #9ece6a);
+  --color-warn: light-dark(#96690f, #e0af68);
 
-  --color-agent-claude: #3987e5;
-  --color-agent-pi: #199e70;
-  --color-agent-codex: #c98500;
-  --color-agent-opencode: #9085e9;
-  --color-agent-cursor: #e66767;
+  --color-agent-claude: light-dark(#2c6ecb, #3987e5);
+  --color-agent-pi: light-dark(#0f7d58, #199e70);
+  --color-agent-codex: light-dark(#9a6700, #c98500);
+  --color-agent-opencode: light-dark(#6d5fc9, #9085e9);
+  --color-agent-cursor: light-dark(#c94f4f, #e66767);
 
   /* Transcript registers: the user speaks in accent, the assistant in
      violet. Identity never rides on color alone — glyphs, labels, and
      card layout differ too. */
-  --color-assistant: #bb9af7;
+  --color-assistant: light-dark(#6d4fc4, #bb9af7);
 
   /* Tool-call kinds (chips always carry the tool name as text). */
-  --color-tool-shell: #e0af68;
-  --color-tool-edit: #ff9e64;
-  --color-tool-write: #9ece6a;
-  --color-tool-read: #7dcfff;
-  --color-tool-search: #2ac3de;
-  --color-tool-discovery: #73daca;
-  --color-tool-web: #d55181;
-  --color-tool-subagent: #bb9af7;
+  --color-tool-shell: light-dark(#96690f, #e0af68);
+  --color-tool-edit: light-dark(#b95c1d, #ff9e64);
+  --color-tool-write: light-dark(#4f7d23, #9ece6a);
+  --color-tool-read: light-dark(#1f6f9d, #7dcfff);
+  --color-tool-search: light-dark(#0e7d92, #2ac3de);
+  --color-tool-discovery: light-dark(#177a68, #73daca);
+  --color-tool-web: light-dark(#b23a68, #d55181);
+  --color-tool-subagent: light-dark(#6d4fc4, #bb9af7);
+}
+
+/* Theme selection: the system preference by default; data-theme (set by
+   the toggle before hydration, see index.html) pins one scheme. */
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 body {
@@ -120,7 +138,7 @@ body {
 .hljs-selector-tag,
 .hljs-tag,
 .hljs-name {
-  color: #bb9af7;
+  color: var(--color-assistant);
 }
 .hljs-string,
 .hljs-regexp,
@@ -144,7 +162,7 @@ body {
 .hljs-built_in,
 .hljs-type,
 .hljs-class {
-  color: #2ac3de;
+  color: var(--color-tool-search);
 }
 .hljs-variable,
 .hljs-template-variable,
