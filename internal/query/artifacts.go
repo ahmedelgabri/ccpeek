@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
 // ArtifactSummary is one row of the `artifacts` op.
@@ -89,10 +91,12 @@ type ArtifactDetail struct {
 
 // producerTool names the tool call whose latest occurrence in a session
 // produced an artifact of a given kind. Only kinds emitted by a tool call
-// appear here; the rest have no message-level provenance.
+// appear here; the rest have no message-level provenance. Plans are not
+// listed: a session can hold several plans, so their anchor is resolved
+// by matching plan text against ExitPlanMode inputs instead of "last
+// call wins" (see the plan block in Artifact).
 var producerTool = map[string]string{
 	"todo_list": "TodoWrite",
-	"plan":      "ExitPlanMode",
 }
 
 // Artifact fetches one artifact with content and linked sessions.
@@ -154,5 +158,44 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 		}
 	}
 	d.Sessions = len(d.SessionIDs)
-	return d, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Plans anchor to the specific ExitPlanMode call whose plan text
+	// matches this artifact — a session can hold several plans, so the
+	// generic last-producer heuristic would point them all at one message.
+	// Calls scan in seq order so a repeated approval (resumed session)
+	// settles on the latest occurrence.
+	if kind == "plan" && len(d.SessionIDs) > 0 && d.Content != "" {
+		want := db.NormalizePlanText(d.Content)
+		prows, err := s.store.ReadDB().QueryContext(ctx, `
+			SELECT se.external_id, tc.message_seq, tc.input_json
+			FROM artifact_sessions ass
+			JOIN tool_calls tc ON tc.session_id = ass.session_id
+			JOIN sessions se ON se.id = tc.session_id
+			WHERE ass.artifact_id = ? AND tc.name = 'ExitPlanMode'
+			ORDER BY tc.seq`, id)
+		if err != nil {
+			return nil, err
+		}
+		defer prows.Close()
+		for prows.Next() {
+			var sid, input string
+			var seq int
+			if err := prows.Scan(&sid, &seq, &input); err != nil {
+				return nil, err
+			}
+			if text, ok := db.ExtractPlanText(input); ok && db.NormalizePlanText(text) == want {
+				if d.SessionAnchors == nil {
+					d.SessionAnchors = map[string]int{}
+				}
+				d.SessionAnchors[sid] = seq
+			}
+		}
+		if err := prows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return d, nil
 }

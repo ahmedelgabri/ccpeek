@@ -98,3 +98,67 @@ func TestArtifactSessionAnchors(t *testing.T) {
 		t.Errorf("memory sessionIds = %v, want the linked session", mem.SessionIDs)
 	}
 }
+
+// TestPlanAnchorMatchesItsOwnCall: a session holding several plans must
+// anchor each plan artifact to the ExitPlanMode call that carried ITS
+// text, not the session's last one.
+func TestPlanAnchorMatchesItsOwnCall(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "sess-plans",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		msgSeq, seq int
+		plan        string
+	}{
+		{3, 0, `{"plan":"# First plan"}`},
+		{12, 1, `{"plan":"# Second plan"}`},
+	} {
+		if err := w.InsertToolCall(sessID, canon.ToolCall{
+			MessageSeq: tc.msgSeq, Seq: tc.seq, Name: "ExitPlanMode",
+			Kind: canon.ToolOther, Input: []byte(tc.plan),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactPlan, Name: "first.md",
+		Content: "# First plan\n",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlanArtifacts(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := New(store, table).Artifact(ctx, "claude-code", "plan", "first.md", nil)
+	if err != nil {
+		t.Fatalf("Artifact(plan): %v", err)
+	}
+	if got := plan.SessionAnchors["sess-plans"]; got != 3 {
+		t.Errorf("plan anchor = %d, want 3 (the call carrying this plan, not the last)", got)
+	}
+	if len(plan.SessionIDs) != 1 || plan.SessionIDs[0] != "sess-plans" {
+		t.Errorf("plan sessionIds = %v", plan.SessionIDs)
+	}
+}

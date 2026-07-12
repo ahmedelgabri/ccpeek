@@ -79,9 +79,18 @@ func TestRunOverFixtureCorpus(t *testing.T) {
 	if report.History != 2 {
 		t.Errorf("history = %d, want 2", report.History)
 	}
-	// Artifact links resolved against ingested sessions.
-	if n := queryInt(t, store, `SELECT COUNT(*) FROM artifact_sessions`); n != 4 {
-		t.Errorf("artifact_sessions = %d, want 4 (todo, task, file-history, facet)", n)
+	// Artifact links resolved against ingested sessions — including the
+	// plan, linked by matching its text to session 2's ExitPlanMode call.
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM artifact_sessions`); n != 5 {
+		t.Errorf("artifact_sessions = %d, want 5 (todo, task, file-history, facet, plan)", n)
+	}
+	if n := queryInt(t, store, `
+		SELECT COUNT(*) FROM artifact_sessions ass
+		JOIN artifacts a ON a.id = ass.artifact_id
+		JOIN sessions s ON s.id = ass.session_id
+		WHERE a.kind = 'plan' AND ass.evidence = 'content_ref'
+		  AND s.external_id = '22222222-aaaa-bbbb-cccc-222222222222'`); n != 1 {
+		t.Errorf("plan content_ref links = %d, want 1", n)
 	}
 	// Two corrupted fixture lines (one per agent corpus).
 	if len(report.Issues) != 2 {
