@@ -29,7 +29,7 @@ export function OverviewPage() {
   const stats = useQuery({ queryKey: ["stats"], queryFn: api.stats });
   const recent = useQuery({
     queryKey: ["sessions", "recent"],
-    queryFn: () => api.sessions({ limit: "8" }),
+    queryFn: () => api.sessions({ limit: "12" }),
   });
 
   const st = stats.data;
