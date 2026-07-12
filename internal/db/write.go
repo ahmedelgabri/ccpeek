@@ -218,12 +218,18 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		if err != nil {
 			return err
 		}
+		// The literal content_id <> '' predicate is what makes the partial
+		// index idx_messages_content_id eligible — the planner cannot prove
+		// a bound parameter is non-empty, and without the index this lookup
+		// walks every message of the agent, turning first-run ingest into
+		// O(messages²) (measured: minutes of the first pass).
 		var dup int
 		err = w.tx.QueryRowContext(w.ctx, `
 			SELECT 1 FROM message_usage u
 			JOIN messages m ON m.id = u.message_id
 			JOIN sessions s ON s.id = m.session_id
-			WHERE s.agent_id = ? AND m.content_id = ? AND u.request_id = ?
+			WHERE s.agent_id = ? AND m.content_id = ? AND m.content_id <> ''
+			  AND u.request_id = ?
 			LIMIT 1`,
 			agentID, msg.ContentID, msg.Usage.RequestID).Scan(&dup)
 		switch {
