@@ -131,10 +131,12 @@ func run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("initializing scanner: %w", err)
 		}
-		findings, err := scanner.Run(ctx)
+		findings, report, err := scanner.Run(ctx)
 		if err != nil {
 			return fmt.Errorf("scan failed: %w", err)
 		}
+		logf("  Scanned %d changed session(s), %d changed artifact(s)\n",
+			report.SessionsScanned, report.ArtifactsScanned)
 		active := 0
 		for _, f := range findings {
 			if !f.Ignored {

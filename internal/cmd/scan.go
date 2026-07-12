@@ -50,6 +50,7 @@ Results are stored in the database and viewable in the web UI at /scan/.`,
 
 func init() {
 	scanCmd.Flags().StringP("format", "f", "text", "Output format: text, json")
+	scanCmd.Flags().Bool("full", false, "Re-scan everything, discarding incremental scan state")
 	scanCmd.Flags().Bool("v2", true, "Deprecated no-op: the v2 index is always scanned")
 	_ = scanCmd.Flags().MarkHidden("v2")
 	rootCmd.AddCommand(scanCmd)

@@ -15,7 +15,7 @@ import (
 // (prune is opt-in), v1-imported orphans, and user annotations, none of
 // which a rebuild-from-sources could restore. Migrating in place also
 // keeps startup instant instead of re-ingesting the corpus.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -256,6 +256,16 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 
 -- Secret-scan findings are derived (rescannable); the user's ignore
 -- decisions live in user_annotations keyed by natural key.
+-- scan_state records the content hash each entity carried when it was
+-- last scanned, making rescans incremental: only entities whose hash
+-- moved (or that were never scanned) are re-examined.
+CREATE TABLE IF NOT EXISTS scan_state (
+	entity_type TEXT NOT NULL,
+	entity_key TEXT NOT NULL,
+	content_hash TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (entity_type, entity_key)
+);
+
 CREATE TABLE IF NOT EXISTS scan_findings (
 	id INTEGER PRIMARY KEY,
 	rule_id TEXT NOT NULL,
@@ -325,6 +335,7 @@ CREATE TABLE IF NOT EXISTS user_annotations (
 // respects foreign keys (children first). search_fts is handled separately.
 var derivedTables = []string{
 	"scan_findings",
+	"scan_state",
 	"rollup_usage_daily",
 	"ingest_issues",
 	"ingest_runs",
@@ -379,4 +390,16 @@ var migrations = []migration{
 	// rebuild-on-mismatch experiment; databases created then are already
 	// at the current shape).
 	func(ctx context.Context, tx *sql.Tx) error { return nil },
+	// v4 → v5: incremental secret scanning. scan_state starts empty, so
+	// the next scan examines everything once and is incremental after.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS scan_state (
+				entity_type TEXT NOT NULL,
+				entity_key TEXT NOT NULL,
+				content_hash TEXT NOT NULL DEFAULT '',
+				PRIMARY KEY (entity_type, entity_key)
+			)`)
+		return err
+	},
 }

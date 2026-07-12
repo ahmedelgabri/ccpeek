@@ -35,10 +35,16 @@ func runScanV2(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	findings, err := scanner.Run(ctx)
+	run := scanner.Run
+	if full, _ := cmd.Flags().GetBool("full"); full {
+		run = scanner.RunFull
+	}
+	findings, report, err := run(ctx)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stderr, "Scanned %d changed session(s), %d changed artifact(s)\n",
+		report.SessionsScanned, report.ArtifactsScanned)
 
 	active := 0
 	for _, f := range findings {

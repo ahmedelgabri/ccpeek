@@ -3,6 +3,13 @@
 // artifacts, not just Claude's (docs/v2-plan.md §6: nothing else scans
 // your Codex/Cursor history for keys).
 //
+// Scanning is incremental: scan_state remembers the content hash each
+// entity carried when it was last scanned, so a pass only re-runs the
+// detector over sessions and artifacts whose hash moved (an active
+// session, a fresh plan) and keeps stored findings for everything
+// untouched. A full-corpus sweep on a large history costs minutes; the
+// typical incremental pass costs seconds.
+//
 // Findings are derived data (scan_findings); the user's ignore decisions
 // live in user_annotations under natural keys shaped exactly like the
 // v1 importer writes them — "<entity_type>/<source_id>/<rule_id>/<line>" —
@@ -12,9 +19,13 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/zricethezav/gitleaks/v8/detect"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
@@ -28,6 +39,13 @@ type Finding struct {
 	MatchRedacted string `json:"matchRedacted"`
 	Line          int    `json:"line"`
 	Ignored       bool   `json:"ignored"`
+}
+
+// Report counts what a pass actually ran the detector over (entities
+// whose stored scan state already matched were skipped).
+type Report struct {
+	SessionsScanned  int
+	ArtifactsScanned int
 }
 
 // Scanner runs gitleaks over the v2 store.
@@ -45,63 +63,409 @@ func New(store *db.Store) (*Scanner, error) {
 	return &Scanner{detector: d, store: store}, nil
 }
 
-// Run scans all indexed content and replaces scan_findings. It returns
-// every finding with its ignored state resolved from user_annotations.
-func (sc *Scanner) Run(ctx context.Context) ([]Finding, error) {
-	var all []Finding
+// Run scans entities whose content changed since their last scan,
+// replaces their findings, and returns the complete stored findings set
+// with ignored state resolved from user_annotations.
+func (sc *Scanner) Run(ctx context.Context) ([]Finding, Report, error) {
+	var report Report
 
-	if err := sc.scanMessages(ctx, &all); err != nil {
-		return nil, err
-	}
-	if err := sc.scanArtifacts(ctx, &all); err != nil {
-		return nil, err
-	}
-
-	sqlDB := sc.store.DB()
-	tx, err := sqlDB.BeginTx(ctx, nil)
+	state, err := sc.loadState(ctx)
 	if err != nil {
-		return nil, err
+		return nil, report, err
+	}
+	if err := sc.scanSessions(ctx, state, &report); err != nil {
+		return nil, report, err
+	}
+	if err := sc.scanArtifacts(ctx, state, &report); err != nil {
+		return nil, report, err
+	}
+	if err := sc.dropVanished(ctx, state); err != nil {
+		return nil, report, err
+	}
+
+	findings, err := sc.allFindings(ctx)
+	return findings, report, err
+}
+
+// RunFull forgets all scan state and findings first, forcing a complete
+// re-scan (`ccpeek scan --full` — e.g. after a gitleaks ruleset update,
+// which changes what a scan would find without changing any content
+// hash).
+func (sc *Scanner) RunFull(ctx context.Context) ([]Finding, Report, error) {
+	tx, err := sc.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return nil, Report{}, err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scan_state`); err != nil {
+		return nil, Report{}, fmt.Errorf("clearing scan state: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM scan_findings`); err != nil {
-		return nil, fmt.Errorf("clearing findings: %w", err)
-	}
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO scan_findings
-			(rule_id, description, entity_type, natural_key, match_redacted, line_number, scanned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, f := range all {
-		if _, err := stmt.ExecContext(ctx, f.RuleID, f.Description,
-			f.EntityType, f.NaturalKey, f.MatchRedacted, f.Line, now); err != nil {
-			return nil, fmt.Errorf("inserting finding: %w", err)
-		}
+		return nil, Report{}, fmt.Errorf("clearing findings: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
+		return nil, Report{}, err
+	}
+	return sc.Run(ctx)
+}
+
+// scanEntity is one scan_state row plus a liveness mark: entities still
+// unseen after both scan passes have vanished from the index.
+type scanEntity struct {
+	hash string
+	seen bool
+}
+
+// stateKey joins entity type and key with a separator no slug/id
+// contains, so one map serves both entity types.
+func stateKey(entityType, entityKey string) string {
+	return entityType + "\x00" + entityKey
+}
+
+func (sc *Scanner) loadState(ctx context.Context) (map[string]*scanEntity, error) {
+	rows, err := sc.store.ReadDB().QueryContext(ctx,
+		`SELECT entity_type, entity_key, content_hash FROM scan_state`)
+	if err != nil {
+		return nil, fmt.Errorf("reading scan state: %w", err)
+	}
+	defer rows.Close()
+	state := map[string]*scanEntity{}
+	for rows.Next() {
+		var typ, key, hash string
+		if err := rows.Scan(&typ, &key, &hash); err != nil {
+			return nil, err
+		}
+		state[stateKey(typ, key)] = &scanEntity{hash: hash}
+	}
+	return state, rows.Err()
+}
+
+// markChanged records that an entity exists and reports whether its
+// content moved since the last scan (or was never scanned).
+func markChanged(state map[string]*scanEntity, entityType, entityKey, hash string) bool {
+	if st, ok := state[stateKey(entityType, entityKey)]; ok {
+		st.seen = true
+		if st.hash == hash {
+			return false
+		}
+		st.hash = hash
+		return true
+	}
+	state[stateKey(entityType, entityKey)] = &scanEntity{hash: hash, seen: true}
+	return true
+}
+
+func (sc *Scanner) scanSessions(ctx context.Context, state map[string]*scanEntity, report *Report) error {
+	type sessionRow struct {
+		id             int64
+		external, hash string
+		key            string // agent-qualified: slug/external_id
+	}
+	rows, err := sc.store.ReadDB().QueryContext(ctx, `
+		SELECT se.id, a.slug, se.external_id, se.content_hash
+		FROM sessions se JOIN agents a ON a.id = se.agent_id`)
+	if err != nil {
+		return fmt.Errorf("listing sessions: %w", err)
+	}
+	var changed []sessionRow
+	for rows.Next() {
+		var s sessionRow
+		var slug string
+		if err := rows.Scan(&s.id, &slug, &s.external, &s.hash); err != nil {
+			rows.Close()
+			return err
+		}
+		s.key = slug + "/" + s.external
+		if markChanged(state, "session", s.key, s.hash) {
+			changed = append(changed, s)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Detection is regex CPU work and dominates the pass; a full sweep is
+	// single-threaded minutes vs parallel tens of seconds. The gitleaks
+	// detector is safe to share across goroutines (gitleaks itself fans
+	// file scans out over one detector); writes serialize on the store's
+	// single writer connection.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
+	var scanned atomic.Int64
+	for _, s := range changed {
+		g.Go(func() error {
+			findings, err := sc.detectSessionMessages(gctx, s.id, s.external)
+			if err != nil {
+				return err
+			}
+			if err := sc.replaceFindings(gctx,
+				"message", "message/"+s.external, "session", s.key, s.hash,
+				findings); err != nil {
+				return err
+			}
+			scanned.Add(1)
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	report.SessionsScanned = int(scanned.Load())
+	return nil
+}
+
+// scanBatchSize bounds how many rows each paging query returns. Detection
+// is regex work over every row — an open cursor for a big session's whole
+// scan would pin a read-pool connection; paging releases it between
+// batches.
+const scanBatchSize = 500
+
+// detectSessionMessages runs the detector over one session's messages.
+func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, externalID string) ([]Finding, error) {
+	type row struct {
+		seq     int
+		content string
+	}
+	var out []Finding
+	lastSeq := -1
+	for {
+		batch := make([]row, 0, scanBatchSize)
+		rows, err := sc.store.ReadDB().QueryContext(ctx, `
+			SELECT m.seq, m.content
+			FROM messages m
+			WHERE m.session_id = ? AND m.seq > ?
+			ORDER BY m.seq
+			LIMIT ?`, sessionID, lastSeq, scanBatchSize)
+		if err != nil {
+			return nil, fmt.Errorf("reading messages: %w", err)
+		}
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.seq, &r.content); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			batch = append(batch, r)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if len(batch) == 0 {
+			return out, nil
+		}
+
+		for _, r := range batch {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			for _, g := range sc.detector.DetectString(r.content) {
+				out = append(out, Finding{
+					RuleID:      g.RuleID,
+					Description: g.Description,
+					EntityType:  "message",
+					// v1-compatible source id: the session external id. Seq
+					// rides in the line slot's sibling field below.
+					NaturalKey:    "message/" + externalID,
+					MatchRedacted: redact(g.Secret),
+					Line:          r.seq,
+				})
+			}
+		}
+		lastSeq = batch[len(batch)-1].seq
+	}
+}
+
+func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEntity, report *Report) error {
+	type artifactRow struct {
+		kind, name, content, metadata, hash string
+		key                                 string // agent-qualified: slug/kind/name
+	}
+	rows, err := sc.store.ReadDB().QueryContext(ctx, `
+		SELECT a.slug, ar.kind, ar.name, ar.content, ar.metadata_json, ar.content_hash
+		FROM artifacts ar JOIN agents a ON a.id = ar.agent_id`)
+	if err != nil {
+		return fmt.Errorf("listing artifacts: %w", err)
+	}
+	var changed []artifactRow
+	for rows.Next() {
+		var r artifactRow
+		var slug string
+		if err := rows.Scan(&slug, &r.kind, &r.name, &r.content, &r.metadata, &r.hash); err != nil {
+			rows.Close()
+			return err
+		}
+		r.key = slug + "/" + r.kind + "/" + r.name
+		if markChanged(state, "artifact", r.key, r.hash) {
+			changed = append(changed, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
+	var scanned atomic.Int64
+	for _, r := range changed {
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			text := r.content
+			if len(r.metadata) > 2 { // structured children (todos, versions) live here
+				text += "\n" + r.metadata
+			}
+			var findings []Finding
+			for _, m := range sc.detector.DetectString(text) {
+				findings = append(findings, Finding{
+					RuleID:        m.RuleID,
+					Description:   m.Description,
+					EntityType:    "artifact",
+					NaturalKey:    r.kind + "/" + r.name,
+					MatchRedacted: redact(m.Secret),
+					Line:          m.StartLine,
+				})
+			}
+			if err := sc.replaceFindings(gctx,
+				"artifact", r.kind+"/"+r.name, "artifact", r.key, r.hash,
+				findings); err != nil {
+				return err
+			}
+			scanned.Add(1)
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	report.ArtifactsScanned = int(scanned.Load())
+	return nil
+}
+
+// replaceFindings swaps one entity's findings and records its scan state
+// in a single short transaction, so a killed scan never leaves an entity
+// marked scanned without its findings (or vice versa).
+func (sc *Scanner) replaceFindings(ctx context.Context, findingType, naturalKey, stateType, stateEntityKey, hash string, findings []Finding) error {
+	tx, err := sc.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM scan_findings WHERE entity_type = ? AND natural_key = ?`,
+		findingType, naturalKey); err != nil {
+		return fmt.Errorf("clearing findings: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, f := range findings {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO scan_findings
+				(rule_id, description, entity_type, natural_key, match_redacted, line_number, scanned_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			f.RuleID, f.Description, f.EntityType, f.NaturalKey,
+			f.MatchRedacted, f.Line, now); err != nil {
+			return fmt.Errorf("inserting finding: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO scan_state (entity_type, entity_key, content_hash)
+		VALUES (?, ?, ?)
+		ON CONFLICT(entity_type, entity_key) DO UPDATE SET content_hash = excluded.content_hash`,
+		stateType, stateEntityKey, hash); err != nil {
+		return fmt.Errorf("recording scan state: %w", err)
+	}
+	return tx.Commit()
+}
+
+// dropVanished forgets state and findings for entities the index no
+// longer holds (pruned sessions, deleted artifacts), mirroring what the
+// old full re-scan achieved by rebuilding findings from scratch.
+func (sc *Scanner) dropVanished(ctx context.Context, state map[string]*scanEntity) error {
+	for key, st := range state {
+		if st.seen {
+			continue
+		}
+		typ, entityKey, _ := strings.Cut(key, "\x00")
+		// State keys are agent-qualified (slug/…); findings keep the
+		// v1-compatible shape without the slug.
+		findingType, naturalKey := typ, entityKey
+		rest := entityKey
+		if _, after, found := strings.Cut(entityKey, "/"); found {
+			rest = after
+		}
+		if typ == "session" {
+			findingType = "message"
+			naturalKey = "message/" + rest
+		} else {
+			naturalKey = rest
+		}
+		tx, err := sc.store.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM scan_findings WHERE entity_type = ? AND natural_key = ?`,
+			findingType, naturalKey); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM scan_state WHERE entity_type = ? AND entity_key = ?`,
+			typ, entityKey); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// allFindings returns the stored findings with ignore flags resolved
+// (user state survives rescans and rebuilds).
+func (sc *Scanner) allFindings(ctx context.Context) ([]Finding, error) {
+	rows, err := sc.store.ReadDB().QueryContext(ctx, `
+		SELECT rule_id, description, entity_type, natural_key, match_redacted, line_number
+		FROM scan_findings
+		ORDER BY entity_type, natural_key, line_number`)
+	if err != nil {
+		return nil, fmt.Errorf("reading findings: %w", err)
+	}
+	defer rows.Close()
+	var all []Finding
+	for rows.Next() {
+		var f Finding
+		if err := rows.Scan(&f.RuleID, &f.Description, &f.EntityType,
+			&f.NaturalKey, &f.MatchRedacted, &f.Line); err != nil {
+			return nil, err
+		}
+		all = append(all, f)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// Resolve ignore flags (user state survives rescans and rebuilds).
 	ignored := map[string]bool{}
-	rows, err := sc.store.ReadDB().QueryContext(ctx, `
+	irows, err := sc.store.ReadDB().QueryContext(ctx, `
 		SELECT natural_key FROM user_annotations
 		WHERE entity_type = 'scan_finding' AND kind = 'scan_ignore'`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
+	defer irows.Close()
+	for irows.Next() {
 		var key string
-		if err := rows.Scan(&key); err != nil {
+		if err := irows.Scan(&key); err != nil {
 			return nil, err
 		}
 		ignored[key] = true
 	}
-	if err := rows.Err(); err != nil {
+	if err := irows.Err(); err != nil {
 		return nil, err
 	}
 	for i := range all {
@@ -114,129 +478,6 @@ func (sc *Scanner) Run(ctx context.Context) ([]Finding, error) {
 // "<entity_type>/<source_id>/<rule_id>/<line>".
 func annotationKey(f Finding) string {
 	return fmt.Sprintf("%s/%s/%d", f.NaturalKey, f.RuleID, f.Line)
-}
-
-// scanBatchSize bounds how many rows each paging query returns. The store
-// runs a single SQLite connection, and detection is regex work over every
-// row — an open cursor for the scan's whole duration would pin that
-// connection and block every concurrent API query (the serve-first
-// startup scans in the background while the UI is live). Paging releases
-// the connection between batches.
-const scanBatchSize = 500
-
-func (sc *Scanner) scanMessages(ctx context.Context, out *[]Finding) error {
-	type row struct {
-		id        int64
-		sessionID string
-		seq       int
-		content   string
-	}
-	lastID := int64(0)
-	for {
-		batch := make([]row, 0, scanBatchSize)
-		rows, err := sc.store.ReadDB().QueryContext(ctx, `
-			SELECT m.id, s.external_id, m.seq, m.content
-			FROM messages m
-			JOIN sessions s ON s.id = m.session_id
-			WHERE m.id > ?
-			ORDER BY m.id
-			LIMIT ?`, lastID, scanBatchSize)
-		if err != nil {
-			return fmt.Errorf("reading messages: %w", err)
-		}
-		for rows.Next() {
-			var r row
-			if err := rows.Scan(&r.id, &r.sessionID, &r.seq, &r.content); err != nil {
-				rows.Close()
-				return err
-			}
-			batch = append(batch, r)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		if len(batch) == 0 {
-			return nil
-		}
-
-		for _, r := range batch {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			for _, g := range sc.detector.DetectString(r.content) {
-				*out = append(*out, Finding{
-					RuleID:      g.RuleID,
-					Description: g.Description,
-					EntityType:  "message",
-					// v1-compatible source id: the session external id. Seq
-					// rides in the line slot's sibling field below.
-					NaturalKey:    "message/" + r.sessionID,
-					MatchRedacted: redact(g.Secret),
-					Line:          r.seq,
-				})
-			}
-		}
-		lastID = batch[len(batch)-1].id
-	}
-}
-
-func (sc *Scanner) scanArtifacts(ctx context.Context, out *[]Finding) error {
-	type row struct {
-		id                            int64
-		kind, name, content, metadata string
-	}
-	lastID := int64(0)
-	for {
-		batch := make([]row, 0, scanBatchSize)
-		rows, err := sc.store.ReadDB().QueryContext(ctx, `
-			SELECT ar.id, ar.kind, ar.name, ar.content, ar.metadata_json
-			FROM artifacts ar
-			WHERE ar.id > ?
-			ORDER BY ar.id
-			LIMIT ?`, lastID, scanBatchSize)
-		if err != nil {
-			return fmt.Errorf("reading artifacts: %w", err)
-		}
-		for rows.Next() {
-			var r row
-			if err := rows.Scan(&r.id, &r.kind, &r.name, &r.content, &r.metadata); err != nil {
-				rows.Close()
-				return err
-			}
-			batch = append(batch, r)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		if len(batch) == 0 {
-			return nil
-		}
-
-		for _, r := range batch {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			text := r.content
-			if len(r.metadata) > 2 { // structured children (todos, versions) live here
-				text += "\n" + r.metadata
-			}
-			for _, g := range sc.detector.DetectString(text) {
-				*out = append(*out, Finding{
-					RuleID:        g.RuleID,
-					Description:   g.Description,
-					EntityType:    "artifact",
-					NaturalKey:    r.kind + "/" + r.name,
-					MatchRedacted: redact(g.Secret),
-					Line:          g.StartLine,
-				})
-			}
-		}
-		lastID = batch[len(batch)-1].id
-	}
 }
 
 // redact keeps just enough of a secret to recognize it.
