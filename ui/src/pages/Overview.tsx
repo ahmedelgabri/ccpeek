@@ -86,7 +86,7 @@ export function OverviewPage() {
         />
       </div>
 
-      <Panel label="Activity — sessions per day, last 26 weeks">
+      <Panel label="Activity — sessions per day, last 52 weeks">
         <div className="flex justify-center overflow-x-auto px-3 py-3">
           <Heatmap days={st.activity ?? []} />
         </div>
@@ -231,9 +231,9 @@ function Heatmap({ days }: { days: DayActivity[] }) {
   const byDay = new Map(days.map((d) => [d.day, d]));
   const CELL = 13;
   const GAP = 3;
-  const WEEKS = 26;
+  const WEEKS = 52;
 
-  // Grid anchored to the current week's Sunday, going back 26 weeks.
+  // Grid anchored to the current week's Sunday, going back WEEKS weeks.
   const today = new Date();
   const end = new Date(today);
   end.setDate(end.getDate() + (6 - end.getDay()));
