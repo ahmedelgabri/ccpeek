@@ -56,23 +56,23 @@ export function SessionDetailPage() {
     queryKey: ["session", agent, sessionId],
     queryFn: () => api.session(agent, sessionId),
   });
-  // The deep-link target (?seq=N) is captured once per session: it anchors
-  // the query window and is the one-time scroll target. It must NOT track
-  // the live search param, because scroll-spy rewrites ?seq as the reader
-  // moves — feeding that back would re-anchor the window on every scroll.
-  const entrySeq = useRef({ session: sessionId, seq: search.seq });
-  if (entrySeq.current.session !== sessionId) {
-    entrySeq.current = { session: sessionId, seq: search.seq };
-  }
-  const focusSeq = entrySeq.current.seq;
+  // The transcript window is anchored at a target seq. Scroll-spy rewrites
+  // ?seq as the reader moves, so those self-writes (tracked in lastSeqInURL)
+  // are distinguished from deliberate navigation — a deep link, a permalink
+  // opened elsewhere, or a "jump to message" from the commands/tools/files
+  // tabs. Only deliberate navigation re-anchors the window and re-scrolls;
+  // scroll-spy never does (its target is always already in view).
+  const [anchor, setAnchor] = useState(() =>
+    search.seq !== undefined ? Math.max(0, search.seq - 100) : 0,
+  );
+  const [focusSeq, setFocusSeq] = useState(search.seq);
+  const lastSeqInURL = useRef<number | undefined>(search.seq);
 
-  // Anchor the window a little before the target so it isn't flush against
-  // the top and there is immediate context to scroll up into; browsing
-  // with no target starts at seq 0. The anchor is part of the query key so
-  // each deep link is its own list — jumping to seq 3000 loads the page
-  // AROUND 3000, never the 3000 messages before it.
-  const anchor = focusSeq !== undefined ? Math.max(0, focusSeq - 100) : 0;
   const transcript = useInfiniteQuery({
+    // Anchor a little before the target so it isn't flush against the top
+    // and there is context to scroll up into; the anchor is in the query
+    // key so a far jump loads the page AROUND the target, never everything
+    // up to it.
     queryKey: ["transcript", agent, sessionId, anchor],
     queryFn: ({ pageParam }) =>
       api.transcript(agent, sessionId, {
@@ -95,11 +95,33 @@ export function SessionDetailPage() {
     [transcript.data],
   );
 
-  // The URL carries the message the reader is on: scroll-spy replaces ?seq
-  // as they move (no history spam, no scroll reset — and it never
-  // re-anchors, since the window anchor was captured once above), and a
-  // per-message permalink writes ?seq and copies a shareable link.
-  const lastSeqInURL = useRef<number | undefined>(search.seq);
+  // The route reuses this component across sessions: reset the window when
+  // the session id changes.
+  useEffect(() => {
+    setAnchor(search.seq !== undefined ? Math.max(0, search.seq - 100) : 0);
+    setFocusSeq(search.seq);
+    lastSeqInURL.current = search.seq;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // Deliberate navigation to a seq (anything but our own scroll-spy write):
+  // focus it, and re-anchor when the target sits outside the loaded range,
+  // so a far jump loads the page around it instead of paging all the way
+  // there.
+  useEffect(() => {
+    if (search.seq === undefined || search.seq === lastSeqInURL.current) return;
+    lastSeqInURL.current = search.seq;
+    setFocusSeq(search.seq);
+    const first = msgs[0]?.seq;
+    const last = msgs[msgs.length - 1]?.seq;
+    if (first === undefined || search.seq < first || search.seq > last) {
+      setAnchor(Math.max(0, search.seq - 100));
+    }
+  }, [search.seq, msgs]);
+
+  // Scroll-spy and permalinks write ?seq without re-anchoring (their target
+  // is on screen); a jump from another tab writes ?seq via a plain navigate
+  // so the deliberate-navigation effect above handles it.
   const putSeqInURL = useCallback(
     (seq: number, copy = false) => {
       if (!copy && lastSeqInURL.current === seq) return;
@@ -114,6 +136,11 @@ export function SessionDetailPage() {
         void navigator.clipboard?.writeText(link);
       }
     },
+    [navigate],
+  );
+  const jumpToMessage = useCallback(
+    (seq: number) =>
+      void navigate({ search: { seq }, resetScroll: false }),
     [navigate],
   );
 
@@ -267,9 +294,13 @@ export function SessionDetailPage() {
           onPermalink={(seq) => putSeqInURL(seq, true)}
         />
       )}
-      {tab === "commands" && <CommandsTab commands={commands} />}
-      {tab === "tools" && <ToolsTab tools={toolRows} />}
-      {tab === "files" && <FilesTab files={files} />}
+      {tab === "commands" && (
+        <CommandsTab commands={commands} onJump={jumpToMessage} />
+      )}
+      {tab === "tools" && (
+        <ToolsTab tools={toolRows} onJump={jumpToMessage} />
+      )}
+      {tab === "files" && <FilesTab files={files} onJump={jumpToMessage} />}
       {tab === "artifacts" && (
         <ArtifactsTab
           agent={s.agent}
@@ -737,7 +768,37 @@ function MessageTools({
   );
 }
 
-function CommandsTab({ commands }: { commands: ToolCallRow[] }) {
+// JumpButton links a tool call / file change back to the message that
+// issued it: it navigates the transcript to that seq, where the shared
+// anchoring loads the window around it and scrolls it into view.
+function JumpButton({
+  seq,
+  onJump,
+}: {
+  seq: number;
+  onJump: (seq: number) => void;
+}) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onJump(seq);
+      }}
+      title={`Jump to message #${seq} in the transcript`}
+      className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums hover:text-accent"
+    >
+      ↗ #{seq}
+    </button>
+  );
+}
+
+function CommandsTab({
+  commands,
+  onJump,
+}: {
+  commands: ToolCallRow[];
+  onJump: (seq: number) => void;
+}) {
   const container = useRef<HTMLDivElement>(null);
   useHighlight(container, [commands]);
   if (commands.length === 0)
@@ -755,6 +816,7 @@ function CommandsTab({ commands }: { commands: ToolCallRow[] }) {
                 {c.detail}
               </code>
             </pre>
+            <JumpButton seq={c.messageSeq} onJump={onJump} />
             <span className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums">
               {c.at?.slice(11, 19)}
             </span>
@@ -766,7 +828,13 @@ function CommandsTab({ commands }: { commands: ToolCallRow[] }) {
   );
 }
 
-function ToolsTab({ tools }: { tools: ToolCallRow[] }) {
+function ToolsTab({
+  tools,
+  onJump,
+}: {
+  tools: ToolCallRow[];
+  onJump: (seq: number) => void;
+}) {
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
   const byKind = new Map<string, number>();
   for (const t of tools) byKind.set(t.kind, (byKind.get(t.kind) ?? 0) + 1);
@@ -789,12 +857,13 @@ function ToolsTab({ tools }: { tools: ToolCallRow[] }) {
               <th className="px-3 py-1.5">tool</th>
               <th className="px-3 py-1.5">kind</th>
               <th className="px-3 py-1.5">detail</th>
+              <th className="px-3 py-1.5 text-right">msg</th>
               <th className="px-3 py-1.5 text-right">at</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-edge bg-surface-1">
             {tools.map((t) => (
-              <ToolRow key={t.seq} t={t} />
+              <ToolRow key={t.seq} t={t} onJump={onJump} />
             ))}
           </tbody>
         </table>
@@ -803,7 +872,13 @@ function ToolsTab({ tools }: { tools: ToolCallRow[] }) {
   );
 }
 
-function ToolRow({ t }: { t: ToolCallRow }) {
+function ToolRow({
+  t,
+  onJump,
+}: {
+  t: ToolCallRow;
+  onJump: (seq: number) => void;
+}) {
   const [open, setOpen] = useState(false);
   const hasDiff =
     (t.kind === "file_edit" || t.kind === "file_write") && (t.old || t.new);
@@ -833,13 +908,16 @@ function ToolRow({ t }: { t: ToolCallRow }) {
           )}
           {t.detail && shortPath(t.detail)}
         </td>
+        <td className="px-3 py-1.5 text-right">
+          <JumpButton seq={t.messageSeq} onJump={onJump} />
+        </td>
         <td className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums">
           {t.at?.slice(11, 19)}
         </td>
       </tr>
       {hasDiff && open && (
         <tr>
-          <td colSpan={5} className="px-3 py-2">
+          <td colSpan={6} className="px-3 py-2">
             <DiffView old={t.old ?? ""} new={t.new ?? ""} />
           </td>
         </tr>
@@ -884,19 +962,31 @@ function groupFiles(tools: ToolCallRow[]): FileGroup[] {
   );
 }
 
-function FilesTab({ files }: { files: FileGroup[] }) {
+function FilesTab({
+  files,
+  onJump,
+}: {
+  files: FileGroup[];
+  onJump: (seq: number) => void;
+}) {
   if (files.length === 0)
     return <EmptyNote>No files touched in this session.</EmptyNote>;
   return (
     <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
       {files.map((f) => (
-        <FileRow key={f.path} f={f} />
+        <FileRow key={f.path} f={f} onJump={onJump} />
       ))}
     </ul>
   );
 }
 
-function FileRow({ f }: { f: FileGroup }) {
+function FileRow({
+  f,
+  onJump,
+}: {
+  f: FileGroup;
+  onJump: (seq: number) => void;
+}) {
   const [open, setOpen] = useState(false);
   const diffs = f.changes;
   return (
@@ -924,9 +1014,12 @@ function FileRow({ f }: { f: FileGroup }) {
         <div className="space-y-2 border-t border-edge px-3 py-2">
           {diffs.map((e) => (
             <div key={e.seq}>
-              <div className="mb-1 font-mono text-[10px] text-ink-faint tabular-nums">
-                {e.kind === "file_write" ? "write" : "edit"} #{e.seq} ·{" "}
-                {e.at?.slice(11, 19)}
+              <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
+                <span>
+                  {e.kind === "file_write" ? "write" : "edit"} #{e.seq} ·{" "}
+                  {e.at?.slice(11, 19)}
+                </span>
+                <JumpButton seq={e.messageSeq} onJump={onJump} />
               </div>
               <DiffView old={e.old ?? ""} new={e.new ?? ""} />
             </div>
