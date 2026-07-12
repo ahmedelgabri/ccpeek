@@ -105,6 +105,26 @@ Post-launch sprints (feedback-driven, after v2.0):
   `query.ErrBadRequest`; ECharts instances re-create on stale DOM +
   resize on data-shape changes; the usage-report artifact renders in a
   sandboxed iframe via `/artifacts/.../raw`.
+- ✅ **Incremental secret scan** (schema v5): `scan_state` remembers the
+  content hash each session/artifact carried when last scanned, so a
+  pass re-runs gitleaks only over entities whose hash moved, swaps just
+  their findings in per-entity transactions, and drops state+findings
+  for entities the index no longer holds. Detection fans out across
+  GOMAXPROCS workers (the gitleaks detector is goroutine-safe).
+  `ccpeek scan --full` discards the state for ruleset upgrades.
+  Measured on a 947-session corpus: full sweep 51s (was ~10min
+  single-threaded), nothing changed 38ms, one changed 3.6k-message
+  session 8.2s.
+- ✅ **Append-cursor ingest** (schema v6): `source_files.parse_state`
+  stores a cursor (byte offset + prefix hash + sequence counters);
+  adapters implementing `agent.TailParser` (Claude Code) verify the
+  prefix and decode only appended bytes. The sink advances the session
+  row in place (title/created_at survive) and inserts only new records;
+  `tool_calls.external_id` + `canon.ToolResult` attach results that land
+  after their issuing call was indexed. Rewritten/truncated sources fall
+  back to a full parse that records a fresh cursor; partial trailing
+  lines wait for the next pass. Measured on the active 2.6k-message
+  session: 169ms vs 46.7s for the whole-file re-parse.
 
 Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
 …) land post-launch per §6 as demand shows up.
