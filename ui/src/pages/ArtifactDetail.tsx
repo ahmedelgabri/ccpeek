@@ -58,16 +58,25 @@ export function ArtifactDetailPage() {
 
       {a.sessionIds && a.sessionIds.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2 text-xs">
-          {a.sessionIds.map((sid) => (
-            <Link
-              key={sid}
-              to="/sessions/$agent/$sessionId"
-              params={{ agent: a.agent, sessionId: sid }}
-              className="rounded-full border border-accent/40 px-2 py-1 text-accent hover:bg-surface-2"
-            >
-              session {sid.slice(0, 8)}…
-            </Link>
-          ))}
+          {a.sessionIds.map((sid) => {
+            // When the producing tool call is known, deep-link straight to
+            // that message; otherwise the pill opens the session at the top.
+            const seq = a.sessionAnchors?.[sid];
+            return (
+              <Link
+                key={sid}
+                to="/sessions/$agent/$sessionId"
+                params={{ agent: a.agent, sessionId: sid }}
+                search={seq !== undefined ? { seq } : {}}
+                className="rounded-full border border-accent/40 px-2 py-1 text-accent hover:bg-surface-2"
+              >
+                session {sid.slice(0, 8)}…
+                {seq !== undefined && (
+                  <span className="text-ink-faint"> · ↗ #{seq}</span>
+                )}
+              </Link>
+            );
+          })}
         </div>
       )}
 

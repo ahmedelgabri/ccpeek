@@ -285,6 +285,9 @@ export interface ArtifactDetail extends ArtifactSummary {
   contentHTML?: string;
   metadata?: string;
   sessionIds?: string[];
+  // Per-session transcript seq of the tool call that produced this artifact
+  // (todo → TodoWrite, plan → ExitPlanMode), when one was found.
+  sessionAnchors?: Record<string, number>;
 }
 
 export interface ScanFinding {

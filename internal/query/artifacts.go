@@ -79,6 +79,20 @@ type ArtifactDetail struct {
 	ContentHTML string   `json:"contentHTML,omitempty"` // server-rendered (markdown kinds)
 	Metadata    string   `json:"metadata,omitempty"`    // raw JSON payload
 	SessionIDs  []string `json:"sessionIds,omitempty"`  // linked session external ids
+	// SessionAnchors maps a linked session's external id to the transcript
+	// seq of the tool call that produced this artifact (a TodoWrite for a
+	// todo list, an ExitPlanMode for a plan), when one is found — letting
+	// the UI deep-link the artifact to the message it came from. Kinds with
+	// no producing tool call (memories, snapshots, file history) have none.
+	SessionAnchors map[string]int `json:"sessionAnchors,omitempty"`
+}
+
+// producerTool names the tool call whose latest occurrence in a session
+// produced an artifact of a given kind. Only kinds emitted by a tool call
+// appear here; the rest have no message-level provenance.
+var producerTool = map[string]string{
+	"todo_list": "TodoWrite",
+	"plan":      "ExitPlanMode",
 }
 
 // Artifact fetches one artifact with content and linked sessions.
@@ -109,22 +123,35 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 		d.ContentHTML = render(d.Kind, d.Content)
 	}
 
+	// The correlated subquery picks the last producing tool call in each
+	// linked session; it yields NULL when the kind has no producer (empty
+	// tool name matches nothing) or the session has no such call.
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT se.external_id
+		SELECT se.external_id,
+		       (SELECT tc.message_seq FROM tool_calls tc
+		        WHERE tc.session_id = se.id AND tc.name = ?
+		        ORDER BY tc.seq DESC LIMIT 1) AS anchor
 		FROM artifact_sessions ass
 		JOIN sessions se ON se.id = ass.session_id
 		WHERE ass.artifact_id = ?
-		ORDER BY se.modified_at DESC`, id)
+		ORDER BY se.modified_at DESC`, producerTool[kind], id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var sid string
-		if err := rows.Scan(&sid); err != nil {
+		var anchor sql.NullInt64
+		if err := rows.Scan(&sid, &anchor); err != nil {
 			return nil, err
 		}
 		d.SessionIDs = append(d.SessionIDs, sid)
+		if anchor.Valid {
+			if d.SessionAnchors == nil {
+				d.SessionAnchors = map[string]int{}
+			}
+			d.SessionAnchors[sid] = int(anchor.Int64)
+		}
 	}
 	d.Sessions = len(d.SessionIDs)
 	return d, rows.Err()
