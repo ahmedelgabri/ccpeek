@@ -44,7 +44,9 @@ export function Palette() {
   if (!open) return null;
 
   const pages: Item[] = [
-    { label: "Sessions", go: () => void navigate({ to: "/" }) },
+    { label: "Overview", go: () => void navigate({ to: "/" }) },
+    { label: "Sessions", go: () => void navigate({ to: "/sessions" }) },
+    { label: "Commands", go: () => void navigate({ to: "/commands" }) },
     { label: "Usage", go: () => void navigate({ to: "/usage" }) },
     { label: "Artifacts", go: () => void navigate({ to: "/artifacts" }) },
     { label: "Secret scan", go: () => void navigate({ to: "/scan" }) },
@@ -57,10 +59,12 @@ export function Palette() {
     .map((h) => ({
       label: h.snippet.replaceAll("[", "").replaceAll("]", "").slice(0, 70),
       hint: `${h.agent} · ${h.docType}`,
+      // Land on the matching message, mirroring the Search page.
       go: () =>
         void navigate({
           to: "/sessions/$agent/$sessionId",
           params: { agent: h.agent, sessionId: h.sessionId! },
+          search: h.seq !== undefined ? { seq: h.seq } : {},
         }),
     }));
 
