@@ -154,11 +154,16 @@ func run(cmd *cobra.Command, args []string) error {
 	defer eng.Close()
 
 	// runScan reports rather than fails: on the serving path a scan
-	// problem must not take the server down.
-	runScan := func(ctx context.Context) error {
-		if skipScan || eng.report == nil || eng.report.FilesChanged == 0 {
+	// problem must not take the server down. The mutex serializes the
+	// bootstrap scan with watch-triggered rescans — the scanner's
+	// per-entity state updates must not interleave.
+	var scanMu sync.Mutex
+	runScan := func(ctx context.Context, ingestReport *ingest.Report) error {
+		if skipScan || ingestReport == nil || ingestReport.FilesChanged == 0 {
 			return nil
 		}
+		scanMu.Lock()
+		defer scanMu.Unlock()
 		logf("Scanning for secrets...\n")
 		scanner, err := secrets.New(eng.store)
 		if err != nil {
@@ -191,7 +196,7 @@ func run(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
-		return runScan(ctx)
+		return runScan(ctx, eng.report)
 	}
 
 	// Serve first: the port is reachable immediately and the first index
@@ -216,16 +221,26 @@ func run(cmd *cobra.Command, args []string) error {
 			// The scan is derived data over already-ingested rows — it must
 			// never delay watch mode picking up new appends.
 			go func() {
-				if err := runScan(ctx); err != nil && ctx.Err() == nil {
+				if err := runScan(ctx, eng.report); err != nil && ctx.Err() == nil {
 					logf("WARNING: %v\n", err)
 				}
+				events.Notify() // findings changed; refresh the scan views
 			}()
 		} else {
 			ready.Store(true)
 		}
 		if watch {
 			logf("Watch mode enabled (fsnotify; --watch-interval is a v1 no-op)\n")
-			if err := eng.runner.Watch(ctx, ingestOptions(cmd), 0, func(*ingest.Report) {
+			// Watch passes carry the prune policy the serve run started
+			// with, and re-scan what each pass changed — otherwise new
+			// secrets (and pruned sources) stay stale until a restart.
+			watchOpts := ingestOptions(cmd)
+			watchOpts.Prune = prune
+			if err := eng.runner.Watch(ctx, watchOpts, 0, func(rep *ingest.Report) {
+				events.Notify() // fresh data first; the scan follows
+				if err := runScan(ctx, rep); err != nil && ctx.Err() == nil {
+					logf("WARNING: %v\n", err)
+				}
 				events.Notify()
 			}); err != nil && ctx.Err() == nil {
 				logf("WARNING: watch stopped: %v\n", err)
