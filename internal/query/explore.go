@@ -75,13 +75,20 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	db := s.store.ReadDB()
 	st := &Stats{}
 
+	// Scan findings count only ACTIVE ones: a finding the user ignored
+	// (user_annotations key "<natural_key>/<rule_id>/<line>") must not keep
+	// the overview tile in its warning state.
 	err := db.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM sessions),
 		       (SELECT COUNT(*) FROM messages),
 		       (SELECT COUNT(*) FROM tool_calls),
 		       (SELECT COUNT(*) FROM tool_calls WHERE kind = 'shell'),
 		       (SELECT COUNT(*) FROM artifacts),
-		       (SELECT COUNT(*) FROM scan_findings)`).
+		       (SELECT COUNT(*) FROM scan_findings f
+		        WHERE NOT EXISTS (
+		          SELECT 1 FROM user_annotations ua
+		          WHERE ua.entity_type = 'scan_finding' AND ua.kind = 'scan_ignore'
+		            AND ua.natural_key = f.natural_key || '/' || f.rule_id || '/' || f.line_number))`).
 		Scan(&st.Sessions, &st.Messages, &st.ToolCalls, &st.Commands,
 			&st.Artifacts, &st.ScanFindings)
 	if err != nil {

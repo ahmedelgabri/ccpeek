@@ -227,3 +227,38 @@ func TestMemoryAnchorPointsAtItsWrite(t *testing.T) {
 		t.Errorf("memory anchor = %d, want 7 (its own last edit, not the unrelated write)", got)
 	}
 }
+
+// TestStatsScanFindingsExcludesIgnored: the overview tile must count
+// only active findings — ignoring one removes it from the count.
+func TestStatsScanFindingsExcludesIgnored(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	for _, q := range []string{
+		`INSERT INTO scan_findings (rule_id, description, entity_type, natural_key, match_redacted, line_number, scanned_at)
+		 VALUES ('slack-token', '', 'message', 'message/sess-x', 'xoxb…', 3, '2026-07-13T00:00:00Z')`,
+		`INSERT INTO scan_findings (rule_id, description, entity_type, natural_key, match_redacted, line_number, scanned_at)
+		 VALUES ('aws-key', '', 'message', 'message/sess-x', 'AKIA…', 7, '2026-07-13T00:00:00Z')`,
+		`INSERT INTO user_annotations (entity_type, natural_key, kind, value_json, created_at)
+		 VALUES ('scan_finding', 'message/sess-x/slack-token/3', 'scan_ignore', '{}', '2026-07-13T00:00:00Z')`,
+	} {
+		if _, err := store.DB().ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := New(store, table).Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if st.ScanFindings != 1 {
+		t.Errorf("scanFindings = %d, want 1 (the ignored finding must not count)", st.ScanFindings)
+	}
+}
