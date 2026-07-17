@@ -63,8 +63,17 @@ func (h *handlers) artifact(w http.ResponseWriter, r *http.Request) {
 
 // artifactRaw serves an artifact's stored bytes verbatim. Agent-produced
 // HTML (the Claude usage report) ships as text/html so the UI can host it
-// in a sandboxed iframe — the same isolation v1 used; everything else is
-// text/plain, never interpreted in the app's own origin.
+// in a sandboxed iframe; everything else is text/plain, never interpreted
+// in the app's own origin.
+//
+// The HTML response carries its own CSP sandbox: the iframe's sandbox
+// attribute does not protect a DIRECT navigation to this URL, where the
+// stored (agent-produced, untrusted) markup would otherwise run with the
+// app origin and could drive mutating endpoints. `sandbox allow-scripts`
+// keeps the report's charts working while the document gets an opaque
+// origin — its API requests carry "Origin: null" and fail the
+// same-origin guard. nosniff stops browsers promoting the text/plain
+// kinds to something executable.
 func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
 	detail, err := h.svc.Artifact(r.Context(),
@@ -73,8 +82,10 @@ func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if kind == "usage_report" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "sandbox allow-scripts")
 	} else {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}

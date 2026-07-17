@@ -126,3 +126,38 @@ func TestEndpoints(t *testing.T) {
 		t.Error("search empty")
 	}
 }
+
+// TestArtifactRawIsSandboxed: the raw endpoint serves agent-produced
+// (untrusted) bytes — HTML must carry a CSP sandbox so a DIRECT
+// navigation cannot run scripts with the app origin, and nothing may be
+// MIME-sniffed into something executable.
+func TestArtifactRawIsSandboxed(t *testing.T) {
+	h := newHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/artifacts/claude-code/plan/rate-limit-plan.md/raw", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("raw plan = %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Errorf("plan content-type = %q, want text/plain", ct)
+	}
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("raw response missing nosniff")
+	}
+
+	// The HTML kind must be sandboxed. The fixture corpus ships a usage
+	// report; assert the header contract on it.
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/v1/artifacts/claude-code/usage_report/report.html/raw", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("raw usage report = %d", rec.Code)
+	}
+	if csp := rec.Header().Get("Content-Security-Policy"); csp != "sandbox allow-scripts" {
+		t.Errorf("usage report CSP = %q, want sandbox allow-scripts", csp)
+	}
+}
