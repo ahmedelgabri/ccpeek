@@ -113,6 +113,12 @@ type eventMsg struct {
 	Info json.RawMessage `json:"info"`
 }
 
+// tokenUsage mirrors Codex's token_count payloads. reasoning_output_tokens
+// is a SUBSET of output_tokens, not an additional bucket — real rollouts
+// show total_tokens == input_tokens + output_tokens with reasoning ≤
+// output (OpenAI Responses semantics, where reasoning is a detail of
+// billable output). Cost and totals must therefore use output alone;
+// adding reasoning on top would double-count it.
 type tokenUsage struct {
 	InputTokens           int64 `json:"input_tokens"`
 	CachedInputTokens     int64 `json:"cached_input_tokens"`

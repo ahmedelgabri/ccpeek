@@ -63,20 +63,24 @@ func TestCumulativeTokenDeltas(t *testing.T) {
 		t.Fatalf("usage-bearing entries = %d, want 2", len(usages))
 	}
 
-	// First token_count: last == total (first turn).
+	// First token_count: last == total (first turn). Reasoning is a
+	// SUBSET of output (450 output includes the 300 reasoning) — real
+	// rollouts show total_tokens == input + output, so pricing output
+	// alone is correct and adding reasoning would double-count.
 	if usages[0].CacheReadTokens != 4000 || usages[0].InputTokens != 1200 ||
-		usages[0].OutputTokens != 150 || usages[0].ReasoningTokens != 300 {
+		usages[0].OutputTokens != 450 || usages[0].ReasoningTokens != 300 {
 		t.Errorf("first turn usage = %+v", usages[0])
 	}
 	// Second: last_token_usage is authoritative (5800 input incl. 5200
 	// cached → 600 uncached).
 	if usages[1].InputTokens != 600 || usages[1].CacheReadTokens != 5200 ||
-		usages[1].OutputTokens != 270 || usages[1].ReasoningTokens != 500 {
+		usages[1].OutputTokens != 770 || usages[1].ReasoningTokens != 500 {
 		t.Errorf("second turn usage = %+v", usages[1])
 	}
 
 	// Total across the session must equal the final cumulative counter:
-	// 11000 input (9200 cached → 1800 uncached), 420 output, 800 reasoning.
+	// 11000 input (9200 cached → 1800 uncached), 1220 output of which 800
+	// reasoning.
 	var in, cr, out, reas int64
 	for _, u := range usages {
 		in += u.InputTokens
@@ -84,8 +88,11 @@ func TestCumulativeTokenDeltas(t *testing.T) {
 		out += u.OutputTokens
 		reas += u.ReasoningTokens
 	}
-	if in != 1800 || cr != 9200 || out != 420 || reas != 800 {
+	if in != 1800 || cr != 9200 || out != 1220 || reas != 800 {
 		t.Errorf("session totals = in %d, cacheRead %d, out %d, reasoning %d", in, cr, out, reas)
+	}
+	if out <= reas {
+		t.Errorf("output %d must include reasoning %d (subset semantics)", out, reas)
 	}
 
 	// Model from turn_context applies to the assistant message.
