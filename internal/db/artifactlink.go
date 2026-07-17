@@ -37,14 +37,14 @@ func ExtractPlanText(inputJSON string) (string, bool) {
 // LinkPlanArtifacts connects plan artifacts to the sessions whose
 // ExitPlanMode call carries the same plan text. Plans land on disk as
 // slug-named markdown with no session id anywhere in name or metadata,
-// so content is the only provenance. Only unlinked plans are examined,
-// making every pass after the first a cheap no-op; a plan whose text
-// matches calls in several sessions (re-approved, resumed) links to each.
+// so content is the only provenance. Every plan is matched every pass —
+// links are an N:M relation, and a plan re-approved by a LATER session
+// must gain that link even though the artifact already has one; existing
+// pairs are no-ops via the insert's conflict clause.
 func (s *Store) LinkPlanArtifacts(ctx context.Context) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ar.id, ar.agent_id, ar.content FROM artifacts ar
-		WHERE ar.kind = 'plan' AND ar.content <> ''
-		  AND NOT EXISTS (SELECT 1 FROM artifact_sessions ass WHERE ass.artifact_id = ar.id)`)
+		WHERE ar.kind = 'plan' AND ar.content <> ''`)
 	if err != nil {
 		return 0, fmt.Errorf("listing unlinked plans: %w", err)
 	}
@@ -150,13 +150,13 @@ func MemoryPathSuffix(name string) (string, bool) {
 // wrote them: memory files are created and updated through file_write /
 // file_edit tool calls whose file_path lands inside the project's memory
 // directory, so the call's path is direct provenance. Like the plan
-// resolver, only unlinked memories are examined, and a memory written by
-// several sessions over time links to each.
+// resolver, every memory is matched every pass so sessions that write an
+// already-linked memory later still gain their link; existing pairs are
+// no-ops via the insert's conflict clause.
 func (s *Store) LinkMemoryArtifacts(ctx context.Context) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ar.id, ar.agent_id, ar.name FROM artifacts ar
-		WHERE ar.kind = 'memory'
-		  AND NOT EXISTS (SELECT 1 FROM artifact_sessions ass WHERE ass.artifact_id = ar.id)`)
+		WHERE ar.kind = 'memory'`)
 	if err != nil {
 		return 0, fmt.Errorf("listing unlinked memories: %w", err)
 	}

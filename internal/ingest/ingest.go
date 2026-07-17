@@ -192,9 +192,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	// Plans land on disk as slug-named markdown with no session id; link
 	// them to the ExitPlanMode call that produced them by plan text.
 	// Memories link to the sessions whose file_write/file_edit calls
-	// targeted their path. Both run every pass and self-heal — only
-	// unlinked artifacts are examined, so a settled corpus costs two
-	// small queries.
+	// targeted their path. Both resolve missing (artifact, session) PAIRS
+	// every pass — a later session approving an already-linked plan still
+	// gains its link — and both kinds are rare enough that the full match
+	// stays cheap.
 	if _, err := r.store.LinkPlanArtifacts(ctx); err != nil {
 		return nil, r.fail(ctx, report, started, err)
 	}

@@ -179,3 +179,75 @@ func TestLinkMemoryArtifacts(t *testing.T) {
 		t.Errorf("second pass linked = %d, want 0", linked)
 	}
 }
+
+// TestLaterSessionLinksToExistingPlan: links are N:M — a session that
+// approves an already-linked plan LATER must still gain its link (the
+// old "only unlinked artifacts" filter skipped it forever).
+func TestLaterSessionLinksToExistingPlan(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	w, err := s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessA, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "sess-a"}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.InsertToolCall(sessA, canon.ToolCall{
+		Name: "ExitPlanMode", Kind: canon.ToolOther,
+		Input: []byte(`{"plan":"# Shared plan"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactPlan, Name: "shared.md",
+		Content: "# Shared plan",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
+		t.Fatalf("first pass linked = %d (err %v), want 1", n, err)
+	}
+
+	// A second session approves the same plan after the artifact was
+	// already linked.
+	w, err = s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessB, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "sess-b"}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.InsertToolCall(sessB, canon.ToolCall{
+		Name: "ExitPlanMode", Kind: canon.ToolOther,
+		Input: []byte(`{"plan":"# Shared plan"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
+		t.Fatalf("second pass linked = %d (err %v), want 1 (the new pair)", n, err)
+	}
+	var links int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM artifact_sessions ass
+		JOIN artifacts a ON a.id = ass.artifact_id
+		WHERE a.name = 'shared.md'`).Scan(&links); err != nil {
+		t.Fatal(err)
+	}
+	if links != 2 {
+		t.Errorf("plan links = %d, want 2 (both approving sessions)", links)
+	}
+}
