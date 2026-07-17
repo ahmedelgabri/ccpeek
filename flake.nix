@@ -46,8 +46,8 @@
 
             pnpmDeps = pkgs.pnpm_10.fetchDeps {
               inherit (finalAttrs) pname version src;
-              fetcherVersion = 2;
-              hash = "sha256-LpguLIhF2b9luh4kc5cZ+N/pg+D+mbSHYqs3hmFZKOA=";
+              fetcherVersion = 3;
+              hash = "sha256-XPP9g/6iMiJUPbTrO3E5cDXTPjvJrjb8ebY6gBHxhSU=";
             };
 
             buildPhase = ''
@@ -65,7 +65,9 @@
             '';
           });
 
-          ccpeek = pkgs.buildGoModule {
+          # go_1_25 (1.25.12) matches go.mod's toolchain line; the default
+          # pkgs.go (1.26.4) carries GO-2026-5856 and fails govulncheck.
+          ccpeek = (pkgs.buildGoModule.override {go = pkgs.go_1_25;}) {
             pname = "ccpeek";
             version = "2.0.0";
 
@@ -143,7 +145,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            go
+            go_1_25 # 1.25.12, the go.mod toolchain; pkgs.go 1.26.4 fails govulncheck (GO-2026-5856)
             go-tools # includes staticcheck
             gofumpt
             gomodifytags
