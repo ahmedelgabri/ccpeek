@@ -23,7 +23,8 @@ export function ArtifactDetailPage() {
   // ("-Users-x-proj/MEMORY.md") the bare href loses — resolve clicks
   // against the current artifact's prefix instead of the SPA URL.
   const onContentClick = (e: React.MouseEvent) => {
-    const anchor = (e.target as HTMLElement).closest("a");
+    if (!(e.target instanceof Element)) return;
+    const anchor = e.target.closest("a");
     if (!anchor) return;
     const href = anchor.getAttribute("href") ?? "";
     if (href === "" || /^([a-z][a-z0-9+.-]*:|\/|#)/i.test(href)) return;

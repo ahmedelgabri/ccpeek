@@ -110,7 +110,7 @@ export function UsagePage() {
   const rows = useMemo(() => {
     if (!sort) return unsorted;
     const value = SORT_VALUE[sort.key];
-    return [...unsorted].sort((a, b) => {
+    return unsorted.toSorted((a, b) => {
       const av = value(a);
       const bv = value(b);
       const cmp =
@@ -447,7 +447,7 @@ function BlocksTable({
   const sorted = useMemo(() => {
     if (!sort) return blocks;
     const value = BLOCK_SORT_VALUE[sort.key];
-    return [...blocks].sort((a, b) => {
+    return blocks.toSorted((a, b) => {
       const av = value(a);
       const bv = value(b);
       const cmp =

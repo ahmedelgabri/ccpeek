@@ -417,9 +417,9 @@ function Transcript({
   const topSentinel = useRef<HTMLDivElement>(null);
   const bottomSentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!hasMore || loadingMore) return;
+    if (!hasMore || loadingMore) return undefined;
     const node = bottomSentinel.current;
-    if (!node) return;
+    if (!node) return undefined;
     const obs = new IntersectionObserver(
       (entries) => entries[0]?.isIntersecting && onLoadMore(),
       { rootMargin: "800px" },
@@ -428,9 +428,9 @@ function Transcript({
     return () => obs.disconnect();
   }, [hasMore, loadingMore, onLoadMore]);
   useEffect(() => {
-    if (!hasOlder || loadingOlder || !focusDone) return;
+    if (!hasOlder || loadingOlder || !focusDone) return undefined;
     const node = topSentinel.current;
-    if (!node) return;
+    if (!node) return undefined;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
@@ -464,13 +464,13 @@ function Transcript({
   const inBand = useRef<Set<number>>(new Set());
   useEffect(() => {
     const node = container.current;
-    if (!node) return;
+    if (!node) return undefined;
     const rows = node.querySelectorAll<HTMLElement>("li[id^='seq-']");
-    if (rows.length === 0) return;
+    if (rows.length === 0) return undefined;
     const obs = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
-          const seq = Number((e.target as HTMLElement).id.slice(4));
+          const seq = Number(e.target.id.slice(4));
           if (e.isIntersecting) inBand.current.add(seq);
           else inBand.current.delete(seq);
         }
@@ -838,7 +838,7 @@ function ToolsTab({
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
   const byKind = new Map<string, number>();
   for (const t of tools) byKind.set(t.kind, (byKind.get(t.kind) ?? 0) + 1);
-  const kinds = Array.from(byKind, ([label, count]) => ({ label, count })).sort(
+  const kinds = Array.from(byKind, ([label, count]) => ({ label, count })).toSorted(
     (a, b) => b.count - a.count,
   );
   return (
@@ -957,7 +957,7 @@ function groupFiles(tools: ToolCallRow[]): FileGroup[] {
     }
     map.set(t.detail, g);
   }
-  return Array.from(map.values()).sort(
+  return Array.from(map.values()).toSorted(
     (a, b) => b.writes + b.edits - (a.writes + a.edits),
   );
 }

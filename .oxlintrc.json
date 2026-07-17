@@ -7,5 +7,5 @@
   "rules": {
     "unicorn/require-module-specifiers": "off"
   },
-  "ignorePatterns": ["dist", "ui"]
+  "ignorePatterns": ["dist"]
 }

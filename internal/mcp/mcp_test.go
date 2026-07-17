@@ -67,7 +67,8 @@ func drive(t *testing.T, s *Server, requests ...string) []map[string]any {
 
 func TestInitializeAndListTools(t *testing.T) {
 	s := newServer(t)
-	resps := drive(t, s,
+	resps := drive(
+		t, s,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
@@ -88,7 +89,8 @@ func TestInitializeAndListTools(t *testing.T) {
 
 func TestToolCalls(t *testing.T) {
 	s := newServer(t)
-	resps := drive(t, s,
+	resps := drive(
+		t, s,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"rate limiting","limit":5}}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"session","arguments":{"agent":"claude-code","id":"11111111-aaaa-bbbb-cccc-111111111111"}}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"session","arguments":{"agent":"claude-code","id":"missing"}}}`,

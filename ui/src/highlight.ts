@@ -18,7 +18,7 @@ export function useHighlight(
 ) {
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el) return undefined;
     let cancelled = false;
     void loadHljs().then(({ default: hljs }) => {
       if (cancelled || !ref.current) return;

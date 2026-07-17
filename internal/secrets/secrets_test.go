@@ -254,7 +254,8 @@ func TestScanDropsFindingsForVanishedEntities(t *testing.T) {
 	}
 	var n int
 	if err := store.DB().QueryRow(
-		`SELECT COUNT(*) FROM scan_state WHERE entity_type = 'artifact'`).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM scan_state WHERE entity_type = 'artifact'`,
+	).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {

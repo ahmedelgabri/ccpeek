@@ -85,7 +85,7 @@ async function fetchDailyCostByAgent(
 function buildOption(series: DaySeries[], pal: ChartPalette) {
   const days = Array.from(
     new Set(series.flatMap((s) => Array.from(s.byDay.keys()))),
-  ).sort();
+  ).toSorted();
 
   return {
     backgroundColor: "transparent",
@@ -167,8 +167,7 @@ export function GroupBars({
   const pal = chartPalette();
   const top = rows
     .filter((r) => r.costUSD > 0)
-    .slice(0, 20)
-    .reverse(); // echarts y-axis draws bottom-up
+    .toReversed(); // echarts y-axis draws bottom-up
 
   const option =
     top.length === 0
@@ -256,7 +255,7 @@ export function GroupBars({
 function downloadCSV(series: DaySeries[]) {
   const days = Array.from(
     new Set(series.flatMap((s) => Array.from(s.byDay.keys()))),
-  ).sort();
+  ).toSorted();
   const header = ["day", ...series.map((s) => s.agent)].join(",");
   const lines = days.map((d) =>
     [d, ...series.map((s) => (s.byDay.get(d) ?? 0).toFixed(6))].join(","),
@@ -284,14 +283,14 @@ function useEChart(
   const chart = useRef<echarts.ECharts>(null);
 
   useEffect(() => {
-    if (!el.current) return;
+    if (!el.current) return undefined;
     if (chart.current && chart.current.getDom() !== el.current) {
       chart.current.dispose();
       chart.current = null;
     }
     if (!option) {
       chart.current?.clear();
-      return;
+      return undefined;
     }
     chart.current ??= echarts.init(el.current);
     chart.current.setOption(option, true);

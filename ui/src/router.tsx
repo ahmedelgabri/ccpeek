@@ -42,12 +42,12 @@ function IndexingBanner() {
     queryKey: ["health"],
     queryFn: async () => {
       const res = await fetch("/api/v1/health");
-      const body = (await res.json()) as {
+      const body: {
         data?: {
           indexing?: boolean;
           progress?: { agent: string; seen: number; changed: number };
         };
-      };
+      } = await res.json();
       return body.data ?? {};
     },
     refetchInterval: (query) => (query.state.data?.indexing ? 1500 : false),

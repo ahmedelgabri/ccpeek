@@ -26,7 +26,7 @@ test.describe("SPA", () => {
       page.getByRole("button", { name: /transcript/ }),
     ).toBeVisible();
     // Stat tiles include cost.
-    await expect(page.getByText("Cost")).toBeVisible();
+    await expect(page.getByText("Cost", { exact: true })).toBeVisible();
   });
 
   test("usage explorer groups by model", async ({ page }) => {
@@ -78,6 +78,17 @@ test.describe("/api/v1", () => {
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     expect(body.data.sessions).toBeGreaterThan(0);
+  });
+
+  test("all five agents ingest their fixture corpora", async ({ request }) => {
+    const res = await request.get("/api/v1/stats");
+    const body = await res.json();
+    const agents = (body.data.agents ?? []).map(
+      (a: { agent: string }) => a.agent,
+    );
+    for (const slug of ["claude-code", "pi", "codex", "opencode", "cursor"]) {
+      expect(agents, `agent ${slug} missing from stats`).toContain(slug);
+    }
   });
 
   test("commands endpoint exports shell history", async ({ request }) => {

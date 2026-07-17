@@ -18,16 +18,16 @@ export default defineConfig({
     // The server binds before the first index pass finishes; readiness
     // flips to 200 once data is queryable, so tests never race the ingest.
     url: "http://127.0.0.1:4322/api/v1/ready",
-    // Pin every agent root at the fixture corpus: --claude-dir only covers
+    // Pin every agent root at its fixture corpus: --claude-dir only covers
     // Claude, and without these the suite would ingest (and secret-scan)
     // the developer's real ~/.codex, ~/.cursor, etc. into the test db.
-    // Each adapter finds none of its layout under testdata and yields
-    // zero sources.
+    // Each root points at the agent's own fixture layout so the e2e suite
+    // exercises all five adapters, not just Claude.
     env: {
-      PI_CODING_AGENT_DIR: "testdata",
-      CODEX_HOME: "testdata",
-      OPENCODE_DATA_DIR: "testdata",
-      CCPEEK_CURSOR_DIR: "testdata",
+      PI_CODING_AGENT_DIR: "testdata/agents/pi",
+      CODEX_HOME: "testdata/agents/codex",
+      OPENCODE_DATA_DIR: "testdata/agents/opencode",
+      CCPEEK_CURSOR_DIR: "testdata/agents/cursor",
     },
     reuseExistingServer: !process.env.CI,
   },

@@ -155,16 +155,16 @@ interface Envelope<T> {
 
 async function get<T>(
   path: string,
-  params?: Record<string, string>,
+  params?: Record<string, string | undefined>,
 ): Promise<T> {
-  const qs = params
-    ? "?" +
-      new URLSearchParams(
-        Object.entries(params).filter(([, v]) => v != null && v !== ""),
-      ).toString()
+  const entries = Object.entries(params ?? {}).filter(
+    (e): e is [string, string] => e[1] != null && e[1] !== "",
+  );
+  const qs = entries.length
+    ? "?" + new URLSearchParams(entries).toString()
     : "";
   const res = await fetch(`/api/v1${path}${qs}`);
-  const env = (await res.json()) as Envelope<T>;
+  const env: Envelope<T> = await res.json();
   if (!res.ok) {
     throw new Error(env.error ?? `HTTP ${res.status}`);
   }
@@ -181,11 +181,7 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
-  }) =>
-    get<SessionSummary[] | null>(
-      "/sessions",
-      filters as Record<string, string>,
-    ),
+  }) => get<SessionSummary[] | null>("/sessions", filters),
 
   session: (agent: string, id: string) =>
     get<SessionDetail>(`/sessions/${agent}/${id}`),
@@ -197,7 +193,7 @@ export const api = {
   ) =>
     get<TranscriptMessage[] | null>(
       `/sessions/${agent}/${id}/transcript`,
-      opts as Record<string, string>,
+      opts,
     ),
 
   usage: (filters: {
@@ -206,7 +202,7 @@ export const api = {
     model?: string;
     since?: string;
     until?: string;
-  }) => get<UsageRow[] | null>("/usage", filters as Record<string, string>),
+  }) => get<UsageRow[] | null>("/usage", filters),
 
   search: (q: string, limit = "20") =>
     get<SearchHit[] | null>("/search", { q, limit }),
@@ -221,8 +217,7 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
-  }) =>
-    get<CommandRow[] | null>("/commands", filters as Record<string, string>),
+  }) => get<CommandRow[] | null>("/commands", filters),
 
   sessionTools: (agent: string, id: string) =>
     get<ToolCallRow[] | null>(`/sessions/${agent}/${id}/tools`),
@@ -329,7 +324,7 @@ async function send<T>(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const env = (await res.json()) as Envelope<T>;
+  const env: Envelope<T> = await res.json();
   if (!res.ok) throw new Error(env.error ?? `HTTP ${res.status}`);
   return env.data;
 }
