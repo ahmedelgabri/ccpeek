@@ -74,21 +74,33 @@ export function UsagePage() {
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
 
+  // Request the server's maximum group count: the default (100) would
+  // silently truncate day histories past ~3 months and make the page
+  // total, charts, and CSV partial without saying so.
   const { data, isLoading, error } = useQuery({
     queryKey: ["usage", group, since, until, agent, model],
     queryFn: () =>
-      api.usage({ group, since, until: inclusiveUntil(until), agent, model }),
+      api.usage({
+        group,
+        since,
+        until: inclusiveUntil(until),
+        agent,
+        model,
+        limit: "1000",
+      }),
     enabled: group !== "blocks",
     placeholderData: (prev) => prev,
   });
   // Model options come from the unfiltered model rollup.
   const modelRows = useQuery({
     queryKey: ["usage", "model-options"],
-    queryFn: () => api.usage({ group: "model" }),
+    queryFn: () => api.usage({ group: "model", limit: "1000" }),
   });
+  // Blocks support the agent filter (dates/models don't apply to the
+  // rolling 5h windows and are hidden on that tab).
   const blocks = useQuery({
-    queryKey: ["blocks"],
-    queryFn: () => parityApi.blocks(36),
+    queryKey: ["blocks", agent],
+    queryFn: () => parityApi.blocks(36, agent),
     enabled: group === "blocks",
   });
   const budget = useQuery({
@@ -137,17 +149,21 @@ export function UsagePage() {
           {anyUnpriced && <span className="text-warn">(+unpriced)</span>}
         </span>
         <FilterBar
-          since={since}
-          until={until}
-          onRange={(sv, uv) => {
-            setSince(sv);
-            setUntil(uv);
-          }}
+          since={group === "blocks" ? undefined : since}
+          until={group === "blocks" ? undefined : until}
+          onRange={
+            group === "blocks"
+              ? undefined
+              : (sv, uv) => {
+                  setSince(sv);
+                  setUntil(uv);
+                }
+          }
           agent={agent}
           onAgent={setAgent}
-          model={model}
-          models={models}
-          onModel={setModel}
+          model={group === "blocks" ? undefined : model}
+          models={group === "blocks" ? undefined : models}
+          onModel={group === "blocks" ? undefined : setModel}
         >
           <div className="flex rounded-md border border-edge font-mono text-xs">
             {GROUPS.map((g) => (

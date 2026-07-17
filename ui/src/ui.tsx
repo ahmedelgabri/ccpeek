@@ -352,9 +352,12 @@ export function FilterBar({
   onModel,
   children,
 }: {
-  since: string;
-  until: string;
-  onRange: (since: string, until: string) => void;
+  // Date range renders only when onRange is provided — views whose data
+  // has no date dimension (e.g. rolling blocks) hide it rather than
+  // showing controls that silently do nothing.
+  since?: string;
+  until?: string;
+  onRange?: (since: string, until: string) => void;
   agent?: string;
   onAgent?: (agent: string) => void;
   model?: string;
@@ -366,34 +369,36 @@ export function FilterBar({
     "rounded-md border border-edge bg-surface-1 px-2 py-1 font-mono text-xs text-ink-dim focus:text-ink";
   return (
     <div className="ml-auto flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-1.5">
-        <input
-          type="date"
-          value={since}
-          max={until || undefined}
-          onChange={(e) => onRange(e.target.value, until)}
-          className={dateCls}
-          aria-label="From date"
-        />
-        <span className="font-mono text-xs text-ink-faint">→</span>
-        <input
-          type="date"
-          value={until}
-          min={since || undefined}
-          onChange={(e) => onRange(since, e.target.value)}
-          className={dateCls}
-          aria-label="To date"
-        />
-        {(since || until) && (
-          <button
-            onClick={() => onRange("", "")}
-            className="rounded border border-edge px-1.5 py-1 font-mono text-[10px] text-ink-faint hover:text-ink"
-            title="Clear date range"
-          >
-            ✕
-          </button>
-        )}
-      </div>
+      {onRange && (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            value={since ?? ""}
+            max={until || undefined}
+            onChange={(e) => onRange(e.target.value, until ?? "")}
+            className={dateCls}
+            aria-label="From date"
+          />
+          <span className="font-mono text-xs text-ink-faint">→</span>
+          <input
+            type="date"
+            value={until ?? ""}
+            min={since || undefined}
+            onChange={(e) => onRange(since ?? "", e.target.value)}
+            className={dateCls}
+            aria-label="To date"
+          />
+          {(since || until) && (
+            <button
+              onClick={() => onRange("", "")}
+              className="rounded border border-edge px-1.5 py-1 font-mono text-[10px] text-ink-faint hover:text-ink"
+              title="Clear date range"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
       {onAgent && (
         <select
           value={agent ?? ""}

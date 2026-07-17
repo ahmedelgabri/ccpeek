@@ -202,6 +202,7 @@ export const api = {
     model?: string;
     since?: string;
     until?: string;
+    limit?: string;
   }) => get<UsageRow[] | null>("/usage", filters),
 
   search: (q: string, limit = "20") =>
@@ -344,8 +345,8 @@ export const parityApi = {
     get<ScanFinding[] | null>("/scan", { ignored: includeIgnored ? "1" : "" }),
   scanIgnore: (id: number, ignored: boolean) =>
     send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
-  blocks: (limit = 24) =>
-    get<BlockRow[] | null>("/blocks", { limit: String(limit) }),
+  blocks: (limit = 24, agent = "") =>
+    get<BlockRow[] | null>("/blocks", { limit: String(limit), agent }),
   budget: () => get<Budget>("/budget"),
   setBudget: (monthlyUSD: number) =>
     send<Budget>("PUT", "/budget", { monthlyUSD }),
