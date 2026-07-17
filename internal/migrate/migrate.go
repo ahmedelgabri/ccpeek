@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
@@ -260,34 +261,114 @@ func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, rep
 	return nil
 }
 
-// importIgnoreFlags carries the user's scan-ignore decisions over as
-// user_annotations. Natural key shape:
-// "<source_type>/<source_id>/<rule_id>/<line_number>".
+// importIgnoreFlags carries the user's scan-ignore decisions over,
+// TRANSLATING v1 finding identities into the keys the v2 scanner
+// resolves — a verbatim copy would never re-attach, silently reviving
+// every dismissed secret.
+//
+// v1 identities:
+//   - message/command: source_id "<session-uuid>@<timestamp>", line = a
+//     detector line inside that one message's content;
+//   - file_history (and other sidecars): source_id names the artifact.
+//
+// v2 keys: "message/<agent>/<session>/<rule>/<seq>" for messages and
+// "artifact/<agent>/<kind>/<name>/<rule>/<line>" for artifacts. The
+// message translation resolves the v2 seq by matching the v1 timestamp
+// against the imported/ingested messages (seconds precision — v2 stores
+// RFC3339 without sub-second parts). Where no message matches, and for
+// artifact findings whose v1 line numbering has no v2 equivalent, a
+// rule-scoped wildcard key ("…/<rule>/*") preserves the user's intent:
+// they dismissed this rule on this entity.
 func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
 	rows, err := v1.QueryContext(ctx, `
-		SELECT rule_id, source_type, source_id, COALESCE(line_number, 0)
+		SELECT DISTINCT rule_id, source_type, source_id
 		FROM scan_findings WHERE ignored = 1`)
 	if err != nil {
 		return nil // no scan_findings table or no ignored column: fine
 	}
 	defer rows.Close()
 	now := time.Now().UTC().Format(time.RFC3339)
-	for rows.Next() {
-		var ruleID, sourceType, sourceID string
-		var line int
-		if err := rows.Scan(&ruleID, &sourceType, &sourceID, &line); err != nil {
-			return err
-		}
-		key := fmt.Sprintf("%s/%s/%s/%d", sourceType, sourceID, ruleID, line)
-		if _, err := store.DB().ExecContext(ctx, `
+	insert := func(key string) error {
+		_, err := store.DB().ExecContext(ctx, `
 			INSERT INTO user_annotations (entity_type, natural_key, kind, value_json, created_at)
 			VALUES ('scan_finding', ?, 'scan_ignore', '{}', ?)
-			ON CONFLICT(entity_type, natural_key, kind) DO NOTHING`, key, now); err != nil {
-			return fmt.Errorf("importing ignore flag: %w", err)
+			ON CONFLICT(entity_type, natural_key, kind) DO NOTHING`, key, now)
+		return err
+	}
+	for rows.Next() {
+		var ruleID, sourceType, sourceID string
+		if err := rows.Scan(&ruleID, &sourceType, &sourceID); err != nil {
+			return err
+		}
+		var keys []string
+		switch sourceType {
+		case "message", "command":
+			// v1 scanned commands out of the same transcript entries the
+			// v2 scanner covers as messages.
+			session, ts, ok := splitV1MessageID(sourceID)
+			base := fmt.Sprintf("message/%s/%s/%s", claudeSlug, session, ruleID)
+			if ok {
+				for _, seq := range messageSeqsAt(ctx, store, session, ts) {
+					keys = append(keys, fmt.Sprintf("%s/%d", base, seq))
+				}
+			}
+			if len(keys) == 0 {
+				keys = append(keys, base+"/*")
+			}
+		case "file_history":
+			keys = append(keys, fmt.Sprintf("artifact/%s/file_history/%s/%s/*",
+				claudeSlug, sourceID, ruleID))
+		default:
+			// Sidecar kinds map 1:1 onto v2 artifact kinds by name.
+			keys = append(keys, fmt.Sprintf("artifact/%s/%s/%s/%s/*",
+				claudeSlug, sourceType, sourceID, ruleID))
+		}
+		for _, key := range keys {
+			if err := insert(key); err != nil {
+				return fmt.Errorf("importing ignore flag: %w", err)
+			}
 		}
 		report.IgnoreFlags++
 	}
 	return rows.Err()
+}
+
+// splitV1MessageID splits a v1 "<session-uuid>@<timestamp>" identity.
+func splitV1MessageID(id string) (session, ts string, ok bool) {
+	i := strings.LastIndexByte(id, '@')
+	if i <= 0 || i == len(id)-1 {
+		return id, "", false
+	}
+	return id[:i], id[i+1:], true
+}
+
+// messageSeqsAt resolves the v2 seq(s) of the message a v1 finding
+// pointed at, matching created_at at seconds precision (several entries
+// can share a second; ignoring each sibling errs on the user's side).
+func messageSeqsAt(ctx context.Context, store *db.Store, session, v1ts string) []int {
+	t, err := time.Parse(time.RFC3339Nano, v1ts)
+	if err != nil {
+		return nil
+	}
+	rows, err := store.DB().QueryContext(ctx, `
+		SELECT m.seq FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		JOIN agents a ON a.id = s.agent_id
+		WHERE a.slug = ? AND s.external_id = ? AND m.created_at = ?`,
+		string(claudeSlug), session, t.UTC().Truncate(time.Second).Format(time.RFC3339))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var seqs []int
+	for rows.Next() {
+		var seq int
+		if err := rows.Scan(&seq); err != nil {
+			return seqs
+		}
+		seqs = append(seqs, seq)
+	}
+	return seqs
 }
 
 func parseTime(s string) time.Time {

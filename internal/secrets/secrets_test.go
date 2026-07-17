@@ -85,7 +85,7 @@ func TestScanFindsSecretsAcrossEntities(t *testing.T) {
 	if msgFinding == nil {
 		t.Fatal("AWS key in message not detected")
 	}
-	if msgFinding.NaturalKey != "message/sess-leak" || msgFinding.Line != 3 {
+	if msgFinding.NaturalKey != "message/claude-code/sess-leak" || msgFinding.Line != 3 {
 		t.Errorf("message finding = %+v", msgFinding)
 	}
 	if len(msgFinding.MatchRedacted) > 12 {
@@ -94,7 +94,7 @@ func TestScanFindsSecretsAcrossEntities(t *testing.T) {
 	if artFinding == nil {
 		t.Fatal("GitHub token in artifact not detected")
 	}
-	if artFinding.NaturalKey != "shell_snapshot/snapshot-zsh-1.sh" {
+	if artFinding.NaturalKey != "artifact/claude-code/shell_snapshot/snapshot-zsh-1.sh" {
 		t.Errorf("artifact finding key = %q", artFinding.NaturalKey)
 	}
 
@@ -284,5 +284,134 @@ func TestRunFullRescansEverything(t *testing.T) {
 	}
 	if len(full) != len(first) {
 		t.Errorf("findings after full rescan = %d, want %d", len(full), len(first))
+	}
+}
+
+// TestFindingsAreAgentScoped: two agents legitimately reusing the same
+// external session id must keep independent findings — scanning one
+// agent's session must not delete or ignore the other's.
+func TestFindingsAreAgentScoped(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "xoxb-3336494366" + "76-7992618528" + "69-clFJVVIaoJahpORboa3Ba2al"
+	for _, slug := range []string{"claude-code", "opencode"} {
+		id, err := w.UpsertSession(canon.Session{
+			Agent: canon.AgentSlug(slug), ExternalID: "shared-id",
+		}, "h-"+slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.InsertMessage(id, canon.AgentSlug(slug), canon.Message{
+			Seq: 0, Role: canon.RoleUser,
+			Content: []byte(`{"content":"token ` + token + `"}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	sc, err := New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, _, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]bool{}
+	for _, f := range findings {
+		keys[f.NaturalKey] = true
+	}
+	if !keys["message/claude-code/shared-id"] || !keys["message/opencode/shared-id"] {
+		t.Fatalf("finding keys = %v, want both agents' sessions", keys)
+	}
+
+	// Only claude's session changes; opencode's finding must survive the
+	// rescan (unqualified keys used to delete it as a same-key overwrite).
+	w, err = store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "shared-id",
+	}, "h-claude-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	findings, report, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SessionsScanned != 1 {
+		t.Errorf("rescan scanned %d sessions, want 1 (only claude changed)", report.SessionsScanned)
+	}
+	keys = map[string]bool{}
+	for _, f := range findings {
+		keys[f.NaturalKey] = true
+	}
+	if !keys["message/opencode/shared-id"] {
+		t.Error("the unchanged agent's finding was lost by the other agent's rescan")
+	}
+
+	// Ignoring claude's finding must not ignore opencode's.
+	if _, err := store.DB().ExecContext(ctx, `
+		INSERT INTO user_annotations (entity_type, natural_key, kind, value_json, created_at)
+		VALUES ('scan_finding', 'message/claude-code/shared-id/slack-bot-token/0', 'scan_ignore', '{}', '2026-07-13T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	findings, _, err = sc.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		switch f.NaturalKey {
+		case "message/claude-code/shared-id":
+			if !f.Ignored {
+				t.Error("claude finding should be ignored")
+			}
+		case "message/opencode/shared-id":
+			if f.Ignored {
+				t.Error("opencode finding wrongly ignored by claude's annotation")
+			}
+		}
+	}
+}
+
+// TestWildcardIgnoreCoversRuleOnEntity: a "/<rule>/*" annotation (what
+// the v1 importer writes when old line numbers can't translate) ignores
+// every finding of that rule on the entity.
+func TestWildcardIgnoreCoversRuleOnEntity(t *testing.T) {
+	store := seedStore(t)
+	ctx := context.Background()
+	sc, err := New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `
+		INSERT INTO user_annotations (entity_type, natural_key, kind, value_json, created_at)
+		VALUES ('scan_finding', 'message/claude-code/sess-leak/slack-bot-token/*', 'scan_ignore', '{}', '2026-07-13T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	findings, _, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.EntityType == "message" && f.RuleID == "slack-bot-token" && !f.Ignored {
+			t.Errorf("wildcard ignore did not cover %+v", f)
+		}
 	}
 }

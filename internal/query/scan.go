@@ -30,7 +30,10 @@ func (s *Service) ScanFindings(ctx context.Context, includeIgnored bool) ([]Scan
 		         SELECT 1 FROM user_annotations ua
 		         WHERE ua.entity_type = 'scan_finding'
 		           AND ua.kind = 'scan_ignore'
-		           AND ua.natural_key = f.natural_key || '/' || f.rule_id || '/' || f.line_number
+		           AND ua.natural_key IN (
+		             f.natural_key || '/' || f.rule_id || '/' || f.line_number,
+		             f.natural_key || '/' || f.rule_id || '/*'
+		           )
 		       )
 		FROM scan_findings f
 		ORDER BY f.rule_id, f.natural_key, f.line_number`)

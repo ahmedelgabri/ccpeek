@@ -88,7 +88,9 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 		        WHERE NOT EXISTS (
 		          SELECT 1 FROM user_annotations ua
 		          WHERE ua.entity_type = 'scan_finding' AND ua.kind = 'scan_ignore'
-		            AND ua.natural_key = f.natural_key || '/' || f.rule_id || '/' || f.line_number))`).
+		            AND ua.natural_key IN (
+		              f.natural_key || '/' || f.rule_id || '/' || f.line_number,
+		              f.natural_key || '/' || f.rule_id || '/*')))`).
 		Scan(&st.Sessions, &st.Messages, &st.ToolCalls, &st.Commands,
 			&st.Artifacts, &st.ScanFindings)
 	if err != nil {

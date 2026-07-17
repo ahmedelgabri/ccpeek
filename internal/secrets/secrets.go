@@ -11,9 +11,13 @@
 // typical incremental pass costs seconds.
 //
 // Findings are derived data (scan_findings); the user's ignore decisions
-// live in user_annotations under natural keys shaped exactly like the
-// v1 importer writes them — "<entity_type>/<source_id>/<rule_id>/<line>" —
-// so flags imported from v1 re-attach to re-detected findings.
+// live in user_annotations under agent-qualified natural keys
+// ("message/<agent>/<session>" and "artifact/<agent>/<kind>/<name>",
+// suffixed with "/<rule>/<line>"). Two agents can legitimately reuse an
+// external session id or artifact name, so un-qualified keys would let
+// one agent's scan delete or ignore the other's findings. A "/*" line
+// suffix ignores every finding of a rule on an entity — the v1 importer
+// writes those where v1's line numbering has no v2 equivalent.
 package secrets
 
 import (
@@ -195,12 +199,12 @@ func (sc *Scanner) scanSessions(ctx context.Context, state map[string]*scanEntit
 	var scanned atomic.Int64
 	for _, s := range changed {
 		g.Go(func() error {
-			findings, err := sc.detectSessionMessages(gctx, s.id, s.external)
+			findings, err := sc.detectSessionMessages(gctx, s.id, "message/"+s.key)
 			if err != nil {
 				return err
 			}
 			if err := sc.replaceFindings(gctx,
-				"message", "message/"+s.external, "session", s.key, s.hash,
+				"message", "message/"+s.key, "session", s.key, s.hash,
 				findings); err != nil {
 				return err
 			}
@@ -221,8 +225,9 @@ func (sc *Scanner) scanSessions(ctx context.Context, state map[string]*scanEntit
 // batches.
 const scanBatchSize = 500
 
-// detectSessionMessages runs the detector over one session's messages.
-func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, externalID string) ([]Finding, error) {
+// detectSessionMessages runs the detector over one session's messages;
+// naturalKey is the agent-qualified finding key ("message/<agent>/<id>").
+func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, naturalKey string) ([]Finding, error) {
 	type row struct {
 		seq     int
 		content string
@@ -266,9 +271,8 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, e
 					RuleID:      g.RuleID,
 					Description: g.Description,
 					EntityType:  "message",
-					// v1-compatible source id: the session external id. Seq
-					// rides in the line slot's sibling field below.
-					NaturalKey:    "message/" + externalID,
+					// The message's seq rides in the line slot.
+					NaturalKey:    naturalKey,
 					MatchRedacted: redact(g.Secret),
 					Line:          r.seq,
 				})
@@ -325,13 +329,13 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEnti
 					RuleID:        m.RuleID,
 					Description:   m.Description,
 					EntityType:    "artifact",
-					NaturalKey:    r.kind + "/" + r.name,
+					NaturalKey:    "artifact/" + r.key,
 					MatchRedacted: redact(m.Secret),
 					Line:          m.StartLine,
 				})
 			}
 			if err := sc.replaceFindings(gctx,
-				"artifact", r.kind+"/"+r.name, "artifact", r.key, r.hash,
+				"artifact", "artifact/"+r.key, "artifact", r.key, r.hash,
 				findings); err != nil {
 				return err
 			}
@@ -390,18 +394,11 @@ func (sc *Scanner) dropVanished(ctx context.Context, state map[string]*scanEntit
 			continue
 		}
 		typ, entityKey, _ := strings.Cut(key, "\x00")
-		// State keys are agent-qualified (slug/…); findings keep the
-		// v1-compatible shape without the slug.
-		findingType, naturalKey := typ, entityKey
-		rest := entityKey
-		if _, after, found := strings.Cut(entityKey, "/"); found {
-			rest = after
-		}
+		// Finding keys are the agent-qualified entity key under the
+		// entity-type prefix.
+		findingType, naturalKey := "artifact", "artifact/"+entityKey
 		if typ == "session" {
-			findingType = "message"
-			naturalKey = "message/" + rest
-		} else {
-			naturalKey = rest
+			findingType, naturalKey = "message", "message/"+entityKey
 		}
 		tx, err := sc.store.DB().BeginTx(ctx, nil)
 		if err != nil {
@@ -469,15 +466,20 @@ func (sc *Scanner) allFindings(ctx context.Context) ([]Finding, error) {
 		return nil, err
 	}
 	for i := range all {
-		all[i].Ignored = ignored[annotationKey(all[i])]
+		all[i].Ignored = ignored[annotationKey(all[i])] || ignored[wildcardKey(all[i])]
 	}
 	return all, nil
 }
 
-// annotationKey matches the v1 importer's shape:
-// "<entity_type>/<source_id>/<rule_id>/<line>".
+// annotationKey is the exact ignore key for one finding; wildcardKey
+// ignores every finding of the rule on the entity (used by the v1
+// importer where old line numbering has no v2 equivalent).
 func annotationKey(f Finding) string {
 	return fmt.Sprintf("%s/%s/%d", f.NaturalKey, f.RuleID, f.Line)
+}
+
+func wildcardKey(f Finding) string {
+	return f.NaturalKey + "/" + f.RuleID + "/*"
 }
 
 // redact keeps just enough of a secret to recognize it.
