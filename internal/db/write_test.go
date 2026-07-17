@@ -288,12 +288,12 @@ func TestInsertHistoryResolvesSession(t *testing.T) {
 	if err := w.InsertHistory(canon.HistoryEntry{
 		Agent: "claude-code", Display: "fix the tests",
 		Timestamp: time.Now(), SessionExternalID: "sess-a",
-	}); err != nil {
+	}, "/r/history.jsonl"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.InsertHistory(canon.HistoryEntry{
 		Agent: "claude-code", Display: "orphan prompt", Timestamp: time.Now(),
-	}); err != nil {
+	}, "/r/history.jsonl"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Commit(); err != nil {

@@ -18,12 +18,14 @@ import (
 type dbSink struct {
 	writer     *db.Writer
 	agent      canon.AgentSlug
+	sourcePath string
 	sourceHash string
 	report     *Report
 	append     bool
 
-	sessionIDs  map[string]int64 // session external id → row id
-	artifactIDs map[artifactKey]int64
+	sessionIDs     map[string]int64 // session external id → row id
+	artifactIDs    map[artifactKey]int64
+	historyCleared bool
 }
 
 type artifactKey struct {
@@ -139,7 +141,15 @@ func (s *dbSink) History(h canon.HistoryEntry) error {
 	if h.Agent == "" {
 		h.Agent = s.agent
 	}
-	if err := s.writer.InsertHistory(h); err != nil {
+	// History sources re-parse whole on change: replace this source's rows
+	// once per transaction so re-ingest stays idempotent.
+	if !s.historyCleared {
+		if err := s.writer.ClearHistorySource(h.Agent, s.sourcePath); err != nil {
+			return err
+		}
+		s.historyCleared = true
+	}
+	if err := s.writer.InsertHistory(h, s.sourcePath); err != nil {
 		return err
 	}
 	s.report.History++

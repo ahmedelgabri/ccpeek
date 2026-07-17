@@ -415,9 +415,31 @@ func (w *Writer) AddSessionRelation(rel canon.SessionRelation) (resolved bool, e
 	return false, nil
 }
 
+// ClearHistorySource removes a history source's rows before a re-parse
+// re-inserts them — history files are parsed whole whenever they change,
+// and appends are the norm, so insert-only writes would duplicate every
+// existing entry each time. Rows with an empty source_path from builds
+// that predate this provenance are cleared for the same agent too (they
+// can only have come from this source and would otherwise duplicate
+// forever).
+func (w *Writer) ClearHistorySource(agent canon.AgentSlug, sourcePath string) error {
+	agentID, err := w.EnsureAgent(agent)
+	if err != nil {
+		return err
+	}
+	_, err = w.tx.ExecContext(w.ctx, `
+		DELETE FROM history
+		WHERE source_path = ? OR (agent_id = ? AND source_path = '')`,
+		sourcePath, agentID)
+	if err != nil {
+		return fmt.Errorf("clearing history source %s: %w", sourcePath, err)
+	}
+	return nil
+}
+
 // InsertHistory writes one prompt-history entry, resolving its session link
 // when possible.
-func (w *Writer) InsertHistory(h canon.HistoryEntry) error {
+func (w *Writer) InsertHistory(h canon.HistoryEntry, sourcePath string) error {
 	agentID, err := w.EnsureAgent(h.Agent)
 	if err != nil {
 		return err
@@ -431,9 +453,9 @@ func (w *Writer) InsertHistory(h canon.HistoryEntry) error {
 		}
 	}
 	_, err = w.tx.ExecContext(w.ctx, `
-		INSERT INTO history (agent_id, display, timestamp, session_id)
-		VALUES (?, ?, ?, ?)`,
-		agentID, h.Display, h.Timestamp.UnixMilli(), sessionID)
+		INSERT INTO history (agent_id, display, timestamp, session_id, source_path)
+		VALUES (?, ?, ?, ?, ?)`,
+		agentID, h.Display, h.Timestamp.UnixMilli(), sessionID, sourcePath)
 	if err != nil {
 		return fmt.Errorf("inserting history entry: %w", err)
 	}

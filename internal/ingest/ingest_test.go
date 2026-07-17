@@ -494,3 +494,42 @@ func TestRewrittenPrefixFallsBackToFullParse(t *testing.T) {
 		t.Errorf("messages %d → %d after prefix rewrite, want unchanged (full re-parse, no dupes)", before, after)
 	}
 }
+
+// TestHistoryAppendDoesNotDuplicate: history.jsonl re-parses whole on
+// change; rows must be replaced per source, not appended again.
+func TestHistoryAppendDoesNotDuplicate(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	before := queryInt(t, store, `SELECT COUNT(*) FROM history`)
+
+	target := filepath.Join(tmp, "claude-code", "history.jsonl")
+	f, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"display":"one more prompt","timestamp":1751443200000}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	after := queryInt(t, store, `SELECT COUNT(*) FROM history`)
+	if after != before+1 {
+		t.Errorf("history rows %d → %d after one append, want +1 (replaced, not duplicated)", before, after)
+	}
+	// Provenance recorded so future replacement stays scoped.
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM history WHERE source_path = ''`); n != 0 {
+		t.Errorf("%d history rows missing source_path", n)
+	}
+}

@@ -303,7 +303,7 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	}
 	defer w.Rollback()
 
-	sink := &dbSink{writer: w, agent: a.Slug(), sourceHash: hash, report: report}
+	sink := &dbSink{writer: w, agent: a.Slug(), sourcePath: src.Path, sourceHash: hash, report: report}
 	parseState := ""
 	if tp, ok := a.(agent.TailParser); ok {
 		state, err := tp.ParseTail(ctx, src, agent.TailState{}, sink)
@@ -330,7 +330,7 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 	}
 	defer w.Rollback()
 
-	sink := &dbSink{writer: w, agent: a.Slug(), sourceHash: hash, report: report, append: true}
+	sink := &dbSink{writer: w, agent: a.Slug(), sourcePath: src.Path, sourceHash: hash, report: report, append: true}
 	newState, err := tp.ParseTail(ctx, src, state, sink)
 	if err != nil {
 		return err
