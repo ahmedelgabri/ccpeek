@@ -107,5 +107,81 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		r.HasUnpriced = minPriced == 0
 		out = append(out, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Session counts are NOT additive across rollup rows: a session that
+	// spans models (or days, for the non-day groups) appears in several
+	// rows, and SUM would count it once per row. Recompute the counts as
+	// true distinct sessions per group from message usage.
+	distinct, err := s.distinctUsageSessions(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Sessions = distinct[out[i].Group]
+	}
+	return out, nil
+}
+
+// distinctUsageSessions counts distinct usage-bearing sessions per group,
+// mirroring the rollup dimensions and the caller's filters.
+func (s *Service) distinctUsageSessions(ctx context.Context, f UsageFilter) (map[string]int64, error) {
+	var groupExpr string
+	switch f.GroupBy {
+	case "", "day":
+		groupExpr = "substr(COALESCE(m.created_at, se.created_at, ''), 1, 10)"
+	case "model":
+		groupExpr = "m.model"
+	case "agent":
+		groupExpr = "a.slug"
+	case "project":
+		groupExpr = "COALESCE(w.canonical_path, '')"
+	}
+
+	where := "WHERE 1=1"
+	var args []any
+	if f.Agent != "" {
+		where += " AND a.slug = ?"
+		args = append(args, f.Agent)
+	}
+	if f.Model != "" {
+		where += " AND m.model = ?"
+		args = append(args, f.Model)
+	}
+	dayExpr := "substr(COALESCE(m.created_at, se.created_at, ''), 1, 10)"
+	if f.Since != "" {
+		where += " AND " + dayExpr + " >= ?"
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		where += " AND " + dayExpr + " < ?"
+		args = append(args, f.Until)
+	}
+
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT %s AS grp, COUNT(DISTINCT se.id)
+		FROM message_usage u
+		JOIN messages m ON m.id = u.message_id
+		JOIN sessions se ON se.id = m.session_id
+		JOIN agents a ON a.id = se.agent_id
+		LEFT JOIN session_workspaces sw ON sw.session_id = se.id
+		LEFT JOIN workspaces w ON w.id = sw.workspace_id
+		%s
+		GROUP BY grp`, groupExpr, where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("counting distinct sessions: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var grp string
+		var n int64
+		if err := rows.Scan(&grp, &n); err != nil {
+			return nil, err
+		}
+		out[grp] = n
+	}
 	return out, rows.Err()
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
@@ -261,4 +262,70 @@ func TestStatsScanFindingsExcludesIgnored(t *testing.T) {
 	if st.ScanFindings != 1 {
 		t.Errorf("scanFindings = %d, want 1 (the ignored finding must not count)", st.ScanFindings)
 	}
+}
+
+// TestUsageSessionsAreDistinct: a session that used two models in one
+// day occupies two rollup rows; the day group must still count it once.
+func TestUsageSessionsAreDistinct(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "sess-two-models",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for seq, model := range []string{"claude-sonnet-5", "claude-haiku-4-5"} {
+		if err := w.InsertMessage(sessID, "claude-code", canon.Message{
+			Seq: seq, Role: canon.RoleAssistant, Model: model,
+			CreatedAt: mustTime(t, "2026-07-10T10:00:00Z"),
+			Content:   []byte(`{}`),
+			Usage:     &canon.Usage{InputTokens: 100, OutputTokens: 50},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := New(store, table).Usage(ctx, UsageFilter{GroupBy: "day"})
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("day rows = %d, want 1", len(rows))
+	}
+	if rows[0].Sessions != 1 {
+		t.Errorf("day sessions = %d, want 1 (one session across two models)", rows[0].Sessions)
+	}
+	if rows[0].Messages != 2 {
+		t.Errorf("day messages = %d, want 2 (additive metrics unchanged)", rows[0].Messages)
+	}
+}
+
+func mustTime(t *testing.T, s string) (out time.Time) {
+	t.Helper()
+	out, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
