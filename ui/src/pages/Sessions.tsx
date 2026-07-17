@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
@@ -20,7 +20,6 @@ const PAGE = 100;
 export function SessionsPage() {
   const search = useSearch({ from: "/sessions" });
   const navigate = useNavigate({ from: "/sessions" });
-  const [pages, setPages] = useState(1);
   const agent = search.agent ?? "";
   const q = search.q ?? "";
   const project = search.project ?? "";
@@ -43,20 +42,27 @@ export function SessionsPage() {
       replace: true,
     });
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["sessions", agent, q, project, model, since, until, pages],
-    queryFn: () =>
-      api.sessions({
-        agent,
-        q,
-        project,
-        model,
-        since,
-        until: inclusiveUntil(until),
-        limit: String(PAGE * pages),
-      }),
-    placeholderData: (prev) => prev,
-  });
+  // Offset pages of a fixed size: a growing single limit would silently
+  // stop at the server's cap and hide everything past it.
+  const { data, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
+    useInfiniteQuery({
+      queryKey: ["sessions", agent, q, project, model, since, until],
+      queryFn: ({ pageParam }) =>
+        api.sessions({
+          agent,
+          q,
+          project,
+          model,
+          since,
+          until: inclusiveUntil(until),
+          limit: String(PAGE),
+          offset: String(pageParam),
+        }),
+      initialPageParam: 0,
+      getNextPageParam: (last, _all, lastParam) =>
+        last && last.length === PAGE ? lastParam + PAGE : undefined,
+      placeholderData: (prev) => prev,
+    });
   // Model options come from the model rollup, same source as Usage.
   const modelRows = useQuery({
     queryKey: ["usage", "model-options"],
@@ -66,8 +72,10 @@ export function SessionsPage() {
     .map((r) => r.group)
     .filter((m) => m !== "");
 
-  const sessions = data ?? [];
-  const mayHaveMore = sessions.length === PAGE * pages;
+  const sessions = useMemo(
+    () => (data?.pages ?? []).flatMap((p) => p ?? []),
+    [data],
+  );
   const groups = groupByDay(sessions);
 
   return (
@@ -125,12 +133,13 @@ export function SessionsPage() {
         ))}
       </div>
 
-      {mayHaveMore && (
+      {hasNextPage && (
         <button
-          onClick={() => setPages((p) => p + 1)}
-          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink"
+          onClick={() => void fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
         >
-          load more
+          {isFetchingNextPage ? "loading…" : "load more"}
         </button>
       )}
     </div>

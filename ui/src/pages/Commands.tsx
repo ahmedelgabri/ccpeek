@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useRef, useState } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, fmtWhen, inclusiveUntil, shortPath } from "../api";
 import { useHighlight } from "../highlight";
@@ -22,22 +22,30 @@ export function CommandsPage() {
   const [agent, setAgent] = useState("");
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
-  const [pages, setPages] = useState(1);
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["commands", q, agent, since, until, pages],
-    queryFn: () =>
-      api.commands({
-        q,
-        agent,
-        since,
-        until: inclusiveUntil(until),
-        limit: String(PAGE * pages),
-      }),
-    placeholderData: (prev) => prev,
-  });
-  const rows = data ?? [];
-  const mayHaveMore = rows.length === PAGE * pages;
+  // Offset pages of a fixed size: a growing single limit would silently
+  // stop at the server's cap and hide everything past it.
+  const { data, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
+    useInfiniteQuery({
+      queryKey: ["commands", q, agent, since, until],
+      queryFn: ({ pageParam }) =>
+        api.commands({
+          q,
+          agent,
+          since,
+          until: inclusiveUntil(until),
+          limit: String(PAGE),
+          offset: String(pageParam),
+        }),
+      initialPageParam: 0,
+      getNextPageParam: (last, _all, lastParam) =>
+        last && last.length === PAGE ? lastParam + PAGE : undefined,
+      placeholderData: (prev) => prev,
+    });
+  const rows = useMemo(
+    () => (data?.pages ?? []).flatMap((p) => p ?? []),
+    [data],
+  );
   const listRef = useRef<HTMLUListElement>(null);
   useHighlight(listRef, [rows]);
 
@@ -131,12 +139,13 @@ export function CommandsPage() {
         ))}
       </ul>
 
-      {mayHaveMore && (
+      {hasNextPage && (
         <button
-          onClick={() => setPages((p) => p + 1)}
-          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink"
+          onClick={() => void fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
         >
-          load more
+          {isFetchingNextPage ? "loading…" : "load more"}
         </button>
       )}
     </div>
