@@ -133,12 +133,13 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	}
 	rows.Close()
 
-	// Activity: sessions touched per day (26 weeks) + that day's cost.
+	// Activity: sessions touched per day + that day's cost. 371 days
+	// covers the UI's 52-week grid plus the partial week at each end.
 	rows, err = db.QueryContext(ctx, `
 		SELECT act.day, act.n, COALESCE(r.cost, 0)
 		FROM (SELECT substr(modified_at, 1, 10) AS day, COUNT(*) AS n
 		      FROM sessions
-		      WHERE modified_at >= date('now', '-181 days')
+		      WHERE modified_at >= date('now', '-371 days')
 		      GROUP BY 1) act
 		LEFT JOIN (SELECT day, SUM(cost_usd) AS cost
 		           FROM rollup_usage_daily GROUP BY day) r ON r.day = act.day

@@ -234,17 +234,24 @@ function Heatmap({ days }: { days: DayActivity[] }) {
   const WEEKS = 52;
 
   // Grid anchored to the current week's Sunday, going back WEEKS weeks.
-  const today = new Date();
-  const end = new Date(today);
-  end.setDate(end.getDate() + (6 - end.getDay()));
+  // All calendar math runs in UTC: mixing local Date arithmetic with
+  // toISOString (which is UTC) shifts every cell by a day in zones far
+  // from UTC, and the activity days from the API are date strings.
+  const now = new Date();
+  const todayUTC = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const endUTC = todayUTC + (6 - new Date(todayUTC).getUTCDay()) * DAY_MS;
   const cells: { day: string; week: number; dow: number; d?: DayActivity }[] =
     [];
   for (let w = 0; w < WEEKS; w++) {
     for (let dow = 0; dow < 7; dow++) {
-      const date = new Date(end);
-      date.setDate(end.getDate() - (WEEKS - 1 - w) * 7 - (6 - dow));
-      if (date > today) continue;
-      const day = date.toISOString().slice(0, 10);
+      const t = endUTC - ((WEEKS - 1 - w) * 7 + (6 - dow)) * DAY_MS;
+      if (t > todayUTC) continue;
+      const day = new Date(t).toISOString().slice(0, 10);
       cells.push({ day, week: w, dow, d: byDay.get(day) });
     }
   }
