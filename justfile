@@ -32,7 +32,10 @@ staticcheck:
 govulncheck:
     govulncheck ./...
 
+# Type-aware linting covers ui/ too, whose deps live in its own package
+# — install them so oxlint can resolve vite/react module types in CI.
 lint:
+    pnpm -C ui install --frozen-lockfile
     pnpm exec oxlint --type-aware --type-check
 
 format:
