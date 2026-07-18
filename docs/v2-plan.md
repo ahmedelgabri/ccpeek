@@ -126,8 +126,30 @@ Post-launch sprints (feedback-driven, after v2.0):
   lines wait for the next pass. Measured on the active 2.6k-message
   session: 169ms vs 46.7s for the whole-file re-parse.
 
-Nothing from the plan remains open; new agents (Gemini CLI, Droid, Amp,
-…) land post-launch per §6 as demand shows up.
+- ✅ **External review response (2026-07-13, batches 1–4)**: history
+  re-ingest made idempotent (source-scoped replace); overview scan tile
+  counts only active findings; the 52-week heatmap gets 371 days and
+  UTC math; e2e exercises all five agents and oxlint covers the SPA;
+  palette navigation fixed. Codex reasoning tokens documented as a
+  SUBSET of output (fixture corrected — no cost change needed); usage
+  session counts recomputed as true distinct sessions; sessions and
+  commands page by offset; usage requests the full group range and the
+  Blocks tab wires its agent filter (unsupported controls hidden). Scan
+  finding identity is agent-qualified ("message/<agent>/<session>",
+  "artifact/<agent>/<kind>/<name>") with wildcard rule-scoped ignores,
+  and the v1 importer translates old "<session>@<timestamp>" ignore
+  identities to v2 keys (proven by an import→scan→ignored test); the
+  raw artifact endpoint carries CSP sandbox + nosniff. Artifact link
+  resolvers match missing pairs (N:M), watch passes rescan incrementally
+  and honor --prune, and the Nix toolchain pins Go 1.25.12
+  (govulncheck-clean) with the pnpm fetcher on v3.
+
+Remaining review findings are tracked release-gate decisions (schema
+baseline freeze timing, adapter capability labeling, v1 importer
+entity-coverage policy, go-install embed contract) plus deferred
+optimizations (transcript DOM windowing, N+1 session costs, append
+single-pass I/O, operation registry). New agents (Gemini CLI, Droid,
+Amp, …) land post-launch per §6 as demand shows up.
 
 **Schema policy:** the store is an archive, not a cache — it retains
 sessions whose source files were cleaned up (prune is opt-in),
