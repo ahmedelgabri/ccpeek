@@ -1,7 +1,8 @@
 # CCPeek
 
 Explore your coding-agent history. A local web app that indexes
-**Claude Code, Pi, Codex CLI, OpenCode, and Cursor** sessions into one
+**Claude Code, Pi, Codex CLI, and OpenCode** sessions (plus
+**Cursor**, experimental — see the capability matrix below) into one
 session-centric database — conversations, plans, todos, tasks, shell
 snapshots, file history, paste cache, memories, and commands — with real
 token usage and estimated cost, plus an agent-facing query surface
@@ -76,18 +77,18 @@ The server reads each agent's data from its default root (for Claude Code,
 
 ### Flags
 
-| Flag           | Default                           | Description                                        |
-| -------------- | --------------------------------- | -------------------------------------------------- |
-| `-p`, `--port` | `3000`                            | Server port                                        |
-| `--claude-dir` | `~/.claude`                       | Source directory (Claude data)                     |
+| Flag           | Default                           | Description                                                                                                                                                              |
+| -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-p`, `--port` | `3000`                            | Server port                                                                                                                                                              |
+| `--claude-dir` | `~/.claude`                       | Source directory (Claude data)                                                                                                                                           |
 | `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | Database identity: the v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`); a v1 database at this exact path is imported |
-| `--skip-index` | `false`                           | Skip indexing, serve existing data                 |
-| `--index-only` | `false`                           | Index and exit                                     |
-| `--open`       | `false`                           | Open browser after starting                        |
-| `--watch`      | `false`                           | Re-index periodically while serving                |
-| `--rebuild`    | `false`                           | Force full rebuild (drop all data and re-index)    |
-| `--prune`      | `false`                           | Remove data from source files that no longer exist |
-| `--skip-scan`  | `false`                           | Skip secret scanning after indexing                |
+| `--skip-index` | `false`                           | Skip indexing, serve existing data                                                                                                                                       |
+| `--index-only` | `false`                           | Index and exit                                                                                                                                                           |
+| `--open`       | `false`                           | Open browser after starting                                                                                                                                              |
+| `--watch`      | `false`                           | Re-index periodically while serving                                                                                                                                      |
+| `--rebuild`    | `false`                           | Force full rebuild (drop all data and re-index)                                                                                                                          |
+| `--prune`      | `false`                           | Remove data from source files that no longer exist                                                                                                                       |
+| `--skip-scan`  | `false`                           | Skip secret scanning after indexing                                                                                                                                      |
 
 ### Shell completions
 
@@ -145,6 +146,16 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 - **Commands** - Shell commands extracted from sessions
 - **Usage** - Token/cost rollups by day, model, workspace, and agent
 - **Secret Scan** - Detects leaked secrets across all indexed data
+
+### Agent capability matrix
+
+| Agent       | Status           | Messages | Usage/cost | Tool calls | Notes                                                                                                                                 |
+| ----------- | ---------------- | -------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | supported        | ✓        | ✓          | ✓          | Sessions, all sidecar artifacts, prompt history, incremental tail parsing                                                             |
+| Pi          | supported        | ✓        | ✓          | ✓          | Documented session format; forks/branches; reported costs                                                                             |
+| Codex CLI   | supported        | ✓        | ✓          | ✓          | Cumulative token counts recovered per turn; reasoning is a subset of output                                                           |
+| OpenCode    | supported        | ✓        | ✓          | ✓          | Reported costs preferred; additive reasoning folded into billable output                                                              |
+| Cursor      | **experimental** | ✓        | ✓          | —          | Schema derived from fixtures, not yet validated against a real `store.db`; no tool extraction. Expect gaps until real-data validation |
 
 ## v2
 

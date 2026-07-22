@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api } from "../api";
+import { agentLabel } from "../ui";
 
 const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
@@ -41,7 +42,7 @@ export function SearchPage() {
         >
           {AGENTS.map((a) => (
             <option key={a} value={a}>
-              {a === "" ? "all agents" : a}
+              {a === "" ? "all agents" : agentLabel(a)}
             </option>
           ))}
         </select>

@@ -236,17 +236,20 @@ const MIX = [
   {
     key: "output",
     label: "output",
-    color: "color-mix(in oklab, var(--color-accent) 65%, var(--color-surface-2))",
+    color:
+      "color-mix(in oklab, var(--color-accent) 65%, var(--color-surface-2))",
   },
   {
     key: "cacheRead",
     label: "cache read",
-    color: "color-mix(in oklab, var(--color-accent) 35%, var(--color-surface-2))",
+    color:
+      "color-mix(in oklab, var(--color-accent) 35%, var(--color-surface-2))",
   },
   {
     key: "cacheWrite",
     label: "cache write",
-    color: "color-mix(in oklab, var(--color-accent) 18%, var(--color-surface-2))",
+    color:
+      "color-mix(in oklab, var(--color-accent) 18%, var(--color-surface-2))",
   },
 ] as const;
 
@@ -341,6 +344,14 @@ export function KindBars({
 // carries. Values are controlled by the page (URL or state).
 const FILTER_AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
+// agentLabel marks experimental adapters wherever agents are offered as
+// options: Cursor's schema is fixture-derived and not yet validated
+// against a real store.db, and users must be able to tell complete
+// support from experimental ingestion.
+export function agentLabel(slug: string): string {
+  return slug === "cursor" ? "cursor (experimental)" : slug;
+}
+
 export function FilterBar({
   since,
   until,
@@ -408,7 +419,7 @@ export function FilterBar({
         >
           {FILTER_AGENTS.map((a) => (
             <option key={a} value={a}>
-              {a === "" ? "all agents" : a}
+              {a === "" ? "all agents" : agentLabel(a)}
             </option>
           ))}
         </select>
