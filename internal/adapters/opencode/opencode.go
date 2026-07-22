@@ -242,8 +242,13 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 		}
 		if md.Tokens != nil {
 			msg.Usage = &canon.Usage{
-				InputTokens:      md.Tokens.Input,
-				OutputTokens:     md.Tokens.Output,
+				InputTokens: md.Tokens.Input,
+				// OpenCode reports tokens.reasoning ADDITIVELY beside
+				// tokens.output (unlike OpenAI/Codex, where reasoning is a
+				// subset of output); fold it into billable output per the
+				// canon.Usage contract so totals, rollups, and fallback
+				// pricing count it exactly once.
+				OutputTokens:     md.Tokens.Output + md.Tokens.Reasoning,
 				CacheReadTokens:  md.Tokens.Cache.Read,
 				CacheWriteTokens: md.Tokens.Cache.Write,
 				ReasoningTokens:  md.Tokens.Reasoning,

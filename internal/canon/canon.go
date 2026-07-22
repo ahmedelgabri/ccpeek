@@ -117,6 +117,17 @@ type Message struct {
 // ReportedCostUSD is the agent's own cost figure when it provides one
 // (Pi cost.total, legacy Claude costUSD, OpenCode); computed cost lives in
 // the pricing layer, not here.
+//
+// Normalization contract: OutputTokens is the BILLABLE output — every
+// token the provider charges at the output rate, reasoning included.
+// Providers report reasoning differently: OpenAI/Codex semantics make
+// reasoning_output_tokens a subset of output_tokens (already counted),
+// while OpenCode reports tokens.reasoning additively beside
+// tokens.output. Adapters normalize at emit time — additive reporters
+// fold reasoning into OutputTokens — so totals, rollups, and fallback
+// pricing never need per-provider arithmetic. ReasoningTokens stays as
+// the informational detail either way and must never be added to
+// OutputTokens downstream.
 type Usage struct {
 	InputTokens      int64
 	OutputTokens     int64

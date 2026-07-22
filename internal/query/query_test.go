@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/codex"
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/opencode"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
@@ -267,5 +269,77 @@ func TestSearch(t *testing.T) {
 	// Operators in user input must not break MATCH.
 	if _, err := s.Search(context.Background(), `AND OR "unbalanced`, SearchFilter{}); err != nil {
 		t.Errorf("operator input errored: %v", err)
+	}
+}
+
+// TestReasoningSemanticsAcrossProviders pins the provider-specific
+// reasoning contract end to end: OpenCode reports reasoning ADDITIVELY
+// (folded into billable output by its adapter), Codex reports it as a
+// SUBSET of output (never re-added). If either side regresses — dropped
+// OpenCode reasoning or double-counted Codex reasoning — the exact
+// token totals here break.
+func TestReasoningSemanticsAcrossProviders(t *testing.T) {
+	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := func(dir string) []string {
+		p, err := filepath.Abs(filepath.Join("../../testdata/agents", dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []string{p}
+	}
+	runner := ingest.New(store, table, codex.New(), opencode.New())
+	if _, err := runner.Run(context.Background(), ingest.Options{
+		ConfigRoots: map[canon.AgentSlug][]string{
+			codex.Slug:    fixtures("codex"),
+			opencode.Slug: fixtures("opencode"),
+		},
+		Getenv: func(string) string { return "" },
+		Home:   "/nonexistent",
+	}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	svc := New(store, table)
+
+	sessions, err := svc.Sessions(context.Background(), SessionsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oc, cx *SessionSummary
+	for i := range sessions {
+		switch sessions[i].Agent {
+		case "opencode":
+			oc = &sessions[i]
+		case "codex":
+			cx = &sessions[i]
+		}
+	}
+	if oc == nil || cx == nil {
+		t.Fatalf("missing sessions: opencode=%v codex=%v", oc != nil, cx != nil)
+	}
+
+	// OpenCode fixture: msg_002 output 510 + reasoning 90, msg_003
+	// output 120 + reasoning 30 → billable output 750 (720 would mean
+	// reasoning was dropped).
+	if oc.Tokens.Output != 750 {
+		t.Errorf("opencode output = %d, want 750 (reasoning folded in)", oc.Tokens.Output)
+	}
+	// msg_003 carries no reported cost, so its 450 tokens price through
+	// the fallback — the total must exceed msg_002's reported 0.0142.
+	if oc.CostUSD <= 0.0142 {
+		t.Errorf("opencode cost = %v, want > 0.0142 (fallback priced the reasoning message)", oc.CostUSD)
+	}
+
+	// Codex fixture: cumulative output 1220 with reasoning 800 as a
+	// SUBSET — 2020 would mean reasoning was double-counted.
+	if cx.Tokens.Output != 1220 {
+		t.Errorf("codex output = %d, want 1220 (reasoning is a subset, not added)", cx.Tokens.Output)
 	}
 }

@@ -74,9 +74,14 @@ func TestParseSessionDocument(t *testing.T) {
 		t.Fatal("assistant without usage")
 	}
 	u := asst.Usage
-	if u.InputTokens != 2400 || u.OutputTokens != 510 ||
+	// OpenCode reasoning (90) is additive to output (510); the adapter
+	// folds it into billable output per the canon.Usage contract.
+	if u.InputTokens != 2400 || u.OutputTokens != 600 ||
 		u.CacheReadTokens != 11000 || u.CacheWriteTokens != 800 {
 		t.Errorf("usage = %+v", u)
+	}
+	if u.ReasoningTokens != 90 {
+		t.Errorf("reasoning tokens = %d, want 90 (kept as detail)", u.ReasoningTokens)
 	}
 	if u.ReportedCostUSD == nil || *u.ReportedCostUSD != 0.0142 {
 		t.Errorf("reported cost = %v", u.ReportedCostUSD)
