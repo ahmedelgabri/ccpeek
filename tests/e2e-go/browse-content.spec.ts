@@ -77,3 +77,61 @@ test.describe("browse sessions", () => {
     ).toBeVisible();
   });
 });
+
+test.describe("transcript deep-link paging", () => {
+  const bigSession = "deadbeef-1111-2222-3333-444444444444";
+
+  test("backward pages tile without overlapping the anchor", async ({
+    page,
+  }) => {
+    const transcriptRequests: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes(`/${bigSession}/transcript`)) {
+        transcriptRequests.push(r.url());
+      }
+    });
+
+    // Deep link into the middle: the anchor sits 100 before the target.
+    await page.goto(`/sessions/claude-code/${bigSession}?seq=500`);
+    await expect(page.getByText("deep link message 500")).toBeVisible();
+
+    // The anchored request covers from=400 with a full page limit.
+    expect(
+      transcriptRequests.some(
+        (u) => u.includes("from=400") && u.includes("limit=1000"),
+      ),
+      `anchored request missing in ${transcriptRequests.join(", ")}`,
+    ).toBeTruthy();
+
+    // Scrolling to the top triggers the backward load. The page must be
+    // bounded to the uncovered gap (0..399 → limit=400), NOT a fixed
+    // 1000 that would re-cover 400..999 and duplicate seq keys.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect
+      .poll(
+        () =>
+          transcriptRequests.some(
+            (u) => u.includes("from=0") && u.includes("limit=400"),
+          ),
+        {
+          message: `gap-bounded backward request missing in ${transcriptRequests.join(", ")}`,
+        },
+      )
+      .toBeTruthy();
+    expect(
+      transcriptRequests.some(
+        (u) => u.includes("from=0") && u.includes("limit=1000"),
+      ),
+      "backward request used a full page limit (overlap)",
+    ).toBeFalsy();
+
+    // No duplicate mounted rows: each rendered permalink seq is unique.
+    const seqs = await page
+      .locator("button[title='Copy link to this message']")
+      .allTextContents();
+    const unique = new Set(seqs);
+    expect(unique.size, `duplicate mounted seqs among ${seqs.join(",")}`).toBe(
+      seqs.length,
+    );
+  });
+});

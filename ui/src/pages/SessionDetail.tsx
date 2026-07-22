@@ -82,28 +82,47 @@ export function SessionDetailPage() {
     // Anchor a little before the target so it isn't flush against the top
     // and there is context to scroll up into; the anchor is in the query
     // key so a far jump loads the page AROUND the target, never everything
-    // up to it.
+    // up to it. Page parameters carry BOTH from and limit so pages tile:
+    // a fixed backward limit used to re-cover most of the anchored page
+    // (anchor 400 → previous request 0..999 overlapping 400..999),
+    // producing duplicate seqs and duplicate virtualizer keys.
     queryKey: ["transcript", agent, sessionId, anchor],
     queryFn: ({ pageParam }) =>
       api.transcript(agent, sessionId, {
-        from: String(pageParam),
-        limit: String(TRANSCRIPT_PAGE),
+        from: String(pageParam.from),
+        limit: String(pageParam.limit),
       }),
-    initialPageParam: anchor,
+    initialPageParam: { from: anchor, limit: TRANSCRIPT_PAGE },
     // A full page implies more ahead, continuing just past the last seq.
-    getNextPageParam: (last) =>
-      last && last.length === TRANSCRIPT_PAGE
-        ? last[last.length - 1].seq + 1
+    getNextPageParam: (last, _all, lastParam) =>
+      last && last.length === lastParam.limit
+        ? { from: last[last.length - 1].seq + 1, limit: TRANSCRIPT_PAGE }
         : undefined,
-    // Older messages sit one page-width before the current first page's
-    // start; nothing precedes seq 0.
-    getPreviousPageParam: (_first, _all, firstParam) =>
-      firstParam > 0 ? Math.max(0, firstParam - TRANSCRIPT_PAGE) : undefined,
+    // Older messages: step back one page width, but never past what is
+    // already loaded — the final backward page's limit is exactly the
+    // uncovered gap, so it ends where the anchored page begins.
+    getPreviousPageParam: (_first, _all, firstParam) => {
+      if (firstParam.from <= 0) return undefined;
+      const from = Math.max(0, firstParam.from - TRANSCRIPT_PAGE);
+      return { from, limit: firstParam.from - from };
+    },
   });
-  const msgs = useMemo(
-    () => (transcript.data?.pages ?? []).flatMap((p) => p ?? []),
-    [transcript.data],
-  );
+  // Defensive seq-dedupe on flatten: tiling makes overlap impossible by
+  // construction, but duplicate seqs would corrupt the virtualizer's
+  // keyed heights, so the invariant is enforced here too.
+  const msgs = useMemo(() => {
+    const seen = new Set<number>();
+    const out: TranscriptMessage[] = [];
+    for (const page of transcript.data?.pages ?? []) {
+      for (const m of page ?? []) {
+        if (!seen.has(m.seq)) {
+          seen.add(m.seq);
+          out.push(m);
+        }
+      }
+    }
+    return out;
+  }, [transcript.data]);
 
   // The route reuses this component across sessions: reset the window when
   // the session id changes.
