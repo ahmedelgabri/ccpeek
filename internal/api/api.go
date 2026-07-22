@@ -105,13 +105,21 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 
 // readiness answers 200 once the initial index pass has completed and 503
 // before that — the server itself is up the whole time (queries answer
-// from whatever is already indexed).
+// from whatever is already indexed). A failed v1 import also holds
+// readiness at 503 ("v1-import-failed"): the index is genuinely
+// incomplete without the legacy data, and anything blocking on this
+// endpoint would otherwise read partial history as ready. Health keeps
+// answering 200 with the failure detail throughout.
 func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
-	if h.isReady() {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	if !h.isReady() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "indexing"})
 		return
 	}
-	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "indexing"})
+	if h.v1Import != nil && h.v1Import().State == "failed" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "v1-import-failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {

@@ -93,11 +93,31 @@ func TestHealthV1Import(t *testing.T) {
 		t.Errorf("v1Import = %v", v1)
 	}
 
+	// Readiness holds at 503 while the import is failed — partial history
+	// must not read as ready — with a status distinct from "indexing".
+	code, env = get(t, h, "/api/v1/ready")
+	if code != http.StatusServiceUnavailable {
+		t.Errorf("ready with failed import = %d, want 503", code)
+	}
+	if d, _ := env.Data.(map[string]any); d["status"] != "v1-import-failed" {
+		t.Errorf("ready status = %v, want v1-import-failed", env.Data)
+	}
+
+	hOK := Handler(query.New(store, table), nil, nil, nil, func() V1ImportStatus {
+		return V1ImportStatus{State: "success", ImportedAt: "2026-07-22T00:00:00Z"}
+	})
+	if code, _ := get(t, hOK, "/api/v1/ready"); code != 200 {
+		t.Errorf("ready with successful import = %d, want 200", code)
+	}
+
 	h2 := Handler(query.New(store, table), nil, nil, nil, nil)
 	_, env2 := get(t, h2, "/api/v1/health")
 	data2, _ := env2.Data.(map[string]any)
 	if _, ok := data2["v1Import"]; ok {
 		t.Errorf("v1Import present without a hook: %v", env2.Data)
+	}
+	if code, _ := get(t, h2, "/api/v1/ready"); code != 200 {
+		t.Errorf("ready without a hook = %d, want 200", code)
 	}
 }
 
