@@ -61,8 +61,9 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 
 	// First run is keyed on the migrated_at meta, not file existence: a
 	// pre-release schema bump rebuilds the database in Open, and the
-	// cleared meta makes the full bootstrap (including the v1 import)
-	// re-run.
+	// cleared meta makes the full bootstrap re-run. The v1 import keys on
+	// its own v1_import_state meta so a failure retries past the first
+	// run.
 	_, initialized, err := store.GetMeta(ctx, "migrated_at")
 	if err != nil {
 		store.Close()
@@ -112,28 +113,68 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 				report.Artifacts, report.Duration.Round(time.Millisecond))
 		}
 
+		maybeImportV1(ctx, store, dataFile, logw)
 		if firstRun {
-			if _, err := os.Stat(dataFile); err == nil {
-				fmt.Fprintf(logw, "Importing v1 data from %s\n", dataFile)
-				mreport, err := migrate.ImportV1(ctx, store, dataFile)
-				if err != nil {
-					// Import failure must not brick the new engine; the v1 DB is
-					// untouched and the import can be re-run with `ccpeek migrate`.
-					fmt.Fprintf(logw, "WARNING: v1 import failed (re-run with `ccpeek migrate`): %v\n", err)
-				} else {
-					fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages, %d tool calls), %d artifacts, %d history entries, %d ignore flags\n",
-						mreport.OrphanSessions, mreport.OrphanMessages,
-						mreport.OrphanToolCalls, mreport.OrphanArtifacts,
-						mreport.HistoryEntries, mreport.IgnoreFlags)
-					b, _ := json.Marshal(mreport)
-					_ = store.SetMeta(ctx, "v1_import_report", string(b))
-				}
-			}
 			_ = store.SetMeta(ctx, "migrated_at", time.Now().UTC().Format(time.RFC3339))
 		}
 		return nil
 	}
 	return eng, bootstrap, nil
+}
+
+// v1_import_state meta values. Success and no-legacy-db both stop the
+// bootstrap from probing again; anything else — unset, or "failed" —
+// makes the next indexing start retry.
+const (
+	v1ImportSuccess    = "success"
+	v1ImportFailed     = "failed"
+	v1ImportNoLegacyDB = "no-legacy-db"
+)
+
+// maybeImportV1 runs the v1 import unless a previous attempt succeeded
+// or established there is no legacy database. The state is deliberately
+// separate from migrated_at (the bootstrap marker): a failed import
+// must not look done just because the engine came up — it is retried on
+// every indexing start until it succeeds, and databases stamped before
+// this split get one idempotent re-import. Failure never bricks the
+// engine; it is recorded for /api/v1/health and the UI, and
+// `ccpeek migrate` re-runs the import with a non-zero exit on error.
+func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) {
+	state, _, err := store.GetMeta(ctx, "v1_import_state")
+	if err == nil && (state == v1ImportSuccess || state == v1ImportNoLegacyDB) {
+		return
+	}
+	if _, err := os.Stat(dataFile); err != nil {
+		_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
+		return
+	}
+	if _, err := runV1Import(ctx, store, dataFile, logw); err != nil {
+		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
+	}
+}
+
+// runV1Import executes the import and records its outcome in meta:
+// success stamps v1_imported_at and clears v1_import_error; failure
+// records the error without a stamp. The v1 database is opened
+// read-only either way.
+func runV1Import(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) (*migrate.Report, error) {
+	fmt.Fprintf(logw, "Importing v1 data from %s\n", dataFile)
+	mreport, err := migrate.ImportV1(ctx, store, dataFile)
+	if err != nil {
+		_ = store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
+		_ = store.SetMeta(ctx, "v1_import_error", err.Error())
+		return nil, err
+	}
+	fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages, %d tool calls), %d artifacts, %d history entries, %d ignore flags\n",
+		mreport.OrphanSessions, mreport.OrphanMessages,
+		mreport.OrphanToolCalls, mreport.OrphanArtifacts,
+		mreport.HistoryEntries, mreport.IgnoreFlags)
+	b, _ := json.Marshal(mreport)
+	_ = store.SetMeta(ctx, "v1_import_report", string(b))
+	_ = store.SetMeta(ctx, "v1_import_state", v1ImportSuccess)
+	_ = store.SetMeta(ctx, "v1_imported_at", time.Now().UTC().Format(time.RFC3339))
+	_ = store.SetMeta(ctx, "v1_import_error", "")
+	return mreport, nil
 }
 
 // openEngine opens the engine and runs any needed bootstrap ingest

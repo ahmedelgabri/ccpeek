@@ -33,15 +33,26 @@ type IndexProgress struct {
 	Changed int    `json:"changed"`
 }
 
+// V1ImportStatus is the legacy-database import outcome, surfaced
+// through /api/v1/health so a failed import stays visible instead of
+// dissolving into a startup log line. State is "" (no attempt yet),
+// "success", "failed" (Error set), or "no-legacy-db".
+type V1ImportStatus struct {
+	State      string `json:"state"`
+	Error      string `json:"error,omitempty"`
+	ImportedAt string `json:"importedAt,omitempty"`
+}
+
 // Handler mounts the API routes. events may be nil when live updates are
 // not running (e.g. `--watch` off); the endpoint then answers 501. ready
 // reports whether the initial index pass has completed — nil means
 // "always ready"; while false, /api/v1/ready answers 503 so scripts (and
 // the e2e web server wait) can block on first data. progress, when
-// non-nil, feeds the index-pass state into the health payload.
-func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress) http.Handler {
+// non-nil, feeds the index-pass state into the health payload, and
+// v1Import the legacy-import outcome.
+func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress, v1Import func() V1ImportStatus) http.Handler {
 	mux := http.NewServeMux()
-	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress}
+	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress, v1Import: v1Import}
 	mux.HandleFunc("GET /api/v1/health", h.health)
 	mux.HandleFunc("GET /api/v1/ready", h.readiness)
 	mux.HandleFunc("GET /api/v1/stats", h.stats)
@@ -69,6 +80,7 @@ type handlers struct {
 	events_  *Broadcaster
 	ready    func() bool
 	progress func() IndexProgress
+	v1Import func() V1ImportStatus
 }
 
 func (h *handlers) isReady() bool {
@@ -82,6 +94,11 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.isReady() && h.progress != nil {
 		payload["progress"] = h.progress()
+	}
+	if h.v1Import != nil {
+		if st := h.v1Import(); st.State != "" {
+			payload["v1Import"] = st
+		}
 	}
 	writeJSON(w, http.StatusOK, payload)
 }

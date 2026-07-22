@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ahmedelgabri/ccpeek/internal/migrate"
 	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 	"github.com/spf13/cobra"
@@ -162,10 +161,13 @@ database is opened read-only and never modified.`,
 
 		dataFile, _ := cmd.Flags().GetString("data-file")
 		if _, err := os.Stat(dataFile); err != nil {
+			_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
 			fmt.Fprintf(os.Stderr, "no v1 database at %s; nothing to import\n", dataFile)
 			return nil
 		}
-		report, err := migrate.ImportV1(ctx, eng.store, dataFile)
+		// runV1Import records the outcome metas either way; a failure here
+		// exits non-zero, unlike the bootstrap's warn-and-retry path.
+		report, err := runV1Import(ctx, eng.store, dataFile, os.Stderr)
 		if err != nil {
 			return err
 		}

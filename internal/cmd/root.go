@@ -154,6 +154,23 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	defer eng.Close()
 
+	// The health payload carries the v1 import outcome so a failed import
+	// stays visible in the UI instead of dissolving into a startup log
+	// line (the bootstrap retries it on every start until it succeeds).
+	readV1Import := func() api.V1ImportStatus {
+		var st api.V1ImportStatus
+		if v, ok, err := eng.store.GetMeta(ctx, "v1_import_state"); err == nil && ok {
+			st.State = v
+		}
+		if v, ok, err := eng.store.GetMeta(ctx, "v1_import_error"); err == nil && ok && v != "" {
+			st.Error = v
+		}
+		if v, ok, err := eng.store.GetMeta(ctx, "v1_imported_at"); err == nil && ok {
+			st.ImportedAt = v
+		}
+		return st
+	}
+
 	// runScan reports rather than fails: on the serving path a scan
 	// problem must not take the server down. The mutex serializes the
 	// bootstrap scan with watch-triggered rescans — the scanner's
@@ -257,7 +274,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return serve(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress)))
+	return serve(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import)))
 }
 
 // newProgressLogger prints ingest progress to w: one line per discovered

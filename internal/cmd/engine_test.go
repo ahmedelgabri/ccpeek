@@ -99,6 +99,12 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 	if _, ok, err := eng.store.GetMeta(ctx, "v1_import_report"); err != nil || !ok {
 		t.Fatalf("v1_import_report meta missing (ok=%v err=%v)", ok, err)
 	}
+	if v, _, _ := eng.store.GetMeta(ctx, "v1_import_state"); v != "success" {
+		t.Errorf("v1_import_state = %q, want success", v)
+	}
+	if _, ok, _ := eng.store.GetMeta(ctx, "v1_imported_at"); !ok {
+		t.Error("v1_imported_at meta missing")
+	}
 
 	queryInt := func(q string, args ...any) int {
 		t.Helper()
@@ -132,5 +138,113 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 	defer eng2.Close()
 	if n := queryInt(`SELECT COUNT(*) FROM sessions WHERE origin = 'imported-v1'`); n != 2 {
 		t.Errorf("imported sessions after reopen = %d, want 2 (no duplicate import)", n)
+	}
+}
+
+// TestV1ImportFailureRetries proves the outcome split: a failing v1
+// import leaves the engine usable (bootstrap done, migrated_at stamped)
+// but records state=failed with the error retained and no
+// v1_imported_at; the next start retries, and once the import succeeds
+// the error clears, v1_imported_at is stamped, and the data is in.
+// Because retry keys on v1_import_state alone, this is also the path a
+// database stamped before the split takes: migrated_at no longer stops
+// the import.
+func TestV1ImportFailureRetries(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dataFile := filepath.Join(dir, "ccpeek.db")
+
+	// A v1 "database" sqlite cannot read.
+	if err := os.WriteFile(dataFile, []byte("this is not a sqlite database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	emptyRoot := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", emptyRoot)
+	t.Setenv("CODEX_HOME", emptyRoot)
+	t.Setenv("OPENCODE_DATA_DIR", emptyRoot)
+	t.Setenv("CCPEEK_CURSOR_DIR", emptyRoot)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
+	if err := cmd.Flags().Set("claude-dir", emptyRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatalf("a failing v1 import must not fail the engine: %v", err)
+	}
+	meta := func(e *engine, key string) (string, bool) {
+		t.Helper()
+		v, ok, err := e.store.GetMeta(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v, ok
+	}
+	if _, ok := meta(eng, "migrated_at"); !ok {
+		t.Error("migrated_at missing: bootstrap did not complete")
+	}
+	if v, _ := meta(eng, "v1_import_state"); v != "failed" {
+		t.Errorf("v1_import_state = %q, want failed", v)
+	}
+	if v, _ := meta(eng, "v1_import_error"); v == "" {
+		t.Error("v1_import_error empty: the failure is invisible")
+	}
+	if _, ok := meta(eng, "v1_imported_at"); ok {
+		t.Error("v1_imported_at stamped despite failure")
+	}
+	eng.Close()
+
+	// Fix the v1 database; the next start retries without any flag.
+	if err := os.Remove(dataFile); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dir, "live.jsonl")
+	if err := os.WriteFile(live, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedV1DB(t, dataFile, live)
+
+	eng2, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng2.Close()
+	if v, _ := meta(eng2, "v1_import_state"); v != "success" {
+		t.Errorf("v1_import_state after retry = %q, want success", v)
+	}
+	if v, _ := meta(eng2, "v1_import_error"); v != "" {
+		t.Errorf("v1_import_error not cleared: %q", v)
+	}
+	if _, ok := meta(eng2, "v1_imported_at"); !ok {
+		t.Error("v1_imported_at missing after successful retry")
+	}
+	var n int
+	if err := eng2.store.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sessions WHERE origin = 'imported-v1'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("imported sessions after retry = %d, want 2", n)
+	}
+
+	// A third start must not import again.
+	eng3, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng3.Close()
+	if n := func() int {
+		var n int
+		if err := eng3.store.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE origin = 'imported-v1'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}(); n != 2 {
+		t.Errorf("imported sessions after third start = %d, want 2", n)
 	}
 }

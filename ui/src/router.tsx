@@ -36,7 +36,9 @@ const NAV: { to: string; label: string; exact?: boolean }[] = [
 // IndexingBanner shows while the server's initial index pass runs — the
 // UI is up immediately (serve-first startup), pages fill in live as data
 // lands (SSE notifies fire during the pass), and the banner carries the
-// real counter so the wait never looks hung.
+// real counter so the wait never looks hung. It also surfaces a failed
+// v1 import: the server retries on every start, but until one succeeds
+// the failure must stay visible, not vanish into a startup log line.
 function IndexingBanner() {
   const { data } = useQuery({
     queryKey: ["health"],
@@ -46,25 +48,51 @@ function IndexingBanner() {
         data?: {
           indexing?: boolean;
           progress?: { agent: string; seen: number; changed: number };
+          v1Import?: { state: string; error?: string };
         };
       } = await res.json();
       return body.data ?? {};
     },
     refetchInterval: (query) => (query.state.data?.indexing ? 1500 : false),
   });
-  if (!data?.indexing) return null;
-  const p = data.progress;
+  const importFailed = data?.v1Import?.state === "failed";
+  if (!data?.indexing && !importFailed) return null;
+  const p = data?.progress;
   return (
-    <div className="mb-6 flex items-baseline gap-3 rounded-md border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
-      <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse self-center rounded-full bg-accent" />
-      <span>Indexing your agent history — pages fill in live as data lands.</span>
-      {p && p.seen > 0 && (
-        <span className="ml-auto shrink-0 font-mono text-xs text-ink-faint tabular-nums">
-          {p.agent} · {p.seen.toLocaleString()} sources checked ·{" "}
-          {p.changed.toLocaleString()} indexed
-        </span>
+    <>
+      {importFailed && (
+        <div className="mb-6 flex items-baseline gap-3 rounded-md border border-red-500/50 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full bg-red-500" />
+          <span>
+            Importing your v1 database failed — its data is not in this index
+            yet. Run <code className="font-mono text-ink">ccpeek migrate</code>{" "}
+            to retry and see the error.
+          </span>
+          {data?.v1Import?.error && (
+            <span
+              className="ml-auto max-w-96 shrink-0 truncate font-mono text-xs text-ink-faint"
+              title={data.v1Import.error}
+            >
+              {data.v1Import.error}
+            </span>
+          )}
+        </div>
       )}
-    </div>
+      {data?.indexing && (
+        <div className="mb-6 flex items-baseline gap-3 rounded-md border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse self-center rounded-full bg-accent" />
+          <span>
+            Indexing your agent history — pages fill in live as data lands.
+          </span>
+          {p && p.seen > 0 && (
+            <span className="ml-auto shrink-0 font-mono text-xs text-ink-faint tabular-nums">
+              {p.agent} · {p.seen.toLocaleString()} sources checked ·{" "}
+              {p.changed.toLocaleString()} indexed
+            </span>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -116,8 +144,7 @@ function Layout() {
               key={n.to}
               to={n.to}
               activeProps={{
-                className:
-                  "border-l-2 border-accent bg-surface-2/70 text-ink",
+                className: "border-l-2 border-accent bg-surface-2/70 text-ink",
               }}
               inactiveProps={{
                 className:

@@ -46,7 +46,7 @@ func newHandler(t *testing.T) http.Handler {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return Handler(query.New(store, table), nil, nil, nil)
+	return Handler(query.New(store, table), nil, nil, nil, nil)
 }
 
 func get(t *testing.T, h http.Handler, path string) (int, envelope) {
@@ -62,6 +62,43 @@ func get(t *testing.T, h http.Handler, path string) (int, envelope) {
 		t.Errorf("GET %s: schema = %q", path, env.Schema)
 	}
 	return rec.Code, env
+}
+
+// TestHealthV1Import proves a failed legacy import stays visible on the
+// health surface — and that handlers without the hook omit the field.
+func TestHealthV1Import(t *testing.T) {
+	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := Handler(query.New(store, table), nil, nil, nil, func() V1ImportStatus {
+		return V1ImportStatus{State: "failed", Error: "reading v1 database: file is not a database"}
+	})
+	code, env := get(t, h, "/api/v1/health")
+	if code != 200 {
+		t.Fatalf("health = %d", code)
+	}
+	data, _ := env.Data.(map[string]any)
+	v1, _ := data["v1Import"].(map[string]any)
+	if v1 == nil {
+		t.Fatalf("health payload lacks v1Import: %v", env.Data)
+	}
+	if v1["state"] != "failed" || v1["error"] != "reading v1 database: file is not a database" {
+		t.Errorf("v1Import = %v", v1)
+	}
+
+	h2 := Handler(query.New(store, table), nil, nil, nil, nil)
+	_, env2 := get(t, h2, "/api/v1/health")
+	data2, _ := env2.Data.(map[string]any)
+	if _, ok := data2["v1Import"]; ok {
+		t.Errorf("v1Import present without a hook: %v", env2.Data)
+	}
 }
 
 func TestEndpoints(t *testing.T) {
