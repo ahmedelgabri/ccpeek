@@ -230,18 +230,36 @@ func Registry() []Op {
 		},
 		{
 			Name: "tools",
-			Desc: "List one session's tool calls in order, with command/file detail and result status. Everything by default; page with limit/offset for large sessions.",
+			Desc: "List one session's tool calls in order, with command/file detail and result status (no diff excerpts — fetch a single call with `tool` for those). Everything by default; page with limit/offset, bound by message seq with from_seq/to_seq, or request compact chip rows.",
 			Params: []Param{
 				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
 				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
 				limitParam,
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
+				{Name: "from_seq", Type: "integer", Desc: "Only calls issued at or after this message seq"},
+				{Name: "to_seq", Type: "integer", Desc: "Only calls issued at or before this message seq (0 = unbounded)"},
+				{Name: "compact", Type: "boolean", Desc: "Chip-sized rows: capped detail, no timestamps"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.SessionTools(ctx, a.Str["agent"], a.Str["id"], query.ToolsFilter{
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
+					FromSeq: a.Int["from_seq"], ToSeq: a.Int["to_seq"],
+					Compact: a.Bool["compact"],
 				})
 				return out, len(out) == 0, err
+			},
+		},
+		{
+			Name: "tool",
+			Desc: "Get one tool call of a session with its full payload, including diff excerpts (old/new for edits, written content for writes).",
+			Params: []Param{
+				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
+				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
+				{Name: "seq", Type: "integer", Desc: "Tool call seq", Required: true, Positional: true},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.SessionToolDetail(ctx, a.Str["agent"], a.Str["id"], a.Int["seq"])
+				return out, false, err
 			},
 		},
 		{

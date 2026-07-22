@@ -135,3 +135,52 @@ test.describe("transcript deep-link paging", () => {
     );
   });
 });
+
+test.describe("lazy tool payloads", () => {
+  const editSession = "11111111-aaaa-bbbb-cccc-111111111111";
+
+  test("transcript loads chips only; excerpts arrive on expansion", async ({
+    page,
+  }) => {
+    const toolRequests: string[] = [];
+    page.on("request", (r) => {
+      const u = r.url();
+      if (u.includes(`/${editSession}/tools`)) toolRequests.push(u);
+    });
+
+    await page.goto(`/sessions/claude-code/${editSession}`);
+    await expect(
+      page.locator("button[title='Copy link to this message']").first(),
+    ).toBeVisible();
+    // Give any eager fetch a beat to fire before asserting it did not.
+    await page.waitForTimeout(300);
+
+    // The transcript triggers ONLY the compact chip projection — no full
+    // tool list, no per-call detail, no eager page loop.
+    expect(toolRequests.length).toBeGreaterThan(0);
+    for (const u of toolRequests) {
+      expect(
+        u,
+        `non-compact tools request before any tab/expansion: ${u}`,
+      ).toContain("compact=1");
+    }
+
+    // Expanding the Edit chip fetches exactly that call's detail and
+    // renders the diff.
+    await page.getByRole("button", { name: /Edit/ }).first().click();
+    await expect
+      .poll(() => toolRequests.some((u) => /\/tools\/\d+(\?|$)/.test(u)))
+      .toBeTruthy();
+
+    // Opening the Tools tab is what starts the full (excerpt-free) list.
+    const before = toolRequests.length;
+    await page.getByRole("button", { name: "tools", exact: true }).click();
+    await expect
+      .poll(() =>
+        toolRequests
+          .slice(before)
+          .some((u) => u.includes("limit=500") && !u.includes("compact")),
+      )
+      .toBeTruthy();
+  });
+});

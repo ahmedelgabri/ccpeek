@@ -71,6 +71,7 @@ func Routes() []Route {
 		{"GET /api/v1/sessions/{agent}/{id}", "session", "op"},
 		{"GET /api/v1/sessions/{agent}/{id}/transcript", "transcript", "op"},
 		{"GET /api/v1/sessions/{agent}/{id}/tools", "tools", "op"},
+		{"GET /api/v1/sessions/{agent}/{id}/tools/{seq}", "tool", "op"},
 		{"GET /api/v1/commands", "commands", "op"},
 		{"GET /api/v1/usage", "usage", "op"},
 		{"GET /api/v1/search", "search", "op"},
@@ -102,6 +103,7 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 		"GET /api/v1/sessions/{agent}/{id}":               h.session,
 		"GET /api/v1/sessions/{agent}/{id}/transcript":    h.transcript,
 		"GET /api/v1/sessions/{agent}/{id}/tools":         h.sessionTools,
+		"GET /api/v1/sessions/{agent}/{id}/tools/{seq}":   h.sessionTool,
 		"GET /api/v1/commands":                            h.commands,
 		"GET /api/v1/usage":                               h.usage,
 		"GET /api/v1/search":                              h.search,
@@ -230,12 +232,32 @@ func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) sessionTools(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	tools, err := h.svc.SessionTools(r.Context(), r.PathValue("agent"), r.PathValue("id"),
-		query.ToolsFilter{Limit: intParam(q.Get("limit")), Offset: intParam(q.Get("offset"))})
+		query.ToolsFilter{
+			Limit: intParam(q.Get("limit")), Offset: intParam(q.Get("offset")),
+			FromSeq: intParam(q.Get("from_seq")), ToSeq: intParam(q.Get("to_seq")),
+			Compact: q.Get("compact") != "",
+		})
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, tools)
+}
+
+// sessionTool serves one call's full payload including diff excerpts —
+// the lazy counterpart the UI requests only when a row expands.
+func (h *handlers) sessionTool(w http.ResponseWriter, r *http.Request) {
+	seq, err := strconv.Atoi(r.PathValue("seq"))
+	if err != nil {
+		writeBadRequest(w, fmt.Errorf("%w: invalid tool seq %q", query.ErrBadRequest, r.PathValue("seq")))
+		return
+	}
+	detail, err := h.svc.SessionToolDetail(r.Context(), r.PathValue("agent"), r.PathValue("id"), seq)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (h *handlers) stats(w http.ResponseWriter, r *http.Request) {

@@ -154,6 +154,39 @@ func TestEndpoints(t *testing.T) {
 		t.Errorf("missing session = %d, want 404", code)
 	}
 
+	// Tool list rows never carry diff excerpts; the per-call detail does.
+	code, env = get(t, h, "/api/v1/sessions/claude-code/11111111-aaaa-bbbb-cccc-111111111111/tools")
+	if code != 200 {
+		t.Fatalf("tools = %d (%s)", code, env.Error)
+	}
+	toolRows, _ := env.Data.([]any)
+	if len(toolRows) == 0 {
+		t.Fatal("tools list empty")
+	}
+	for _, r := range toolRows {
+		row := r.(map[string]any)
+		if _, has := row["old"]; has {
+			t.Errorf("list row carries old excerpt: %v", row)
+		}
+		if _, has := row["new"]; has {
+			t.Errorf("list row carries new excerpt: %v", row)
+		}
+	}
+	code, env = get(t, h, "/api/v1/sessions/claude-code/11111111-aaaa-bbbb-cccc-111111111111/tools/1")
+	if code != 200 {
+		t.Fatalf("tool detail = %d (%s)", code, env.Error)
+	}
+	toolDetail, _ := env.Data.(map[string]any)
+	if toolDetail["kind"] == "file_edit" && toolDetail["old"] == nil && toolDetail["new"] == nil {
+		t.Errorf("edit detail lacks excerpts: %v", toolDetail)
+	}
+	if code, _ = get(t, h, "/api/v1/sessions/claude-code/11111111-aaaa-bbbb-cccc-111111111111/tools/abc"); code != 400 {
+		t.Errorf("malformed tool seq = %d, want 400", code)
+	}
+	if code, _ = get(t, h, "/api/v1/sessions/claude-code/11111111-aaaa-bbbb-cccc-111111111111/tools/999"); code != 404 {
+		t.Errorf("unknown tool seq = %d, want 404", code)
+	}
+
 	code, env = get(t, h, "/api/v1/sessions/pi/9f8e7d6c-1111-2222-3333-444455556666/transcript?limit=3")
 	if code != 200 {
 		t.Fatalf("transcript = %d", code)

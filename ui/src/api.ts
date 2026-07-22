@@ -122,6 +122,11 @@ export interface ToolCallRow {
   detail?: string;
   status?: string;
   at?: string;
+}
+
+// Diff excerpts (up to 16 KiB each) ride ONLY the per-call detail
+// lookup, fetched when a row is expanded — never list responses.
+export interface ToolCallDetail extends ToolCallRow {
   old?: string;
   new?: string;
 }
@@ -220,11 +225,27 @@ export const api = {
     offset?: string;
   }) => get<CommandRow[] | null>("/commands", filters),
 
-  sessionTools: (agent: string, id: string, limit = 0, offset = 0) =>
+  sessionTools: (
+    agent: string,
+    id: string,
+    opts?: {
+      limit?: number;
+      offset?: number;
+      fromSeq?: number;
+      toSeq?: number;
+      compact?: boolean;
+    },
+  ) =>
     get<ToolCallRow[] | null>(`/sessions/${agent}/${id}/tools`, {
-      limit: String(limit),
-      offset: String(offset),
+      limit: String(opts?.limit ?? 0),
+      offset: String(opts?.offset ?? 0),
+      from_seq: opts?.fromSeq ? String(opts.fromSeq) : "",
+      to_seq: opts?.toSeq ? String(opts.toSeq) : "",
+      compact: opts?.compact ? "1" : "",
     }),
+
+  sessionToolDetail: (agent: string, id: string, seq: number) =>
+    get<ToolCallDetail>(`/sessions/${agent}/${id}/tools/${seq}`),
 };
 
 // The validated per-agent palette (also defined as CSS vars in

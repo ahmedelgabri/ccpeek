@@ -172,28 +172,57 @@ export function SessionDetailPage() {
     [navigate],
   );
 
-  // Tool calls arrive in fixed pages so a tool-heavy session never
-  // ships one giant response; pages auto-fetch to completion because
-  // the transcript chips and the Tools/Files tabs all need the full
-  // set (each page is bounded, the set is not silently capped).
+  // Compact chips for exactly the loaded transcript range: tiny rows
+  // (capped detail, no diff payloads), re-requested as the range grows.
+  // The transcript never triggers the full tool list.
+  const firstSeq = msgs[0]?.seq;
+  const lastSeq = msgs[msgs.length - 1]?.seq;
+  const chips = useQuery({
+    queryKey: ["toolchips", agent, sessionId, firstSeq, lastSeq],
+    queryFn: () =>
+      api.sessionTools(agent, sessionId, {
+        compact: true,
+        fromSeq: firstSeq,
+        toSeq: lastSeq,
+      }),
+    enabled: firstSeq !== undefined,
+    placeholderData: (prev) => prev,
+  });
+  const chipRows = chips.data ?? [];
+
+  // Full tool rows load only once a tab that needs them is first
+  // opened — never on transcript mount — and then page to completion
+  // (rows carry no diff payloads; excerpts load per expansion).
+  const wantsTools = tab === "commands" || tab === "tools" || tab === "files";
+  const [toolsRequested, setToolsRequested] = useState(wantsTools);
+  useEffect(() => {
+    if (wantsTools) setToolsRequested(true);
+  }, [wantsTools]);
   const tools = useInfiniteQuery({
     queryKey: ["tools", agent, sessionId],
     queryFn: ({ pageParam }) =>
-      api.sessionTools(agent, sessionId, TOOLS_PAGE, pageParam),
+      api.sessionTools(agent, sessionId, {
+        limit: TOOLS_PAGE,
+        offset: pageParam,
+      }),
     initialPageParam: 0,
     getNextPageParam: (last, _all, lastParam) =>
       last && last.length === TOOLS_PAGE ? lastParam + TOOLS_PAGE : undefined,
+    enabled: toolsRequested,
   });
   const { hasNextPage: toolsHaveMore, isFetchingNextPage: toolsFetching } =
     tools;
   useEffect(() => {
-    if (toolsHaveMore && !toolsFetching) void tools.fetchNextPage();
-  }, [toolsHaveMore, toolsFetching, tools]);
+    if (toolsRequested && toolsHaveMore && !toolsFetching) {
+      void tools.fetchNextPage();
+    }
+  }, [toolsRequested, toolsHaveMore, toolsFetching, tools]);
   const toolPages = tools.data;
   const allToolRows = useMemo(
     () => (toolPages?.pages ?? []).flatMap((p) => p ?? []),
     [toolPages],
   );
+  const toolsLoading = toolsRequested && (tools.isLoading || toolsHaveMore);
 
   if (detail.isLoading)
     return (
@@ -325,8 +354,10 @@ export function SessionDetailPage() {
       {tab === "transcript" && (
         <Transcript
           key={sessionId}
+          agent={agent}
+          sessionId={sessionId}
           msgs={msgs}
-          tools={toolRows}
+          tools={chipRows}
           focusSeq={focusSeq}
           total={s.messages}
           loading={transcript.isLoading}
@@ -340,11 +371,34 @@ export function SessionDetailPage() {
           onPermalink={(seq) => putSeqInURL(seq, true)}
         />
       )}
-      {tab === "commands" && (
-        <CommandsTab commands={commands} onJump={jumpToMessage} />
-      )}
-      {tab === "tools" && <ToolsTab tools={toolRows} onJump={jumpToMessage} />}
-      {tab === "files" && <FilesTab files={files} onJump={jumpToMessage} />}
+      {tab === "commands" &&
+        (toolsLoading ? (
+          <SkeletonRows rows={4} />
+        ) : (
+          <CommandsTab commands={commands} onJump={jumpToMessage} />
+        ))}
+      {tab === "tools" &&
+        (toolsLoading ? (
+          <SkeletonRows rows={4} />
+        ) : (
+          <ToolsTab
+            agent={agent}
+            sessionId={sessionId}
+            tools={toolRows}
+            onJump={jumpToMessage}
+          />
+        ))}
+      {tab === "files" &&
+        (toolsLoading ? (
+          <SkeletonRows rows={4} />
+        ) : (
+          <FilesTab
+            agent={agent}
+            sessionId={sessionId}
+            files={files}
+            onJump={jumpToMessage}
+          />
+        ))}
       {tab === "artifacts" && (
         <ArtifactsTab agent={s.agent} artifacts={s.artifacts ?? []} />
       )}
@@ -353,6 +407,8 @@ export function SessionDetailPage() {
 }
 
 function Transcript({
+  agent,
+  sessionId,
   msgs,
   tools,
   focusSeq,
@@ -367,6 +423,8 @@ function Transcript({
   onScrollSeq,
   onPermalink,
 }: {
+  agent: string;
+  sessionId: string;
   msgs: TranscriptMessage[];
   tools: ToolCallRow[];
   focusSeq?: number;
@@ -687,6 +745,8 @@ function Transcript({
                   ))}
                 {msgTools.length > 0 && (
                   <MessageTools
+                    agent={agent}
+                    sessionId={sessionId}
                     tools={msgTools}
                     className={m.text.trim() !== "" ? "mt-2" : ""}
                   />
@@ -718,12 +778,16 @@ function Transcript({
 }
 
 // MessageTools renders a message's tool calls as kind-colored chips;
-// every chip with a payload expands inline — file edits into their line
-// diff, everything else into the full command/path.
+// expandable chips fetch their full payload (diff excerpts, complete
+// command) only when opened — chip rows never carry them.
 function MessageTools({
+  agent,
+  sessionId,
   tools,
   className = "",
 }: {
+  agent: string;
+  sessionId: string;
   tools: ToolCallRow[];
   className?: string;
 }) {
@@ -741,11 +805,11 @@ function MessageTools({
       <div className="flex flex-wrap gap-1.5">
         {tools.map((t) => {
           // Expand only when there is more than the chip already shows: a
-          // diff (edits and writes both carry payloads), a full shell
-          // command, or a truncated detail.
+          // diff (edits and writes carry payloads behind the detail
+          // lookup), a full shell command, or a truncated detail.
           const expandable =
-            ((t.kind === "file_edit" || t.kind === "file_write") &&
-              Boolean(t.old || t.new)) ||
+            t.kind === "file_edit" ||
+            t.kind === "file_write" ||
             (t.kind === "shell" && Boolean(t.detail)) ||
             Boolean(t.detail && t.detail.length > 80);
           const isOpen = open.has(t.seq);
@@ -788,25 +852,53 @@ function MessageTools({
               <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
               {t.detail && t.kind !== "shell" && <> · {shortPath(t.detail)}</>}
             </div>
-            {(t.kind === "file_edit" || t.kind === "file_write") &&
-            (t.old || t.new) ? (
-              <DiffView old={t.old ?? ""} new={t.new ?? ""} />
-            ) : (
-              <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-[11px] leading-relaxed">
-                <code
-                  className={
-                    t.kind === "shell"
-                      ? "language-bash block whitespace-pre-wrap"
-                      : "block whitespace-pre-wrap"
-                  }
-                >
-                  {t.detail}
-                </code>
-              </pre>
-            )}
+            <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
           </div>
         ))}
     </div>
+  );
+}
+
+// ToolExpansion mounts only when a chip or row is opened: opening is
+// what fetches the full payload — the 16 KiB diff excerpts never ride
+// list responses.
+function ToolExpansion({
+  agent,
+  sessionId,
+  seq,
+}: {
+  agent: string;
+  sessionId: string;
+  seq: number;
+}) {
+  const q = useQuery({
+    queryKey: ["tooldetail", agent, sessionId, seq],
+    queryFn: () => api.sessionToolDetail(agent, sessionId, seq),
+  });
+  if (q.isLoading)
+    return <p className="font-mono text-[11px] text-ink-dim">Loading…</p>;
+  const d = q.data;
+  if (!d)
+    return (
+      <p className="font-mono text-[11px] text-warn">
+        Failed to load: {String(q.error ?? "not found")}
+      </p>
+    );
+  if ((d.kind === "file_edit" || d.kind === "file_write") && (d.old || d.new)) {
+    return <DiffView old={d.old ?? ""} new={d.new ?? ""} />;
+  }
+  return (
+    <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-[11px] leading-relaxed">
+      <code
+        className={
+          d.kind === "shell"
+            ? "language-bash block whitespace-pre-wrap"
+            : "block whitespace-pre-wrap"
+        }
+      >
+        {d.detail}
+      </code>
+    </pre>
   );
 }
 
@@ -871,9 +963,13 @@ function CommandsTab({
 }
 
 function ToolsTab({
+  agent,
+  sessionId,
   tools,
   onJump,
 }: {
+  agent: string;
+  sessionId: string;
   tools: ToolCallRow[];
   onJump: (seq: number) => void;
 }) {
@@ -906,7 +1002,13 @@ function ToolsTab({
           </thead>
           <tbody className="divide-y divide-edge bg-surface-1">
             {tools.map((t) => (
-              <ToolRow key={t.seq} t={t} onJump={onJump} />
+              <ToolRow
+                key={t.seq}
+                agent={agent}
+                sessionId={sessionId}
+                t={t}
+                onJump={onJump}
+              />
             ))}
           </tbody>
         </table>
@@ -916,15 +1018,18 @@ function ToolsTab({
 }
 
 function ToolRow({
+  agent,
+  sessionId,
   t,
   onJump,
 }: {
+  agent: string;
+  sessionId: string;
   t: ToolCallRow;
   onJump: (seq: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const hasDiff =
-    (t.kind === "file_edit" || t.kind === "file_write") && (t.old || t.new);
+  const hasDiff = t.kind === "file_edit" || t.kind === "file_write";
   return (
     <>
       <tr
@@ -961,7 +1066,7 @@ function ToolRow({
       {hasDiff && open && (
         <tr>
           <td colSpan={6} className="px-3 py-2">
-            <DiffView old={t.old ?? ""} new={t.new ?? ""} />
+            <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
           </td>
         </tr>
       )}
@@ -974,7 +1079,8 @@ interface FileGroup {
   reads: number;
   writes: number;
   edits: number;
-  // changes holds the edit/write rows with payloads, for diff expansion.
+  // changes holds the edit/write rows; their diff payloads are fetched
+  // per row when expanded.
   changes: ToolCallRow[];
 }
 
@@ -992,10 +1098,7 @@ function groupFiles(tools: ToolCallRow[]): FileGroup[] {
     if (t.kind === "file_read") g.reads++;
     if (t.kind === "file_write") g.writes++;
     if (t.kind === "file_edit") g.edits++;
-    if (
-      (t.kind === "file_edit" || t.kind === "file_write") &&
-      (t.old || t.new)
-    ) {
+    if (t.kind === "file_edit" || t.kind === "file_write") {
       g.changes.push(t);
     }
     map.set(t.detail, g);
@@ -1006,9 +1109,13 @@ function groupFiles(tools: ToolCallRow[]): FileGroup[] {
 }
 
 function FilesTab({
+  agent,
+  sessionId,
   files,
   onJump,
 }: {
+  agent: string;
+  sessionId: string;
   files: FileGroup[];
   onJump: (seq: number) => void;
 }) {
@@ -1017,16 +1124,26 @@ function FilesTab({
   return (
     <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
       {files.map((f) => (
-        <FileRow key={f.path} f={f} onJump={onJump} />
+        <FileRow
+          key={f.path}
+          agent={agent}
+          sessionId={sessionId}
+          f={f}
+          onJump={onJump}
+        />
       ))}
     </ul>
   );
 }
 
 function FileRow({
+  agent,
+  sessionId,
   f,
   onJump,
 }: {
+  agent: string;
+  sessionId: string;
   f: FileGroup;
   onJump: (seq: number) => void;
 }) {
@@ -1064,7 +1181,7 @@ function FileRow({
                 </span>
                 <JumpButton seq={e.messageSeq} onJump={onJump} />
               </div>
-              <DiffView old={e.old ?? ""} new={e.new ?? ""} />
+              <ToolExpansion agent={agent} sessionId={sessionId} seq={e.seq} />
             </div>
           ))}
         </div>

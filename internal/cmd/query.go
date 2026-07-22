@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/ops"
@@ -93,6 +94,14 @@ func opCommand(op ops.Op) *cobra.Command {
 				if p.Variadic {
 					a.Str[p.Name] = strings.Join(args[i:], " ")
 					break
+				}
+				if p.Type == "integer" {
+					v, err := strconv.Atoi(args[i])
+					if err != nil {
+						return fmt.Errorf("argument <%s>: want an integer, got %q", p.FlagName(), args[i])
+					}
+					a.Int[p.Name] = v
+					continue
 				}
 				a.Str[p.Name] = args[i]
 			}

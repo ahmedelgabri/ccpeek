@@ -6,6 +6,8 @@ package query
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -320,11 +322,16 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 // pathological edits fall back to "diff too large".
 const editExcerptLimit = 16 * 1024
 
+// chipDetailCap bounds the detail column of a compact chip row: a chip
+// label shows at most the first line's start, so shipping whole shell
+// scripts per chip would defeat the compact projection.
+const chipDetailCap = 120
+
 // ToolCallRow is one tool invocation of a session, with just enough
-// detail to browse (command text or file path, never the full payload) —
-// plus change payloads so the UI can render diffs: old/new for
-// file_edit, the written content as New for file_write (an all-addition
-// diff).
+// detail to browse (command text or file path, never the full payload).
+// Change excerpts (diff old/new) deliberately do NOT ride list rows —
+// they can reach 16 KiB each, so they ship only through the per-call
+// detail lookup when a row is actually expanded.
 type ToolCallRow struct {
 	Seq int `json:"seq"`
 	// MessageSeq is the transcript seq of the issuing message, letting the
@@ -335,7 +342,13 @@ type ToolCallRow struct {
 	Detail     string `json:"detail,omitempty"` // shell command or file path
 	Status     string `json:"status,omitempty"`
 	At         string `json:"at,omitempty"`
-	// Old/New carry the change excerpts (capped).
+}
+
+// ToolCallDetail is one call's full browseable payload: the list row
+// plus the change excerpts for diff rendering — old/new for file_edit,
+// the written content as New for file_write (an all-addition diff).
+type ToolCallDetail struct {
+	ToolCallRow
 	Old string `json:"old,omitempty"`
 	New string `json:"new,omitempty"`
 }
@@ -343,9 +356,15 @@ type ToolCallRow struct {
 // ToolsFilter pages a session's tool calls. Limit <= 0 returns
 // everything from Offset on — completeness is the default; the limit is
 // an explicit page size for callers that stream large sessions.
+// FromSeq/ToSeq bound the issuing MESSAGE seq (ToSeq 0 = unbounded), so
+// the transcript can request chips for exactly its loaded range.
+// Compact trims each row to chip size: detail capped, no timestamps.
 type ToolsFilter struct {
-	Limit  int
-	Offset int
+	Limit   int
+	Offset  int
+	FromSeq int
+	ToSeq   int
+	Compact bool
 }
 
 // SessionTools returns one session's tool calls in order, paged by f.
@@ -354,8 +373,25 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	if err != nil {
 		return nil, err
 	}
+	detailExpr := `COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, '')`
+	atExpr := `COALESCE(tc.started_at, '')`
+	var args []any
+	if f.Compact {
+		detailExpr = fmt.Sprintf("substr(%s, 1, ?)", detailExpr)
+		atExpr = `''`
+		args = append(args, chipDetailCap)
+	}
+	where := "tc.session_id = ?"
+	args = append(args, rowID)
+	if f.FromSeq > 0 {
+		where += " AND tc.message_seq >= ?"
+		args = append(args, f.FromSeq)
+	}
+	if f.ToSeq > 0 {
+		where += " AND tc.message_seq <= ?"
+		args = append(args, f.ToSeq)
+	}
 	limitClause := ""
-	args := []any{editExcerptLimit, editExcerptLimit, editExcerptLimit, rowID}
 	if f.Limit > 0 {
 		limitClause = "LIMIT ? OFFSET ?"
 		args = append(args, f.Limit, f.Offset)
@@ -365,6 +401,37 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 		args = append(args, f.Offset)
 	}
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT tc.seq, tc.message_seq, tc.name, tc.kind, %s,
+		       tc.result_status, %s
+		FROM tool_calls tc WHERE %s ORDER BY tc.seq %s`,
+		detailExpr, atExpr, where, limitClause),
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing tool calls: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ToolCallRow
+	for rows.Next() {
+		var t ToolCallRow
+		if err := rows.Scan(&t.Seq, &t.MessageSeq, &t.Name, &t.Kind,
+			&t.Detail, &t.Status, &t.At); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// SessionToolDetail fetches one call with its change excerpts — the
+// lazy counterpart to SessionTools, requested only when a row expands.
+func (s *Service) SessionToolDetail(ctx context.Context, agentSlug, externalID string, seq int) (*ToolCallDetail, error) {
+	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
+	if err != nil {
+		return nil, err
+	}
+	var d ToolCallDetail
+	err = s.store.ReadDB().QueryRowContext(ctx, `
 		SELECT tc.seq, tc.message_seq, tc.name, tc.kind,
 		       COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, ''),
 		       tc.result_status, COALESCE(tc.started_at, ''),
@@ -376,23 +443,17 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 		            WHEN tc.kind = 'file_write'
 		            THEN substr(COALESCE(json_extract(tc.input_json, '$.content'), ''), 1, ?)
 		            ELSE '' END
-		FROM tool_calls tc WHERE tc.session_id = ? ORDER BY tc.seq %s`, limitClause),
-		args...)
+		FROM tool_calls tc WHERE tc.session_id = ? AND tc.seq = ?`,
+		editExcerptLimit, editExcerptLimit, editExcerptLimit, rowID, seq).
+		Scan(&d.Seq, &d.MessageSeq, &d.Name, &d.Kind,
+			&d.Detail, &d.Status, &d.At, &d.Old, &d.New)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: tool call %d of %s/%s", ErrNotFound, seq, agentSlug, externalID)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("listing tool calls: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var out []ToolCallRow
-	for rows.Next() {
-		var t ToolCallRow
-		if err := rows.Scan(&t.Seq, &t.MessageSeq, &t.Name, &t.Kind,
-			&t.Detail, &t.Status, &t.At, &t.Old, &t.New); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return &d, nil
 }
 
 // escapeLike escapes LIKE wildcards so user filters match literally.

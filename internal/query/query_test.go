@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -540,5 +541,104 @@ func TestNoSilentCaps(t *testing.T) {
 	}
 	if len(paged) != 5 {
 		t.Errorf("tools across pages = %d, want 5", len(paged))
+	}
+}
+
+// TestToolChipsAndLazyDetail pins the split projection: compact chip
+// rows are range-scoped and capped (no timestamps, no diff payloads —
+// those can reach 16 KiB each), the plain list carries full detail but
+// still no excerpts, and the per-call detail lookup is where old/new
+// live, fetched only when a row expands.
+func TestToolChipsAndLazyDetail(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "chips-session",
+	}, "h-chips")
+	if err != nil {
+		t.Fatal(err)
+	}
+	longCmd := strings.Repeat("echo very-long-command && ", 20)
+	bigOld := strings.Repeat("o", 4000)
+	bigNew := strings.Repeat("n", 4000)
+	edit, _ := json.Marshal(map[string]string{
+		"file_path": "a.go", "old_string": bigOld, "new_string": bigNew,
+	})
+	calls := []canon.ToolCall{
+		{
+			Seq: 0, MessageSeq: 1, Name: "Bash", Kind: canon.ToolShell,
+			Input: json.RawMessage(`{"command":"` + longCmd + `"}`),
+		},
+		{
+			Seq: 1, MessageSeq: 5, Name: "Edit", Kind: canon.ToolFileEdit,
+			Input: edit, FilePath: "a.go",
+		},
+		{
+			Seq: 2, MessageSeq: 9, Name: "Read", Kind: canon.ToolFileRead,
+			Input: json.RawMessage(`{"file_path":"b.go"}`), FilePath: "b.go",
+		},
+	}
+	for _, c := range calls {
+		if err := w.InsertToolCall(sessionID, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	// Compact chips scoped to message seqs 2..9: the shell call at 1 is
+	// outside the range; detail is capped at chip size; At is empty.
+	chips, err := svc.SessionTools(ctx, "claude-code", "chips-session",
+		ToolsFilter{Compact: true, FromSeq: 2, ToSeq: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chips) != 2 || chips[0].Seq != 1 || chips[1].Seq != 2 {
+		t.Fatalf("chips = %+v, want calls 1 and 2", chips)
+	}
+	for _, c := range chips {
+		if len(c.Detail) > 120 {
+			t.Errorf("chip detail = %d bytes, want <= 120", len(c.Detail))
+		}
+		if c.At != "" {
+			t.Errorf("chip carries a timestamp: %q", c.At)
+		}
+	}
+
+	// The full list keeps full detail (the long shell command) but the
+	// row type carries no excerpt fields at all — those live behind the
+	// per-call detail.
+	full, err := svc.SessionTools(ctx, "claude-code", "chips-session", ToolsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full) != 3 || len(full[0].Detail) <= 120 {
+		t.Fatalf("full list = %d rows, first detail %d bytes", len(full), len(full[0].Detail))
+	}
+
+	detail, err := svc.SessionToolDetail(ctx, "claude-code", "chips-session", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Old != bigOld || detail.New != bigNew {
+		t.Errorf("detail excerpts = %d/%d bytes, want %d/%d",
+			len(detail.Old), len(detail.New), len(bigOld), len(bigNew))
+	}
+	if _, err := svc.SessionToolDetail(ctx, "claude-code", "chips-session", 99); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown seq error = %v, want ErrNotFound", err)
 	}
 }
