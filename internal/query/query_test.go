@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/codex"
@@ -341,5 +342,74 @@ func TestReasoningSemanticsAcrossProviders(t *testing.T) {
 	// SUBSET — 2020 would mean reasoning was double-counted.
 	if cx.Tokens.Output != 1220 {
 		t.Errorf("codex output = %d, want 1220 (reasoning is a subset, not added)", cx.Tokens.Output)
+	}
+}
+
+// TestBlocksDistinctSessionsAcrossModels: three sessions share one
+// 5-hour window with disjoint model sets (two on model-a, one on
+// model-b). The window must report 3 sessions — the old per-model
+// maximum reported 2, presenting a floor as an exact count.
+func TestBlocksDistinctSessionsAcrossModels(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All inside the same UTC-aligned window (10:00–15:00).
+	at := func(s string) time.Time {
+		ts, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ts
+	}
+	seed := []struct {
+		session, model, ts string
+	}{
+		{"blk-1", "model-a", "2026-07-01T10:05:00Z"},
+		{"blk-2", "model-b", "2026-07-01T10:30:00Z"},
+		{"blk-3", "model-a", "2026-07-01T11:00:00Z"},
+	}
+	for _, s := range seed {
+		id, err := w.UpsertSession(canon.Session{
+			Agent: "claude-code", ExternalID: s.session,
+		}, "h-"+s.session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.InsertMessage(id, "claude-code", canon.Message{
+			Seq: 0, Role: canon.RoleAssistant, Kind: canon.KindMessage,
+			CreatedAt: at(s.ts), Model: s.model,
+			Usage: &canon.Usage{InputTokens: 100, OutputTokens: 10},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks, err := New(store, table).Blocks(ctx, "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1 window", len(blocks))
+	}
+	if blocks[0].Sessions != 3 {
+		t.Errorf("window sessions = %d, want 3 true distinct", blocks[0].Sessions)
+	}
+	if blocks[0].Messages != 3 {
+		t.Errorf("window messages = %d, want 3", blocks[0].Messages)
 	}
 }

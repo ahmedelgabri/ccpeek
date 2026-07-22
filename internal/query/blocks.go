@@ -38,10 +38,39 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		args = append(args, agent)
 	}
 
+	// True distinct sessions per window, computed apart from the
+	// per-model aggregation below: sessions that touch several models in
+	// one window would otherwise be under-counted (the old max-per-model
+	// figure was only a floor when the sets are disjoint).
+	sessionsByWin := map[int64]int64{}
+	srows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT (unixepoch(m.created_at) / %d) AS win, COUNT(DISTINCT se.id)
+		FROM message_usage u
+		JOIN messages m ON m.id = u.message_id
+		JOIN sessions se ON se.id = m.session_id
+		JOIN agents a ON a.id = se.agent_id
+		WHERE m.created_at IS NOT NULL %s
+		GROUP BY win`, blockSeconds, where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("counting block sessions: %w", err)
+	}
+	for srows.Next() {
+		var win, sessions int64
+		if err := srows.Scan(&win, &sessions); err != nil {
+			srows.Close()
+			return nil, err
+		}
+		sessionsByWin[win] = sessions
+	}
+	srows.Close()
+	if err := srows.Err(); err != nil {
+		return nil, err
+	}
+
 	// created_at is RFC3339 text; unixepoch() handles it in SQLite ≥3.38.
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT (unixepoch(m.created_at) / %d) AS win, m.model,
-		       COUNT(DISTINCT se.id), COUNT(*),
+		       COUNT(*),
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
 		       SUM(COALESCE(u.reported_cost_usd, 0)),
@@ -62,14 +91,13 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 	defer rows.Close()
 
 	byWin := map[int64]*BlockRow{}
-	sessionsMax := map[int64]int64{}
 	for rows.Next() {
-		var win, sessions, messages int64
+		var win, messages int64
 		var model string
 		var in, out, cr, cw int64
 		var reported float64
 		var uin, uout, ucr, ucw int64
-		if err := rows.Scan(&win, &model, &sessions, &messages,
+		if err := rows.Scan(&win, &model, &messages,
 			&in, &out, &cr, &cw, &reported,
 			&uin, &uout, &ucr, &ucw); err != nil {
 			return nil, err
@@ -81,11 +109,6 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 				End:   time.Unix((win+1)*blockSeconds, 0).UTC().Format(time.RFC3339),
 			}
 			byWin[win] = b
-		}
-		// Session counts per (win, model) overlap across models; keep the
-		// max as a floor rather than double-counting.
-		if sessions > sessionsMax[win] {
-			sessionsMax[win] = sessions
 		}
 		b.Messages += messages
 		b.Tokens.Input += in
@@ -120,7 +143,7 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 	out := make([]BlockRow, 0, len(wins))
 	for _, w := range wins {
 		b := byWin[w]
-		b.Sessions = sessionsMax[w]
+		b.Sessions = sessionsByWin[w]
 		b.Active = w == nowWin
 		out = append(out, *b)
 	}
