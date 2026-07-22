@@ -22,15 +22,28 @@ import (
 
 const protocolVersion = "2025-06-18"
 
+// Status is the index-freshness snapshot behind the transport-owned
+// `status` tool: whether a refresh pass is running (answers come from
+// the last complete archive meanwhile) and the v1 import outcome —
+// MCP's equivalent of HTTP's /health.
+type Status struct {
+	Indexing      bool   `json:"indexing"`
+	V1ImportState string `json:"v1ImportState,omitempty"`
+	V1ImportError string `json:"v1ImportError,omitempty"`
+}
+
 // Server speaks MCP over one reader/writer pair.
 type Server struct {
 	svc     *query.Service
 	version string
+	status  func() Status
 }
 
-// New builds a Server. version is the ccpeek build version.
-func New(svc *query.Service, version string) *Server {
-	return &Server{svc: svc, version: version}
+// New builds a Server. version is the ccpeek build version; status,
+// when non-nil, backs the `status` tool so clients can tell a warming
+// index from a complete one.
+func New(svc *query.Service, version string, status func() Status) *Server {
+	return &Server{svc: svc, version: version, status: status}
 }
 
 type rpcRequest struct {
@@ -97,7 +110,11 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 	case "ping":
 		resp.Result = map[string]any{}
 	case "tools/list":
-		resp.Result = map[string]any{"tools": toolDefs}
+		defs := toolDefs
+		if s.status != nil {
+			defs = append(append([]map[string]any{}, defs...), statusToolDef)
+		}
+		resp.Result = map[string]any{"tools": defs}
 	case "tools/call":
 		result, err := s.call(ctx, req.Params)
 		if err != nil {
@@ -118,6 +135,16 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 // toolDefs derive from the operation registry, so the MCP surface can
 // never drift from the CLI's — one definition serves both.
 var toolDefs = buildToolDefs()
+
+// statusToolDef is transport-owned, not a registry op: like HTTP's
+// /health it describes THIS server process (index freshness), not the
+// archive, so the CLI has no equivalent command to drift from.
+var statusToolDef = map[string]any{
+	"name": "status",
+	"description": "Index freshness: whether a background refresh pass is running " +
+		"(answers meanwhile come from the last complete archive) and the v1 import state.",
+	"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+}
 
 func buildToolDefs() []map[string]any {
 	var defs []map[string]any
@@ -150,6 +177,18 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 	if err := json.Unmarshal(params, &call); err != nil {
 		return nil, fmt.Errorf("invalid tool call params: %w", err)
+	}
+
+	if call.Name == "status" && s.status != nil {
+		text, err := json.MarshalIndent(map[string]any{
+			"schema": "ccpeek/v1", "data": s.status(),
+		}, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"content": []map[string]any{{"type": "text", "text": string(text)}},
+		}, nil
 	}
 
 	var op *ops.Op

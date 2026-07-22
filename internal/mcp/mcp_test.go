@@ -41,7 +41,7 @@ func newServer(t *testing.T) *Server {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return New(query.New(store, table), "test")
+	return New(query.New(store, table), "test", nil)
 }
 
 // drive sends newline-delimited JSON-RPC requests and returns the decoded
@@ -124,5 +124,35 @@ func TestToolCalls(t *testing.T) {
 	// Unknown method: RPC error.
 	if resps[3]["error"] == nil {
 		t.Error("unknown method must be an RPC error")
+	}
+}
+
+// TestStatusTool: with a status hook wired (the `ccpeek mcp` path,
+// which now serves before indexing finishes), tools/list advertises the
+// transport-owned status tool and calling it reports the index state —
+// so a client can tell a warming index from a complete archive.
+func TestStatusTool(t *testing.T) {
+	s := newServer(t)
+	s.status = func() Status {
+		return Status{Indexing: true, V1ImportState: "failed", V1ImportError: "boom"}
+	}
+	resps := drive(
+		t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
+	)
+	if len(resps) != 2 {
+		t.Fatalf("responses = %d, want 2", len(resps))
+	}
+	tools := resps[0]["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != len(ops.Registry())+1 {
+		t.Fatalf("tools = %d, want %d (registry + status)", len(tools), len(ops.Registry())+1)
+	}
+	result := resps[1]["result"].(map[string]any)
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	for _, want := range []string{`"indexing": true`, `"v1ImportState": "failed"`, `"v1ImportError": "boom"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status payload lacks %s: %s", want, text)
+		}
 	}
 }
