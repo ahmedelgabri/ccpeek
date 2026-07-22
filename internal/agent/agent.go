@@ -110,6 +110,14 @@ type TailState struct {
 	MessageSeq int    `json:"messageSeq"`
 	ToolSeq    int    `json:"toolSeq"`
 	LineNo     int    `json:"lineNo"` // lines consumed, so tail diagnostics report absolute lines
+
+	// ResumeHash, when set, is the marshaled state of a SHA-256 that has
+	// already consumed the first Offset bytes — the pipeline verifies the
+	// prefix during its own change-detection read and hands the running
+	// hasher over, so the adapter seeks straight to Offset instead of
+	// re-reading (and re-hashing) the whole prefix a second time. It is
+	// transient hand-off state, never persisted.
+	ResumeHash []byte `json:"-"`
 }
 
 // ErrTailInvalid means a source cannot be resumed from its stored cursor

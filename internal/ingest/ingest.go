@@ -10,6 +10,7 @@ package ingest
 import (
 	"context"
 	"crypto/sha256"
+	"encoding"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -254,7 +255,33 @@ func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent
 		return nil // unchanged by stat — skip without reading content
 	}
 
-	hash, err := hashSource(src)
+	// A stored cursor lets one read serve two purposes: the full content
+	// hash for change detection AND prefix verification for the append
+	// path — with the running hasher handed to the adapter so the tail
+	// parse seeks straight to the offset instead of re-reading the prefix
+	// (previously every append read a multi-GB active log twice).
+	var cursor agent.TailState
+	tp, tailable := a.(agent.TailParser)
+	haveCursor := false
+	if tailable && prior.ParseState != "" && src.Kind == agent.SourceFile {
+		if err := json.Unmarshal([]byte(prior.ParseState), &cursor); err == nil && cursor.Offset > 0 {
+			haveCursor = true
+		}
+	}
+
+	var hash string
+	var err error
+	prefixOK := false
+	if haveCursor {
+		var resume []byte
+		hash, resume, err = hashFileWithPrefix(src.Path, cursor.Offset, cursor.PrefixHash)
+		if err == nil && resume != nil {
+			cursor.ResumeHash = resume
+			prefixOK = true
+		}
+	} else {
+		hash, err = hashSource(src)
+	}
 	if err != nil {
 		report.Issues = append(report.Issues, canon.Issue{
 			Agent: a.Slug(), Severity: canon.SeverityWarn,
@@ -277,23 +304,53 @@ func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent
 
 	// Cursor-capable sources try an append parse first: only the bytes
 	// added since the stored cursor are decoded and only new records are
-	// written — the difference between re-parsing a whole multi-thousand
-	// message session and reading its last few lines. A cursor the source
-	// can't resume from (rewritten prefix, missing session row) falls back
-	// to a full parse, which records a fresh cursor.
-	if tp, ok := a.(agent.TailParser); ok && prior.ParseState != "" {
-		var state agent.TailState
-		if err := json.Unmarshal([]byte(prior.ParseState), &state); err == nil && state.Offset > 0 {
-			err := r.ingestTail(ctx, a, tp, src, state, hash, statSig, report)
-			if err == nil {
-				return nil
-			}
-			if !errors.Is(err, agent.ErrTailInvalid) && !errors.Is(err, db.ErrUnknownSession) {
-				return err
-			}
+	// written. A cursor the source can't resume from (rewritten prefix,
+	// missing session row) falls back to a full parse, which records a
+	// fresh cursor.
+	if haveCursor && prefixOK {
+		err := r.ingestTail(ctx, a, tp, src, cursor, hash, statSig, report)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, agent.ErrTailInvalid) && !errors.Is(err, db.ErrUnknownSession) {
+			return err
 		}
 	}
 	return r.ingestSource(ctx, a, src, hash, statSig, report)
+}
+
+// hashFileWithPrefix hashes a whole file in one pass, additionally
+// checking whether its first offset bytes still match wantPrefix. On a
+// match it returns the marshaled state of a hasher that has consumed
+// exactly those bytes, for the tail parser to resume; on a mismatch (or
+// a file shorter than offset) resume is nil and only the full hash is
+// meaningful.
+func hashFileWithPrefix(path string, offset int64, wantPrefix string) (full string, resume []byte, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer f.Close()
+
+	prefixHasher := sha256.New()
+	n, err := io.CopyN(prefixHasher, f, offset)
+	if err != nil && err != io.EOF {
+		return "", nil, err
+	}
+	prefixMatches := n == offset &&
+		hex.EncodeToString(prefixHasher.Sum(nil)) == wantPrefix
+	if prefixMatches {
+		if m, ok := prefixHasher.(encoding.BinaryMarshaler); ok {
+			resume, _ = m.MarshalBinary()
+		}
+	}
+
+	// The prefix hasher continues into the full hash: Sum above did not
+	// disturb its running state.
+	if _, err := io.Copy(prefixHasher, f); err != nil {
+		return "", nil, err
+	}
+	return hex.EncodeToString(prefixHasher.Sum(nil)), resume, nil
 }
 
 // ingestSource fully parses one changed source inside its own transaction.

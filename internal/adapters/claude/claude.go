@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -170,21 +171,32 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 	defer f.Close()
 
 	hasher := sha256.New()
-	r := bufio.NewReaderSize(f, 64*1024)
 	resuming := state.Offset > 0
-	if resuming {
-		// The cursor is only valid if the bytes it covers are unchanged:
-		// re-hash the prefix and compare. Cheap relative to parsing — no
-		// JSON is decoded.
-		if n, err := io.CopyN(hasher, r, state.Offset); err != nil || n < state.Offset {
+	switch {
+	case resuming && state.ResumeHash != nil:
+		// The pipeline already verified the prefix during its change
+		// detection read and handed the running hasher over: restore it
+		// and seek straight to the cursor — the prefix is not read again.
+		u, ok := hasher.(encoding.BinaryUnmarshaler)
+		if !ok || u.UnmarshalBinary(state.ResumeHash) != nil {
+			return agent.TailState{}, agent.ErrTailInvalid
+		}
+		if _, err := f.Seek(state.Offset, io.SeekStart); err != nil {
+			return agent.TailState{}, agent.ErrTailInvalid
+		}
+	case resuming:
+		// No hand-off (direct ParseTail callers): verify the prefix by
+		// re-hashing it. Cheap relative to parsing — no JSON is decoded.
+		if n, err := io.CopyN(hasher, f, state.Offset); err != nil || n < state.Offset {
 			return agent.TailState{}, agent.ErrTailInvalid // file shrank
 		}
 		if hex.EncodeToString(hasher.Sum(nil)) != state.PrefixHash {
 			return agent.TailState{}, agent.ErrTailInvalid // prefix rewritten
 		}
-	} else {
+	default:
 		state = agent.TailState{}
 	}
+	r := bufio.NewReaderSize(f, 64*1024)
 
 	sessionID := strings.TrimSuffix(filepath.Base(src.Path), ".jsonl")
 	sess := canon.Session{
