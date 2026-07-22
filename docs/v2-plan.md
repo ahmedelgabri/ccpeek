@@ -163,6 +163,29 @@ Post-launch sprints (feedback-driven, after v2.0):
   generated from it (ten ops each, matching HTTP; the once-missing
   model/full filters everywhere).
 
+- ✅ **Second review round: the two upgrade-boundary CRITICALs
+  (2026-07-22)**: the v1 scan-ignore importer now maps all ELEVEN v1
+  source types explicitly — paste_cache→paste, todo→todo_list
+  (`#item-N` stripped), task→task_group (`#task-*` stripped),
+  usage_report `report`→`report.html`, command collapsing into its
+  containing message, the rest passing through by name — each proven by
+  an import→full-scan reattachment test, with the memory
+  empty-file-name edge pinned as a deliberate orphan annotation and
+  per-item ignores deliberately coarsening to whole-artifact rule
+  wildcards. The import is version-adaptive (sqlite_master + PRAGMA
+  table_info drive every SELECT): pre-v13 databases no longer fail on
+  columns they never had, table-absent is distinguished from
+  column-absent (which previously skipped whole tables silently), and
+  the commands table of pre-tool_calls vintages (v7/v10) imports as
+  shell tool calls instead of vanishing. The historical fixture corpus
+  (v4–v14) is restored to internal/migrate/testdata/v1 with per-vintage
+  import + idempotency tests. The import outcome is tracked apart from
+  migrated_at: tri-state v1_import_state (success/failed/no-legacy-db)
+  with v1_imported_at stamped only on success, failures retained in
+  v1_import_error, surfaced via /api/v1/health and a UI banner, retried
+  on every start (already-stamped WIP databases get one idempotent
+  re-import), and `ccpeek migrate` exiting non-zero.
+
 **Schema baseline decision:** the migration machinery stays parked until
 this branch lands on main; at that merge the baseline freezes and every
 later schema change ships as a migration. New agents (Gemini CLI,
