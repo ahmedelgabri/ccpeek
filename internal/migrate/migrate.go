@@ -915,9 +915,16 @@ func collectV1Memories(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structu
 	if !sch.table("memories") {
 		return nil, nil
 	}
-	rows, err := v1.QueryContext(ctx, `
-		SELECT COALESCE(project_dir,''), COALESCE(file_name,''), COALESCE(content,'')
-		FROM memories`)
+	// memories.file_name arrived in v15; the v14→v15 migration backfilled
+	// existing rows with 'MEMORY.md', so pre-v15 vintages import under the
+	// same default (one memory file per project was the only shape then).
+	fileExpr := `COALESCE(file_name,'')`
+	if !sch.has("memories", "file_name") {
+		fileExpr = `'MEMORY.md'`
+	}
+	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`
+		SELECT COALESCE(project_dir,''), %s, COALESCE(content,'')
+		FROM memories`, fileExpr))
 	if err != nil {
 		return nil, err
 	}

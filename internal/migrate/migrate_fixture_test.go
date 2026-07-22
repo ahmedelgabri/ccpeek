@@ -31,8 +31,9 @@ func TestImportV1HistoricalFixtures(t *testing.T) {
 		// tool_calls and commands both exist; commands must not import
 		// twice. The todo list lands as a structured artifact.
 		"v13-delete-actions.db": {OrphanSessions: 1, OrphanMessages: 1, OrphanToolCalls: 1, OrphanArtifacts: 1},
-		// plans without source_path.
-		"v14-damaged-derived-tables.db": {OrphanSessions: 1, OrphanMessages: 2, OrphanArtifacts: 1},
+		// plans without source_path, and the pre-file_name memories shape
+		// (the v14→v15 migration is what added that column).
+		"v14-damaged-derived-tables.db": {OrphanSessions: 1, OrphanMessages: 2, OrphanArtifacts: 2},
 	}
 
 	fixtures, err := filepath.Glob(filepath.Join("testdata", "v1", "*.db"))
@@ -93,6 +94,15 @@ func TestImportV1HistoricalFixtures(t *testing.T) {
 					WHERE kind = 'shell'
 					  AND json_extract(input_json, '$.command') = 'echo legacy'`); n != 1 {
 					t.Errorf("legacy command tool calls = %d, want 1", n)
+				}
+			}
+			// The pre-file_name memory imports under the same MEMORY.md
+			// default the v14→v15 migration would have backfilled.
+			if name == "v14-damaged-derived-tables.db" {
+				if n := count(`SELECT COUNT(*) FROM artifacts
+					WHERE kind = 'memory'
+					  AND name = '-Users-me-damaged-project/MEMORY.md'`); n != 1 {
+					t.Errorf("pre-file_name memory artifacts = %d, want 1", n)
 				}
 			}
 

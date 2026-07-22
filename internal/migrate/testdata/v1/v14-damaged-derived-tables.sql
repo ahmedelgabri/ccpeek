@@ -114,3 +114,18 @@ VALUES (1, 'damaged-plan.md', 'Damaged Fixture Plan', 28, 'Plan content used to 
 
 INSERT INTO source_files (path, content_hash, indexed_at)
 VALUES ('/src/damaged-session.jsonl', 'damaged-hash', '2024-01-06T00:00:10Z');
+
+-- The v14 memories shape: source_path but no file_name column (the
+-- v14->v15 migration adds file_name, backfilling 'MEMORY.md').
+CREATE TABLE memories (
+  id          INTEGER PRIMARY KEY,
+  project_dir TEXT NOT NULL UNIQUE,
+  project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  size_bytes  INTEGER NOT NULL DEFAULT 0,
+  content     TEXT NOT NULL DEFAULT '',
+  source_path TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_memories_source ON memories(source_path);
+
+INSERT INTO memories (id, project_dir, project_id, size_bytes, content, source_path)
+VALUES (1, '-Users-me-damaged-project', 1, 24, 'Remember the damaged fix.', '/gone/memory/MEMORY.md');
