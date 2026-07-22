@@ -66,7 +66,7 @@ func TestLinkPlanArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	linked, err := s.LinkPlanArtifacts(ctx)
+	linked, _, err := s.LinkPlanArtifacts(ctx)
 	if err != nil {
 		t.Fatalf("LinkPlanArtifacts: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestLinkPlanArtifacts(t *testing.T) {
 
 	// Second pass: nothing new (linked plans are skipped, the orphan still
 	// matches nothing).
-	linked, err = s.LinkPlanArtifacts(ctx)
+	linked, _, err = s.LinkPlanArtifacts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestLinkMemoryArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	linked, err := s.LinkMemoryArtifacts(ctx)
+	linked, _, err := s.LinkMemoryArtifacts(ctx)
 	if err != nil {
 		t.Fatalf("LinkMemoryArtifacts: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestLinkMemoryArtifacts(t *testing.T) {
 		t.Errorf("link = %s/%s, want sess-mem/content_ref", ext, evidence)
 	}
 
-	linked, err = s.LinkMemoryArtifacts(ctx)
+	linked, _, err = s.LinkMemoryArtifacts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestLaterSessionLinksToExistingPlan(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
+	if n, _, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
 		t.Fatalf("first pass linked = %d (err %v), want 1", n, err)
 	}
 
@@ -237,7 +237,7 @@ func TestLaterSessionLinksToExistingPlan(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
+	if n, _, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
 		t.Fatalf("second pass linked = %d (err %v), want 1 (the new pair)", n, err)
 	}
 	var links int
@@ -249,5 +249,89 @@ func TestLaterSessionLinksToExistingPlan(t *testing.T) {
 	}
 	if links != 2 {
 		t.Errorf("plan links = %d, want 2 (both approving sessions)", links)
+	}
+}
+
+// TestLinkPlanArtifactsReconcilesStaleEvidence: a plan REWRITTEN under
+// the same natural key must lose the content-derived link whose text no
+// longer matches — while links owned by other evidence survive.
+func TestLinkPlanArtifactsReconcilesStaleEvidence(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	w, err := s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessA, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "sess-a"}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.InsertToolCall(sessA, canon.ToolCall{
+		Name: "ExitPlanMode", Kind: canon.ToolOther,
+		Input: []byte(`{"plan":"# Version one"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	planID, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactPlan, Name: "plan.md",
+		Content: "# Version one\n",
+	}, "h1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if added, removed, err := s.LinkPlanArtifacts(ctx); err != nil || added != 1 || removed != 0 {
+		t.Fatalf("first pass = +%d -%d (%v), want +1 -0", added, removed, err)
+	}
+
+	// A link owned by DIFFERENT evidence on the same pair's artifact: the
+	// reconciler must never touch it.
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO artifact_sessions (artifact_id, session_id, relation, evidence)
+		VALUES (?, ?, 'applies_to', 'id_match')`, planID, sessA); err != nil {
+		t.Fatal(err)
+	}
+
+	// The plan file is rewritten under the same name with unrelated text.
+	w, err = s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactPlan, Name: "plan.md",
+		Content: "# Rewritten: nothing like version one\n",
+	}, "h2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if added, removed, err := s.LinkPlanArtifacts(ctx); err != nil || added != 0 || removed != 1 {
+		t.Fatalf("reconcile pass = +%d -%d (%v), want +0 -1 (stale evidence)", added, removed, err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM artifact_sessions
+		WHERE artifact_id = ? AND evidence = 'content_ref'`, planID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("stale content_ref links = %d, want 0", n)
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM artifact_sessions
+		WHERE artifact_id = ? AND evidence = 'id_match'`, planID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("non-resolver link count = %d, want 1 (must be preserved)", n)
 	}
 }

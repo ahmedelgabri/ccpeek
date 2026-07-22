@@ -144,7 +144,7 @@ func TestPlanAnchorMatchesItsOwnCall(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.LinkPlanArtifacts(ctx); err != nil {
+	if _, _, err := store.LinkPlanArtifacts(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +212,7 @@ func TestMemoryAnchorPointsAtItsWrite(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.LinkMemoryArtifacts(ctx); err != nil {
+	if _, _, err := store.LinkMemoryArtifacts(ctx); err != nil {
 		t.Fatal(err)
 	}
 
