@@ -7,8 +7,11 @@ import (
 	"strings"
 )
 
-// SearchHit is one result of the `search` op. Every hit resolves to a
-// session (directly for messages, via links for artifacts).
+// SearchHit is one result of the `search` op. Message hits resolve to
+// their session (SessionID + Seq anchor); artifact hits carry their own
+// locator instead — Agent + DocType (the artifact kind) + Artifact (the
+// name) address the artifact page directly, with no pretense of one
+// canonical session.
 type SearchHit struct {
 	DocType   string `json:"docType"` // message | plan | todo_list | …
 	Agent     string `json:"agent"`

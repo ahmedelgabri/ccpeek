@@ -205,8 +205,8 @@ export const api = {
     limit?: string;
   }) => get<UsageRow[] | null>("/usage", filters),
 
-  search: (q: string, limit = "20") =>
-    get<SearchHit[] | null>("/search", { q, limit }),
+  search: (q: string, agent = "", limit = "20") =>
+    get<SearchHit[] | null>("/search", { q, agent, limit }),
 
   stats: () => get<Stats>("/stats"),
 

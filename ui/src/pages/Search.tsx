@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, type SearchHit } from "../api";
+import { api } from "../api";
 
 const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
@@ -12,14 +12,11 @@ export function SearchPage() {
   const [agent, setAgent] = useState("");
   const enabled = q.trim().length >= 2;
 
+  // The agent filter narrows on the SERVER: filtering the global top-N
+  // client-side hid valid matches behind "No matches".
   const { data, isFetching } = useQuery({
     queryKey: ["search", q, agent],
-    queryFn: async () => {
-      const hits = await api.search(q);
-      return agent
-        ? (hits ?? []).filter((h: SearchHit) => h.agent === agent)
-        : hits;
-    },
+    queryFn: () => api.search(q, agent),
     enabled,
   });
 
@@ -56,7 +53,10 @@ export function SearchPage() {
 
       <ul className="space-y-2">
         {hits.map((h, i) => (
-          <li key={i} className="rounded-lg border border-edge bg-surface-1 px-4 py-3">
+          <li
+            key={i}
+            className="rounded-lg border border-edge bg-surface-1 px-4 py-3"
+          >
             <div className="mb-1 flex gap-2 text-xs text-ink-dim">
               <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-accent">
                 {h.agent}
@@ -76,6 +76,15 @@ export function SearchPage() {
                 className="mt-1 inline-block text-xs text-accent hover:underline"
               >
                 open at match →
+              </Link>
+            )}
+            {h.artifact && (
+              <Link
+                to="/artifacts/$agent/$kind/$name"
+                params={{ agent: h.agent, kind: h.docType, name: h.artifact }}
+                className="mt-1 inline-block text-xs text-accent hover:underline"
+              >
+                open {h.docType.replaceAll("_", " ")} →
               </Link>
             )}
           </li>
