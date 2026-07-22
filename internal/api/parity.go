@@ -36,18 +36,23 @@ func isLoopbackHost(host string) bool {
 }
 
 func (h *handlers) artifacts(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	list, err := h.svc.Artifacts(r.Context(), query.ArtifactsFilter{
-		Agent:  q.Get("agent"),
-		Kind:   q.Get("kind"),
-		Limit:  intParam(q.Get("limit")),
-		Offset: intParam(q.Get("offset")),
-	})
+	p := newParams(r)
+	f := query.ArtifactsFilter{
+		Agent:  p.Str("agent"),
+		Kind:   p.Str("kind"),
+		Limit:  p.Int("limit"),
+		Offset: p.Int("offset"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	list, err := h.svc.Artifacts(r.Context(), f)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, orEmpty(list))
 }
 
 func (h *handlers) artifact(w http.ResponseWriter, r *http.Request) {
@@ -93,13 +98,13 @@ func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) scanFindings(w http.ResponseWriter, r *http.Request) {
-	includeIgnored := r.URL.Query().Get("ignored") == "1"
-	findings, err := h.svc.ScanFindings(r.Context(), includeIgnored)
+	p := newParams(r)
+	findings, err := h.svc.ScanFindings(r.Context(), p.Bool("ignored"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, findings)
+	writeJSON(w, http.StatusOK, orEmpty(findings))
 }
 
 func (h *handlers) scanIgnore(w http.ResponseWriter, r *http.Request) {
@@ -123,13 +128,18 @@ func (h *handlers) scanIgnore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) blocks(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	blocks, err := h.svc.Blocks(r.Context(), q.Get("agent"), intParam(q.Get("limit")))
+	p := newParams(r)
+	agent, limit := p.Str("agent"), p.Int("limit")
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	blocks, err := h.svc.Blocks(r.Context(), agent, limit)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, blocks)
+	writeJSON(w, http.StatusOK, orEmpty(blocks))
 }
 
 func (h *handlers) budget(w http.ResponseWriter, r *http.Request) {

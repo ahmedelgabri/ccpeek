@@ -179,23 +179,27 @@ func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	p := newParams(r)
 	f := query.SessionsFilter{
-		Agent:   q.Get("agent"),
-		Project: q.Get("project"),
-		Model:   q.Get("model"),
-		Since:   q.Get("since"),
-		Until:   q.Get("until"),
-		Query:   q.Get("q"),
-		Limit:   intParam(q.Get("limit")),
-		Offset:  intParam(q.Get("offset")),
+		Agent:   p.Str("agent"),
+		Project: p.Str("project"),
+		Model:   p.Str("model"),
+		Since:   p.Date("since"),
+		Until:   p.Date("until"),
+		Query:   p.Str("q"),
+		Limit:   p.Int("limit"),
+		Offset:  p.Int("offset"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
 	}
 	sessions, err := h.svc.Sessions(r.Context(), f)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, sessions)
+	writeJSON(w, http.StatusOK, orEmpty(sessions))
 }
 
 func (h *handlers) session(w http.ResponseWriter, r *http.Request) {
@@ -208,11 +212,15 @@ func (h *handlers) session(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	p := newParams(r)
 	opts := query.TranscriptOptions{
-		FromSeq: intParam(q.Get("from")),
-		Limit:   intParam(q.Get("limit")),
-		Full:    q.Get("full") == "1" || q.Get("full") == "true",
+		FromSeq: p.Int("from"),
+		Limit:   p.Int("limit"),
+		Full:    p.Bool("full"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
 	}
 	msgs, err := h.svc.Transcript(r.Context(), r.PathValue("agent"), r.PathValue("id"), opts)
 	if err != nil {
@@ -226,22 +234,26 @@ func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 			msgs[i].HTML = renderMarkdown(msgs[i].Text)
 		}
 	}
-	writeJSON(w, http.StatusOK, msgs)
+	writeJSON(w, http.StatusOK, orEmpty(msgs))
 }
 
 func (h *handlers) sessionTools(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	tools, err := h.svc.SessionTools(r.Context(), r.PathValue("agent"), r.PathValue("id"),
-		query.ToolsFilter{
-			Limit: intParam(q.Get("limit")), Offset: intParam(q.Get("offset")),
-			FromSeq: intParam(q.Get("from_seq")), ToSeq: intParam(q.Get("to_seq")),
-			Compact: q.Get("compact") != "",
-		})
+	p := newParams(r)
+	f := query.ToolsFilter{
+		Limit: p.Int("limit"), Offset: p.Int("offset"),
+		FromSeq: p.Int("from_seq"), ToSeq: p.Int("to_seq"),
+		Compact: p.Bool("compact"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	tools, err := h.svc.SessionTools(r.Context(), r.PathValue("agent"), r.PathValue("id"), f)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tools)
+	writeJSON(w, http.StatusOK, orEmpty(tools))
 }
 
 // sessionTool serves one call's full payload including diff excerpts —
@@ -271,14 +283,19 @@ func (h *handlers) stats(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	p := newParams(r)
 	f := query.CommandsFilter{
-		Agent:   q.Get("agent"),
-		Project: q.Get("project"),
-		Query:   q.Get("q"),
-		Since:   q.Get("since"),
-		Until:   q.Get("until"),
-		Limit:   intParam(q.Get("limit")),
-		Offset:  intParam(q.Get("offset")),
+		Agent:   p.Str("agent"),
+		Project: p.Str("project"),
+		Query:   p.Str("q"),
+		Since:   p.Date("since"),
+		Until:   p.Date("until"),
+		Limit:   p.Int("limit"),
+		Offset:  p.Int("offset"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
 	}
 	rows, err := h.svc.Commands(r.Context(), f)
 	if err != nil {
@@ -305,44 +322,47 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	writeJSON(w, http.StatusOK, orEmpty(rows))
 }
 
 func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	p := newParams(r)
 	f := query.UsageFilter{
-		GroupBy: q.Get("group"),
-		Agent:   q.Get("agent"),
-		Model:   q.Get("model"),
-		Since:   q.Get("since"),
-		Until:   q.Get("until"),
-		Limit:   intParam(q.Get("limit")),
+		GroupBy: p.Str("group"),
+		Agent:   p.Str("agent"),
+		Model:   p.Str("model"),
+		Since:   p.Date("since"),
+		Until:   p.Date("until"),
+		Limit:   p.Int("limit"),
 	}
-	rows, err := h.svc.Usage(r.Context(), f)
-	if err != nil {
-		// Only caller mistakes are 400s; a canceled request or store
-		// failure must not masquerade as one in the access log.
-		if errors.Is(err, query.ErrBadRequest) {
-			writeBadRequest(w, err)
-		} else {
-			writeError(w, err)
-		}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
-}
-
-func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	hits, err := h.svc.Search(r.Context(), q.Get("q"), query.SearchFilter{
-		Agent: q.Get("agent"),
-		Limit: intParam(q.Get("limit")),
-	})
+	rows, err := h.svc.Usage(r.Context(), f)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, hits)
+	writeJSON(w, http.StatusOK, orEmpty(rows))
+}
+
+func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.SearchFilter{
+		Agent: p.Str("agent"),
+		Limit: p.Int("limit"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	hits, err := h.svc.Search(r.Context(), p.Str("q"), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, orEmpty(hits))
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -351,8 +371,15 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Data: data})
 }
 
+// writeError maps domain errors onto statuses: caller mistakes
+// (query.ErrBadRequest) are 400, misses are 404, everything else is a
+// 500 — a canceled request or store failure must never masquerade as a
+// caller mistake in the access log.
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
+	if errors.Is(err, query.ErrBadRequest) {
+		status = http.StatusBadRequest
+	}
 	if errors.Is(err, query.ErrNotFound) {
 		status = http.StatusNotFound
 	}
@@ -365,9 +392,4 @@ func writeBadRequest(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Error: err.Error()})
-}
-
-func intParam(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }
