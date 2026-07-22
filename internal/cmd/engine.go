@@ -145,7 +145,15 @@ func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw i
 		return
 	}
 	if _, err := os.Stat(dataFile); err != nil {
-		_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
+		if os.IsNotExist(err) {
+			_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
+			return
+		}
+		// Permission or I/O trouble reaching the legacy file is a failed
+		// attempt to retry, not proof there is nothing to import.
+		_ = store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
+		_ = store.SetMeta(ctx, "v1_import_error", err.Error())
+		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
 		return
 	}
 	if _, err := runV1Import(ctx, store, dataFile, logw); err != nil {

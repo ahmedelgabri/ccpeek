@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -246,5 +247,74 @@ func TestV1ImportFailureRetries(t *testing.T) {
 		return n
 	}(); n != 2 {
 		t.Errorf("imported sessions after third start = %d, want 2", n)
+	}
+}
+
+// TestV1ImportStatErrorIsFailure proves an UNREACHABLE legacy file (a
+// stat error other than not-exist) classifies as a failed attempt —
+// recorded and retried — never as no-legacy-db, which is permanent.
+func TestV1ImportStatErrorIsFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not bind root")
+	}
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dataFile := filepath.Join(locked, "ccpeek.db")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	maybeImportV1(ctx, store, dataFile, io.Discard)
+	meta := func(key string) (string, bool) {
+		t.Helper()
+		v, ok, err := store.GetMeta(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v, ok
+	}
+	if v, _ := meta("v1_import_state"); v != "failed" {
+		t.Fatalf("v1_import_state = %q, want failed (a stat error is not no-legacy-db)", v)
+	}
+	if v, _ := meta("v1_import_error"); v == "" {
+		t.Error("v1_import_error empty for the unreachable legacy file")
+	}
+
+	// Reachable again: the same call retries and succeeds.
+	if err := os.Chmod(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(locked, "live.jsonl")
+	if err := os.WriteFile(live, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedV1DB(t, dataFile, live)
+	maybeImportV1(ctx, store, dataFile, io.Discard)
+	if v, _ := meta("v1_import_state"); v != "success" {
+		t.Errorf("v1_import_state after retry = %q, want success", v)
+	}
+	if v, _ := meta("v1_import_error"); v != "" {
+		t.Errorf("v1_import_error not cleared: %q", v)
+	}
+
+	// A truly absent file (fresh store) records no-legacy-db.
+	store2, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	maybeImportV1(ctx, store2, filepath.Join(t.TempDir(), "nope.db"), io.Discard)
+	if v, _, _ := store2.GetMeta(ctx, "v1_import_state"); v != "no-legacy-db" {
+		t.Errorf("v1_import_state for missing file = %q, want no-legacy-db", v)
 	}
 }

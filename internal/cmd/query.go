@@ -161,9 +161,16 @@ database is opened read-only and never modified.`,
 
 		dataFile, _ := cmd.Flags().GetString("data-file")
 		if _, err := os.Stat(dataFile); err != nil {
-			_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
-			fmt.Fprintf(os.Stderr, "no v1 database at %s; nothing to import\n", dataFile)
-			return nil
+			if os.IsNotExist(err) {
+				_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
+				fmt.Fprintf(os.Stderr, "no v1 database at %s; nothing to import\n", dataFile)
+				return nil
+			}
+			// Unreachable is not absent: record the failure and exit
+			// non-zero so it is retried rather than written off.
+			_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
+			_ = eng.store.SetMeta(ctx, "v1_import_error", err.Error())
+			return fmt.Errorf("checking v1 database: %w", err)
 		}
 		// runV1Import records the outcome metas either way; a failure here
 		// exits non-zero, unlike the bootstrap's warn-and-retry path.
