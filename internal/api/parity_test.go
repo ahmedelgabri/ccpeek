@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 )
 
 func post(t *testing.T, h http.Handler, path, body string, headers map[string]string) (int, envelope) {
@@ -117,3 +119,36 @@ func TestBlocksEndpoint(t *testing.T) {
 
 // jsonUnmarshal indirection keeps the helper header tidy.
 func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+// TestRouteRegistryParity: every classified "op" route names a real
+// registry operation, every registry operation is reachable over HTTP,
+// and the transport/write remainder is the enumerated set — so a new
+// endpoint cannot appear without either a registry op or an explicit
+// transport classification.
+func TestRouteRegistryParity(t *testing.T) {
+	opsByName := map[string]bool{}
+	for _, op := range ops.Registry() {
+		opsByName[op.Name] = true
+	}
+	coveredOps := map[string]bool{}
+	for _, r := range Routes() {
+		switch r.Kind {
+		case "op":
+			if !opsByName[r.Op] {
+				t.Errorf("route %s claims registry op %q, which does not exist", r.Pattern, r.Op)
+			}
+			coveredOps[r.Op] = true
+		case "transport", "write":
+			if r.Op != "" {
+				t.Errorf("route %s is %s but names op %q", r.Pattern, r.Kind, r.Op)
+			}
+		default:
+			t.Errorf("route %s has unknown kind %q", r.Pattern, r.Kind)
+		}
+	}
+	for name := range opsByName {
+		if !coveredOps[name] {
+			t.Errorf("registry op %q has no HTTP route", name)
+		}
+	}
+}

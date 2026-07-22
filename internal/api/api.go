@@ -43,6 +43,47 @@ type V1ImportStatus struct {
 	ImportedAt string `json:"importedAt,omitempty"`
 }
 
+// Route classifies one API endpoint for the transport-parity test:
+// Op names the registry operation answering the same read (HTTP keeps
+// hand-written parsing for transport concerns, but the read itself must
+// exist in the registry so CLI and MCP can never lack it); "transport"
+// marks endpoints that describe this server process or need HTTP
+// semantics (health, readiness, SSE, raw bytes with CSP); "write" marks
+// mutations, which the read-op registry deliberately excludes.
+type Route struct {
+	Pattern string
+	Op      string // registry op name, or "" when Kind != "op"
+	Kind    string // "op" | "transport" | "write"
+}
+
+// Routes is the complete classified endpoint table — Handler registers
+// exactly this set, so adding an endpoint without classifying it is
+// impossible, and the parity test cross-checks the op column against
+// the registry.
+func Routes() []Route {
+	return []Route{
+		{"GET /api/v1/health", "", "transport"},
+		{"GET /api/v1/ready", "", "transport"},
+		{"GET /api/v1/events", "", "transport"},
+		{"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", "", "transport"}, // raw bytes + CSP sandbox
+		{"GET /api/v1/stats", "stats", "op"},
+		{"GET /api/v1/sessions", "sessions", "op"},
+		{"GET /api/v1/sessions/{agent}/{id}", "session", "op"},
+		{"GET /api/v1/sessions/{agent}/{id}/transcript", "transcript", "op"},
+		{"GET /api/v1/sessions/{agent}/{id}/tools", "tools", "op"},
+		{"GET /api/v1/commands", "commands", "op"},
+		{"GET /api/v1/usage", "usage", "op"},
+		{"GET /api/v1/search", "search", "op"},
+		{"GET /api/v1/artifacts", "artifacts", "op"},
+		{"GET /api/v1/artifacts/{agent}/{kind}/{name}", "artifact", "op"},
+		{"GET /api/v1/scan", "scan", "op"},
+		{"GET /api/v1/blocks", "blocks", "op"},
+		{"GET /api/v1/budget", "budget", "op"},
+		{"POST /api/v1/scan/{id}/ignore", "", "write"},
+		{"PUT /api/v1/budget", "", "write"},
+	}
+}
+
 // Handler mounts the API routes. events may be nil when live updates are
 // not running (e.g. `--watch` off); the endpoint then answers 501. ready
 // reports whether the initial index pass has completed — nil means
@@ -53,25 +94,38 @@ type V1ImportStatus struct {
 func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress, v1Import func() V1ImportStatus) http.Handler {
 	mux := http.NewServeMux()
 	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress, v1Import: v1Import}
-	mux.HandleFunc("GET /api/v1/health", h.health)
-	mux.HandleFunc("GET /api/v1/ready", h.readiness)
-	mux.HandleFunc("GET /api/v1/stats", h.stats)
-	mux.HandleFunc("GET /api/v1/sessions", h.sessions)
-	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}", h.session)
-	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}/transcript", h.transcript)
-	mux.HandleFunc("GET /api/v1/sessions/{agent}/{id}/tools", h.sessionTools)
-	mux.HandleFunc("GET /api/v1/commands", h.commands)
-	mux.HandleFunc("GET /api/v1/usage", h.usage)
-	mux.HandleFunc("GET /api/v1/search", h.search)
-	mux.HandleFunc("GET /api/v1/events", h.events)
-	mux.HandleFunc("GET /api/v1/artifacts", h.artifacts)
-	mux.HandleFunc("GET /api/v1/artifacts/{agent}/{kind}/{name}", h.artifact)
-	mux.HandleFunc("GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", h.artifactRaw)
-	mux.HandleFunc("GET /api/v1/scan", h.scanFindings)
-	mux.HandleFunc("POST /api/v1/scan/{id}/ignore", sameOriginOnly(h.scanIgnore))
-	mux.HandleFunc("GET /api/v1/blocks", h.blocks)
-	mux.HandleFunc("GET /api/v1/budget", h.budget)
-	mux.HandleFunc("PUT /api/v1/budget", sameOriginOnly(h.setBudget))
+	byPattern := map[string]http.HandlerFunc{
+		"GET /api/v1/health":                              h.health,
+		"GET /api/v1/ready":                               h.readiness,
+		"GET /api/v1/stats":                               h.stats,
+		"GET /api/v1/sessions":                            h.sessions,
+		"GET /api/v1/sessions/{agent}/{id}":               h.session,
+		"GET /api/v1/sessions/{agent}/{id}/transcript":    h.transcript,
+		"GET /api/v1/sessions/{agent}/{id}/tools":         h.sessionTools,
+		"GET /api/v1/commands":                            h.commands,
+		"GET /api/v1/usage":                               h.usage,
+		"GET /api/v1/search":                              h.search,
+		"GET /api/v1/events":                              h.events,
+		"GET /api/v1/artifacts":                           h.artifacts,
+		"GET /api/v1/artifacts/{agent}/{kind}/{name}":     h.artifact,
+		"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw": h.artifactRaw,
+		"GET /api/v1/scan":                                h.scanFindings,
+		"POST /api/v1/scan/{id}/ignore":                   sameOriginOnly(h.scanIgnore),
+		"GET /api/v1/blocks":                              h.blocks,
+		"GET /api/v1/budget":                              h.budget,
+		"PUT /api/v1/budget":                              sameOriginOnly(h.setBudget),
+	}
+	for _, r := range Routes() {
+		fn, ok := byPattern[r.Pattern]
+		if !ok {
+			panic("api: route " + r.Pattern + " classified but not implemented")
+		}
+		mux.HandleFunc(r.Pattern, fn)
+		delete(byPattern, r.Pattern)
+	}
+	if len(byPattern) > 0 {
+		panic("api: unclassified routes exist — add them to Routes()")
+	}
 	return mux
 }
 

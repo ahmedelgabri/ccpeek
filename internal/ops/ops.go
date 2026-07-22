@@ -1,11 +1,14 @@
 // Package ops is the single definition of the agent-facing query
-// surface: every read operation is described once — name, documentation,
+// surface: every domain read is described once — name, documentation,
 // typed parameters, executor — and the CLI (`ccpeek query`) and MCP
 // server derive their commands, flags, and schemas from it, so the
 // transports cannot drift apart (they had: MCP lacked sessions.model and
-// transcript.full; CLI and MCP exposed five of HTTP's ten reads). The
-// HTTP handlers keep their hand-written parsing for transport-specific
-// concerns, held to this registry by a parity test.
+// transcript.full; CLI and MCP exposed five of HTTP's reads). The HTTP
+// handlers keep hand-written parsing for transport concerns, but every
+// GET route must either map to a registry op or carry an explicit
+// transport-only classification (health, readiness, SSE, raw bytes) in
+// api.Routes — enforced by the route/registry parity test, so an
+// endpoint cannot be added without the CLI and MCP gaining the read.
 package ops
 
 import (
@@ -210,6 +213,44 @@ func Registry() []Op {
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
 				})
 				return out, len(out) == 0, err
+			},
+		},
+		{
+			Name: "artifact",
+			Desc: "Get one artifact with its content, metadata, and linked sessions.",
+			Params: []Param{
+				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
+				{Name: "kind", Type: "string", Desc: "Artifact kind", Required: true, Positional: true},
+				{Name: "name", Type: "string", Desc: "Artifact name", Required: true, Positional: true},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.Artifact(ctx, a.Str["agent"], a.Str["kind"], a.Str["name"], nil)
+				return out, false, err
+			},
+		},
+		{
+			Name: "tools",
+			Desc: "List one session's tool calls in order, with command/file detail and result status. Everything by default; page with limit/offset for large sessions.",
+			Params: []Param{
+				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
+				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
+				limitParam,
+				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.SessionTools(ctx, a.Str["agent"], a.Str["id"], query.ToolsFilter{
+					Limit: a.Int["limit"], Offset: a.Int["offset"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
+			Name:   "budget",
+			Desc:   "The monthly budget setting and current month-to-date spend.",
+			Params: nil,
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.GetBudget(ctx)
+				return out, false, err
 			},
 		},
 	}
