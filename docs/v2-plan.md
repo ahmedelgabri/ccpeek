@@ -195,6 +195,33 @@ Post-launch sprints (feedback-driven, after v2.0):
   and legacy-file stat errors other than not-exist record failed (and
   retry) instead of the permanent no-legacy-db.
 
+- ✅ **Remaining review groups 3–7 (2026-07-22)**: accounting — the
+  canon.Usage contract makes OutputTokens the billable output
+  (reasoning included); OpenCode's additive reasoning folds in at the
+  adapter while Codex's subset semantics pass through, so every surface
+  sums one normalized column, and Blocks counts true per-window
+  distinct sessions (cross-provider and disjoint-model tests pin
+  both). Contracts — no silent caps: Artifacts pages (clamp removed),
+  Usage defaults to ALL groups (aggregate surface), session tool calls
+  page with everything-by-default, Compare picks via server-side title
+  filter with truncation flagged, cap+1 tests on each; --data-file
+  derives a per-name v2 store (a.db → a.v2.db) so profiles never
+  alias. Scalability — MCP serves initialize immediately with a
+  transport-owned status tool while indexing runs behind; all three
+  JSONL adapters stream records (memory bounded by a line, not a
+  session; schema v7 adds the result-pairing index) and skip oversized
+  lines as diagnostics with the cursor spanning the skip. Cleanup —
+  Cursor is labeled experimental in the README capability matrix and
+  every UI agent selector; search filters agents server-side and
+  artifact hits link to their artifact page; the plan/memory resolvers
+  reconcile stale content_ref links transactionally via hash joins;
+  the bootstrap scan completes before watch starts (ingest and
+  scanning never overlap) and rollups rebuild only on dirty session
+  domains; the ops registry covers every HTTP domain read (tools,
+  artifact, budget added — CLI/MCP gain them by generation) with a
+  classified route table enforcing transport parity; and the
+  failed→no-legacy-db transition clears the stale import error.
+
 **Schema baseline decision:** the migration machinery stays parked until
 this branch lands on main; at that merge the baseline freezes and every
 later schema change ships as a migration. New agents (Gemini CLI,
