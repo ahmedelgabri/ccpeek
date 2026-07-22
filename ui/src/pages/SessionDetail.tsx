@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useHighlight } from "../highlight";
 import { DiffView } from "../Diff";
@@ -353,7 +354,6 @@ function Transcript({
       return next;
     });
   const container = useRef<HTMLDivElement>(null);
-  useHighlight(container, [msgs]);
   const depths = useMemo(() => computeDepths(msgs), [msgs]);
   const toolsByMsg = useMemo(() => {
     const map = new Map<number, ToolCallRow[]>();
@@ -375,6 +375,34 @@ function Transcript({
   );
   const hidden = msgs.length - visible.length;
 
+  // DOM windowing: only the on-screen slice of a session is mounted —
+  // scrolling a 10k-message transcript must not accumulate thousands of
+  // markdown nodes and highlight blocks. Rows are keyed by seq so
+  // measured heights survive page prepends, and heights are measured
+  // (markdown, diffs, expandable chips are all variable).
+  const listRef = useRef<HTMLOListElement>(null);
+  const listOffset = useRef(0);
+  useLayoutEffect(() => {
+    listOffset.current = listRef.current?.offsetTop ?? 0;
+  }, []);
+  const virtualizer = useWindowVirtualizer({
+    count: visible.length,
+    estimateSize: () => 96,
+    overscan: 10,
+    scrollMargin: listOffset.current,
+    getItemKey: (i) => visible[i].seq,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const range = virtualizer.range;
+  // Highlight re-runs as the mounted window moves — freshly mounted rows
+  // need their code blocks processed (already-highlighted ones are
+  // skipped by the :not(.hljs) selector).
+  useHighlight(container, [
+    msgs,
+    virtualItems[0]?.key,
+    virtualItems[virtualItems.length - 1]?.key,
+  ]);
+
   // Deep link (?seq=N): scroll the target into view once, when it first
   // lands in the loaded window. A ref (not state) gates it so later page
   // loads don't yank the reader back to the anchor. focusDone also unlocks
@@ -388,12 +416,12 @@ function Transcript({
   }, [focusSeq]);
   useEffect(() => {
     if (focusSeq === undefined || focused.current) return;
-    const el = document.getElementById(`seq-${focusSeq}`);
-    if (!el) return;
-    el.scrollIntoView({ block: "center" });
+    const idx = visible.findIndex((m) => m.seq === focusSeq);
+    if (idx < 0) return;
+    virtualizer.scrollToIndex(idx, { align: "center" });
     focused.current = true;
     setFocusDone(true);
-  }, [focusSeq, msgs]);
+  }, [focusSeq, visible, virtualizer]);
 
   // Prepending older messages grows the document above the viewport, which
   // would jump the reader downward. Capture the height just before an older
@@ -411,38 +439,23 @@ function Transcript({
     if (delta > 0) window.scrollBy(0, delta);
   }, [msgs]);
 
-  // Two sentinels drive the infinite scroll: the bottom pulls newer pages,
-  // the top pulls older ones (once the deep-link scroll has settled). Each
-  // has an explicit button below/above as the accessible fallback.
-  const topSentinel = useRef<HTMLDivElement>(null);
-  const bottomSentinel = useRef<HTMLDivElement>(null);
+  // The virtualizer's visible range drives the infinite scroll: nearing
+  // the last rows pulls newer pages, nearing the first pulls older ones
+  // (once the deep-link scroll has settled). The buttons above/below stay
+  // as the explicit, accessible fallback.
+  const rangeStart = range?.startIndex;
+  const rangeEnd = range?.endIndex;
   useEffect(() => {
-    if (!hasMore || loadingMore) return undefined;
-    const node = bottomSentinel.current;
-    if (!node) return undefined;
-    const obs = new IntersectionObserver(
-      (entries) => entries[0]?.isIntersecting && onLoadMore(),
-      { rootMargin: "800px" },
-    );
-    obs.observe(node);
-    return () => obs.disconnect();
-  }, [hasMore, loadingMore, onLoadMore]);
+    if (!hasMore || loadingMore || rangeEnd === undefined) return;
+    if (rangeEnd >= visible.length - 8) onLoadMore();
+  }, [hasMore, loadingMore, rangeEnd, visible.length, onLoadMore]);
   useEffect(() => {
-    if (!hasOlder || loadingOlder || !focusDone) return undefined;
-    const node = topSentinel.current;
-    if (!node) return undefined;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          beforeOlder.current = document.documentElement.scrollHeight;
-          onLoadOlder();
-        }
-      },
-      { rootMargin: "800px" },
-    );
-    obs.observe(node);
-    return () => obs.disconnect();
-  }, [hasOlder, loadingOlder, focusDone, onLoadOlder]);
+    if (!hasOlder || loadingOlder || !focusDone || rangeStart === undefined) return;
+    if (rangeStart <= 4) {
+      beforeOlder.current = document.documentElement.scrollHeight;
+      onLoadOlder();
+    }
+  }, [hasOlder, loadingOlder, focusDone, rangeStart, onLoadOlder]);
 
   // Scroll-spy: keep the URL pointed at the topmost message in view so the
   // address bar is always a shareable link to the reader's spot. Gated on a
@@ -461,36 +474,12 @@ function Transcript({
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  const inBand = useRef<Set<number>>(new Set());
   useEffect(() => {
-    const node = container.current;
-    if (!node) return undefined;
-    const rows = node.querySelectorAll<HTMLElement>("li[id^='seq-']");
-    if (rows.length === 0) return undefined;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          const seq = Number(e.target.id.slice(4));
-          if (e.isIntersecting) inBand.current.add(seq);
-          else inBand.current.delete(seq);
-        }
-        if (
-          userScrolled.current &&
-          Date.now() >= spyResumeAt.current &&
-          inBand.current.size > 0
-        ) {
-          onScrollSeq(Math.min(...inBand.current));
-        }
-      },
-      // Only the top ~12% of the viewport counts as "current".
-      { rootMargin: "0px 0px -88% 0px" },
-    );
-    rows.forEach((r) => obs.observe(r));
-    return () => {
-      obs.disconnect();
-      inBand.current.clear();
-    };
-  }, [msgs, onScrollSeq]);
+    if (rangeStart === undefined) return;
+    if (!userScrolled.current || Date.now() < spyResumeAt.current) return;
+    const m = visible[rangeStart];
+    if (m) onScrollSeq(m.seq);
+  }, [rangeStart, visible, onScrollSeq]);
 
   const copyPermalink = (seq: number) => {
     spyResumeAt.current = Date.now() + 800;
@@ -521,7 +510,7 @@ function Transcript({
         </button>
       </div>
       {hasOlder && (
-        <div ref={topSentinel} className="mb-3 flex justify-center">
+        <div className="mb-3 flex justify-center">
           <button
             onClick={loadOlder}
             disabled={loadingOlder}
@@ -531,8 +520,13 @@ function Transcript({
           </button>
         </div>
       )}
-      <ol className="space-y-2">
-        {visible.map((m) => {
+      <ol
+        ref={listRef}
+        className="relative"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualItems.map((vi) => {
+          const m = visible[vi.index];
           const msgTools = toolsByMsg.get(m.seq) ?? [];
           // Three visual registers: the user's prompts (accent rule,
           // raised surface), the assistant's replies (quiet card), and
@@ -544,16 +538,24 @@ function Transcript({
           const glyph = isUser ? "❯" : isAssistant ? "✦" : "·";
           return (
             <li
-              key={m.seq}
+              key={vi.key}
               id={`seq-${m.seq}`}
-              style={
-                treeView
-                  ? {
-                      marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px`,
-                    }
-                  : undefined
-              }
-              className={`rounded-md border border-l-2 ${
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              className="absolute top-0 left-0 w-full pb-2"
+              style={{
+                transform: `translateY(${vi.start - virtualizer.options.scrollMargin}px)`,
+              }}
+            >
+              <div
+                style={
+                  treeView
+                    ? {
+                        marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px`,
+                      }
+                    : undefined
+                }
+                className={`rounded-md border border-l-2 ${
                 m.seq === focusSeq
                   ? "border-accent"
                   : isUser
@@ -644,18 +646,19 @@ function Transcript({
                     {m.text}
                   </div>
                 ))}
-              {msgTools.length > 0 && (
-                <MessageTools
-                  tools={msgTools}
-                  className={m.text.trim() !== "" ? "mt-2" : ""}
-                />
-              )}
+                {msgTools.length > 0 && (
+                  <MessageTools
+                    tools={msgTools}
+                    className={m.text.trim() !== "" ? "mt-2" : ""}
+                  />
+                )}
+              </div>
             </li>
           );
         })}
       </ol>
       {hasMore && (
-        <div ref={bottomSentinel} className="mt-3 flex justify-center">
+        <div className="mt-3 flex justify-center">
           <button
             onClick={onLoadMore}
             disabled={loadingMore}
