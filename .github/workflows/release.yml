@@ -66,7 +66,7 @@ jobs:
         run: |
           pnpm install
           just ui
-          go build -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
+          go build -tags withui -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
           mkdir -p dist/completions dist/man
           ./ccpeek-native completion bash > dist/completions/ccpeek.bash
           ./ccpeek-native completion zsh > dist/completions/_ccpeek
@@ -81,7 +81,7 @@ jobs:
           for arch in amd64 arm64; do
             DIR="ccpeek-${VERSION}-${{ matrix.os }}-${arch}"
             mkdir -p "dist/${DIR}"
-            CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${arch} go build -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
+            CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${arch} go build -tags withui -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
             cp -r dist/completions "dist/${DIR}/"
             cp -r dist/man "dist/${DIR}/"
             tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"

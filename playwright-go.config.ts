@@ -14,7 +14,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4322",
   },
   webServer: {
-    command: `go run ./cmd/ccpeek --claude-dir testdata --port 4322 --data-file ${testDb} --rebuild`,
+    command: `go run -tags withui ./cmd/ccpeek --claude-dir testdata --port 4322 --data-file ${testDb} --rebuild`,
     // The server binds before the first index pass finishes; readiness
     // flips to 200 once data is queryable, so tests never race the ingest.
     url: "http://127.0.0.1:4322/api/v1/ready",

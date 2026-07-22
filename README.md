@@ -33,7 +33,7 @@ nix run github:ahmedelgabri/ccpeek
 nix profile install github:ahmedelgabri/ccpeek
 ```
 
-### Go install
+### Build from source (full product)
 
 Requires Go 1.25+, Node.js, and pnpm (for building the web UI):
 
@@ -45,6 +45,19 @@ pnpm install
 just build
 # Binary is at cmd/ccpeek/ccpeek
 ```
+
+The full product is compiled with the `withui` build tag, which
+enforces the embedded UI's presence at compile time — `just build` (and
+every release path) cannot produce a UI-less binary.
+
+### `go install` (API-only variant)
+
+A plain `go build ./...` or `go install` cannot run the SPA build, so
+it deliberately produces the **API-only variant**: `/api/v1`,
+`ccpeek query`, and `ccpeek mcp` work normally, the server logs a
+warning at startup, and `/` explains what is missing instead of
+rendering a blank page. Use it for headless/agent-only setups; use any
+other installation method for the web UI.
 
 ### Pre-built binaries
 

@@ -88,6 +88,11 @@
 
             subPackages = ["cmd/ccpeek"];
 
+            # Full-product variant: the SPA's presence is enforced at
+            # compile time, so this build fails rather than shipping a
+            # UI-less binary if the ccpeek-ui copy ever breaks.
+            tags = ["withui"];
+
             preBuild = ''
               cp -r ${self'.packages.ccpeek-ui}/. internal/webui/dist/
             '';

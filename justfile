@@ -17,11 +17,15 @@ ui:
 ui-dev:
     pnpm -C ui exec vite
 
+# The withui tag selects the full-product variant: the SPA's presence
+# is enforced at compile time (see internal/webui), so this recipe can
+# never ship a UI-less binary. Plain `go build` yields the API-only
+# variant instead.
 build: ui
-    go build -o {{binary}} ./cmd/ccpeek/
+    go build -tags withui -o {{binary}} ./cmd/ccpeek/
 
 dev: ui
-    go run ./cmd/ccpeek --open --watch
+    go run -tags withui ./cmd/ccpeek --open --watch
 
 vet:
     go vet ./...

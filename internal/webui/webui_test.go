@@ -7,9 +7,8 @@ import (
 	"testing/fstest"
 )
 
-// TestMissingUIServesExplanation: a binary built without the SPA (plain
-// go build — only .gitkeep embedded) must say so instead of serving a
-// blank page.
+// TestMissingUIServesExplanation: the API-only variant (plain go build,
+// no withui tag) must say so instead of serving a blank page.
 func TestMissingUIServesExplanation(t *testing.T) {
 	h := handlerFrom(fstest.MapFS{
 		".gitkeep": &fstest.MapFile{},
@@ -19,7 +18,7 @@ func TestMissingUIServesExplanation(t *testing.T) {
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "without the embedded web UI") {
+	if !strings.Contains(rec.Body.String(), "API-only ccpeek build variant") {
 		t.Errorf("body does not explain the missing UI: %q", rec.Body.String())
 	}
 }
