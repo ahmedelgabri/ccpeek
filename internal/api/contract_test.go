@@ -44,6 +44,7 @@ func TestListContractsEncodeEmptyAsArray(t *testing.T) {
 	lists := []string{
 		"/api/v1/sessions",
 		"/api/v1/commands",
+		"/api/v1/history",
 		"/api/v1/usage",
 		"/api/v1/search?q=nothing-matches-this",
 		"/api/v1/artifacts",
@@ -73,6 +74,7 @@ func TestParamContractsRejectMalformedInput(t *testing.T) {
 		"/api/v1/sessions?since=notadate",
 		"/api/v1/sessions?until=2026-13-99",
 		"/api/v1/commands?limit=-5",
+		"/api/v1/history?limit=abc",
 		"/api/v1/commands?since=yesterday",
 		"/api/v1/usage?limit=abc",
 		"/api/v1/usage?since=07/01/2026",

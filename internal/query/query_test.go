@@ -642,3 +642,72 @@ func TestToolChipsAndLazyDetail(t *testing.T) {
 		t.Errorf("unknown seq error = %v, want ErrNotFound", err)
 	}
 }
+
+// TestHistoryQueryable: prompt history is a first-class read — filter
+// by agent and prompt substring, page, and see the session link when
+// one resolved. (It was previously stored but unreachable.)
+func TestHistoryQueryable(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "hist-sess",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	entries := []canon.HistoryEntry{
+		{
+			Agent: "claude-code", Display: "fix the rate limiter",
+			Timestamp: time.UnixMilli(1751713260000), SessionExternalID: "hist-sess",
+		},
+		{
+			Agent: "claude-code", Display: "write release notes",
+			Timestamp: time.UnixMilli(1751713270000),
+		},
+	}
+	for _, e := range entries {
+		if err := w.InsertHistory(e, "/x/history.jsonl"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	all, err := svc.History(ctx, HistoryFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("history = %d rows, want 2", len(all))
+	}
+	if all[0].Display != "write release notes" {
+		t.Errorf("order = %q first, want newest first", all[0].Display)
+	}
+	if all[1].SessionID != "hist-sess" {
+		t.Errorf("linked entry sessionId = %q, want hist-sess", all[1].SessionID)
+	}
+	if all[0].At == "" {
+		t.Error("timestamp not rendered")
+	}
+
+	filtered, err := svc.History(ctx, HistoryFilter{Query: "rate limiter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 || filtered[0].Display != "fix the rate limiter" {
+		t.Errorf("substring filter = %+v", filtered)
+	}
+}

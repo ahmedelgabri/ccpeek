@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // AgentStat is one agent's slice of the overview.
@@ -462,4 +463,64 @@ func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, `%`, `\%`)
 	s = strings.ReplaceAll(s, `_`, `\_`)
 	return s
+}
+
+// HistoryRow is one prompt-history entry — the retained cross-session
+// prompt log (Claude's history.jsonl plus v1-imported entries).
+type HistoryRow struct {
+	Agent     string `json:"agent"`
+	Display   string `json:"display"`
+	At        string `json:"at,omitempty"`        // RFC3339 UTC
+	SessionID string `json:"sessionId,omitempty"` // external id when linked
+}
+
+// HistoryFilter narrows the history op.
+type HistoryFilter struct {
+	Agent  string
+	Query  string // substring of the prompt text
+	Limit  int
+	Offset int
+}
+
+// History lists prompt-history entries newest first.
+func (s *Service) History(ctx context.Context, f HistoryFilter) ([]HistoryRow, error) {
+	if f.Limit <= 0 {
+		f.Limit = 100
+	}
+	where := "WHERE h.display <> ''"
+	var args []any
+	if f.Agent != "" {
+		where += " AND a.slug = ?"
+		args = append(args, f.Agent)
+	}
+	if f.Query != "" {
+		where += ` AND h.display LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(f.Query)+"%")
+	}
+	args = append(args, f.Limit, f.Offset)
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT a.slug, h.display, h.timestamp, COALESCE(se.external_id, '')
+		FROM history h
+		JOIN agents a ON a.id = h.agent_id
+		LEFT JOIN sessions se ON se.id = h.session_id
+		%s
+		ORDER BY h.timestamp DESC, h.id DESC
+		LIMIT ? OFFSET ?`, where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing history: %w", err)
+	}
+	defer rows.Close()
+	var out []HistoryRow
+	for rows.Next() {
+		var r HistoryRow
+		var ts int64
+		if err := rows.Scan(&r.Agent, &r.Display, &ts, &r.SessionID); err != nil {
+			return nil, err
+		}
+		if ts > 0 {
+			r.At = time.UnixMilli(ts).UTC().Format(time.RFC3339)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

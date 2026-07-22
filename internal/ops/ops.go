@@ -167,6 +167,23 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "history",
+			Desc: "List retained prompt-history entries newest first (Claude's history.jsonl plus v1-imported entries), filterable by agent and prompt substring.",
+			Params: []Param{
+				agentParam,
+				{Name: "query", Type: "string", Desc: "Substring of the prompt text", CLIFlag: "q"},
+				limitParam,
+				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.History(ctx, query.HistoryFilter{
+					Agent: a.Str["agent"], Query: a.Str["query"],
+					Limit: a.Int["limit"], Offset: a.Int["offset"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
 			Name:   "stats",
 			Desc:   "Overview counters: sessions, messages, tool calls, artifacts, active scan findings, tokens, and cost, with per-agent and per-day activity.",
 			Params: nil,

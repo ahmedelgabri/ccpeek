@@ -73,6 +73,7 @@ func Routes() []Route {
 		{"GET /api/v1/sessions/{agent}/{id}/tools", "tools", "op"},
 		{"GET /api/v1/sessions/{agent}/{id}/tools/{seq}", "tool", "op"},
 		{"GET /api/v1/commands", "commands", "op"},
+		{"GET /api/v1/history", "history", "op"},
 		{"GET /api/v1/usage", "usage", "op"},
 		{"GET /api/v1/search", "search", "op"},
 		{"GET /api/v1/artifacts", "artifacts", "op"},
@@ -105,6 +106,7 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 		"GET /api/v1/sessions/{agent}/{id}/tools":         h.sessionTools,
 		"GET /api/v1/sessions/{agent}/{id}/tools/{seq}":   h.sessionTool,
 		"GET /api/v1/commands":                            h.commands,
+		"GET /api/v1/history":                             h.history,
 		"GET /api/v1/usage":                               h.usage,
 		"GET /api/v1/search":                              h.search,
 		"GET /api/v1/events":                              h.events,
@@ -320,6 +322,26 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		return
+	}
+	writeJSON(w, http.StatusOK, orEmpty(rows))
+}
+
+func (h *handlers) history(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.HistoryFilter{
+		Agent:  p.Str("agent"),
+		Query:  p.Str("q"),
+		Limit:  p.Int("limit"),
+		Offset: p.Int("offset"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	rows, err := h.svc.History(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, orEmpty(rows))

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   api,
@@ -182,7 +182,7 @@ export function UsagePage() {
         </FilterBar>
       </div>
 
-      {budget.data && budget.data.monthlyUSD > 0 && (
+      {budget.data && (
         <BudgetBanner
           spent={budget.data.spentUSD}
           monthly={budget.data.monthlyUSD}
@@ -398,6 +398,68 @@ function SortableTH<K extends string>({
   );
 }
 
+// BudgetEditor makes the budget mutation reachable from the product,
+// not just the API: set, change, or clear (0) the monthly figure.
+function BudgetEditor({ monthly }: { monthly: number }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(monthly || ""));
+  const qc = useQueryClient();
+  const save = useMutation({
+    mutationFn: (usd: number) => parityApi.setBudget(usd),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+      setEditing(false);
+    },
+  });
+  if (!editing) {
+    return (
+      <button
+        onClick={() => {
+          setValue(String(monthly || ""));
+          setEditing(true);
+        }}
+        className="ml-auto shrink-0 font-mono text-[11px] text-ink-faint hover:text-accent"
+      >
+        {monthly > 0 ? "edit budget" : "set monthly budget"}
+      </button>
+    );
+  }
+  return (
+    <form
+      className="ml-auto flex shrink-0 items-center gap-1.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const usd = Number(value);
+        if (!Number.isNaN(usd) && usd >= 0) save.mutate(usd);
+      }}
+    >
+      <span className="font-mono text-[11px] text-ink-faint">$/month</span>
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        inputMode="decimal"
+        className="w-20 rounded border border-edge bg-surface-1 px-1.5 py-0.5 text-right font-mono text-xs tabular-nums"
+        aria-label="Monthly budget in USD"
+      />
+      <button
+        type="submit"
+        disabled={save.isPending}
+        className="rounded border border-edge px-1.5 py-0.5 font-mono text-[11px] text-ink-dim hover:text-ink disabled:opacity-50"
+      >
+        {save.isPending ? "…" : "save"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        className="font-mono text-[11px] text-ink-faint hover:text-ink"
+      >
+        cancel
+      </button>
+    </form>
+  );
+}
+
 function BudgetBanner({
   spent,
   monthly,
@@ -407,6 +469,15 @@ function BudgetBanner({
   monthly: number;
   month: string;
 }) {
+  // No budget configured: a quiet affordance to set one, nothing else.
+  if (monthly <= 0) {
+    return (
+      <div className="mb-4 flex items-baseline rounded-lg border border-edge bg-surface-1 px-4 py-2 text-sm text-ink-dim">
+        <span>No monthly budget set.</span>
+        <BudgetEditor monthly={0} />
+      </div>
+    );
+  }
   const pct = Math.min((spent / monthly) * 100, 100);
   const over = spent > monthly;
   const near = !over && pct >= 80;
@@ -425,6 +496,7 @@ function BudgetBanner({
           {month} budget: {fmtCost(spent)} of {fmtCost(monthly)}
         </span>
         <span className="ml-auto tabular-nums">{pct.toFixed(0)}%</span>
+        <BudgetEditor monthly={monthly} />
       </div>
       <div className="h-2 overflow-hidden rounded bg-surface-2">
         <div

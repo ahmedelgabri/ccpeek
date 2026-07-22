@@ -566,8 +566,9 @@ provenance (`source_path`) and session attributes (`cwd`), never as join keys.
 ```sql
 -- dimensions
 agents(id, slug UNIQUE, display_name)
-pricing(model_key, effective_from, input_per_mtok, output_per_mtok,
-        cache_write_per_mtok, cache_read_per_mtok, source, fetched_at)
+-- (a pricing table was planned here; pricing ships as an embedded
+--  snapshot instead, and the stored form is parked until a runtime
+--  refresh has a consumer)
 
 -- THE HUB (derived, rebuildable from sources)
 sessions(id, agent_id, external_id, title, created_at, modified_at,
@@ -661,14 +662,17 @@ Schema hygiene rules (fixing v1's drift):
 **Pricing:**
 
 - Embed a snapshot of LiteLLM's `model_prices_and_context_window.json`
-  (cross-provider, includes cache-write/read rates) at build time;
-  `ccpeek pricing update` refreshes into the `pricing` table at runtime.
-  models.dev is the fallback source. Fully offline-capable.
+  (cross-provider, includes cache-write/read rates) at build time. The
+  embedded snapshot is the ONLY runtime pricing source; a runtime
+  refresh (`ccpeek pricing update` into a SQL pricing table) is PARKED
+  until it has a consumer — the dead table was removed from the schema
+  so the stored shape cannot drift from reality. Fully
+  offline-capable.
 - Model-key normalization layer (`claude-sonnet-5` ≡ `anthropic/claude-sonnet-5`
   ≡ Bedrock/Vertex ids).
-- Cost is **computed from tokens at query time** against the pricing table
-  (respecting `effective_from`), then materialized into `rollup_usage_daily`
-  for dashboard speed; rollups invalidate when pricing changes. Where the agent
+- Cost is **computed from tokens** against the embedded pricing
+  snapshot, materialized into `rollup_usage_daily` for dashboard speed;
+  rollups regenerate when session data changes. Where the agent
   reported its own cost (Pi's `cost.total`, legacy `costUSD`, OpenCode), store
   it and offer ccusage-style modes: `auto` (prefer reported) / `calculate` /
   `display`.

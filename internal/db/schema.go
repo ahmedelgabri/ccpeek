@@ -20,14 +20,14 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 7
+const baseVersion = 8
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -36,18 +36,6 @@ CREATE TABLE IF NOT EXISTS agents (
 	id INTEGER PRIMARY KEY,
 	slug TEXT NOT NULL UNIQUE,
 	display_name TEXT NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS pricing (
-	model_key TEXT NOT NULL,
-	effective_from TEXT NOT NULL DEFAULT '',
-	input_per_mtok REAL,
-	output_per_mtok REAL,
-	cache_write_per_mtok REAL,
-	cache_read_per_mtok REAL,
-	source TEXT NOT NULL DEFAULT '',
-	fetched_at TEXT NOT NULL DEFAULT '',
-	PRIMARY KEY (model_key, effective_from)
 );
 
 -- The hub. (agent_id, external_id) is the natural key; cwd/repo/git are
@@ -375,7 +363,6 @@ var derivedTables = []string{
 	"pending_relations",
 	"session_relations",
 	"sessions",
-	"pricing",
 	"agents",
 }
 

@@ -37,7 +37,7 @@ func TestOpenFreshCreatesLatestSchema(t *testing.T) {
 		"messages", "message_usage", "tool_calls", "artifacts",
 		"artifact_sessions", "workspaces", "session_workspaces", "history",
 		"source_files", "ingest_runs", "ingest_issues", "rollup_usage_daily",
-		"scan_findings", "pricing", "user_annotations", "search_docs", "search_fts",
+		"scan_findings", "user_annotations", "search_docs", "search_fts",
 	} {
 		var name string
 		err := s.db.QueryRowContext(ctx,
