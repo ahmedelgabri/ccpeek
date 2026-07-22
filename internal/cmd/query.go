@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/migrate"
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 	"github.com/spf13/cobra"
 )
@@ -45,143 +47,101 @@ versioned JSON ("schema": "ccpeek/v1"). Exit codes: 0 results found,
 1 error, 3 valid query with no matches.`,
 }
 
-var querySessionsCmd = &cobra.Command{
-	Use:   "sessions",
-	Short: "List sessions (newest first)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
-		if err != nil {
-			return err
-		}
-		defer eng.Close()
-
-		f := query.SessionsFilter{}
-		f.Agent, _ = cmd.Flags().GetString("agent")
-		f.Project, _ = cmd.Flags().GetString("project")
-		f.Model, _ = cmd.Flags().GetString("model")
-		f.Since, _ = cmd.Flags().GetString("since")
-		f.Until, _ = cmd.Flags().GetString("until")
-		f.Query, _ = cmd.Flags().GetString("title")
-		f.Limit, _ = cmd.Flags().GetInt("limit")
-		f.Offset, _ = cmd.Flags().GetInt("offset")
-
-		sessions, err := eng.query.Sessions(ctx, f)
-		if err != nil {
-			return err
-		}
-		return emit(sessions, len(sessions) == 0)
-	},
-}
-
-var querySessionCmd = &cobra.Command{
-	Use:   "session <agent> <session-id>",
-	Short: "One session with relations, artifacts, usage, and cost",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
-		if err != nil {
-			return err
-		}
-		defer eng.Close()
-
-		detail, err := eng.query.Session(ctx, args[0], args[1])
-		if errors.Is(err, query.ErrNotFound) {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(exitNoMatches)
-		}
-		if err != nil {
-			return err
-		}
-		return emit(detail, false)
-	},
-}
-
-var queryTranscriptCmd = &cobra.Command{
-	Use:   "transcript <agent> <session-id>",
-	Short: "A session's entries in order (bounded; --full for raw payloads)",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
-		if err != nil {
-			return err
-		}
-		defer eng.Close()
-
-		opts := query.TranscriptOptions{}
-		opts.FromSeq, _ = cmd.Flags().GetInt("from-seq")
-		opts.Limit, _ = cmd.Flags().GetInt("limit")
-		opts.Full, _ = cmd.Flags().GetBool("full")
-
-		msgs, err := eng.query.Transcript(ctx, args[0], args[1], opts)
-		if errors.Is(err, query.ErrNotFound) {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(exitNoMatches)
-		}
-		if err != nil {
-			return err
-		}
-		return emit(msgs, len(msgs) == 0)
-	},
-}
-
-var querySearchCmd = &cobra.Command{
-	Use:   "search <terms...>",
-	Short: "Full-text search across sessions and artifacts",
-	Args:  cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
-		if err != nil {
-			return err
-		}
-		defer eng.Close()
-
-		f := query.SearchFilter{}
-		f.Agent, _ = cmd.Flags().GetString("agent")
-		f.Limit, _ = cmd.Flags().GetInt("limit")
-
-		q := ""
-		for i, a := range args {
-			if i > 0 {
-				q += " "
+// opCommand builds one `ccpeek query <op>` command from the operation
+// registry — the same definitions that drive the MCP schemas, so the two
+// agent-facing transports cannot drift.
+func opCommand(op ops.Op) *cobra.Command {
+	var positional []ops.Param
+	var flags []ops.Param
+	use := op.Name
+	for _, p := range op.Params {
+		if p.Positional {
+			positional = append(positional, p)
+			if p.Variadic {
+				use += fmt.Sprintf(" <%s...>", p.FlagName())
+			} else {
+				use += fmt.Sprintf(" <%s>", p.FlagName())
 			}
-			q += a
+		} else {
+			flags = append(flags, p)
 		}
-		hits, err := eng.query.Search(ctx, q, f)
-		if err != nil {
-			return err
+	}
+
+	nargs := cobra.ExactArgs(len(positional))
+	if n := len(positional); n > 0 && positional[n-1].Variadic {
+		nargs = cobra.MinimumNArgs(n)
+	}
+
+	c := &cobra.Command{
+		Use:   use,
+		Short: firstSentence(op.Desc),
+		Long:  op.Desc,
+		Args:  nargs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			a := ops.Args{
+				Str:  map[string]string{},
+				Int:  map[string]int{},
+				Bool: map[string]bool{},
+			}
+			for i, p := range positional {
+				if p.Variadic {
+					a.Str[p.Name] = strings.Join(args[i:], " ")
+					break
+				}
+				a.Str[p.Name] = args[i]
+			}
+			for _, p := range flags {
+				switch p.Type {
+				case "string":
+					a.Str[p.Name], _ = cmd.Flags().GetString(p.FlagName())
+				case "integer":
+					a.Int[p.Name], _ = cmd.Flags().GetInt(p.FlagName())
+				case "boolean":
+					a.Bool[p.Name], _ = cmd.Flags().GetBool(p.FlagName())
+				}
+			}
+
+			data, empty, err := op.Run(ctx, eng.query, a)
+			if errors.Is(err, query.ErrNotFound) {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(exitNoMatches)
+			}
+			if err != nil {
+				return err
+			}
+			return emit(data, empty)
+		},
+	}
+	for _, p := range flags {
+		switch p.Type {
+		case "string":
+			def := ""
+			if op.Name == "usage" && p.Name == "group" {
+				def = "day"
+			}
+			c.Flags().String(p.FlagName(), def, p.Desc)
+		case "integer":
+			c.Flags().Int(p.FlagName(), 0, p.Desc)
+		case "boolean":
+			c.Flags().Bool(p.FlagName(), false, p.Desc)
 		}
-		return emit(hits, len(hits) == 0)
-	},
+	}
+	c.Flags().Bool("no-index", false, "Skip the incremental re-index before querying")
+	return c
 }
 
-var queryUsageCmd = &cobra.Command{
-	Use:   "usage",
-	Short: "Token/cost aggregates grouped by day, model, project, or agent",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
-		if err != nil {
-			return err
-		}
-		defer eng.Close()
-
-		f := query.UsageFilter{}
-		f.GroupBy, _ = cmd.Flags().GetString("group")
-		f.Agent, _ = cmd.Flags().GetString("agent")
-		f.Since, _ = cmd.Flags().GetString("since")
-		f.Until, _ = cmd.Flags().GetString("until")
-		f.Limit, _ = cmd.Flags().GetInt("limit")
-
-		rows, err := eng.query.Usage(ctx, f)
-		if err != nil {
-			return err
-		}
-		return emit(rows, len(rows) == 0)
-	},
+func firstSentence(s string) string {
+	if i := strings.Index(s, ". "); i > 0 {
+		return s[:i]
+	}
+	return strings.TrimSuffix(s, ".")
 }
 
 var migrateCmd = &cobra.Command{
@@ -219,27 +179,9 @@ func querySkipIndex(cmd *cobra.Command) bool {
 }
 
 func init() {
-	for _, c := range []*cobra.Command{
-		querySessionsCmd, querySessionCmd, queryTranscriptCmd,
-		querySearchCmd, queryUsageCmd,
-	} {
-		c.Flags().String("agent", "", "Filter by agent slug (claude-code, pi, …)")
-		c.Flags().Int("limit", 0, "Maximum results")
-		c.Flags().Bool("no-index", false, "Skip the incremental re-index before querying")
-		queryCmd.AddCommand(c)
+	for _, op := range ops.Registry() {
+		queryCmd.AddCommand(opCommand(op))
 	}
-	querySessionsCmd.Flags().String("project", "", "Filter by workspace path")
-	querySessionsCmd.Flags().String("model", "", "Filter to sessions that used a model")
-	querySessionsCmd.Flags().String("since", "", "Only sessions modified on/after YYYY-MM-DD")
-	querySessionsCmd.Flags().String("until", "", "Only sessions modified before YYYY-MM-DD")
-	querySessionsCmd.Flags().String("title", "", "Substring filter on session title")
-	querySessionsCmd.Flags().Int("offset", 0, "Pagination offset")
-	queryTranscriptCmd.Flags().Int("from-seq", 0, "Start at this entry seq")
-	queryTranscriptCmd.Flags().Bool("full", false, "Include raw agent payloads")
-	queryUsageCmd.Flags().String("group", "day", "Group by: day | model | project | agent")
-	queryUsageCmd.Flags().String("since", "", "Inclusive YYYY-MM-DD lower bound")
-	queryUsageCmd.Flags().String("until", "", "Exclusive YYYY-MM-DD upper bound")
-
 	rootCmd.AddCommand(queryCmd)
 	rootCmd.AddCommand(migrateCmd)
 }

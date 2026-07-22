@@ -16,6 +16,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
 
@@ -114,94 +115,90 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 	return resp
 }
 
-// toolDefs mirror the query ops 1:1 (same surface as the CLI and API).
-var toolDefs = []map[string]any{
-	{
-		"name":        "sessions",
-		"description": "List coding-agent sessions, newest first. Filter by agent slug (claude-code, pi, codex, opencode, cursor), project path, date range (YYYY-MM-DD), or title substring. Returns tokens and estimated cost per session.",
-		"inputSchema": schema(map[string]string{
-			"agent": "string", "project": "string", "since": "string",
-			"until": "string", "query": "string", "limit": "integer",
-		}),
-	},
-	{
-		"name":        "session",
-		"description": "Get one session with everything related to it: token/cost totals, models used, relations (forks, resumes, sidechains), and linked artifacts (todos, plans, tasks, facets).",
-		"inputSchema": schemaRequired(map[string]string{
-			"agent": "string", "id": "string",
-		}, "agent", "id"),
-	},
-	{
-		"name":        "transcript",
-		"description": "Read a session's transcript in order. Bounded by default (token-budget friendly); use from_seq/limit to page. Text only unless full=true.",
-		"inputSchema": schemaRequired(map[string]string{
-			"agent": "string", "id": "string", "from_seq": "integer",
-			"limit": "integer",
-		}, "agent", "id"),
-	},
-	{
-		"name":        "usage",
-		"description": "Token and estimated-cost aggregates from all agents, grouped by day, model, project, or agent, with optional date range. Unpriced groups are flagged.",
-		"inputSchema": schema(map[string]string{
-			"group": "string", "agent": "string", "since": "string", "until": "string",
-		}),
-	},
-	{
-		"name":        "search",
-		"description": "Full-text search across all indexed sessions and artifacts from every agent — 'have I solved this before?'. Every hit resolves to a session.",
-		"inputSchema": schemaRequired(map[string]string{
-			"query": "string", "agent": "string", "limit": "integer",
-		}, "query"),
-	},
+// toolDefs derive from the operation registry, so the MCP surface can
+// never drift from the CLI's — one definition serves both.
+var toolDefs = buildToolDefs()
+
+func buildToolDefs() []map[string]any {
+	var defs []map[string]any
+	for _, op := range ops.Registry() {
+		props := map[string]any{}
+		var required []string
+		for _, p := range op.Params {
+			props[p.Name] = map[string]string{"type": p.Type, "description": p.Desc}
+			if p.Required {
+				required = append(required, p.Name)
+			}
+		}
+		schema := map[string]any{"type": "object", "properties": props}
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		defs = append(defs, map[string]any{
+			"name":        op.Name,
+			"description": op.Desc,
+			"inputSchema": schema,
+		})
+	}
+	return defs
 }
 
 func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) {
 	var call struct {
-		Name      string `json:"name"`
-		Arguments struct {
-			Agent   string `json:"agent"`
-			ID      string `json:"id"`
-			Project string `json:"project"`
-			Model   string `json:"model"`
-			Since   string `json:"since"`
-			Until   string `json:"until"`
-			Query   string `json:"query"`
-			Group   string `json:"group"`
-			FromSeq int    `json:"from_seq"`
-			Limit   int    `json:"limit"`
-			Full    bool   `json:"full"`
-		} `json:"arguments"`
+		Name      string                     `json:"name"`
+		Arguments map[string]json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &call); err != nil {
 		return nil, fmt.Errorf("invalid tool call params: %w", err)
 	}
-	a := call.Arguments
 
-	var data any
-	var err error
-	switch call.Name {
-	case "sessions":
-		data, err = s.svc.Sessions(ctx, query.SessionsFilter{
-			Agent: a.Agent, Project: a.Project, Model: a.Model,
-			Since: a.Since, Until: a.Until, Query: a.Query, Limit: a.Limit,
-		})
-	case "session":
-		data, err = s.svc.Session(ctx, a.Agent, a.ID)
-	case "transcript":
-		data, err = s.svc.Transcript(ctx, a.Agent, a.ID, query.TranscriptOptions{
-			FromSeq: a.FromSeq, Limit: a.Limit, Full: a.Full,
-		})
-	case "usage":
-		data, err = s.svc.Usage(ctx, query.UsageFilter{
-			GroupBy: a.Group, Agent: a.Agent, Since: a.Since, Until: a.Until,
-		})
-	case "search":
-		data, err = s.svc.Search(ctx, a.Query, query.SearchFilter{
-			Agent: a.Agent, Limit: a.Limit,
-		})
-	default:
+	var op *ops.Op
+	for _, o := range ops.Registry() {
+		if o.Name == call.Name {
+			op = &o
+			break
+		}
+	}
+	if op == nil {
 		return nil, fmt.Errorf("unknown tool %q", call.Name)
 	}
+
+	args := ops.Args{
+		Str:  map[string]string{},
+		Int:  map[string]int{},
+		Bool: map[string]bool{},
+	}
+	for _, p := range op.Params {
+		raw, present := call.Arguments[p.Name]
+		if !present {
+			if p.Required {
+				return nil, fmt.Errorf("missing required argument %q", p.Name)
+			}
+			continue
+		}
+		switch p.Type {
+		case "string":
+			var v string
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, fmt.Errorf("argument %q: want string", p.Name)
+			}
+			args.Str[p.Name] = v
+		case "integer":
+			var v int
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, fmt.Errorf("argument %q: want integer", p.Name)
+			}
+			args.Int[p.Name] = v
+		case "boolean":
+			var v bool
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, fmt.Errorf("argument %q: want boolean", p.Name)
+			}
+			args.Bool[p.Name] = v
+		}
+	}
+
+	data, _, err := op.Run(ctx, s.svc, args)
 	if err != nil {
 		return nil, err
 	}
@@ -213,20 +210,4 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 	return map[string]any{
 		"content": []map[string]any{{"type": "text", "text": string(text)}},
 	}, nil
-}
-
-func schema(props map[string]string) map[string]any {
-	return schemaRequired(props)
-}
-
-func schemaRequired(props map[string]string, required ...string) map[string]any {
-	p := make(map[string]any, len(props))
-	for name, typ := range props {
-		p[name] = map[string]string{"type": typ}
-	}
-	out := map[string]any{"type": "object", "properties": p}
-	if len(required) > 0 {
-		out["required"] = required
-	}
-	return out
 }

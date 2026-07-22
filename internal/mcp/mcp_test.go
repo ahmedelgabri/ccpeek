@@ -13,6 +13,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
@@ -82,8 +83,8 @@ func TestInitializeAndListTools(t *testing.T) {
 		t.Errorf("protocolVersion = %v", init["protocolVersion"])
 	}
 	tools := resps[1]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 5 {
-		t.Fatalf("tools = %d, want 5", len(tools))
+	if len(tools) != len(ops.Registry()) {
+		t.Fatalf("tools = %d, want %d (one per registry op)", len(tools), len(ops.Registry()))
 	}
 }
 
