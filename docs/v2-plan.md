@@ -207,7 +207,9 @@ Post-launch sprints (feedback-driven, after v2.0):
   filter with truncation flagged, cap+1 tests on each; --data-file
   derives a per-name v2 store (a.db → a.v2.db) so profiles never
   alias. Scalability — MCP serves initialize immediately with a
-  transport-owned status tool while indexing runs behind; all three
+  transport-owned status tool while indexing runs behind (reads see a
+  visibly warming archive during the pass — per-source commits land
+  incrementally, rollups regenerate at the end — not a frozen snapshot); all three
   JSONL adapters stream records (memory bounded by a line, not a
   session; schema v7 adds the result-pairing index) and skip oversized
   lines as diagnostics with the cursor spanning the skip. Cleanup —

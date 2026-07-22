@@ -130,7 +130,7 @@ func TestToolCalls(t *testing.T) {
 // TestStatusTool: with a status hook wired (the `ccpeek mcp` path,
 // which now serves before indexing finishes), tools/list advertises the
 // transport-owned status tool and calling it reports the index state —
-// so a client can tell a warming index from a complete archive.
+// so a client can tell a warming archive from a settled one.
 func TestStatusTool(t *testing.T) {
 	s := newServer(t)
 	s.status = func() Status {

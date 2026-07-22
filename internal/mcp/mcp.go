@@ -23,9 +23,11 @@ import (
 const protocolVersion = "2025-06-18"
 
 // Status is the index-freshness snapshot behind the transport-owned
-// `status` tool: whether a refresh pass is running (answers come from
-// the last complete archive meanwhile) and the v1 import outcome —
-// MCP's equivalent of HTTP's /health.
+// `status` tool: whether a refresh pass is running and the v1 import
+// outcome — MCP's equivalent of HTTP's /health. While Indexing is true
+// tools read a visibly WARMING archive, not a frozen snapshot:
+// per-source transactions commit as the pass runs and usage rollups
+// regenerate at its end, so counts and totals can grow between calls.
 type Status struct {
 	Indexing      bool   `json:"indexing"`
 	V1ImportState string `json:"v1ImportState,omitempty"`
@@ -41,7 +43,7 @@ type Server struct {
 
 // New builds a Server. version is the ccpeek build version; status,
 // when non-nil, backs the `status` tool so clients can tell a warming
-// index from a complete one.
+// archive from a settled one.
 func New(svc *query.Service, version string, status func() Status) *Server {
 	return &Server{svc: svc, version: version, status: status}
 }
@@ -142,7 +144,9 @@ var toolDefs = buildToolDefs()
 var statusToolDef = map[string]any{
 	"name": "status",
 	"description": "Index freshness: whether a background refresh pass is running " +
-		"(answers meanwhile come from the last complete archive) and the v1 import state.",
+		"(while true, reads see a warming archive — per-source commits land " +
+		"incrementally and usage rollups regenerate at the end of the pass) " +
+		"and the v1 import state.",
 	"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 }
 

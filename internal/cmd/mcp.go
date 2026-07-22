@@ -25,9 +25,10 @@ stdout carries the protocol; all logging goes to stderr.`,
 		// stdout is the MCP transport — everything else goes to stderr.
 		// Serve IMMEDIATELY and index in the background: a first run or a
 		// large changed corpus must not stall the client's initialize
-		// handshake past its launch timeout. Tools answer from the last
-		// complete archive while the refresh runs; the `status` tool tells
-		// clients which state they are reading.
+		// handshake past its launch timeout. While the refresh runs, tools
+		// read a visibly WARMING archive — per-source transactions commit
+		// incrementally and rollups regenerate at the end of the pass — and
+		// the `status` tool tells clients they are reading that state.
 		eng, bootstrap, err := openEngineDeferred(ctx, cmd, false, os.Stderr)
 		if err != nil {
 			return err
@@ -39,7 +40,7 @@ stdout carries the protocol; all logging goes to stderr.`,
 			go func() {
 				defer indexing.Store(false)
 				if err := bootstrap(ctx); err != nil && ctx.Err() == nil {
-					fmt.Fprintf(os.Stderr, "WARNING: indexing failed (serving the previous archive): %v\n", err)
+					fmt.Fprintf(os.Stderr, "WARNING: indexing failed (serving whatever is indexed so far): %v\n", err)
 				}
 			}()
 		}
