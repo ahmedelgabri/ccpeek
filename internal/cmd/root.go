@@ -17,6 +17,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/api"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
 	"github.com/ahmedelgabri/ccpeek/internal/secrets"
+	"github.com/ahmedelgabri/ccpeek/internal/webui"
 	"github.com/spf13/cobra"
 )
 
@@ -205,6 +206,10 @@ func run(cmd *cobra.Command, args []string) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	logf("Serving on %s\n", url)
+	if !webui.Embedded() {
+		logf("%sWARNING%s this binary has no embedded web UI (built with plain `go build`?) — the API works; use a released binary or `just build` for the UI\n",
+			colorYellow, colorReset)
+	}
 
 	var ready atomic.Bool
 	go func() {
