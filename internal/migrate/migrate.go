@@ -785,11 +785,6 @@ var todoFileRe = regexp.MustCompile(`^([0-9a-f-]{36})-agent-`)
 // resolves — a verbatim copy would never re-attach, silently reviving
 // every dismissed secret.
 //
-// v1 identities:
-//   - message/command: source_id "<session-uuid>@<timestamp>", line = a
-//     detector line inside that one message's content;
-//   - file_history (and other sidecars): source_id names the artifact.
-//
 // v2 keys: "message/<agent>/<session>/<rule>/<seq>" for messages and
 // "artifact/<agent>/<kind>/<name>/<rule>/<line>" for artifacts. The
 // message translation resolves the v2 seq by matching the v1 timestamp
@@ -798,6 +793,30 @@ var todoFileRe = regexp.MustCompile(`^([0-9a-f-]{36})-agent-`)
 // artifact findings whose v1 line numbering has no v2 equivalent, a
 // rule-scoped wildcard key ("…/<rule>/*") preserves the user's intent:
 // they dismissed this rule on this entity.
+//
+// The v1 scanner emitted exactly eleven source types; each one maps
+// explicitly (v1 source_type/source_id → v2 key entity):
+//
+//	message   <session>@<ts>      → message/<agent>/<session>  (seq via ts)
+//	command   <session>@<ts>      → message/<agent>/<session>  (v1 scanned
+//	          commands out of the same transcript entries v2 covers as
+//	          messages, so the ignore collapses into the containing one)
+//	plan      <file_name>         → artifact plan/<file_name>
+//	shell_snapshot <file_name>    → artifact shell_snapshot/<file_name>
+//	paste_cache <file_name>       → artifact paste/<file_name>
+//	memory    <dir>/<file>.md     → artifact memory/<dir>/<file>.md
+//	todo      <file>#item-<seq>   → artifact todo_list/<file>
+//	task      <dir>[#task-<id>]   → artifact task_group/<dir>
+//	file_history <conversation>   → artifact file_history/<conversation>
+//	usage_facet <session>         → artifact usage_facet/<session>
+//	usage_report report           → artifact usage_report/report.html
+//
+// The per-item todo/task identities deliberately coarsen to the whole
+// artifact: sibling items' findings of the same rule are ignored too,
+// erring on the user's side. A v1 memory row with an empty file name
+// yields a bare-projectDir id no v2 artifact name can equal ("<dir>/
+// <file>" always has the slash); its annotation imports anyway and
+// stays inert — an orphan, not a mismatch.
 func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
 	rows, err := v1.QueryContext(ctx, `
 		SELECT DISTINCT rule_id, source_type, source_id
@@ -819,6 +838,10 @@ func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, report 
 		if err := rows.Scan(&ruleID, &sourceType, &sourceID); err != nil {
 			return err
 		}
+		artifactKey := func(kind canon.ArtifactKind, name string) string {
+			return fmt.Sprintf("artifact/%s/%s/%s/%s/*",
+				claudeSlug, kind, name, ruleID)
+		}
 		var keys []string
 		switch sourceType {
 		case "message", "command":
@@ -834,11 +857,38 @@ func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, report 
 			if len(keys) == 0 {
 				keys = append(keys, base+"/*")
 			}
+		case "plan":
+			keys = append(keys, artifactKey(canon.ArtifactPlan, sourceID))
+		case "shell_snapshot":
+			keys = append(keys, artifactKey(canon.ArtifactShellSnapshot, sourceID))
+		case "memory":
+			keys = append(keys, artifactKey(canon.ArtifactMemory, sourceID))
+		case "paste_cache":
+			keys = append(keys, artifactKey(canon.ArtifactPaste, sourceID))
+		case "todo":
+			name := sourceID
+			if i := strings.LastIndex(name, "#item-"); i >= 0 {
+				name = name[:i]
+			}
+			keys = append(keys, artifactKey(canon.ArtifactTodoList, name))
+		case "task":
+			name := sourceID
+			if i := strings.LastIndex(name, "#task-"); i >= 0 {
+				name = name[:i]
+			}
+			keys = append(keys, artifactKey(canon.ArtifactTaskGroup, name))
 		case "file_history":
-			keys = append(keys, fmt.Sprintf("artifact/%s/file_history/%s/%s/*",
-				claudeSlug, sourceID, ruleID))
+			keys = append(keys, artifactKey(canon.ArtifactFileHistory, sourceID))
+		case "usage_facet":
+			keys = append(keys, artifactKey(canon.ArtifactUsageFacet, sourceID))
+		case "usage_report":
+			// v1 stored the single report under the fixed id "report"; v2
+			// names the artifact by its on-disk file.
+			keys = append(keys, artifactKey(canon.ArtifactUsageReport, "report.html"))
 		default:
-			// Sidecar kinds map 1:1 onto v2 artifact kinds by name.
+			// A source type this importer does not know (a v1 newer than
+			// its final release shape). Preserve the identity verbatim so
+			// the decision is at least kept, even if it cannot re-attach.
 			keys = append(keys, fmt.Sprintf("artifact/%s/%s/%s/%s/*",
 				claudeSlug, sourceType, sourceID, ruleID))
 		}

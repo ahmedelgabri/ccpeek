@@ -3,9 +3,12 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
@@ -247,6 +250,195 @@ func TestImportV1(t *testing.T) {
 		t.Errorf("annotations after re-import = %d, want 2 (no duplicates)", n)
 	}
 	_ = report2
+}
+
+// TestImportV1IgnoreTranslation proves the full v1→v2 ignore mapping:
+// one ignored v1 finding per source type the v1 scanner ever emitted,
+// imported, then re-attached by a real v2 scan over seeded matching
+// content. command gets its own message (seq 4) so its collapse into
+// the containing transcript entry is proven independently of message.
+func TestImportV1IgnoreTranslation(t *testing.T) {
+	ctx := context.Background()
+	secret := "xoxb-3336494366" + "76-7992618528" + "69-clFJVVIaoJahpORboa3Ba2al"
+
+	// A v1 database holding nothing but the user's ignore decisions, in
+	// the exact identity shapes main's scanner produced.
+	v1Path := filepath.Join(t.TempDir(), "ccpeek.db")
+	v1, err := sql.Open("sqlite", "file:"+v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v1.Exec(`
+	CREATE TABLE projects (id INTEGER PRIMARY KEY, dir_name TEXT, display_name TEXT, canonical_path TEXT);
+	CREATE TABLE sessions (id INTEGER PRIMARY KEY, session_id TEXT, project_id INTEGER,
+		first_prompt TEXT, created_at TEXT, modified_at TEXT, git_branch TEXT,
+		project_path TEXT, source_path TEXT);
+	CREATE TABLE scan_findings (id INTEGER PRIMARY KEY, rule_id TEXT,
+		description TEXT, source_type TEXT, source_id TEXT,
+		match_redacted TEXT, line_number INTEGER, scanned_at TEXT,
+		ignored INTEGER DEFAULT 0);`); err != nil {
+		t.Fatal(err)
+	}
+	ignored := []struct{ sourceType, sourceID string }{
+		{"message", "sess-1@2026-05-01T10:00:00.500Z"},
+		{"command", "sess-1@2026-05-01T10:01:00.500Z"},
+		{"plan", "p.md"},
+		{"shell_snapshot", "snap.sh"},
+		{"paste_cache", "paste-1.txt"},
+		{"memory", "proj-dir/MEMORY.md"},
+		// The empty-file-name edge: MemorySourceID collapsed to the bare
+		// project dir, which no v2 memory name can equal.
+		{"memory", "proj-dir-empty"},
+		{"todo", "todos-file.json#item-2"},
+		{"task", "taskdir#task-7"},
+		{"file_history", "conv-1"},
+		{"usage_facet", "sess-1"},
+		{"usage_report", "report"},
+	}
+	for _, f := range ignored {
+		if _, err := v1.Exec(`INSERT INTO scan_findings
+			(rule_id, source_type, source_id, line_number, ignored)
+			VALUES ('slack-bot-token', ?, ?, 5, 1)`, f.sourceType, f.sourceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v1.Close()
+
+	// The v2 store as ingest would have left it: the session with the
+	// offending messages, and one artifact of every kind, each carrying
+	// the secret the user already dismissed.
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "sess-1",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(s string) time.Time {
+		t.Helper()
+		ts, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ts
+	}
+	for _, m := range []canon.Message{
+		{
+			Seq: 3, Role: "user", Kind: canon.KindMessage,
+			CreatedAt: at("2026-05-01T10:00:00Z"),
+			Content:   json.RawMessage(`{"role":"user","content":"token ` + secret + `"}`),
+		},
+		{
+			Seq: 4, Role: "assistant", Kind: canon.KindMessage,
+			CreatedAt: at("2026-05-01T10:01:00Z"),
+			Content:   json.RawMessage(`{"role":"assistant","content":"ran: export T=` + secret + `"}`),
+		},
+	} {
+		if err := w.InsertMessage(sessionID, "claude-code", m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifacts := []struct {
+		kind canon.ArtifactKind
+		name string
+	}{
+		{canon.ArtifactPlan, "p.md"},
+		{canon.ArtifactShellSnapshot, "snap.sh"},
+		{canon.ArtifactPaste, "paste-1.txt"},
+		{canon.ArtifactMemory, "proj-dir/MEMORY.md"},
+		{canon.ArtifactTodoList, "todos-file.json"},
+		{canon.ArtifactTaskGroup, "taskdir"},
+		{canon.ArtifactFileHistory, "conv-1"},
+		{canon.ArtifactUsageFacet, "sess-1"},
+		{canon.ArtifactUsageReport, "report.html"},
+	}
+	for i, a := range artifacts {
+		if _, err := w.UpsertArtifact(canon.Artifact{
+			Agent: "claude-code", Kind: a.kind, Name: a.name,
+			Content: "leaked " + secret,
+		}, fmt.Sprintf("hash-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := ImportV1(ctx, store, v1Path)
+	if err != nil {
+		t.Fatalf("ImportV1: %v", err)
+	}
+	if report.IgnoreFlags != len(ignored) {
+		t.Fatalf("ignore flags = %d, want %d", report.IgnoreFlags, len(ignored))
+	}
+
+	wantKeys := []string{
+		"message/claude-code/sess-1/slack-bot-token/3",
+		"message/claude-code/sess-1/slack-bot-token/4",
+		"artifact/claude-code/plan/p.md/slack-bot-token/*",
+		"artifact/claude-code/shell_snapshot/snap.sh/slack-bot-token/*",
+		"artifact/claude-code/paste/paste-1.txt/slack-bot-token/*",
+		"artifact/claude-code/memory/proj-dir/MEMORY.md/slack-bot-token/*",
+		"artifact/claude-code/memory/proj-dir-empty/slack-bot-token/*",
+		"artifact/claude-code/todo_list/todos-file.json/slack-bot-token/*",
+		"artifact/claude-code/task_group/taskdir/slack-bot-token/*",
+		"artifact/claude-code/file_history/conv-1/slack-bot-token/*",
+		"artifact/claude-code/usage_facet/sess-1/slack-bot-token/*",
+		"artifact/claude-code/usage_report/report.html/slack-bot-token/*",
+	}
+	for _, key := range wantKeys {
+		var n int
+		if err := store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM user_annotations
+			WHERE kind = 'scan_ignore' AND natural_key = ?`, key).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("annotation %q count = %d, want 1", key, n)
+		}
+	}
+
+	// The proof that matters: a fresh full scan finds every seeded secret
+	// and resolves each one as ignored through the translated keys.
+	sc, err := secrets.New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, _, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatalf("scan after import: %v", err)
+	}
+	wantIgnored := map[string]bool{
+		"message/claude-code/sess-1": false, // both message seqs share this key
+	}
+	for _, a := range artifacts {
+		wantIgnored["artifact/claude-code/"+string(a.kind)+"/"+a.name] = false
+	}
+	for _, f := range findings {
+		if f.RuleID != "slack-bot-token" {
+			continue
+		}
+		if _, expected := wantIgnored[f.NaturalKey]; !expected {
+			t.Errorf("unexpected finding entity %q", f.NaturalKey)
+			continue
+		}
+		if !f.Ignored {
+			t.Errorf("finding on %q (line %d) not ignored", f.NaturalKey, f.Line)
+		}
+		wantIgnored[f.NaturalKey] = true
+	}
+	for key, seen := range wantIgnored {
+		if !seen {
+			t.Errorf("scan produced no finding for %q", key)
+		}
+	}
 }
 
 func TestImportV1MissingDB(t *testing.T) {
