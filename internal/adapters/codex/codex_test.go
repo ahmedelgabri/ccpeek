@@ -35,10 +35,12 @@ func parseFixture(t *testing.T) *agenttest.Sink {
 
 func TestParseSessionMeta(t *testing.T) {
 	sink := parseFixture(t)
-	if len(sink.Sessions) != 1 {
-		t.Fatalf("sessions = %d", len(sink.Sessions))
+	// Streaming parse: the session is emitted before its first child and
+	// re-emitted at EOF; the LAST emit carries the folded metadata.
+	if len(sink.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2 (initial + folded)", len(sink.Sessions))
 	}
-	sess := sink.Sessions[0]
+	sess := sink.Sessions[len(sink.Sessions)-1]
 	if sess.ExternalID != sessionID {
 		t.Errorf("external id = %q (must come from session_meta)", sess.ExternalID)
 	}
@@ -112,8 +114,14 @@ func TestShellCallPairing(t *testing.T) {
 	if tc.Name != "shell" || tc.Kind != canon.ToolShell {
 		t.Errorf("call = %s/%s", tc.Name, tc.Kind)
 	}
-	if tc.ResultStatus != "ok" || tc.ResultExcerpt == "" {
-		t.Errorf("result = %q %q", tc.ResultStatus, tc.ResultExcerpt)
+	// Streaming parses never mutate an already-emitted call: the result
+	// arrives as a ToolResult record the store pairs by call id.
+	if len(sink.ToolResults) != 1 {
+		t.Fatalf("tool results = %d, want 1", len(sink.ToolResults))
+	}
+	res := sink.ToolResults[0]
+	if res.CallExternalID != tc.ExternalID || res.Status != "ok" || res.Excerpt == "" {
+		t.Errorf("result = %+v (call id %q)", res, tc.ExternalID)
 	}
 
 	// Bad line surfaced.

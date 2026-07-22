@@ -10,7 +10,6 @@
 package codex
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/jsonl"
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
@@ -149,37 +149,61 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		ExternalID: fallbackID,
 		SourcePath: src.Path,
 	}
+
+	// Records stream to the sink as they parse — memory stays bounded by
+	// one line, not the rollout. The session is emitted before its first
+	// child (session_meta is the first rollout line, so the external id is
+	// settled by then) and re-emitted at EOF with the folded title and
+	// timestamps. Exactly ONE message may be held back: the latest
+	// assistant message waiting for the token_count that usually follows
+	// it; any other emit flushes it first, so order is preserved and the
+	// holdback never grows. Tool results pair through sink.ToolResult by
+	// call id.
 	var (
-		messages     []canon.Message
-		toolCalls    []canon.ToolCall
-		callIndex    = map[string]int{} // call_id → toolCalls index
+		messageCount int
+		toolCount    int
 		currentModel string
 		prevTotal    *tokenUsage
-		lastAsstIdx  = -1
+		pendingAsst  *canon.Message
+		emitted      bool
 	)
+	emitSession := func() error {
+		if emitted {
+			return nil
+		}
+		emitted = true
+		return sink.Session(sess)
+	}
+	emitMessage := func(m canon.Message) error {
+		if err := emitSession(); err != nil {
+			return err
+		}
+		m.SessionExternalID = sess.ExternalID
+		return sink.Message(m)
+	}
+	flushPending := func() error {
+		if pendingAsst == nil {
+			return nil
+		}
+		m := *pendingAsst
+		pendingAsst = nil
+		return emitMessage(m)
+	}
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
-	lineNo := 0
-	for scanner.Scan() {
+	scanErr := jsonl.Scan(f, maxLineBytes, func(lineNo int, raw []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		lineNo++
-		raw := scanner.Bytes()
 		if len(strings.TrimSpace(string(raw))) == 0 {
-			continue
+			return nil
 		}
 		var line rolloutLine
 		if err := json.Unmarshal(raw, &line); err != nil {
-			if serr := sink.Issue(canon.Issue{
+			return sink.Issue(canon.Issue{
 				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
 				SourcePath: src.Path, Line: lineNo,
 				Detail: fmt.Sprintf("skipping unparseable line: %v", err),
-			}); serr != nil {
-				return serr
-			}
-			continue
+			})
 		}
 		if !line.Timestamp.IsZero() {
 			if sess.CreatedAt.IsZero() {
@@ -192,8 +216,18 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		case "session_meta":
 			var meta sessionMeta
 			if json.Unmarshal(line.Payload, &meta) == nil {
-				if meta.ID != "" {
+				if meta.ID != "" && !emitted {
 					sess.ExternalID = meta.ID
+				} else if meta.ID != "" && meta.ID != sess.ExternalID {
+					// Children already carry the earlier id; switching now
+					// would orphan them. Keep the id and say so.
+					if err := sink.Issue(canon.Issue{
+						Agent: Slug, Severity: canon.SeverityWarn, Category: "format",
+						SourcePath: src.Path, Line: lineNo,
+						Detail: fmt.Sprintf("late session_meta id %q ignored (session already %q)", meta.ID, sess.ExternalID),
+					}); err != nil {
+						return err
+					}
 				}
 				sess.CWD = meta.CWD
 				sess.GitBranch = meta.Git.Branch
@@ -211,12 +245,15 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		case "response_item":
 			var item responseItem
 			if json.Unmarshal(line.Payload, &item) != nil {
-				continue
+				return nil
 			}
 			switch item.Type {
 			case "message":
+				if err := flushPending(); err != nil {
+					return err
+				}
 				msg := canon.Message{
-					Seq:       len(messages),
+					Seq:       messageCount,
 					Role:      canon.Role(item.Role),
 					Kind:      canon.KindMessage,
 					CreatedAt: line.Timestamp,
@@ -225,6 +262,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					Content:   line.Payload,
 					Text:      itemText(item),
 				}
+				messageCount++
 				if msg.Role == canon.RoleUser && sess.Title == "" && msg.Text != "" {
 					t := strings.TrimSpace(msg.Text)
 					if len(t) > titleLimit {
@@ -233,44 +271,62 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					sess.Title = t
 				}
 				if msg.Role == canon.RoleAssistant {
-					lastAsstIdx = len(messages)
+					pendingAsst = &msg
+					return nil
 				}
-				messages = append(messages, msg)
+				return emitMessage(msg)
 
 			case "function_call":
-				callIndex[item.CallID] = len(toolCalls)
-				toolCalls = append(toolCalls, canon.ToolCall{
-					MessageSeq: max(len(messages)-1, 0),
-					Seq:        len(toolCalls),
-					Name:       item.Name,
-					Kind:       normalizeTool(item.Name),
-					Input:      json.RawMessage(argumentsJSON(item.Arguments)),
-					StartedAt:  line.Timestamp,
-				})
+				if err := flushPending(); err != nil {
+					return err
+				}
+				if err := emitSession(); err != nil {
+					return err
+				}
+				tc := canon.ToolCall{
+					SessionExternalID: sess.ExternalID,
+					MessageSeq:        max(messageCount-1, 0),
+					Seq:               toolCount,
+					ExternalID:        item.CallID,
+					Name:              item.Name,
+					Kind:              normalizeTool(item.Name),
+					Input:             json.RawMessage(argumentsJSON(item.Arguments)),
+					StartedAt:         line.Timestamp,
+				}
+				toolCount++
+				return sink.ToolCall(tc)
 
 			case "function_call_output":
-				if idx, ok := callIndex[item.CallID]; ok {
-					out := item.Output
-					if len(out) > excerptCap {
-						out = out[:excerptCap]
-					}
-					toolCalls[idx].ResultStatus = "ok"
-					toolCalls[idx].ResultExcerpt = out
+				if item.CallID == "" {
+					return nil
 				}
+				if err := emitSession(); err != nil {
+					return err
+				}
+				out := item.Output
+				if len(out) > excerptCap {
+					out = out[:excerptCap]
+				}
+				return sink.ToolResult(canon.ToolResult{
+					SessionExternalID: sess.ExternalID,
+					CallExternalID:    item.CallID,
+					Status:            "ok",
+					Excerpt:           out,
+				})
 			}
 
 		case "event_msg":
 			var ev eventMsg
 			if json.Unmarshal(line.Payload, &ev) != nil || ev.Type != "token_count" {
-				continue
+				return nil
 			}
 			var info tokenCountInfo
 			if json.Unmarshal(ev.Info, &info) != nil {
-				continue
+				return nil
 			}
 			delta := perTurnUsage(info, &prevTotal)
 			if delta == nil {
-				continue
+				return nil
 			}
 			usage := &canon.Usage{
 				InputTokens:     delta.InputTokens - delta.CachedInputTokens,
@@ -278,47 +334,46 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				CacheReadTokens: delta.CachedInputTokens,
 				ReasoningTokens: delta.ReasoningOutputTokens,
 			}
-			// Attach to the latest assistant message without usage; when
-			// the count arrives before the assistant text (as Codex does),
-			// park it on a usage-info entry so nothing is lost.
-			if lastAsstIdx >= 0 && messages[lastAsstIdx].Usage == nil {
-				messages[lastAsstIdx].Usage = usage
-			} else {
-				messages = append(messages, canon.Message{
-					Seq:       len(messages),
-					Role:      canon.RoleAssistant,
-					Kind:      canon.KindInfo,
-					CreatedAt: line.Timestamp,
-					Model:     currentModel,
-					Content:   line.Payload,
-					Usage:     usage,
-				})
+			// Attach to the held assistant message when one is waiting;
+			// otherwise (the count preceded the assistant text, as Codex
+			// often orders it) park it on a usage-info entry so nothing is
+			// lost.
+			if pendingAsst != nil && pendingAsst.Usage == nil {
+				pendingAsst.Usage = usage
+				return flushPending()
 			}
+			info2 := canon.Message{
+				Seq:       messageCount,
+				Role:      canon.RoleAssistant,
+				Kind:      canon.KindInfo,
+				CreatedAt: line.Timestamp,
+				Model:     currentModel,
+				Content:   line.Payload,
+				Usage:     usage,
+			}
+			messageCount++
+			return emitMessage(info2)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanning %s: %w", src.Path, err)
-	}
-	if len(messages) == 0 && len(toolCalls) == 0 {
 		return nil
+	}, func(lineNo int, size int64) error {
+		return sink.Issue(canon.Issue{
+			Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
+			SourcePath: src.Path, Line: lineNo,
+			Detail: fmt.Sprintf("skipping oversized line (%d bytes > %d limit)", size, maxLineBytes),
+		})
+	})
+	if scanErr != nil {
+		return scanErr
 	}
-
-	if err := sink.Session(sess); err != nil {
+	if err := flushPending(); err != nil {
 		return err
 	}
-	for i := range messages {
-		messages[i].SessionExternalID = sess.ExternalID
-		if err := sink.Message(messages[i]); err != nil {
-			return err
-		}
+	if !emitted {
+		return nil // nothing indexable in this rollout
 	}
-	for i := range toolCalls {
-		toolCalls[i].SessionExternalID = sess.ExternalID
-		if err := sink.ToolCall(toolCalls[i]); err != nil {
-			return err
-		}
-	}
-	return nil
+
+	// Final emit: the folded title, timestamps, cwd, and branch.
+	return sink.Session(sess)
 }
 
 // perTurnUsage recovers this turn's usage: last_token_usage when the CLI

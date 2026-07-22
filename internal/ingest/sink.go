@@ -9,7 +9,10 @@ import (
 
 // dbSink adapts db.Writer to the agent.RecordSink contract for one source's
 // transaction. Adapters emit a Session before its Messages/ToolCalls; the
-// sink tracks the session row ids it has upserted in this source.
+// sink tracks the session row ids it has upserted in this source. A
+// session may be re-emitted — streaming adapters send it first so
+// children can follow, then again at the end with the fully folded
+// metadata — and only the FIRST emit clears prior children.
 //
 // In append mode (tail parse of a cursor-capable source) the session's
 // existing children are kept — the adapter emitted only new records — and
@@ -37,6 +40,7 @@ func (s *dbSink) Session(sess canon.Session) error {
 	if sess.Agent == "" {
 		sess.Agent = s.agent
 	}
+	_, seen := s.sessionIDs[sess.ExternalID]
 	var (
 		id  int64
 		err error
@@ -45,7 +49,7 @@ func (s *dbSink) Session(sess canon.Session) error {
 		id, err = s.writer.AdvanceSession(sess, s.sourceHash)
 	} else {
 		id, err = s.writer.UpsertSession(sess, s.sourceHash)
-		if err == nil {
+		if err == nil && !seen {
 			err = s.writer.ClearSessionChildren(id)
 		}
 	}
@@ -56,7 +60,9 @@ func (s *dbSink) Session(sess canon.Session) error {
 		s.sessionIDs = make(map[string]int64)
 	}
 	s.sessionIDs[sess.ExternalID] = id
-	s.report.Sessions++
+	if !seen {
+		s.report.Sessions++
+	}
 	return nil
 }
 

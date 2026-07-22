@@ -73,10 +73,12 @@ func TestDiscoverMissingRootIsEmpty(t *testing.T) {
 func TestParseSessionAttributes(t *testing.T) {
 	sink := parseFixture(t, "11111111-aaaa-bbbb-cccc-111111111111")
 
-	if len(sink.Sessions) != 1 {
-		t.Fatalf("sessions = %d, want 1", len(sink.Sessions))
+	// Streaming parse: the session is emitted before its first child and
+	// re-emitted after EOF; the LAST emit carries the folded metadata.
+	if len(sink.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2 (initial + folded)", len(sink.Sessions))
 	}
-	sess := sink.Sessions[0]
+	sess := sink.Sessions[len(sink.Sessions)-1]
 	if sess.ExternalID != "11111111-aaaa-bbbb-cccc-111111111111" {
 		t.Errorf("external id = %q", sess.ExternalID)
 	}
@@ -160,8 +162,17 @@ func TestParseToolCallsWithResults(t *testing.T) {
 	if read.FilePath != "internal/auth/login.go" {
 		t.Errorf("read file path = %q", read.FilePath)
 	}
-	if read.ResultStatus != "ok" || read.ResultExcerpt == "" {
-		t.Errorf("read result = %q %q — pairing broken", read.ResultStatus, read.ResultExcerpt)
+	// Streaming parses never mutate an already-emitted call: results
+	// arrive as ToolResult records and the store pairs them by external
+	// id. The read call's result must be among them.
+	var readResult *canon.ToolResult
+	for i := range sink.ToolResults {
+		if sink.ToolResults[i].CallExternalID == read.ExternalID {
+			readResult = &sink.ToolResults[i]
+		}
+	}
+	if readResult == nil || readResult.Status != "ok" || readResult.Excerpt == "" {
+		t.Errorf("read result record = %+v — pairing broken", readResult)
 	}
 
 	if edit.Name != "Edit" || edit.Kind != canon.ToolFileEdit {
@@ -244,9 +255,9 @@ func TestParseResumedSessionKeepsDedupeKeys(t *testing.T) {
 		t.Error("entry uuid should differ from the original session's entry")
 	}
 
-	// Branch changes fold to the last seen value.
-	if sink.Sessions[0].GitBranch != "feat/limits" {
-		t.Errorf("branch = %q, want feat/limits", sink.Sessions[0].GitBranch)
+	// Branch changes fold to the last seen value (on the final emit).
+	if got := sink.Sessions[len(sink.Sessions)-1].GitBranch; got != "feat/limits" {
+		t.Errorf("branch = %q, want feat/limits", got)
 	}
 }
 
@@ -334,26 +345,36 @@ func TestParseTailEmitsOnlyAppendedRecords(t *testing.T) {
 			second.Messages[0].Seq, second.Messages[2].Seq)
 	}
 
-	// The new call pairs its result in-batch and continues the tool seq.
+	// The new call continues the tool seq; its result arrives as a
+	// ToolResult record like every other (streaming parses never mutate
+	// already-emitted calls — the store pairs by external id).
 	if len(second.ToolCalls) != 1 {
 		t.Fatalf("tail emitted %d tool calls, want 1", len(second.ToolCalls))
 	}
 	call := second.ToolCalls[0]
-	if call.Seq != 1 || call.ExternalID != "toolu_02" || call.ResultStatus != "error" {
+	if call.Seq != 1 || call.ExternalID != "toolu_02" {
 		t.Errorf("tail call = %+v", call)
 	}
 
-	// The pre-boundary call's result crosses as a ToolResult record.
-	if len(second.ToolResults) != 1 {
-		t.Fatalf("tail emitted %d tool results, want 1", len(second.ToolResults))
+	// Both results cross as ToolResult records: the pre-boundary call's
+	// and the new call's own.
+	if len(second.ToolResults) != 2 {
+		t.Fatalf("tail emitted %d tool results, want 2", len(second.ToolResults))
 	}
-	res := second.ToolResults[0]
-	if res.CallExternalID != "toolu_01" || res.Status != "ok" || res.Excerpt != "file.txt" {
+	byCall := map[string]canon.ToolResult{}
+	for _, r := range second.ToolResults {
+		byCall[r.CallExternalID] = r
+	}
+	if res := byCall["toolu_01"]; res.Status != "ok" || res.Excerpt != "file.txt" {
 		t.Errorf("late result = %+v", res)
 	}
+	if res := byCall["toolu_02"]; res.Status != "error" {
+		t.Errorf("in-pass result = %+v", res)
+	}
 
-	// Session attributes folded from the tail: modification advances.
-	if len(second.Sessions) != 1 || second.Sessions[0].ModifiedAt.IsZero() {
+	// Session attributes folded from the tail: modification advances on
+	// the final emit.
+	if len(second.Sessions) == 0 || second.Sessions[len(second.Sessions)-1].ModifiedAt.IsZero() {
 		t.Fatalf("tail sessions = %+v", second.Sessions)
 	}
 }

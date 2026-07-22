@@ -8,7 +8,6 @@
 package pi
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/jsonl"
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
@@ -203,38 +203,34 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	}
 	defer f.Close()
 
+	// Records stream to the sink as they parse — memory stays bounded by
+	// one line, not the session. The session is emitted right after the
+	// header (children need it) and re-emitted at EOF with the folded
+	// title and final ModifiedAt; the sink clears prior children only on
+	// the first emit. Tool results pair through sink.ToolResult by call
+	// id instead of an in-memory index.
 	var (
 		sess         canon.Session
 		haveHeader   bool
-		messages     []canon.Message
-		toolCalls    []canon.ToolCall
-		pendingCalls = map[string]int{} // toolCall id → index into toolCalls
-		relation     *canon.SessionRelation
+		messageCount int
+		toolCount    int
 		currentModel string
 	)
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
-	lineNo := 0
-	for scanner.Scan() {
+	scanErr := jsonl.Scan(f, maxLineBytes, func(lineNo int, line []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		lineNo++
-		line := scanner.Bytes()
 		if len(strings.TrimSpace(string(line))) == 0 {
-			continue
+			return nil
 		}
 		var e entry
 		if err := json.Unmarshal(line, &e); err != nil {
-			if serr := sink.Issue(canon.Issue{
+			return sink.Issue(canon.Issue{
 				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
 				SourcePath: src.Path, Line: lineNo,
 				Detail: fmt.Sprintf("skipping unparseable line: %v", err),
-			}); serr != nil {
-				return serr
-			}
-			continue
+			})
 		}
 
 		if !haveHeader {
@@ -250,25 +246,28 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				CWD:        e.CWD,
 				SourcePath: src.Path,
 			}
+			if err := sink.Session(sess); err != nil {
+				return err
+			}
 			if e.ParentSession != "" {
-				relation = &canon.SessionRelation{
+				return sink.SessionRelation(canon.SessionRelation{
 					Agent:          Slug,
 					FromExternalID: e.ID,
 					ToExternalID:   e.ParentSession,
 					Kind:           canon.RelForkOf,
 					Evidence:       json.RawMessage(`{"source":"header.parentSession"}`),
-				}
+				})
 			}
-			continue
+			return nil
 		}
 
 		if !e.Timestamp.IsZero() {
 			sess.ModifiedAt = e.Timestamp
 		}
 
-		msg, ok := a.convertEntry(e, len(messages), &sess, &currentModel)
+		msg, ok := a.convertEntry(e, messageCount, &sess, &currentModel)
 		if !ok {
-			continue
+			return nil
 		}
 		msg.SessionExternalID = sess.ExternalID
 
@@ -280,13 +279,17 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			if json.Unmarshal(e.Message, &pm) == nil {
 				switch {
 				case pm.Role == "toolResult" && pm.ToolCallID != "":
-					if idx, found := pendingCalls[pm.ToolCallID]; found {
-						status := "ok"
-						if pm.IsError {
-							status = "error"
-						}
-						toolCalls[idx].ResultStatus = status
-						toolCalls[idx].ResultExcerpt = truncate(strings.TrimSpace(piText(pm.Content)), resultExcerptCap)
+					status := "ok"
+					if pm.IsError {
+						status = "error"
+					}
+					if err := sink.ToolResult(canon.ToolResult{
+						SessionExternalID: sess.ExternalID,
+						CallExternalID:    pm.ToolCallID,
+						Status:            status,
+						Excerpt:           truncate(strings.TrimSpace(piText(pm.Content)), resultExcerptCap),
+					}); err != nil {
+						return err
 					}
 				default:
 					var blocks []piBlock
@@ -295,62 +298,49 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 							if b.Type != "toolCall" {
 								continue
 							}
-							if b.ID != "" {
-								pendingCalls[b.ID] = len(toolCalls)
-							}
-							toolCalls = append(toolCalls, canon.ToolCall{
+							if err := sink.ToolCall(canon.ToolCall{
 								SessionExternalID: sess.ExternalID,
 								MessageSeq:        msg.Seq,
-								Seq:               len(toolCalls),
+								Seq:               toolCount,
 								ExternalID:        b.ID,
 								Name:              b.Name,
 								Kind:              normalizeTool(b.Name),
 								Input:             b.Arguments,
 								FilePath:          argPath(b.Arguments),
 								StartedAt:         e.Timestamp,
-							})
+							}); err != nil {
+								return err
+							}
+							toolCount++
 						}
 					}
 				}
 			}
 		}
-		messages = append(messages, msg)
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanning %s: %w", src.Path, err)
+		if sess.Title == "" && msg.Role == canon.RoleUser && msg.Text != "" {
+			sess.Title = truncate(strings.TrimSpace(msg.Text), titleLimit)
+		}
+		if err := sink.Message(msg); err != nil {
+			return err
+		}
+		messageCount++
+		return nil
+	}, func(lineNo int, size int64) error {
+		return sink.Issue(canon.Issue{
+			Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
+			SourcePath: src.Path, Line: lineNo,
+			Detail: fmt.Sprintf("skipping oversized line (%d bytes > %d limit)", size, maxLineBytes),
+		})
+	})
+	if scanErr != nil {
+		return scanErr
 	}
 	if !haveHeader {
 		return nil // empty file
 	}
 
-	if sess.Title == "" {
-		for _, m := range messages {
-			if m.Role == canon.RoleUser && m.Text != "" {
-				sess.Title = truncate(strings.TrimSpace(m.Text), titleLimit)
-				break
-			}
-		}
-	}
-
-	if err := sink.Session(sess); err != nil {
-		return err
-	}
-	if relation != nil {
-		if err := sink.SessionRelation(*relation); err != nil {
-			return err
-		}
-	}
-	for _, m := range messages {
-		if err := sink.Message(m); err != nil {
-			return err
-		}
-	}
-	for _, tc := range toolCalls {
-		if err := sink.ToolCall(tc); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Final emit: the folded title and ModifiedAt.
+	return sink.Session(sess)
 }
 
 // convertEntry maps one non-header entry to a canonical message. Model is

@@ -57,10 +57,12 @@ func TestDiscover(t *testing.T) {
 func TestParseMainSession(t *testing.T) {
 	sink := parseFixture(t, "2026-07-01T10-00-00_"+mainSession+".jsonl")
 
-	if len(sink.Sessions) != 1 {
-		t.Fatalf("sessions = %d, want 1", len(sink.Sessions))
+	// Streaming parse: the session is emitted after the header and again
+	// at EOF; the LAST emit carries the folded title and ModifiedAt.
+	if len(sink.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2 (header + folded)", len(sink.Sessions))
 	}
-	sess := sink.Sessions[0]
+	sess := sink.Sessions[len(sink.Sessions)-1]
 	if sess.ExternalID != mainSession {
 		t.Errorf("external id = %q", sess.ExternalID)
 	}
@@ -187,8 +189,14 @@ func TestParseToolCalls(t *testing.T) {
 	if bash.ExternalID != "call_pi_001" {
 		t.Errorf("bash external id = %q", bash.ExternalID)
 	}
-	if bash.ResultStatus != "ok" || !strings.Contains(bash.ResultExcerpt, "limiter.Take") {
-		t.Errorf("bash result = %q %q — toolResult pairing broken", bash.ResultStatus, bash.ResultExcerpt)
+	// Streaming parses never mutate an already-emitted call: results
+	// arrive as ToolResult records the store pairs by call id.
+	results := map[string]canon.ToolResult{}
+	for _, r := range sink.ToolResults {
+		results[r.CallExternalID] = r
+	}
+	if r := results["call_pi_001"]; r.Status != "ok" || !strings.Contains(r.Excerpt, "limiter.Take") {
+		t.Errorf("bash result = %+v — toolResult pairing broken", r)
 	}
 
 	if edit.Name != "edit" || edit.Kind != canon.ToolFileEdit {
@@ -197,7 +205,7 @@ func TestParseToolCalls(t *testing.T) {
 	if edit.FilePath != "internal/auth/login.go" {
 		t.Errorf("edit file path = %q (from arguments.path)", edit.FilePath)
 	}
-	if edit.ResultStatus != "error" {
-		t.Errorf("edit result status = %q, want error (isError:true)", edit.ResultStatus)
+	if r := results[edit.ExternalID]; r.Status != "error" {
+		t.Errorf("edit result = %+v, want error (isError:true)", r)
 	}
 }

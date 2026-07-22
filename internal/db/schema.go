@@ -20,14 +20,14 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 6
+const schemaVersion = 7
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 6
+const baseVersion = 7
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -143,6 +143,10 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 	UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_kind ON tool_calls(kind, started_at DESC);
+-- Result pairing: streaming adapters attach every tool result through
+-- UPDATE ... WHERE session_id = ? AND external_id = ?; without this the
+-- unique (session_id, seq) prefix makes each update scan the session.
+CREATE INDEX IF NOT EXISTS idx_tool_calls_external ON tool_calls(session_id, external_id) WHERE external_id <> '';
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path) WHERE file_path <> '';
 
