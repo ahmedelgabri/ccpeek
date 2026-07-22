@@ -6,8 +6,11 @@
 // file, and Parse queries it as a database — the SourceDatabase path the
 // adapter framework was designed around.
 //
-// Field mapping is fixture-based pending the real-world format spike the
-// plan schedules; unknown blob shapes are tolerated silently.
+// CAPABILITY NOTE: field mapping is fixture-based — no real cursor-agent
+// corpus has been available to spike against, so transcripts/usage
+// follow the documented store.db shape while tool calls are NOT yet
+// extracted (their real blob shape is unknown). Unknown blob shapes are
+// tolerated silently; revisit when a real store.db exists.
 package cursor
 
 import (
@@ -126,18 +129,33 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		SourcePath: src.Path,
 	}
 
-	var metaHex string
-	err = sdb.QueryRowContext(ctx, `SELECT value FROM meta LIMIT 1`).Scan(&metaHex)
+	// The meta table may hold several rows; scan them in stable order and
+	// take the first that decodes into a session document (one with a name
+	// or workspace), instead of whatever row the engine returns first.
+	metaRows, err := sdb.QueryContext(ctx, `SELECT value FROM meta ORDER BY rowid`)
 	if err == nil {
-		var meta metaDoc
-		if decodeHexJSON(metaHex, &meta) == nil {
+		for metaRows.Next() {
+			var metaHex string
+			if metaRows.Scan(&metaHex) != nil {
+				continue
+			}
+			var meta metaDoc
+			if decodeHexJSON(metaHex, &meta) != nil ||
+				(meta.Name == "" && meta.WorkspaceRoot == "" && meta.CreatedAt == 0) {
+				continue
+			}
 			sess.Title = truncate(meta.Name, titleLimit)
 			sess.CWD = meta.WorkspaceRoot
 			if meta.CreatedAt > 0 {
 				sess.CreatedAt = time.UnixMilli(meta.CreatedAt).UTC()
 			}
+			break
 		}
-	} else if !isMissingTable(err) && err != sql.ErrNoRows {
+		metaRows.Close()
+		if err := metaRows.Err(); err != nil {
+			return err
+		}
+	} else if !isMissingTable(err) {
 		return fmt.Errorf("reading meta from %s: %w", src.Path, err)
 	}
 
