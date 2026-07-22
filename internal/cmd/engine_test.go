@@ -109,13 +109,15 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 		return n
 	}
 
-	// The orphan came over as imported-v1; the live session did not (its
-	// source file still exists and would be re-ingested from disk).
+	// Both v1 sessions came over: the ghost (source gone) and the "live"
+	// one — its file exists on disk but OUTSIDE the configured roots, so
+	// the ingest never saw it and only the import can rescue it. Skipping
+	// is keyed on what v2 actually holds, not on file existence.
 	if n := queryInt(`SELECT COUNT(*) FROM sessions WHERE external_id = 'ghost-session' AND origin = 'imported-v1'`); n != 1 {
 		t.Errorf("imported ghost sessions = %d, want 1", n)
 	}
-	if n := queryInt(`SELECT COUNT(*) FROM sessions WHERE external_id = 'live-session'`); n != 0 {
-		t.Errorf("live-session imported = %d rows, want 0 (source still on disk)", n)
+	if n := queryInt(`SELECT COUNT(*) FROM sessions WHERE external_id = 'live-session' AND origin = 'imported-v1'`); n != 1 {
+		t.Errorf("live-session (outside roots) imported = %d rows, want 1", n)
 	}
 	if n := queryInt(`SELECT COUNT(*) FROM user_annotations WHERE kind = 'scan_ignore'`); n != 1 {
 		t.Errorf("imported ignore flags = %d, want 1", n)
@@ -128,7 +130,7 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng2.Close()
-	if n := queryInt(`SELECT COUNT(*) FROM sessions WHERE origin = 'imported-v1'`); n != 1 {
-		t.Errorf("imported sessions after reopen = %d, want 1 (no duplicate import)", n)
+	if n := queryInt(`SELECT COUNT(*) FROM sessions WHERE origin = 'imported-v1'`); n != 2 {
+		t.Errorf("imported sessions after reopen = %d, want 2 (no duplicate import)", n)
 	}
 }

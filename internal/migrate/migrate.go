@@ -16,7 +16,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -31,7 +31,9 @@ const claudeSlug = canon.AgentSlug("claude-code")
 type Report struct {
 	OrphanSessions  int `json:"orphanSessions"`
 	OrphanMessages  int `json:"orphanMessages"`
+	OrphanToolCalls int `json:"orphanToolCalls"`
 	OrphanArtifacts int `json:"orphanArtifacts"`
+	HistoryEntries  int `json:"historyEntries"`
 	IgnoreFlags     int `json:"ignoreFlags"`
 }
 
@@ -68,10 +70,35 @@ func ImportV1(ctx context.Context, store *db.Store, v1Path string) (*Report, err
 	if err := importOrphanArtifacts(ctx, store, v1, report); err != nil {
 		return nil, err
 	}
+	if err := importHistory(ctx, store, v1, report); err != nil {
+		return nil, err
+	}
 	if err := importIgnoreFlags(ctx, store, v1, report); err != nil {
 		return nil, err
 	}
 	return report, nil
+}
+
+// v2HasSession reports whether the store already holds the session —
+// the only reliable skip test: an on-disk source outside the detected
+// roots (or one that failed to parse) must still be rescued, and a
+// re-ingested one must not be overwritten with v1's lossier shape.
+func v2HasSession(ctx context.Context, store *db.Store, externalID string) bool {
+	var one int
+	err := store.DB().QueryRowContext(ctx, `
+		SELECT 1 FROM sessions s JOIN agents a ON a.id = s.agent_id
+		WHERE a.slug = ? AND s.external_id = ? AND s.origin <> 'imported-v1'`,
+		string(claudeSlug), externalID).Scan(&one)
+	return err == nil
+}
+
+func v2HasArtifact(ctx context.Context, store *db.Store, kind canon.ArtifactKind, name string) bool {
+	var one int
+	err := store.DB().QueryRowContext(ctx, `
+		SELECT 1 FROM artifacts ar JOIN agents a ON a.id = ar.agent_id
+		WHERE a.slug = ? AND ar.kind = ? AND ar.name = ? AND ar.content_hash <> 'imported-v1'`,
+		string(claudeSlug), string(kind), name).Scan(&one)
+	return err == nil
 }
 
 func importOrphanSessions(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
@@ -102,10 +129,8 @@ func importOrphanSessions(ctx context.Context, store *db.Store, v1 *sql.DB, repo
 			&s.canonicalPath); err != nil {
 			return err
 		}
-		if s.sourcePath != "" {
-			if _, err := os.Stat(s.sourcePath); err == nil {
-				continue // still on disk: the pipeline owns it
-			}
+		if v2HasSession(ctx, store, s.externalID) {
+			continue // the pipeline ingested it from disk; v2 owns it
 		}
 		orphans = append(orphans, s)
 	}
@@ -147,13 +172,145 @@ func importOrphanSessions(ctx context.Context, store *db.Store, v1 *sql.DB, repo
 			w.Rollback()
 			return fmt.Errorf("importing messages for %s: %w", o.externalID, err)
 		}
+		tc, err := importToolCalls(ctx, v1, w, o.rowID, sessionID)
+		if err != nil {
+			w.Rollback()
+			return fmt.Errorf("importing tool calls for %s: %w", o.externalID, err)
+		}
 		if err := w.Commit(); err != nil {
 			return err
 		}
 		report.OrphanSessions++
 		report.OrphanMessages += n
+		report.OrphanToolCalls += tc
 	}
 	return nil
+}
+
+// v1ToolKind maps v1's tool taxonomy onto v2's; the two differ only in
+// the discovery and subagent names.
+func v1ToolKind(kind string) canon.ToolKind {
+	switch kind {
+	case "file_discovery":
+		return canon.ToolDiscovery
+	case "task":
+		return canon.ToolSubagent
+	case "shell", "file_read", "file_write", "file_edit", "search", "web":
+		return canon.ToolKind(kind)
+	default:
+		return canon.ToolOther
+	}
+}
+
+// importToolCalls copies an orphan session's tool calls — v2 derives
+// tool calls (and the commands browser) from session sources, which for
+// orphans no longer exist. v1's commands table needs no separate pass:
+// its rows are the shell subset of these tool calls.
+func importToolCalls(ctx context.Context, v1 *sql.DB, w *db.Writer, v1SessionID, sessionID int64) (int, error) {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT seq, COALESCE(timestamp, ''), COALESCE(tool_name, ''),
+		       COALESCE(tool_kind, ''), COALESCE(input_json, '{}'),
+		       COALESCE(result_text, ''), COALESCE(file_path, '')
+		FROM tool_calls WHERE session_id = ? ORDER BY seq`, v1SessionID)
+	if err != nil {
+		return 0, nil // table missing in this v1 version: nothing to import
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var seq int
+		var ts, name, kind, input, result, filePath string
+		if err := rows.Scan(&seq, &ts, &name, &kind, &input, &result, &filePath); err != nil {
+			return n, err
+		}
+		if len(result) > 400 {
+			result = result[:400] // v2 stores a bounded excerpt
+		}
+		if err := w.InsertToolCall(sessionID, canon.ToolCall{
+			Seq:           seq,
+			Name:          name,
+			Kind:          v1ToolKind(kind),
+			Input:         json.RawMessage(input),
+			ResultExcerpt: result,
+			FilePath:      filePath,
+			StartedAt:     parseTime(ts),
+		}); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, rows.Err()
+}
+
+// importHistory copies prompt-history rows whose entries v2 does not
+// already hold (the live history.jsonl re-ingests natively; v1 retains
+// entries from files that are gone). The v1 source path is preserved so
+// the history replacement logic never collides with live sources.
+func importHistory(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT COALESCE(display, ''), COALESCE(timestamp, 0), COALESCE(source_path, '')
+		FROM history WHERE display <> ''`)
+	if err != nil {
+		return nil // table missing: nothing to import
+	}
+	defer rows.Close()
+	type v1History struct {
+		display, sourcePath string
+		ts                  int64
+	}
+	var entries []v1History
+	for rows.Next() {
+		var h v1History
+		if err := rows.Scan(&h.display, &h.ts, &h.sourcePath); err != nil {
+			return err
+		}
+		entries = append(entries, h)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	// Existence checks go through the read pool: the open write
+	// transaction holds the store's only writer connection, so querying
+	// the writer here would deadlock. The seen set additionally collapses
+	// duplicates within the v1 rows themselves.
+	seen := map[string]bool{}
+	for _, h := range entries {
+		dupeKey := fmt.Sprintf("%s\x00%d", h.display, h.ts)
+		if seen[dupeKey] {
+			continue
+		}
+		seen[dupeKey] = true
+		var one int
+		err := store.ReadDB().QueryRowContext(ctx, `
+			SELECT 1 FROM history h JOIN agents a ON a.id = h.agent_id
+			WHERE a.slug = ? AND h.display = ? AND h.timestamp = ?`,
+			string(claudeSlug), h.display, h.ts).Scan(&one)
+		if err == nil {
+			continue // v2 already has this entry (re-ingested or re-imported)
+		}
+		src := h.sourcePath
+		if src == "" {
+			src = "imported-v1"
+		}
+		if err := w.InsertHistory(canon.HistoryEntry{
+			Agent:     claudeSlug,
+			Display:   h.display,
+			Timestamp: time.UnixMilli(h.ts),
+		}, src); err != nil {
+			return err
+		}
+		report.HistoryEntries++
+	}
+	return w.Commit()
 }
 
 func importMessages(ctx context.Context, v1 *sql.DB, w *db.Writer, v1SessionID, sessionID int64) (int, error) {
@@ -214,10 +371,8 @@ func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, rep
 				rows.Close()
 				return err
 			}
-			if a.sourcePath != "" {
-				if _, err := os.Stat(a.sourcePath); err == nil {
-					continue
-				}
+			if v2HasArtifact(ctx, store, spec.kind, a.name) {
+				continue // ingested from disk; v2 owns it
 			}
 			orphans = append(orphans, a)
 		}
@@ -258,8 +413,372 @@ func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, rep
 			report.OrphanArtifacts++
 		}
 	}
+	return importStructuredArtifacts(ctx, store, v1, report)
+}
+
+// structuredArtifact is one assembled v1 sidecar row of a kind whose v2
+// artifact carries structured metadata and (usually) a session link.
+type structuredArtifact struct {
+	kind     canon.ArtifactKind
+	name     string
+	content  string
+	metadata []byte
+	linkTo   string // session external id, "" for none
+	relation canon.LinkRelation
+	evidence canon.LinkEvidence
+}
+
+// importStructuredArtifacts covers the retained v1 sidecars beyond the
+// content-only tables: todos, task groups, file history, usage facets,
+// the usage report, and memories — each rebuilt into the exact shape the
+// v2 adapter produces, so the UI and resolvers treat imported and
+// ingested rows identically. Missing tables (older v1 schemas) skip
+// silently.
+func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
+	collectors := []func(context.Context, *sql.DB) ([]structuredArtifact, error){
+		collectV1Todos,
+		collectV1TaskGroups,
+		collectV1FileHistory,
+		collectV1UsageFacets,
+		collectV1UsageReport,
+		collectV1Memories,
+	}
+	for _, collect := range collectors {
+		arts, err := collect(ctx, v1)
+		if err != nil {
+			return err
+		}
+		for _, a := range arts {
+			if v2HasArtifact(ctx, store, a.kind, a.name) {
+				continue
+			}
+			w, err := store.BeginWrite(ctx)
+			if err != nil {
+				return err
+			}
+			id, err := w.UpsertArtifact(canon.Artifact{
+				Agent:    claudeSlug,
+				Kind:     a.kind,
+				Name:     a.name,
+				Content:  a.content,
+				Metadata: a.metadata,
+			}, "imported-v1")
+			if err != nil {
+				w.Rollback()
+				return err
+			}
+			if err := w.ClearArtifactSearchDocs(id); err != nil {
+				w.Rollback()
+				return err
+			}
+			if err := w.InsertSearchDoc(0, id, string(a.kind), 0, a.name, a.content); err != nil {
+				w.Rollback()
+				return err
+			}
+			if a.linkTo != "" {
+				// Unresolvable targets park as pending links, exactly like
+				// the ingest sink.
+				if _, err := w.LinkArtifact(id, canon.ArtifactLink{
+					Agent:             claudeSlug,
+					ArtifactKind:      a.kind,
+					ArtifactName:      a.name,
+					SessionExternalID: a.linkTo,
+					Relation:          a.relation,
+					Evidence:          a.evidence,
+				}); err != nil {
+					w.Rollback()
+					return err
+				}
+			}
+			if err := w.Commit(); err != nil {
+				return err
+			}
+			report.OrphanArtifacts++
+		}
+	}
 	return nil
 }
+
+func collectV1Todos(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT t.id, t.file_name FROM todos t ORDER BY t.id`)
+	if err != nil {
+		return nil, nil // table missing
+	}
+	defer rows.Close()
+	type todo struct {
+		id   int64
+		name string
+	}
+	var todos []todo
+	for rows.Next() {
+		var t todo
+		if err := rows.Scan(&t.id, &t.name); err != nil {
+			return nil, err
+		}
+		todos = append(todos, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var out []structuredArtifact
+	for _, t := range todos {
+		irows, err := v1.QueryContext(ctx, `
+			SELECT COALESCE(content,''), COALESCE(status,''), COALESCE(active_form,'')
+			FROM todo_items WHERE todo_id = ? ORDER BY seq`, t.id)
+		if err != nil {
+			return nil, err
+		}
+		type item struct {
+			Content    string `json:"content"`
+			Status     string `json:"status"`
+			ActiveForm string `json:"activeForm,omitempty"`
+		}
+		var items []item
+		var texts []string
+		for irows.Next() {
+			var it item
+			if err := irows.Scan(&it.Content, &it.Status, &it.ActiveForm); err != nil {
+				irows.Close()
+				return nil, err
+			}
+			items = append(items, it)
+			if it.Content != "" {
+				texts = append(texts, it.Content)
+			}
+		}
+		irows.Close()
+		if err := irows.Err(); err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			continue // empty todo lists are noise, matching ingest
+		}
+		meta, _ := json.Marshal(items)
+		a := structuredArtifact{
+			kind: canon.ArtifactTodoList, name: t.name,
+			content: strings.Join(texts, "\n"), metadata: meta,
+		}
+		if m := todoFileRe.FindStringSubmatch(t.name); m != nil {
+			a.linkTo = m[1]
+			a.relation, a.evidence = canon.LinkProducedBy, canon.EvidenceFilenameUUID
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+func collectV1TaskGroups(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT g.id, g.dir_name FROM task_groups g ORDER BY g.id`)
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	type group struct {
+		id   int64
+		name string
+	}
+	var groups []group
+	for rows.Next() {
+		var g group
+		if err := rows.Scan(&g.id, &g.name); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var out []structuredArtifact
+	for _, g := range groups {
+		irows, err := v1.QueryContext(ctx, `
+			SELECT COALESCE(item_id,''), COALESCE(subject,''), COALESCE(description,''),
+			       COALESCE(active_form,''), COALESCE(status,''),
+			       COALESCE(blocks,'[]'), COALESCE(blocked_by,'[]')
+			FROM task_items WHERE task_group_id = ? ORDER BY seq`, g.id)
+		if err != nil {
+			return nil, err
+		}
+		var items []json.RawMessage
+		var texts []string
+		for irows.Next() {
+			var itemID, subject, desc, active, status, blocks, blockedBy string
+			if err := irows.Scan(&itemID, &subject, &desc, &active, &status, &blocks, &blockedBy); err != nil {
+				irows.Close()
+				return nil, err
+			}
+			raw, _ := json.Marshal(map[string]any{
+				"id": itemID, "subject": subject, "description": desc,
+				"activeForm": active, "status": status,
+				"blocks": json.RawMessage(blocks), "blockedBy": json.RawMessage(blockedBy),
+			})
+			items = append(items, raw)
+			texts = append(texts, strings.TrimSpace(subject+" "+desc))
+		}
+		irows.Close()
+		if err := irows.Err(); err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			continue
+		}
+		meta, _ := json.Marshal(map[string]any{"items": items})
+		out = append(out, structuredArtifact{
+			kind: canon.ArtifactTaskGroup, name: g.name,
+			content: strings.Join(texts, "\n"), metadata: meta,
+			linkTo:   g.name, // task dirs are named by the spawning session
+			relation: canon.LinkProducedBy, evidence: canon.EvidenceIDMatch,
+		})
+	}
+	return out, nil
+}
+
+func collectV1FileHistory(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT h.id, h.conversation_id FROM file_history h ORDER BY h.id`)
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	type hist struct {
+		id   int64
+		name string
+	}
+	var hists []hist
+	for rows.Next() {
+		var h hist
+		if err := rows.Scan(&h.id, &h.name); err != nil {
+			return nil, err
+		}
+		hists = append(hists, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var out []structuredArtifact
+	for _, h := range hists {
+		vrows, err := v1.QueryContext(ctx, `
+			SELECT COALESCE(hash,''), version, COALESCE(content,'')
+			FROM file_versions WHERE file_history_id = ? ORDER BY version`, h.id)
+		if err != nil {
+			return nil, err
+		}
+		type version struct {
+			Hash    string `json:"hash"`
+			Version string `json:"version"`
+			Content string `json:"content"`
+		}
+		var versions []version
+		for vrows.Next() {
+			var hash, content string
+			var vnum int64
+			if err := vrows.Scan(&hash, &vnum, &content); err != nil {
+				vrows.Close()
+				return nil, err
+			}
+			versions = append(versions, version{Hash: hash, Version: fmt.Sprint(vnum), Content: content})
+		}
+		vrows.Close()
+		if err := vrows.Err(); err != nil {
+			return nil, err
+		}
+		if len(versions) == 0 {
+			continue
+		}
+		meta, _ := json.Marshal(map[string]any{"versions": versions})
+		out = append(out, structuredArtifact{
+			kind: canon.ArtifactFileHistory, name: h.name, metadata: meta,
+			linkTo:   h.name, // file-history dirs are named by the owning session
+			relation: canon.LinkProducedBy, evidence: canon.EvidenceIDMatch,
+		})
+	}
+	return out, nil
+}
+
+func collectV1UsageFacets(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT session_id_text, COALESCE(underlying_goal,''), COALESCE(outcome,''),
+		       COALESCE(helpfulness,''), COALESCE(session_type,''),
+		       COALESCE(primary_success,''), COALESCE(brief_summary,''),
+		       COALESCE(friction_detail,''), COALESCE(goal_categories,'{}'),
+		       COALESCE(satisfaction,'{}'), COALESCE(friction_counts,'{}')
+		FROM usage_facets`)
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	var out []structuredArtifact
+	for rows.Next() {
+		var sid, goal, outcome, helpfulness, sessionType, success,
+			summary, friction, goalCats, satisfaction, frictionCounts string
+		if err := rows.Scan(&sid, &goal, &outcome, &helpfulness, &sessionType,
+			&success, &summary, &friction, &goalCats, &satisfaction, &frictionCounts); err != nil {
+			return nil, err
+		}
+		meta, _ := json.Marshal(map[string]any{
+			"session_id": sid, "underlying_goal": goal, "outcome": outcome,
+			"helpfulness": helpfulness, "session_type": sessionType,
+			"primary_success": success, "brief_summary": summary,
+			"friction_detail": friction,
+			"goal_categories": json.RawMessage(goalCats),
+			"satisfaction":    json.RawMessage(satisfaction),
+			"friction_counts": json.RawMessage(frictionCounts),
+		})
+		out = append(out, structuredArtifact{
+			kind: canon.ArtifactUsageFacet, name: sid,
+			content: summary, metadata: meta,
+			linkTo:   sid,
+			relation: canon.LinkAppliesTo, evidence: canon.EvidenceIDMatch,
+		})
+	}
+	return out, rows.Err()
+}
+
+func collectV1UsageReport(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+	var content string
+	err := v1.QueryRowContext(ctx,
+		`SELECT COALESCE(content,'') FROM usage_report LIMIT 1`).Scan(&content)
+	if err != nil || content == "" {
+		return nil, nil
+	}
+	return []structuredArtifact{{
+		kind: canon.ArtifactUsageReport, name: "report.html", content: content,
+	}}, nil
+}
+
+func collectV1Memories(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+	rows, err := v1.QueryContext(ctx, `
+		SELECT COALESCE(project_dir,''), COALESCE(file_name,''), COALESCE(content,'')
+		FROM memories`)
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	var out []structuredArtifact
+	for rows.Next() {
+		var dir, file, content string
+		if err := rows.Scan(&dir, &file, &content); err != nil {
+			return nil, err
+		}
+		if dir == "" || file == "" {
+			continue
+		}
+		meta, _ := json.Marshal(map[string]string{"projectDir": dir})
+		out = append(out, structuredArtifact{
+			kind: canon.ArtifactMemory, name: dir + "/" + file,
+			content: content, metadata: meta,
+		})
+	}
+	return out, rows.Err()
+}
+
+// todoFileRe extracts the session uuid from todo file names, matching
+// the ingest-side rule.
+var todoFileRe = regexp.MustCompile(`^([0-9a-f-]{36})-agent-`)
 
 // importIgnoreFlags carries the user's scan-ignore decisions over,
 // TRANSLATING v1 finding identities into the keys the v2 scanner

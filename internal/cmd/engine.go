@@ -121,9 +121,10 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 					// untouched and the import can be re-run with `ccpeek migrate`.
 					fmt.Fprintf(logw, "WARNING: v1 import failed (re-run with `ccpeek migrate`): %v\n", err)
 				} else {
-					fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages), %d artifacts, %d ignore flags\n",
+					fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages, %d tool calls), %d artifacts, %d history entries, %d ignore flags\n",
 						mreport.OrphanSessions, mreport.OrphanMessages,
-						mreport.OrphanArtifacts, mreport.IgnoreFlags)
+						mreport.OrphanToolCalls, mreport.OrphanArtifacts,
+						mreport.HistoryEntries, mreport.IgnoreFlags)
 					b, _ := json.Marshal(mreport)
 					_ = store.SetMeta(ctx, "v1_import_report", string(b))
 				}

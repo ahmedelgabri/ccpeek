@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/secrets"
 	_ "modernc.org/sqlite"
@@ -38,6 +39,15 @@ func buildV1DB(t *testing.T, liveSourcePath string) string {
 		git_branch TEXT);
 	CREATE TABLE plans (id INTEGER PRIMARY KEY, file_name TEXT, title TEXT,
 		size_bytes INTEGER, content TEXT, source_path TEXT);
+	CREATE TABLE tool_calls (id INTEGER PRIMARY KEY, session_id INTEGER,
+		seq INTEGER, timestamp TEXT, tool_name TEXT, tool_kind TEXT,
+		input_json TEXT, result_text TEXT, file_path TEXT, searchable_text TEXT);
+	CREATE TABLE history (id INTEGER PRIMARY KEY, source_id INTEGER,
+		display TEXT, timestamp INTEGER, project TEXT, source_path TEXT);
+	CREATE TABLE todos (id INTEGER PRIMARY KEY, file_name TEXT,
+		session_id INTEGER, source_path TEXT);
+	CREATE TABLE todo_items (id INTEGER PRIMARY KEY, todo_id INTEGER,
+		seq INTEGER, content TEXT, status TEXT, active_form TEXT);
 	CREATE TABLE scan_findings (id INTEGER PRIMARY KEY, rule_id TEXT,
 		description TEXT, source_type TEXT, source_id TEXT,
 		match_redacted TEXT, line_number INTEGER, scanned_at TEXT,
@@ -72,6 +82,17 @@ func buildV1DB(t *testing.T, liveSourcePath string) string {
 	// Orphan plan.
 	exec(`INSERT INTO plans (file_name, title, content, source_path)
 	      VALUES ('old-plan.md', 'Old plan', '# Old plan\ndo things', '/gone/plans/old-plan.md')`)
+	// Retained rows the ghost session can't re-derive: a tool call
+	// (v1 "task" kind maps to v2 "subagent") and a history entry.
+	exec(`INSERT INTO tool_calls (session_id, seq, timestamp, tool_name, tool_kind, input_json, result_text, file_path)
+	      VALUES (2, 0, '2026-05-01T10:00:30Z', 'Task', 'task', '{"prompt":"audit"}', 'done', '')`)
+	exec(`INSERT INTO history (display, timestamp, source_path)
+	      VALUES ('remember the auth fix?', 1746093600000, '/gone/history.jsonl')`)
+	// A retained todo list with items (structured metadata + parked link).
+	exec(`INSERT INTO todos (id, file_name, source_path)
+	      VALUES (1, '99999999-9999-4999-8999-999999999999-agent-x.json', '/gone/todos/x.json')`)
+	exec(`INSERT INTO todo_items (todo_id, seq, content, status, active_form)
+	      VALUES (1, 0, 'ship the importer', 'in_progress', 'shipping the importer')`)
 	// Ignored findings in the real v1 identity shapes: messages are
 	// "<session>@<timestamp>" with detector line numbers, file history is
 	// the bare session/dir id. One non-ignored row must not import.
@@ -100,12 +121,29 @@ func TestImportV1(t *testing.T) {
 	}
 	defer store.Close()
 
+	// The pipeline ingested the live session before the import runs (the
+	// real first-run order); import must skip exactly what v2 already
+	// holds — not whatever happens to exist on disk.
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "live-session",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
 	report, err := ImportV1(ctx, store, v1Path)
 	if err != nil {
 		t.Fatalf("ImportV1: %v", err)
 	}
 	if report.OrphanSessions != 1 || report.OrphanMessages != 2 ||
-		report.OrphanArtifacts != 1 || report.IgnoreFlags != 2 {
+		report.OrphanToolCalls != 1 || report.OrphanArtifacts != 2 ||
+		report.HistoryEntries != 1 || report.IgnoreFlags != 2 {
 		t.Fatalf("report = %+v", report)
 	}
 
@@ -118,15 +156,34 @@ func TestImportV1(t *testing.T) {
 		return n
 	}
 
-	// Ghost session imported with origin tag; live one skipped.
+	// Ghost session imported with origin tag; the v2-held one skipped.
 	if n := q(`SELECT COUNT(*) FROM sessions WHERE origin = 'imported-v1'`); n != 1 {
 		t.Errorf("imported sessions = %d, want 1", n)
 	}
-	if n := q(`SELECT COUNT(*) FROM sessions`); n != 1 {
-		t.Errorf("total sessions = %d, want 1 (live session must be skipped)", n)
+	if n := q(`SELECT COUNT(*) FROM sessions`); n != 2 {
+		t.Errorf("total sessions = %d, want 2 (ingested + imported)", n)
 	}
 	if n := q(`SELECT COUNT(*) FROM messages`); n != 2 {
 		t.Errorf("messages = %d, want 2", n)
+	}
+	// The tool call imported with its kind translated.
+	if n := q(`SELECT COUNT(*) FROM tool_calls WHERE kind = 'subagent' AND name = 'Task'`); n != 1 {
+		t.Errorf("imported tool calls = %d, want 1 subagent", n)
+	}
+	// The retained history entry landed with provenance.
+	if n := q(`SELECT COUNT(*) FROM history WHERE source_path = '/gone/history.jsonl'`); n != 1 {
+		t.Errorf("imported history = %d, want 1", n)
+	}
+	// The todo list rebuilt with structured metadata and a parked link
+	// (its filename uuid names a session v2 does not hold).
+	if n := q(`SELECT COUNT(*) FROM artifacts WHERE kind = 'todo_list'`); n != 1 {
+		t.Errorf("todo artifacts = %d, want 1", n)
+	}
+	if n := q(`SELECT COUNT(*) FROM artifacts WHERE kind = 'todo_list' AND metadata_json LIKE '%in_progress%'`); n != 1 {
+		t.Error("todo metadata lost its items")
+	}
+	if n := q(`SELECT COUNT(*) FROM pending_artifact_links`); n != 1 {
+		t.Errorf("pending links = %d, want 1 (todo's session uuid unknown)", n)
 	}
 
 	// Imported content is searchable.
@@ -177,8 +234,11 @@ func TestImportV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := q(`SELECT COUNT(*) FROM sessions`); n != 1 {
-		t.Errorf("sessions after re-import = %d, want 1", n)
+	if n := q(`SELECT COUNT(*) FROM sessions`); n != 2 {
+		t.Errorf("sessions after re-import = %d, want 2", n)
+	}
+	if n := q(`SELECT COUNT(*) FROM history`); n != 1 {
+		t.Errorf("history after re-import = %d, want 1 (no duplicates)", n)
 	}
 	if n := q(`SELECT COUNT(*) FROM messages`); n != 2 {
 		t.Errorf("messages after re-import = %d, want 2 (children cleared, not duplicated)", n)
