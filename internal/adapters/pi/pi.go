@@ -126,6 +126,12 @@ type piMessage struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
 	Usage   *piUsage        `json:"usage"`
+
+	// role == "toolResult": the outcome of an earlier toolCall block,
+	// delivered as its own message entry.
+	ToolCallID string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+	IsError    bool   `json:"isError"`
 }
 
 type piUsage struct {
@@ -144,6 +150,47 @@ type piCost struct {
 type piBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+
+	// type == "toolCall" (assistant content blocks).
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+const resultExcerptCap = 400
+
+// normalizeTool maps Pi's tool names (bash, read, edit, write,
+// web_search, todo, …) onto the shared taxonomy.
+func normalizeTool(name string) canon.ToolKind {
+	switch name {
+	case "bash":
+		return canon.ToolShell
+	case "read":
+		return canon.ToolFileRead
+	case "write":
+		return canon.ToolFileWrite
+	case "edit", "multi_edit":
+		return canon.ToolFileEdit
+	case "grep", "search":
+		return canon.ToolSearch
+	case "find", "ls", "glob":
+		return canon.ToolDiscovery
+	case "web_search", "web_fetch", "fetch":
+		return canon.ToolWeb
+	default:
+		return canon.ToolOther
+	}
+}
+
+// argPath pulls the primary file argument out of a toolCall's arguments.
+func argPath(arguments json.RawMessage) string {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(arguments, &a); err != nil {
+		return ""
+	}
+	return a.Path
 }
 
 // Parse reads one Pi session file: header first, then tree entries.
@@ -160,6 +207,8 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		sess         canon.Session
 		haveHeader   bool
 		messages     []canon.Message
+		toolCalls    []canon.ToolCall
+		pendingCalls = map[string]int{} // toolCall id → index into toolCalls
 		relation     *canon.SessionRelation
 		currentModel string
 	)
@@ -222,6 +271,49 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			continue
 		}
 		msg.SessionExternalID = sess.ExternalID
+
+		// Tool calls ride in assistant content blocks; their results
+		// arrive later as dedicated role=toolResult messages referencing
+		// the call id.
+		if e.Type == "message" {
+			var pm piMessage
+			if json.Unmarshal(e.Message, &pm) == nil {
+				switch {
+				case pm.Role == "toolResult" && pm.ToolCallID != "":
+					if idx, found := pendingCalls[pm.ToolCallID]; found {
+						status := "ok"
+						if pm.IsError {
+							status = "error"
+						}
+						toolCalls[idx].ResultStatus = status
+						toolCalls[idx].ResultExcerpt = truncate(strings.TrimSpace(piText(pm.Content)), resultExcerptCap)
+					}
+				default:
+					var blocks []piBlock
+					if json.Unmarshal(pm.Content, &blocks) == nil {
+						for _, b := range blocks {
+							if b.Type != "toolCall" {
+								continue
+							}
+							if b.ID != "" {
+								pendingCalls[b.ID] = len(toolCalls)
+							}
+							toolCalls = append(toolCalls, canon.ToolCall{
+								SessionExternalID: sess.ExternalID,
+								MessageSeq:        msg.Seq,
+								Seq:               len(toolCalls),
+								ExternalID:        b.ID,
+								Name:              b.Name,
+								Kind:              normalizeTool(b.Name),
+								Input:             b.Arguments,
+								FilePath:          argPath(b.Arguments),
+								StartedAt:         e.Timestamp,
+							})
+						}
+					}
+				}
+			}
+		}
 		messages = append(messages, msg)
 	}
 	if err := scanner.Err(); err != nil {
@@ -250,6 +342,11 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	}
 	for _, m := range messages {
 		if err := sink.Message(m); err != nil {
+			return err
+		}
+	}
+	for _, tc := range toolCalls {
+		if err := sink.ToolCall(tc); err != nil {
 			return err
 		}
 	}

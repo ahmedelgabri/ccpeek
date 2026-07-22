@@ -3,6 +3,7 @@ package pi
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -75,15 +76,15 @@ func TestParseMainSession(t *testing.T) {
 
 	// Entries: model_change, 6 messages, branch_summary, label, compaction
 	// = 10 canonical messages (session_info folds into the title).
-	if len(sink.Messages) != 10 {
-		t.Fatalf("messages = %d, want 10", len(sink.Messages))
+	if len(sink.Messages) != 14 {
+		t.Fatalf("messages = %d, want 14", len(sink.Messages))
 	}
 
 	kinds := map[canon.MessageKind]int{}
 	for _, m := range sink.Messages {
 		kinds[m.Kind]++
 	}
-	if kinds[canon.KindMessage] != 6 || kinds[canon.KindModelChange] != 1 ||
+	if kinds[canon.KindMessage] != 10 || kinds[canon.KindModelChange] != 1 ||
 		kinds[canon.KindCompaction] != 1 || kinds[canon.KindBranchPoint] != 1 ||
 		kinds[canon.KindInfo] != 1 {
 		t.Errorf("kind histogram = %v", kinds)
@@ -167,5 +168,36 @@ func TestParseForkedSession(t *testing.T) {
 		if m.Kind == canon.KindMessage && m.Role == canon.RoleAssistant && m.Model != "claude-haiku-4-5" {
 			t.Errorf("assistant model = %q", m.Model)
 		}
+	}
+}
+
+// TestParseToolCalls: Pi's toolCall blocks become canonical tool calls,
+// paired with the role=toolResult messages that answer them.
+func TestParseToolCalls(t *testing.T) {
+	sink := parseFixture(t, "2026-07-01T10-00-00_"+mainSession+".jsonl")
+
+	if len(sink.ToolCalls) != 2 {
+		t.Fatalf("tool calls = %d, want 2", len(sink.ToolCalls))
+	}
+	bash, edit := sink.ToolCalls[0], sink.ToolCalls[1]
+
+	if bash.Name != "bash" || bash.Kind != canon.ToolShell {
+		t.Errorf("first call = %s/%s, want bash/shell", bash.Name, bash.Kind)
+	}
+	if bash.ExternalID != "call_pi_001" {
+		t.Errorf("bash external id = %q", bash.ExternalID)
+	}
+	if bash.ResultStatus != "ok" || !strings.Contains(bash.ResultExcerpt, "limiter.Take") {
+		t.Errorf("bash result = %q %q — toolResult pairing broken", bash.ResultStatus, bash.ResultExcerpt)
+	}
+
+	if edit.Name != "edit" || edit.Kind != canon.ToolFileEdit {
+		t.Errorf("second call = %s/%s, want edit/file_edit", edit.Name, edit.Kind)
+	}
+	if edit.FilePath != "internal/auth/login.go" {
+		t.Errorf("edit file path = %q (from arguments.path)", edit.FilePath)
+	}
+	if edit.ResultStatus != "error" {
+		t.Errorf("edit result status = %q, want error (isError:true)", edit.ResultStatus)
 	}
 }
