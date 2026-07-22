@@ -186,6 +186,15 @@ Post-launch sprints (feedback-driven, after v2.0):
   on every start (already-stamped WIP databases get one idempotent
   re-import), and `ccpeek migrate` exiting non-zero.
 
+- ✅ **Re-review closure (2026-07-22)**: pre-v15 memories tables (no
+  file_name column — that column IS v1's final migration) import under
+  the same 'MEMORY.md' default the v14→v15 migration backfilled, with
+  the v14 fixture carrying the real vintage shape; /api/v1/ready holds
+  at 503 "v1-import-failed" while v1_import_state=failed (partial
+  history must not read as ready — health stays 200 with the detail);
+  and legacy-file stat errors other than not-exist record failed (and
+  retry) instead of the permanent no-legacy-db.
+
 **Schema baseline decision:** the migration machinery stays parked until
 this branch lands on main; at that merge the baseline freezes and every
 later schema change ships as a migration. New agents (Gemini CLI,
