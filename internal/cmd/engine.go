@@ -146,7 +146,11 @@ func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw i
 	}
 	if _, err := os.Stat(dataFile); err != nil {
 		if os.IsNotExist(err) {
+			// A previous failed attempt may have recorded an error; the
+			// legacy file being gone resolves it, so health must not keep
+			// showing a stale message next to the terminal state.
 			_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
+			_ = store.SetMeta(ctx, "v1_import_error", "")
 			return
 		}
 		// Permission or I/O trouble reaching the legacy file is a failed

@@ -163,6 +163,7 @@ database is opened read-only and never modified.`,
 		if _, err := os.Stat(dataFile); err != nil {
 			if os.IsNotExist(err) {
 				_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
+				_ = eng.store.SetMeta(ctx, "v1_import_error", "")
 				fmt.Fprintf(os.Stderr, "no v1 database at %s; nothing to import\n", dataFile)
 				return nil
 			}

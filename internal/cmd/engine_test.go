@@ -317,4 +317,30 @@ func TestV1ImportStatErrorIsFailure(t *testing.T) {
 	if v, _, _ := store2.GetMeta(ctx, "v1_import_state"); v != "no-legacy-db" {
 		t.Errorf("v1_import_state for missing file = %q, want no-legacy-db", v)
 	}
+
+	// failed → absent: the terminal state must not carry the stale error.
+	store3, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store3.Close()
+	goneDir := t.TempDir()
+	garbage := filepath.Join(goneDir, "ccpeek.db")
+	if err := os.WriteFile(garbage, []byte("not a database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	maybeImportV1(ctx, store3, garbage, io.Discard)
+	if v, _, _ := store3.GetMeta(ctx, "v1_import_state"); v != "failed" {
+		t.Fatalf("v1_import_state for garbage file = %q, want failed", v)
+	}
+	if err := os.Remove(garbage); err != nil {
+		t.Fatal(err)
+	}
+	maybeImportV1(ctx, store3, garbage, io.Discard)
+	if v, _, _ := store3.GetMeta(ctx, "v1_import_state"); v != "no-legacy-db" {
+		t.Errorf("v1_import_state after removal = %q, want no-legacy-db", v)
+	}
+	if v, _, _ := store3.GetMeta(ctx, "v1_import_error"); v != "" {
+		t.Errorf("v1_import_error stale after failed→absent transition: %q", v)
+	}
 }
