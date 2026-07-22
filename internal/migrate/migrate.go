@@ -50,6 +50,78 @@ var v1ArtifactTables = []struct {
 	{"paste_cache", canon.ArtifactPaste, "file_name", "content"},
 }
 
+// v1Schema records the tables and columns this particular v1 database
+// actually has — the v1 schema evolved from v4 through v15, and any of
+// those vintages can be sitting on disk. Import queries only name what
+// exists: a missing TABLE means the feature postdates this database
+// (nothing to import), a missing COLUMN narrows the SELECT, and every
+// other error is real and propagates instead of silently skipping.
+type v1Schema map[string]map[string]bool
+
+func loadV1Schema(ctx context.Context, v1 *sql.DB) (v1Schema, error) {
+	rows, err := v1.QueryContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type = 'table'`)
+	if err != nil {
+		return nil, fmt.Errorf("reading v1 schema: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sch := v1Schema{}
+	for _, name := range names {
+		crows, err := v1.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%q)", name))
+		if err != nil {
+			return nil, fmt.Errorf("reading v1 columns of %s: %w", name, err)
+		}
+		cols := map[string]bool{}
+		for crows.Next() {
+			var cid, notNull, pk int
+			var colName, colType string
+			var dflt any
+			if err := crows.Scan(&cid, &colName, &colType, &notNull, &dflt, &pk); err != nil {
+				crows.Close()
+				return nil, err
+			}
+			cols[colName] = true
+		}
+		crows.Close()
+		if err := crows.Err(); err != nil {
+			return nil, err
+		}
+		sch[name] = cols
+	}
+	return sch, nil
+}
+
+func (s v1Schema) table(name string) bool {
+	_, ok := s[name]
+	return ok
+}
+
+func (s v1Schema) has(table, column string) bool {
+	return s[table][column]
+}
+
+// sel builds the SELECT expression for a column older vintages may
+// lack: the COALESCEd column when present, ” otherwise. alias is the
+// query's table alias including the dot ("s."), or "".
+func (s v1Schema) sel(table, alias, column string) string {
+	if s.has(table, column) {
+		return "COALESCE(" + alias + column + ", '')"
+	}
+	return "''"
+}
+
 // ImportV1 copies non-re-derivable data from a v1 database into the v2
 // store. Rows whose source_path still exists on disk are skipped — the
 // ingest pipeline owns them.
@@ -62,18 +134,27 @@ func ImportV1(ctx context.Context, store *db.Store, v1Path string) (*Report, err
 	if err := v1.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("reading v1 database: %w", err)
 	}
+	sch, err := loadV1Schema(ctx, v1)
+	if err != nil {
+		return nil, err
+	}
+	// Every supported v1 vintage (v4+) has these two; their absence means
+	// this is not a ccpeek v1 database at all.
+	if !sch.table("sessions") || !sch.table("messages") {
+		return nil, fmt.Errorf("%s is not a ccpeek v1 database (no sessions/messages tables)", v1Path)
+	}
 
 	report := &Report{}
-	if err := importOrphanSessions(ctx, store, v1, report); err != nil {
+	if err := importOrphanSessions(ctx, store, v1, sch, report); err != nil {
 		return nil, err
 	}
-	if err := importOrphanArtifacts(ctx, store, v1, report); err != nil {
+	if err := importOrphanArtifacts(ctx, store, v1, sch, report); err != nil {
 		return nil, err
 	}
-	if err := importHistory(ctx, store, v1, report); err != nil {
+	if err := importHistory(ctx, store, v1, sch, report); err != nil {
 		return nil, err
 	}
-	if err := importIgnoreFlags(ctx, store, v1, report); err != nil {
+	if err := importIgnoreFlags(ctx, store, v1, sch, report); err != nil {
 		return nil, err
 	}
 	return report, nil
@@ -101,14 +182,19 @@ func v2HasArtifact(ctx context.Context, store *db.Store, kind canon.ArtifactKind
 	return err == nil
 }
 
-func importOrphanSessions(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
-	rows, err := v1.QueryContext(ctx, `
+func importOrphanSessions(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schema, report *Report) error {
+	// sessions.source_path arrived in v5 and projects.canonical_path in a
+	// later vintage; older databases import with those fields empty (they
+	// never held them).
+	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`
 		SELECT s.id, s.session_id, COALESCE(s.first_prompt, ''),
 		       COALESCE(s.created_at, ''), COALESCE(s.modified_at, ''),
 		       COALESCE(s.git_branch, ''), COALESCE(s.project_path, ''),
-		       COALESCE(s.source_path, ''), COALESCE(p.canonical_path, '')
+		       %s, %s
 		FROM sessions s
-		LEFT JOIN projects p ON p.id = s.project_id`)
+		LEFT JOIN projects p ON p.id = s.project_id`,
+		sch.sel("sessions", "s.", "source_path"),
+		sch.sel("projects", "p.", "canonical_path")))
 	if err != nil {
 		return fmt.Errorf("reading v1 sessions: %w", err)
 	}
@@ -172,7 +258,7 @@ func importOrphanSessions(ctx context.Context, store *db.Store, v1 *sql.DB, repo
 			w.Rollback()
 			return fmt.Errorf("importing messages for %s: %w", o.externalID, err)
 		}
-		tc, err := importToolCalls(ctx, v1, w, o.rowID, sessionID)
+		tc, err := importToolCalls(ctx, v1, sch, w, o.rowID, sessionID)
 		if err != nil {
 			w.Rollback()
 			return fmt.Errorf("importing tool calls for %s: %w", o.externalID, err)
@@ -204,16 +290,22 @@ func v1ToolKind(kind string) canon.ToolKind {
 
 // importToolCalls copies an orphan session's tool calls — v2 derives
 // tool calls (and the commands browser) from session sources, which for
-// orphans no longer exist. v1's commands table needs no separate pass:
-// its rows are the shell subset of these tool calls.
-func importToolCalls(ctx context.Context, v1 *sql.DB, w *db.Writer, v1SessionID, sessionID int64) (int, error) {
-	rows, err := v1.QueryContext(ctx, `
+// orphans no longer exist. When the tool_calls table exists, v1's
+// commands table needs no separate pass: its rows are the shell subset
+// of these tool calls. Vintages before tool_calls only have that
+// commands table, so those rows import as shell tool calls instead.
+func importToolCalls(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.Writer, v1SessionID, sessionID int64) (int, error) {
+	if !sch.table("tool_calls") {
+		return importLegacyCommands(ctx, v1, sch, w, v1SessionID, sessionID)
+	}
+	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`
 		SELECT seq, COALESCE(timestamp, ''), COALESCE(tool_name, ''),
 		       COALESCE(tool_kind, ''), COALESCE(input_json, '{}'),
-		       COALESCE(result_text, ''), COALESCE(file_path, '')
-		FROM tool_calls WHERE session_id = ? ORDER BY seq`, v1SessionID)
+		       COALESCE(result_text, ''), %s
+		FROM tool_calls WHERE session_id = ? ORDER BY seq`,
+		sch.sel("tool_calls", "", "file_path")), v1SessionID)
 	if err != nil {
-		return 0, nil // table missing in this v1 version: nothing to import
+		return 0, err
 	}
 	defer rows.Close()
 	n := 0
@@ -242,16 +334,59 @@ func importToolCalls(ctx context.Context, v1 *sql.DB, w *db.Writer, v1SessionID,
 	return n, rows.Err()
 }
 
+// importLegacyCommands rescues the commands table of vintages that
+// predate tool_calls. The {"command": …} input shape is what the v2
+// commands browser reads (json_extract '$.command').
+func importLegacyCommands(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.Writer, v1SessionID, sessionID int64) (int, error) {
+	if !sch.table("commands") {
+		return 0, nil
+	}
+	rows, err := v1.QueryContext(ctx, `
+		SELECT seq, COALESCE(timestamp, ''), COALESCE(command, '')
+		FROM commands WHERE session_id = ? ORDER BY seq`, v1SessionID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var seq int
+		var ts, command string
+		if err := rows.Scan(&seq, &ts, &command); err != nil {
+			return n, err
+		}
+		if command == "" {
+			continue
+		}
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if err := w.InsertToolCall(sessionID, canon.ToolCall{
+			Seq:       seq,
+			Name:      "Bash",
+			Kind:      canon.ToolShell,
+			Input:     input,
+			StartedAt: parseTime(ts),
+		}); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, rows.Err()
+}
+
 // importHistory copies prompt-history rows whose entries v2 does not
 // already hold (the live history.jsonl re-ingests natively; v1 retains
 // entries from files that are gone). The v1 source path is preserved so
 // the history replacement logic never collides with live sources.
-func importHistory(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
-	rows, err := v1.QueryContext(ctx, `
-		SELECT COALESCE(display, ''), COALESCE(timestamp, 0), COALESCE(source_path, '')
-		FROM history WHERE display <> ''`)
+func importHistory(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schema, report *Report) error {
+	if !sch.table("history") {
+		return nil // this vintage predates prompt-history retention
+	}
+	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`
+		SELECT COALESCE(display, ''), COALESCE(timestamp, 0), %s
+		FROM history WHERE display <> ''`,
+		sch.sel("history", "", "source_path")))
 	if err != nil {
-		return nil // table missing: nothing to import
+		return err
 	}
 	defer rows.Close()
 	type v1History struct {
@@ -354,14 +489,19 @@ func importMessages(ctx context.Context, v1 *sql.DB, w *db.Writer, v1SessionID, 
 	return n, rows.Err()
 }
 
-func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
+func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schema, report *Report) error {
 	for _, spec := range v1ArtifactTables {
+		if !sch.table(spec.table) {
+			continue // this vintage predates the sidecar
+		}
+		// source_path is absent from some vintages (v14 plans, for one).
 		query := fmt.Sprintf(`
-			SELECT %s, COALESCE(%s, ''), COALESCE(source_path, '')
-			FROM %s`, spec.nameCol, spec.content, spec.table)
+			SELECT %s, COALESCE(%s, ''), %s
+			FROM %s`, spec.nameCol, spec.content,
+			sch.sel(spec.table, "", "source_path"), spec.table)
 		rows, err := v1.QueryContext(ctx, query)
 		if err != nil {
-			continue // table missing in this v1 version: nothing to import
+			return fmt.Errorf("reading v1 %s: %w", spec.table, err)
 		}
 		type v1Artifact struct{ name, content, sourcePath string }
 		var orphans []v1Artifact
@@ -413,7 +553,7 @@ func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, rep
 			report.OrphanArtifacts++
 		}
 	}
-	return importStructuredArtifacts(ctx, store, v1, report)
+	return importStructuredArtifacts(ctx, store, v1, sch, report)
 }
 
 // structuredArtifact is one assembled v1 sidecar row of a kind whose v2
@@ -432,10 +572,10 @@ type structuredArtifact struct {
 // content-only tables: todos, task groups, file history, usage facets,
 // the usage report, and memories — each rebuilt into the exact shape the
 // v2 adapter produces, so the UI and resolvers treat imported and
-// ingested rows identically. Missing tables (older v1 schemas) skip
-// silently.
-func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
-	collectors := []func(context.Context, *sql.DB) ([]structuredArtifact, error){
+// ingested rows identically. A vintage that predates a table skips it;
+// any other query error is real and aborts the import.
+func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schema, report *Report) error {
+	collectors := []func(context.Context, *sql.DB, v1Schema) ([]structuredArtifact, error){
 		collectV1Todos,
 		collectV1TaskGroups,
 		collectV1FileHistory,
@@ -444,7 +584,7 @@ func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB,
 		collectV1Memories,
 	}
 	for _, collect := range collectors {
-		arts, err := collect(ctx, v1)
+		arts, err := collect(ctx, v1, sch)
 		if err != nil {
 			return err
 		}
@@ -499,11 +639,14 @@ func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB,
 	return nil
 }
 
-func collectV1Todos(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+func collectV1Todos(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structuredArtifact, error) {
+	if !sch.table("todos") || !sch.table("todo_items") {
+		return nil, nil
+	}
 	rows, err := v1.QueryContext(ctx, `
 		SELECT t.id, t.file_name FROM todos t ORDER BY t.id`)
 	if err != nil {
-		return nil, nil // table missing
+		return nil, err
 	}
 	defer rows.Close()
 	type todo struct {
@@ -569,11 +712,14 @@ func collectV1Todos(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, erro
 	return out, nil
 }
 
-func collectV1TaskGroups(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+func collectV1TaskGroups(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structuredArtifact, error) {
+	if !sch.table("task_groups") || !sch.table("task_items") {
+		return nil, nil
+	}
 	rows, err := v1.QueryContext(ctx, `
 		SELECT g.id, g.dir_name FROM task_groups g ORDER BY g.id`)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	defer rows.Close()
 	type group struct {
@@ -636,11 +782,14 @@ func collectV1TaskGroups(ctx context.Context, v1 *sql.DB) ([]structuredArtifact,
 	return out, nil
 }
 
-func collectV1FileHistory(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+func collectV1FileHistory(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structuredArtifact, error) {
+	if !sch.table("file_history") || !sch.table("file_versions") {
+		return nil, nil
+	}
 	rows, err := v1.QueryContext(ctx, `
 		SELECT h.id, h.conversation_id FROM file_history h ORDER BY h.id`)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	defer rows.Close()
 	type hist struct {
@@ -699,7 +848,10 @@ func collectV1FileHistory(ctx context.Context, v1 *sql.DB) ([]structuredArtifact
 	return out, nil
 }
 
-func collectV1UsageFacets(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+func collectV1UsageFacets(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structuredArtifact, error) {
+	if !sch.table("usage_facets") {
+		return nil, nil
+	}
 	rows, err := v1.QueryContext(ctx, `
 		SELECT session_id_text, COALESCE(underlying_goal,''), COALESCE(outcome,''),
 		       COALESCE(helpfulness,''), COALESCE(session_type,''),
@@ -708,7 +860,7 @@ func collectV1UsageFacets(ctx context.Context, v1 *sql.DB) ([]structuredArtifact
 		       COALESCE(satisfaction,'{}'), COALESCE(friction_counts,'{}')
 		FROM usage_facets`)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	defer rows.Close()
 	var out []structuredArtifact
@@ -738,11 +890,20 @@ func collectV1UsageFacets(ctx context.Context, v1 *sql.DB) ([]structuredArtifact
 	return out, rows.Err()
 }
 
-func collectV1UsageReport(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+func collectV1UsageReport(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structuredArtifact, error) {
+	if !sch.table("usage_report") {
+		return nil, nil
+	}
 	var content string
 	err := v1.QueryRowContext(ctx,
 		`SELECT COALESCE(content,'') FROM usage_report LIMIT 1`).Scan(&content)
-	if err != nil || content == "" {
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if content == "" {
 		return nil, nil
 	}
 	return []structuredArtifact{{
@@ -750,12 +911,15 @@ func collectV1UsageReport(ctx context.Context, v1 *sql.DB) ([]structuredArtifact
 	}}, nil
 }
 
-func collectV1Memories(ctx context.Context, v1 *sql.DB) ([]structuredArtifact, error) {
+func collectV1Memories(ctx context.Context, v1 *sql.DB, sch v1Schema) ([]structuredArtifact, error) {
+	if !sch.table("memories") {
+		return nil, nil
+	}
 	rows, err := v1.QueryContext(ctx, `
 		SELECT COALESCE(project_dir,''), COALESCE(file_name,''), COALESCE(content,'')
 		FROM memories`)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	defer rows.Close()
 	var out []structuredArtifact
@@ -817,12 +981,15 @@ var todoFileRe = regexp.MustCompile(`^([0-9a-f-]{36})-agent-`)
 // yields a bare-projectDir id no v2 artifact name can equal ("<dir>/
 // <file>" always has the slash); its annotation imports anyway and
 // stays inert — an orphan, not a mismatch.
-func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, report *Report) error {
+func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schema, report *Report) error {
+	if !sch.table("scan_findings") || !sch.has("scan_findings", "ignored") {
+		return nil // this vintage predates scanning, or the ignore feature
+	}
 	rows, err := v1.QueryContext(ctx, `
 		SELECT DISTINCT rule_id, source_type, source_id
 		FROM scan_findings WHERE ignored = 1`)
 	if err != nil {
-		return nil // no scan_findings table or no ignored column: fine
+		return err
 	}
 	defer rows.Close()
 	now := time.Now().UTC().Format(time.RFC3339)

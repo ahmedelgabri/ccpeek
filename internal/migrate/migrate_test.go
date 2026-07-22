@@ -273,6 +273,8 @@ func TestImportV1IgnoreTranslation(t *testing.T) {
 	CREATE TABLE sessions (id INTEGER PRIMARY KEY, session_id TEXT, project_id INTEGER,
 		first_prompt TEXT, created_at TEXT, modified_at TEXT, git_branch TEXT,
 		project_path TEXT, source_path TEXT);
+	CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id INTEGER, seq INTEGER,
+		type TEXT, role TEXT, timestamp TEXT, uuid TEXT, content TEXT, cwd TEXT);
 	CREATE TABLE scan_findings (id INTEGER PRIMARY KEY, rule_id TEXT,
 		description TEXT, source_type TEXT, source_id TEXT,
 		match_redacted TEXT, line_number INTEGER, scanned_at TEXT,
