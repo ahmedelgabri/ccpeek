@@ -172,6 +172,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		}
 	}
 
+	prunedSources := 0
 	if opts.Prune {
 		pruned, err := r.store.PruneMissingSources(ctx, func(path string) bool {
 			_, err := os.Stat(path)
@@ -181,6 +182,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 			return nil, r.fail(ctx, report, started, err)
 		}
 		if pruned > 0 {
+			prunedSources = pruned
 			report.FilesChanged += pruned // force facet/rollup regeneration
 		}
 	}
@@ -203,10 +205,14 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	if _, _, err := r.store.LinkMemoryArtifacts(ctx); err != nil {
 		return nil, r.fail(ctx, report, started, err)
 	}
-	// Rollups also regenerate when they are empty despite indexed usage —
-	// schema migrations drop them (the split columns rebuild here) and this
-	// self-heals instead of leaving Usage blank until the next change.
-	needRollups := report.FilesChanged > 0
+	// Workspaces and usage rollups derive from sessions and messages;
+	// sidecar-only passes (artifacts, history) leave both untouched and
+	// skip the rebuild. Prune can delete session rows without emitting
+	// records, so it always counts as dirty. Rollups also regenerate when
+	// they are empty despite indexed usage — schema migrations drop them
+	// (the split columns rebuild here) and this self-heals instead of
+	// leaving Usage blank until the next change.
+	needRollups := report.Sessions > 0 || report.Messages > 0 || prunedSources > 0
 	if !needRollups {
 		var rollups, usage int
 		if err := r.store.DB().QueryRowContext(ctx, `

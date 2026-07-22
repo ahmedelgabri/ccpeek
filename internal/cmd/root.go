@@ -240,14 +240,18 @@ func run(cmd *cobra.Command, args []string) error {
 				}
 				return
 			}
-			// The scan is derived data over already-ingested rows — it must
-			// never delay watch mode picking up new appends.
-			go func() {
-				if err := runScan(ctx, eng.report); err != nil && ctx.Err() == nil {
-					logf("WARNING: %v\n", err)
-				}
-				events.Notify() // findings changed; refresh the scan views
-			}()
+			// The bootstrap scan runs to completion BEFORE watch starts:
+			// the scanner pages messages across several read snapshots, so
+			// a concurrent watch ingest could rewrite sessions mid-scan and
+			// leave scan state pairing a new content hash with a stale page
+			// set. The server is already serving; only watch pickup waits.
+			// Watch passes themselves scan inside their onChange callback,
+			// which the watch loop runs synchronously between passes — so
+			// ingest and scanning never overlap anywhere.
+			if err := runScan(ctx, eng.report); err != nil && ctx.Err() == nil {
+				logf("WARNING: %v\n", err)
+			}
+			events.Notify() // findings changed; refresh the scan views
 		} else {
 			ready.Store(true)
 		}
