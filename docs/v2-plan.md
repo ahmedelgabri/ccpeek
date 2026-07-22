@@ -224,6 +224,27 @@ Post-launch sprints (feedback-driven, after v2.0):
   classified route table enforcing transport parity; and the
   failed→no-legacy-db transition clears the stale import error.
 
+- ✅ **Release polish round (2026-07-23)**: backward transcript pages
+  tile to the anchored gap ({from, limit} page params + seq dedupe; a
+  1300-message e2e fixture pins from=0&limit=400 after a ?seq=500 deep
+  link). Tool transfer is lazy end to end: list rows carry no diff
+  excerpts, the transcript requests compact range-scoped chips only,
+  tabs start their paged fetch on first open, and expansion fetches
+  one call's detail (`tool` op / /tools/{seq}); e2e proves no eager
+  loop and no excerpt before expansion. The MCP status wording says
+  warming archive, not "last complete archive". The `withui` build tag
+  makes the full product's UI a COMPILE-time guarantee across just/
+  Nix/release paths while plain `go build`/`go install` is the
+  explicit API-only variant. HTTP contracts are normalized (empty
+  lists as [], centralized typed parameter parsing, 400 on malformed
+  integers/dates and negative offsets, contract tests across every
+  list surface). Dormant slices finished or parked: prompt history is
+  queryable via a `history` op on all transports, the dead SQL pricing
+  table is removed (schema v8) with runtime pricing refresh honestly
+  parked, the budget is editable from the Usage page, and
+  `ccpeek doctor` prints resolved roots (with mechanism), database
+  paths, and migration state read-only.
+
 **Schema baseline decision:** the migration machinery stays parked until
 this branch lands on main; at that merge the baseline freezes and every
 later schema change ships as a migration. New agents (Gemini CLI,
