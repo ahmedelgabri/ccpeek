@@ -39,7 +39,7 @@ func init() {
 	}
 
 	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Path to Claude Code data directory")
-	rootCmd.PersistentFlags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "SQLite database file path")
+	rootCmd.PersistentFlags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "Database identity path: the v2 index lives at a sibling derived from this name; a v1 database at this exact path is imported")
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")

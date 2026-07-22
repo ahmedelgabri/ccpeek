@@ -80,7 +80,7 @@ The server reads each agent's data from its default root (for Claude Code,
 | -------------- | --------------------------------- | -------------------------------------------------- |
 | `-p`, `--port` | `3000`                            | Server port                                        |
 | `--claude-dir` | `~/.claude`                       | Source directory (Claude data)                     |
-| `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | SQLite database file path                          |
+| `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | Database identity: the v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`); a v1 database at this exact path is imported |
 | `--skip-index` | `false`                           | Skip indexing, serve existing data                 |
 | `--index-only` | `false`                           | Index and exit                                     |
 | `--open`       | `false`                           | Open browser after starting                        |

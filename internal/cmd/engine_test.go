@@ -344,3 +344,52 @@ func TestV1ImportStatErrorIsFailure(t *testing.T) {
 		t.Errorf("v1_import_error stale after failed→absent transition: %q", v)
 	}
 }
+
+// TestDataFileIsolation: two explicit --data-file paths in one
+// directory must open two different stores — the old mapping reduced
+// every path to <dir>/ccpeek2.db, silently aliasing independent
+// profiles — while the default name keeps its historical sibling.
+func TestDataFileIsolation(t *testing.T) {
+	if got := storeDBPath("/x/ccpeek.db"); got != "/x/ccpeek2.db" {
+		t.Errorf("default mapping = %q, want /x/ccpeek2.db", got)
+	}
+	if got := storeDBPath("/x/a.db"); got != "/x/a.v2.db" {
+		t.Errorf("explicit mapping = %q, want /x/a.v2.db", got)
+	}
+	if a, b := storeDBPath("/x/a.db"), storeDBPath("/x/b.db"); a == b {
+		t.Fatalf("two names alias one store: %q", a)
+	}
+
+	// End to end: data written through profile A must not appear in B.
+	ctx := context.Background()
+	dir := t.TempDir()
+	emptyRoot := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", emptyRoot)
+	t.Setenv("CODEX_HOME", emptyRoot)
+	t.Setenv("OPENCODE_DATA_DIR", emptyRoot)
+	t.Setenv("CCPEEK_CURSOR_DIR", emptyRoot)
+	open := func(name string) *engine {
+		t.Helper()
+		cmd := &cobra.Command{}
+		cmd.Flags().String("data-file", filepath.Join(dir, name), "")
+		cmd.Flags().String("claude-dir", "", "")
+		if err := cmd.Flags().Set("claude-dir", emptyRoot); err != nil {
+			t.Fatal(err)
+		}
+		eng, err := openEngine(ctx, cmd, false, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return eng
+	}
+	engA := open("a.db")
+	if err := engA.store.SetMeta(ctx, "profile", "A"); err != nil {
+		t.Fatal(err)
+	}
+	engA.Close()
+	engB := open("b.db")
+	defer engB.Close()
+	if v, ok, _ := engB.store.GetMeta(ctx, "profile"); ok {
+		t.Errorf("profile B sees profile A's data (%q): stores alias", v)
+	}
+}

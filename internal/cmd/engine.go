@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
@@ -35,8 +36,18 @@ type engine struct {
 
 // storeDBPath places the store next to the legacy v1 file (docs/v2-plan.md
 // §8.2: a distinct name so neither binary can corrupt the other's store).
+// The v2 name derives from the data-file's own name — the default
+// ccpeek.db keeps its historical ccpeek2.db sibling, and any explicit
+// name gets its own <name>.v2.db — so two different --data-file paths
+// in one directory never alias the same store.
 func storeDBPath(dataFile string) string {
-	return filepath.Join(filepath.Dir(dataFile), "ccpeek2.db")
+	dir := filepath.Dir(dataFile)
+	base := filepath.Base(dataFile)
+	if base == "ccpeek.db" {
+		return filepath.Join(dir, "ccpeek2.db")
+	}
+	ext := filepath.Ext(base)
+	return filepath.Join(dir, strings.TrimSuffix(base, ext)+".v2"+ext)
 }
 
 // openEngineDeferred opens the store and services WITHOUT ingesting, and
