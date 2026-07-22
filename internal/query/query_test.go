@@ -2,7 +2,9 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -411,5 +413,132 @@ func TestBlocksDistinctSessionsAcrossModels(t *testing.T) {
 	}
 	if blocks[0].Messages != 3 {
 		t.Errorf("window messages = %d, want 3", blocks[0].Messages)
+	}
+}
+
+// TestNoSilentCaps seeds one row past every previously clamped surface
+// and proves completeness: Artifacts honors an explicit 501 limit and
+// pages to the full set, Usage returns all groups by default (101 days
+// would have been cut to 100), and SessionTools pages to the full set
+// with a default of everything.
+func TestNoSilentCaps(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "caps-session",
+	}, "h-caps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 101 usage days (the old Usage default returned 100).
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 101; i++ {
+		if err := w.InsertMessage(sessionID, "claude-code", canon.Message{
+			Seq: i, Role: canon.RoleAssistant, Kind: canon.KindMessage,
+			CreatedAt: base.AddDate(0, 0, i), Model: "model-a",
+			Usage: &canon.Usage{InputTokens: 10, OutputTokens: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 501 artifacts (the old Artifacts clamp was 500).
+	for i := 0; i < 501; i++ {
+		if _, err := w.UpsertArtifact(canon.Artifact{
+			Agent: "claude-code", Kind: canon.ArtifactPlan,
+			Name: fmt.Sprintf("plan-%03d.md", i), Content: "x",
+		}, fmt.Sprintf("h-%03d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 5 tool calls, paged by 2.
+	for i := 0; i < 5; i++ {
+		if err := w.InsertToolCall(sessionID, canon.ToolCall{
+			Seq: i, Name: "Bash", Kind: canon.ToolShell,
+			Input: json.RawMessage(fmt.Sprintf(`{"command":"echo %d"}`, i)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	// Usage: all 101 day groups with no limit given.
+	usage, err := svc.Usage(ctx, UsageFilter{GroupBy: "day"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage) != 101 {
+		t.Errorf("usage day groups = %d, want 101 (silently capped?)", len(usage))
+	}
+
+	// Artifacts: explicit limit past the old clamp is honored…
+	arts, err := svc.Artifacts(ctx, ArtifactsFilter{Limit: 501})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arts) != 501 {
+		t.Errorf("artifacts with limit 501 = %d, want 501", len(arts))
+	}
+	// …and offset pages cover the full set exactly once.
+	seen := map[string]bool{}
+	for offset := 0; ; offset += 100 {
+		page, err := svc.Artifacts(ctx, ArtifactsFilter{Limit: 100, Offset: offset})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range page {
+			if seen[a.Name] {
+				t.Errorf("artifact %q returned twice across pages", a.Name)
+			}
+			seen[a.Name] = true
+		}
+		if len(page) < 100 {
+			break
+		}
+	}
+	if len(seen) != 501 {
+		t.Errorf("artifacts across pages = %d, want 501", len(seen))
+	}
+
+	// Tools: default returns everything; pages of 2 cover the set.
+	all, err := svc.SessionTools(ctx, "claude-code", "caps-session", ToolsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 5 {
+		t.Errorf("tools default = %d, want 5 (all)", len(all))
+	}
+	var paged []ToolCallRow
+	for offset := 0; ; offset += 2 {
+		page, err := svc.SessionTools(ctx, "claude-code", "caps-session",
+			ToolsFilter{Limit: 2, Offset: offset})
+		if err != nil {
+			t.Fatal(err)
+		}
+		paged = append(paged, page...)
+		if len(page) < 2 {
+			break
+		}
+	}
+	if len(paged) != 5 {
+		t.Errorf("tools across pages = %d, want 5", len(paged))
 	}
 }

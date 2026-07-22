@@ -340,13 +340,31 @@ type ToolCallRow struct {
 	New string `json:"new,omitempty"`
 }
 
-// SessionTools returns every tool call of one session in order.
-func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string) ([]ToolCallRow, error) {
+// ToolsFilter pages a session's tool calls. Limit <= 0 returns
+// everything from Offset on — completeness is the default; the limit is
+// an explicit page size for callers that stream large sessions.
+type ToolsFilter struct {
+	Limit  int
+	Offset int
+}
+
+// SessionTools returns one session's tool calls in order, paged by f.
+func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string, f ToolsFilter) ([]ToolCallRow, error) {
 	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.store.ReadDB().QueryContext(ctx, `
+	limitClause := ""
+	args := []any{editExcerptLimit, editExcerptLimit, editExcerptLimit, rowID}
+	if f.Limit > 0 {
+		limitClause = "LIMIT ? OFFSET ?"
+		args = append(args, f.Limit, f.Offset)
+	} else if f.Offset > 0 {
+		// SQLite requires a LIMIT before OFFSET; -1 means unbounded.
+		limitClause = "LIMIT -1 OFFSET ?"
+		args = append(args, f.Offset)
+	}
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT tc.seq, tc.message_seq, tc.name, tc.kind,
 		       COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, ''),
 		       tc.result_status, COALESCE(tc.started_at, ''),
@@ -358,8 +376,8 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 		            WHEN tc.kind = 'file_write'
 		            THEN substr(COALESCE(json_extract(tc.input_json, '$.content'), ''), 1, ?)
 		            ELSE '' END
-		FROM tool_calls tc WHERE tc.session_id = ? ORDER BY tc.seq`,
-		editExcerptLimit, editExcerptLimit, editExcerptLimit, rowID)
+		FROM tool_calls tc WHERE tc.session_id = ? ORDER BY tc.seq %s`, limitClause),
+		args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing tool calls: %w", err)
 	}

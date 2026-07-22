@@ -74,9 +74,9 @@ export function UsagePage() {
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
 
-  // Request the server's maximum group count: the default (100) would
-  // silently truncate day histories past ~3 months and make the page
-  // total, charts, and CSV partial without saying so.
+  // No limit: usage is an aggregate surface and the server returns all
+  // groups by default, so the page total, charts, and CSV are complete
+  // by construction (the old fixed 1000 silently truncated past it).
   const { data, isLoading, error } = useQuery({
     queryKey: ["usage", group, since, until, agent, model],
     queryFn: () =>
@@ -86,7 +86,6 @@ export function UsagePage() {
         until: inclusiveUntil(until),
         agent,
         model,
-        limit: "1000",
       }),
     enabled: group !== "blocks",
     placeholderData: (prev) => prev,
@@ -94,7 +93,7 @@ export function UsagePage() {
   // Model options come from the unfiltered model rollup.
   const modelRows = useQuery({
     queryKey: ["usage", "model-options"],
-    queryFn: () => api.usage({ group: "model", limit: "1000" }),
+    queryFn: () => api.usage({ group: "model" }),
   });
   // Blocks support the agent filter (dates/models don't apply to the
   // rolling 5h windows and are hidden on that tab).
@@ -192,10 +191,7 @@ export function UsagePage() {
       )}
 
       {group === "blocks" ? (
-        <BlocksTable
-          blocks={blocks.data ?? []}
-          loading={blocks.isLoading}
-        />
+        <BlocksTable blocks={blocks.data ?? []} loading={blocks.isLoading} />
       ) : (
         <>
           <Suspense fallback={null}>
@@ -210,148 +206,157 @@ export function UsagePage() {
               <GroupBars rows={rows} group={group} />
             )}
           </Suspense>
-          {error && <p className="text-warn">Failed to load: {String(error)}</p>}
+          {error && (
+            <p className="text-warn">Failed to load: {String(error)}</p>
+          )}
           {isLoading && <SkeletonRows rows={6} className="mb-4" />}
           {!isLoading && rows.length === 0 && (
             <p className="text-ink-dim">No usage recorded yet.</p>
           )}
 
-      <div className="overflow-hidden rounded-lg border border-edge">
-        <table className="w-full text-sm">
-          <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-ink-dim">
-            <tr>
-              <SortableTH
-                label={group}
-                k="group"
-                sort={sort}
-                onSort={toggleSort}
-              />
-              <SortableTH
-                label="sessions"
-                k="sessions"
-                sort={sort}
-                onSort={toggleSort}
-                right
-              />
-              <SortableTH
-                label="tokens"
-                k="tokens"
-                sort={sort}
-                onSort={toggleSort}
-                right
-              />
-              <SortableTH
-                label="cache read"
-                k="cacheRead"
-                sort={sort}
-                onSort={toggleSort}
-                right
-              />
-              <SortableTH
-                label="cost"
-                k="cost"
-                sort={sort}
-                onSort={toggleSort}
-                right
-              />
-              <th className="w-1/3 px-4 py-2 font-normal normal-case">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-[2px] bg-accent/70" />
-                  reported
-                  <span className="ml-2 inline-block h-2 w-2 rounded-[2px] bg-accent/30" />
-                  estimated
-                </span>
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-edge bg-surface-1">
-            {rows.map((r) => (
-              <tr key={r.group || "(none)"}>
-                <td className="px-4 py-2 font-mono text-xs">
-                  {!r.group ? (
-                    <span className="text-ink-dim">(no {group})</span>
-                  ) : (
-                    <Link
-                      to="/sessions"
-                      search={pivotSearch(group, r.group, {
-                        agent,
-                        model,
-                        since,
-                        until,
-                      })}
-                      title="Sessions matching this row (and the active filters)"
-                      className="hover:text-accent"
-                    >
-                      {r.group}
-                    </Link>
-                  )}
-                  {r.hasUnpriced && (
-                    <span className="ml-2 text-warn" title="Contains unpriced tokens">
-                      ●
+          <div className="overflow-hidden rounded-lg border border-edge">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-ink-dim">
+                <tr>
+                  <SortableTH
+                    label={group}
+                    k="group"
+                    sort={sort}
+                    onSort={toggleSort}
+                  />
+                  <SortableTH
+                    label="sessions"
+                    k="sessions"
+                    sort={sort}
+                    onSort={toggleSort}
+                    right
+                  />
+                  <SortableTH
+                    label="tokens"
+                    k="tokens"
+                    sort={sort}
+                    onSort={toggleSort}
+                    right
+                  />
+                  <SortableTH
+                    label="cache read"
+                    k="cacheRead"
+                    sort={sort}
+                    onSort={toggleSort}
+                    right
+                  />
+                  <SortableTH
+                    label="cost"
+                    k="cost"
+                    sort={sort}
+                    onSort={toggleSort}
+                    right
+                  />
+                  <th className="w-1/3 px-4 py-2 font-normal normal-case">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-2 rounded-[2px] bg-accent/70" />
+                      reported
+                      <span className="ml-2 inline-block h-2 w-2 rounded-[2px] bg-accent/30" />
+                      estimated
                     </span>
-                  )}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">{r.sessions}</td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {fmtTokens(totalTokens(r.tokens))}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums text-ink-dim">
-                  {fmtTokens(r.tokens.cacheRead)}
-                </td>
-                <td
-                  className="px-4 py-2 text-right tabular-nums text-ok"
-                  title={`reported ${fmtCost(r.costReportedUSD)} · estimated ${fmtCost(r.costEstimatedUSD)}`}
-                >
-                  {fmtCost(r.costUSD)}
-                </td>
-                <td
-                  className="px-4 py-2"
-                  onMouseEnter={(e) =>
-                    tooltip.show(
-                      e,
-                      <>
-                        <span className="text-ink">{r.group || group}</span>
-                        <br />
-                        reported{" "}
-                        <span className="text-ok">
-                          {fmtCost(r.costReportedUSD)}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-edge bg-surface-1">
+                {rows.map((r) => (
+                  <tr key={r.group || "(none)"}>
+                    <td className="px-4 py-2 font-mono text-xs">
+                      {!r.group ? (
+                        <span className="text-ink-dim">(no {group})</span>
+                      ) : (
+                        <Link
+                          to="/sessions"
+                          search={pivotSearch(group, r.group, {
+                            agent,
+                            model,
+                            since,
+                            until,
+                          })}
+                          title="Sessions matching this row (and the active filters)"
+                          className="hover:text-accent"
+                        >
+                          {r.group}
+                        </Link>
+                      )}
+                      {r.hasUnpriced && (
+                        <span
+                          className="ml-2 text-warn"
+                          title="Contains unpriced tokens"
+                        >
+                          ●
                         </span>
-                        {" · "}estimated{" "}
-                        <span className="text-ok">
-                          {fmtCost(r.costEstimatedUSD)}
-                        </span>
-                      </>,
-                    )
-                  }
-                  onMouseLeave={tooltip.hide}
-                >
-                  <div
-                    className="flex h-2 gap-[1px] overflow-hidden rounded"
-                    style={{ width: `${Math.max((r.costUSD / maxCost) * 100, 1)}%` }}
-                  >
-                    {r.costReportedUSD > 0 && (
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {r.sessions}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {fmtTokens(totalTokens(r.tokens))}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-ink-dim">
+                      {fmtTokens(r.tokens.cacheRead)}
+                    </td>
+                    <td
+                      className="px-4 py-2 text-right tabular-nums text-ok"
+                      title={`reported ${fmtCost(r.costReportedUSD)} · estimated ${fmtCost(r.costEstimatedUSD)}`}
+                    >
+                      {fmtCost(r.costUSD)}
+                    </td>
+                    <td
+                      className="px-4 py-2"
+                      onMouseEnter={(e) =>
+                        tooltip.show(
+                          e,
+                          <>
+                            <span className="text-ink">{r.group || group}</span>
+                            <br />
+                            reported{" "}
+                            <span className="text-ok">
+                              {fmtCost(r.costReportedUSD)}
+                            </span>
+                            {" · "}estimated{" "}
+                            <span className="text-ok">
+                              {fmtCost(r.costEstimatedUSD)}
+                            </span>
+                          </>,
+                        )
+                      }
+                      onMouseLeave={tooltip.hide}
+                    >
                       <div
-                        className="bg-accent/70"
+                        className="flex h-2 gap-[1px] overflow-hidden rounded"
                         style={{
-                          width: `${(r.costReportedUSD / (r.costUSD || 1)) * 100}%`,
+                          width: `${Math.max((r.costUSD / maxCost) * 100, 1)}%`,
                         }}
-                      />
-                    )}
-                    {r.costEstimatedUSD > 0 && (
-                      <div
-                        className="bg-accent/30"
-                        style={{
-                          width: `${(r.costEstimatedUSD / (r.costUSD || 1)) * 100}%`,
-                        }}
-                      />
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                      >
+                        {r.costReportedUSD > 0 && (
+                          <div
+                            className="bg-accent/70"
+                            style={{
+                              width: `${(r.costReportedUSD / (r.costUSD || 1)) * 100}%`,
+                            }}
+                          />
+                        )}
+                        {r.costEstimatedUSD > 0 && (
+                          <div
+                            className="bg-accent/30"
+                            style={{
+                              width: `${(r.costEstimatedUSD / (r.costUSD || 1)) * 100}%`,
+                            }}
+                          />
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
       {tooltip.node}
@@ -375,9 +380,7 @@ function SortableTH<K extends string>({
   const active = sort?.key === k;
   return (
     <th
-      aria-sort={
-        active ? (sort.desc ? "descending" : "ascending") : undefined
-      }
+      aria-sort={active ? (sort.desc ? "descending" : "ascending") : undefined}
       className={`px-4 py-2 ${right ? "text-right" : ""}`}
     >
       <button
@@ -517,20 +520,24 @@ function BlocksTable({
           {sorted.map((b) => (
             <tr key={b.start} className={b.active ? "bg-surface-2/50" : ""}>
               <td className="px-4 py-2 font-mono text-xs">
-                {b.start.slice(0, 16).replace("T", " ")} –{" "}
-                {b.end.slice(11, 16)}
+                {b.start.slice(0, 16).replace("T", " ")} – {b.end.slice(11, 16)}
                 {b.active && (
                   <span className="ml-2 rounded bg-ok/20 px-1.5 text-ok">
                     active
                   </span>
                 )}
                 {(b.unpricedTokens ?? 0) > 0 && (
-                  <span className="ml-2 text-warn" title="Contains unpriced tokens">
+                  <span
+                    className="ml-2 text-warn"
+                    title="Contains unpriced tokens"
+                  >
                     ●
                   </span>
                 )}
               </td>
-              <td className="px-4 py-2 text-right tabular-nums">{b.sessions}</td>
+              <td className="px-4 py-2 text-right tabular-nums">
+                {b.sessions}
+              </td>
               <td className="px-4 py-2 text-right tabular-nums">
                 {fmtTokens(totalTokens(b.tokens))}
               </td>

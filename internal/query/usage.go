@@ -46,11 +46,12 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		return nil, fmt.Errorf("%w: unknown group %q (want day|model|project|agent)",
 			ErrBadRequest, f.GroupBy)
 	}
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Limit > 1000 {
-		f.Limit = 1000
+	// Usage is an aggregate surface: its group cardinality is naturally
+	// bounded (days, models, agents, workspaces), so the default is ALL
+	// groups — totals, charts, and CSV exports must never be silently
+	// partial. A positive limit remains an explicit, caller-owned bound.
+	if f.Limit < 0 {
+		f.Limit = 0
 	}
 
 	where := "WHERE 1=1"
@@ -71,7 +72,11 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		where += " AND r.day < ?"
 		args = append(args, f.Until)
 	}
-	args = append(args, f.Limit)
+	limitClause := ""
+	if f.Limit > 0 {
+		limitClause = "LIMIT ?"
+		args = append(args, f.Limit)
+	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s AS grp,
@@ -87,7 +92,7 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		%s
 		GROUP BY grp
 		ORDER BY %s
-		LIMIT ?`, groupExpr, where, orderExpr), args...)
+		%s`, groupExpr, where, orderExpr, limitClause), args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating usage: %w", err)
 	}

@@ -220,8 +220,11 @@ export const api = {
     offset?: string;
   }) => get<CommandRow[] | null>("/commands", filters),
 
-  sessionTools: (agent: string, id: string) =>
-    get<ToolCallRow[] | null>(`/sessions/${agent}/${id}/tools`),
+  sessionTools: (agent: string, id: string, limit = 0, offset = 0) =>
+    get<ToolCallRow[] | null>(`/sessions/${agent}/${id}/tools`, {
+      limit: String(limit),
+      offset: String(offset),
+    }),
 };
 
 // The validated per-agent palette (also defined as CSS vars in
@@ -331,11 +334,12 @@ async function send<T>(
 }
 
 export const parityApi = {
-  artifacts: (kind?: string, agent?: string) =>
+  artifacts: (kind?: string, agent?: string, limit = 100, offset = 0) =>
     get<ArtifactSummary[] | null>("/artifacts", {
       kind: kind ?? "",
       agent: agent ?? "",
-      limit: "500",
+      limit: String(limit),
+      offset: String(offset),
     }),
   artifact: (agent: string, kind: string, name: string) =>
     get<ArtifactDetail>(

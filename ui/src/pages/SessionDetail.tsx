@@ -8,7 +8,12 @@ import {
 } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import { useHighlight } from "../highlight";
 import { DiffView } from "../Diff";
 import {
@@ -32,6 +37,10 @@ import {
 } from "../ui";
 
 const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
+
+// Tool-call page size: bounds each /tools response; pages auto-fetch
+// until the session's full set is loaded.
+const TOOLS_PAGE = 500;
 
 // The transcript pages forward through the API's from/limit window (the
 // server caps a single response at 1000 rows). A session can run to many
@@ -140,15 +149,32 @@ export function SessionDetailPage() {
     [navigate],
   );
   const jumpToMessage = useCallback(
-    (seq: number) =>
-      void navigate({ search: { seq }, resetScroll: false }),
+    (seq: number) => void navigate({ search: { seq }, resetScroll: false }),
     [navigate],
   );
 
-  const tools = useQuery({
+  // Tool calls arrive in fixed pages so a tool-heavy session never
+  // ships one giant response; pages auto-fetch to completion because
+  // the transcript chips and the Tools/Files tabs all need the full
+  // set (each page is bounded, the set is not silently capped).
+  const tools = useInfiniteQuery({
     queryKey: ["tools", agent, sessionId],
-    queryFn: () => api.sessionTools(agent, sessionId),
+    queryFn: ({ pageParam }) =>
+      api.sessionTools(agent, sessionId, TOOLS_PAGE, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, _all, lastParam) =>
+      last && last.length === TOOLS_PAGE ? lastParam + TOOLS_PAGE : undefined,
   });
+  const { hasNextPage: toolsHaveMore, isFetchingNextPage: toolsFetching } =
+    tools;
+  useEffect(() => {
+    if (toolsHaveMore && !toolsFetching) void tools.fetchNextPage();
+  }, [toolsHaveMore, toolsFetching, tools]);
+  const toolPages = tools.data;
+  const allToolRows = useMemo(
+    () => (toolPages?.pages ?? []).flatMap((p) => p ?? []),
+    [toolPages],
+  );
 
   if (detail.isLoading)
     return (
@@ -159,7 +185,7 @@ export function SessionDetailPage() {
     );
   if (detail.error) return <p className="text-warn">{String(detail.error)}</p>;
   const s = detail.data!;
-  const toolRows = tools.data ?? [];
+  const toolRows = allToolRows;
   const commands = toolRows.filter((t) => t.kind === "shell" && t.detail);
   const files = groupFiles(toolRows);
 
@@ -298,15 +324,10 @@ export function SessionDetailPage() {
       {tab === "commands" && (
         <CommandsTab commands={commands} onJump={jumpToMessage} />
       )}
-      {tab === "tools" && (
-        <ToolsTab tools={toolRows} onJump={jumpToMessage} />
-      )}
+      {tab === "tools" && <ToolsTab tools={toolRows} onJump={jumpToMessage} />}
       {tab === "files" && <FilesTab files={files} onJump={jumpToMessage} />}
       {tab === "artifacts" && (
-        <ArtifactsTab
-          agent={s.agent}
-          artifacts={s.artifacts ?? []}
-        />
+        <ArtifactsTab agent={s.agent} artifacts={s.artifacts ?? []} />
       )}
     </div>
   );
@@ -450,7 +471,8 @@ function Transcript({
     if (rangeEnd >= visible.length - 8) onLoadMore();
   }, [hasMore, loadingMore, rangeEnd, visible.length, onLoadMore]);
   useEffect(() => {
-    if (!hasOlder || loadingOlder || !focusDone || rangeStart === undefined) return;
+    if (!hasOlder || loadingOlder || !focusDone || rangeStart === undefined)
+      return;
     if (rangeStart <= 4) {
       beforeOlder.current = document.documentElement.scrollHeight;
       onLoadOlder();
@@ -556,96 +578,94 @@ function Transcript({
                     : undefined
                 }
                 className={`rounded-md border border-l-2 ${
-                m.seq === focusSeq
-                  ? "border-accent"
-                  : isUser
-                    ? "border-edge border-l-accent"
+                  m.seq === focusSeq
+                    ? "border-accent"
+                    : isUser
+                      ? "border-edge border-l-accent"
+                      : isMeta
+                        ? "border-edge border-dashed"
+                        : "border-edge border-l-assistant/60"
+                } ${
+                  isUser
+                    ? "bg-[color-mix(in_oklab,var(--color-accent)_7%,var(--color-surface-1))] p-3"
                     : isMeta
-                      ? "border-edge border-dashed"
-                      : "border-edge border-l-assistant/60"
-              } ${
-                isUser
-                  ? "bg-[color-mix(in_oklab,var(--color-accent)_7%,var(--color-surface-1))] p-3"
-                  : isMeta
-                    ? "bg-transparent px-3 py-1.5"
-                    : "bg-surface-1 p-3"
-              } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
-                m.isSidechain && treeView ? "border-dashed" : ""
-              }`}
-            >
-              <div
-                onClick={
-                  isMeta && m.text.trim() !== ""
-                    ? () => toggleMeta(m.seq)
-                    : undefined
-                }
-                className={`flex gap-2 font-mono text-[11px] text-ink-faint ${isMeta ? "" : "mb-1"} ${
-                  isMeta && m.text.trim() !== ""
-                    ? "cursor-pointer hover:text-ink-dim"
-                    : ""
+                      ? "bg-transparent px-3 py-1.5"
+                      : "bg-surface-1 p-3"
+                } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
+                  m.isSidechain && treeView ? "border-dashed" : ""
                 }`}
               >
-                <span
-                  className={
-                    isAssistant
-                      ? "text-assistant"
-                      : isUser
-                        ? "font-medium text-accent"
-                        : ""
+                <div
+                  onClick={
+                    isMeta && m.text.trim() !== ""
+                      ? () => toggleMeta(m.seq)
+                      : undefined
                   }
+                  className={`flex gap-2 font-mono text-[11px] text-ink-faint ${isMeta ? "" : "mb-1"} ${
+                    isMeta && m.text.trim() !== ""
+                      ? "cursor-pointer hover:text-ink-dim"
+                      : ""
+                  }`}
                 >
-                  {m.isSidechain ? "↳ " : ""}
-                  {glyph} {m.role}
-                  {m.kind !== "message" ? ` · ${m.kind}` : ""}
-                </span>
-                {m.model && <span>{m.model}</span>}
-                {isMeta && m.text.trim() !== "" && (
-                  <>
-                    <span className="text-accent">
-                      {openMeta.has(m.seq) ? "▾" : "▸"}
-                    </span>
-                    {!openMeta.has(m.seq) && (
-                      <span className="truncate text-ink-faint italic">
-                        {m.text.slice(0, 120)}
-                      </span>
-                    )}
-                  </>
-                )}
-                <span className="ml-auto flex items-center gap-1 tabular-nums">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyPermalink(m.seq);
-                    }}
-                    title="Copy link to this message"
+                  <span
                     className={
-                      copiedSeq === m.seq
-                        ? "text-ok"
-                        : "hover:text-accent"
+                      isAssistant
+                        ? "text-assistant"
+                        : isUser
+                          ? "font-medium text-accent"
+                          : ""
                     }
                   >
-                    {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
-                  </button>
-                  {m.createdAt && <span>· {m.createdAt.slice(11, 19)}</span>}
-                </span>
-              </div>
-              {isMeta && openMeta.has(m.seq) && (
-                <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-                  {m.text}
-                </pre>
-              )}
-              {!isMeta &&
-                m.text.trim() !== "" &&
-                (m.html ? (
-                  <div
-                    className="prose-msg"
-                    dangerouslySetInnerHTML={{ __html: m.html }}
-                  />
-                ) : (
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                    {m.isSidechain ? "↳ " : ""}
+                    {glyph} {m.role}
+                    {m.kind !== "message" ? ` · ${m.kind}` : ""}
+                  </span>
+                  {m.model && <span>{m.model}</span>}
+                  {isMeta && m.text.trim() !== "" && (
+                    <>
+                      <span className="text-accent">
+                        {openMeta.has(m.seq) ? "▾" : "▸"}
+                      </span>
+                      {!openMeta.has(m.seq) && (
+                        <span className="truncate text-ink-faint italic">
+                          {m.text.slice(0, 120)}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  <span className="ml-auto flex items-center gap-1 tabular-nums">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyPermalink(m.seq);
+                      }}
+                      title="Copy link to this message"
+                      className={
+                        copiedSeq === m.seq ? "text-ok" : "hover:text-accent"
+                      }
+                    >
+                      {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
+                    </button>
+                    {m.createdAt && <span>· {m.createdAt.slice(11, 19)}</span>}
+                  </span>
+                </div>
+                {isMeta && openMeta.has(m.seq) && (
+                  <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
                     {m.text}
-                  </div>
-                ))}
+                  </pre>
+                )}
+                {!isMeta &&
+                  m.text.trim() !== "" &&
+                  (m.html ? (
+                    <div
+                      className="prose-msg"
+                      dangerouslySetInnerHTML={{ __html: m.html }}
+                    />
+                  ) : (
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {m.text}
+                    </div>
+                  ))}
                 {msgTools.length > 0 && (
                   <MessageTools
                     tools={msgTools}
@@ -841,9 +861,10 @@ function ToolsTab({
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
   const byKind = new Map<string, number>();
   for (const t of tools) byKind.set(t.kind, (byKind.get(t.kind) ?? 0) + 1);
-  const kinds = Array.from(byKind, ([label, count]) => ({ label, count })).toSorted(
-    (a, b) => b.count - a.count,
-  );
+  const kinds = Array.from(byKind, ([label, count]) => ({
+    label,
+    count,
+  })).toSorted((a, b) => b.count - a.count);
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-edge bg-surface-1">
@@ -1038,7 +1059,12 @@ function ArtifactsTab({
   artifacts,
 }: {
   agent: string;
-  artifacts: { kind: string; name: string; relation: string; evidence: string }[];
+  artifacts: {
+    kind: string;
+    name: string;
+    relation: string;
+    evidence: string;
+  }[];
 }) {
   if (artifacts.length === 0)
     return <EmptyNote>No artifacts linked to this session.</EmptyNote>;

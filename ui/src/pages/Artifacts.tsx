@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { parityApi } from "../api";
 
@@ -16,17 +16,34 @@ const KINDS = [
   "usage_report",
 ] as const;
 
+const PAGE = 100;
+
 // Artifact browser: plans, todos, tasks, snapshots, pastes, memories,
 // file history, usage data — every sidecar v1 had pages for, in one
-// kind-filterable list.
+// kind-filterable list. Offset pages of a fixed size: a single capped
+// request would silently hide everything past the cap.
 export function ArtifactsPage() {
   const [kind, setKind] = useState("");
 
-  const { data, isLoading, error } = useQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
     queryKey: ["artifacts", kind],
-    queryFn: () => parityApi.artifacts(kind),
+    queryFn: ({ pageParam }) => parityApi.artifacts(kind, "", PAGE, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, _all, lastParam) =>
+      last && last.length === PAGE ? lastParam + PAGE : undefined,
+    placeholderData: (prev) => prev,
   });
-  const artifacts = data ?? [];
+  const artifacts = useMemo(
+    () => (data?.pages ?? []).flatMap((p) => p ?? []),
+    [data],
+  );
 
   return (
     <div>
@@ -72,6 +89,15 @@ export function ArtifactsPage() {
           </li>
         ))}
       </ul>
+      {hasNextPage && (
+        <button
+          onClick={() => void fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
+        >
+          {isFetchingNextPage ? "loading…" : "load more"}
+        </button>
+      )}
     </div>
   );
 }

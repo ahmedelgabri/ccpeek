@@ -174,7 +174,9 @@ func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) sessionTools(w http.ResponseWriter, r *http.Request) {
-	tools, err := h.svc.SessionTools(r.Context(), r.PathValue("agent"), r.PathValue("id"))
+	q := r.URL.Query()
+	tools, err := h.svc.SessionTools(r.Context(), r.PathValue("agent"), r.PathValue("id"),
+		query.ToolsFilter{Limit: intParam(q.Get("limit")), Offset: intParam(q.Get("offset"))})
 	if err != nil {
 		writeError(w, err)
 		return
