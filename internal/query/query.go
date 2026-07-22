@@ -151,18 +151,37 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for i := range out {
-		if err := s.attachCost(ctx, rowIDs[i], &out[i]); err != nil {
-			return nil, err
-		}
+	if err := s.attachCosts(ctx, rowIDs, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-// attachCost computes a session's token totals and auto-mode cost.
+// attachCost computes one session's token totals and auto-mode cost.
 func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary) error {
-	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT m.model,
+	return s.attachCosts(ctx, []int64{sessionRowID}, []SessionSummary{*sum},
+		func(i int, updated SessionSummary) { *sum = updated })
+}
+
+// attachCosts computes token totals and auto-mode cost for a whole page
+// of sessions in ONE grouped query — per-row queries made a 100-session
+// list cost 101 round trips. apply, when given, receives each updated
+// summary (the single-session path writes through a pointer).
+func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary, apply ...func(int, SessionSummary)) error {
+	if len(rowIDs) == 0 {
+		return nil
+	}
+	placeholders := strings.Repeat("?,", len(rowIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(rowIDs))
+	byRow := make(map[int64]int, len(rowIDs))
+	for i, id := range rowIDs {
+		args[i] = id
+		byRow[id] = i
+	}
+
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT m.session_id, m.model,
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
 		       SUM(COALESCE(u.reported_cost_usd, 0)),
@@ -172,39 +191,52 @@ func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *Sessi
 		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_write_tokens ELSE 0 END)
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
-		WHERE m.session_id = ?
-		GROUP BY m.model`, sessionRowID)
+		WHERE m.session_id IN (%s)
+		GROUP BY m.session_id, m.model`, placeholders), args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var sessionID int64
 		var model string
 		var in, out, cr, cw int64
 		var reported float64
 		var uin, uout, ucr, ucw int64
-		if err := rows.Scan(&model, &in, &out, &cr, &cw,
+		if err := rows.Scan(&sessionID, &model, &in, &out, &cr, &cw,
 			&reported, &uin, &uout, &ucr, &ucw); err != nil {
 			return err
 		}
+		i, found := byRow[sessionID]
+		if !found {
+			continue
+		}
+		sum := &sums[i]
 		sum.Tokens.Input += in
 		sum.Tokens.Output += out
 		sum.Tokens.CacheRead += cr
 		sum.Tokens.CacheWrite += cw
 		sum.CostUSD += reported
-		if uin+uout+ucr+ucw == 0 {
-			continue
-		}
-		if rate, ok := s.pricer.Lookup(model); ok {
-			sum.CostUSD += rate.Cost(canon.Usage{
-				InputTokens: uin, OutputTokens: uout,
-				CacheReadTokens: ucr, CacheWriteTokens: ucw,
-			})
-		} else {
-			sum.UnpricedTokens += uin + uout + ucr + ucw
+		if uin+uout+ucr+ucw > 0 {
+			if rate, ok := s.pricer.Lookup(model); ok {
+				sum.CostUSD += rate.Cost(canon.Usage{
+					InputTokens: uin, OutputTokens: uout,
+					CacheReadTokens: ucr, CacheWriteTokens: ucw,
+				})
+			} else {
+				sum.UnpricedTokens += uin + uout + ucr + ucw
+			}
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, fn := range apply {
+		for i := range sums {
+			fn(i, sums[i])
+		}
+	}
+	return nil
 }
 
 // Relation is one session-graph edge, viewed from a session.
