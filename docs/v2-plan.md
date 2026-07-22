@@ -144,12 +144,29 @@ Post-launch sprints (feedback-driven, after v2.0):
   and honor --prune, and the Nix toolchain pins Go 1.25.12
   (govulncheck-clean) with the pnpm fetcher on v3.
 
-Remaining review findings are tracked release-gate decisions (schema
-baseline freeze timing, adapter capability labeling, v1 importer
-entity-coverage policy, go-install embed contract) plus deferred
-optimizations (transcript DOM windowing, N+1 session costs, append
-single-pass I/O, operation registry). New agents (Gemini CLI, Droid,
-Amp, …) land post-launch per §6 as demand shows up.
+- ✅ **Release-gate fixes + deferred optimizations (2026-07-13+)**: the
+  v1 importer now rescues EVERY retained entity class (todos, task
+  groups, file history, usage facets/report, memories, prompt history,
+  and tool calls for orphan sessions — verified on a real 1.2GB v1 db:
+  1,606 sessions, 149k messages, 29.6k tool calls, 867 artifacts in
+  8.8s), skipping only what v2 actually holds; Pi emits tool calls from
+  its real toolCall/toolResult format (20k calls extracted from a live
+  corpus, 99.98% result-paired); Cursor's meta selection is
+  deterministic and its fixture-based capability level is labeled
+  honestly (no real store.db exists to spike against); binaries built
+  without the SPA say so instead of serving a blank page. Optimizations:
+  the transcript is virtualized (TanStack Virtual — 21–33 mounted rows
+  at any depth of a 4.3k-message session), session-list costs aggregate
+  in one grouped query, append passes read the source once (the running
+  SHA-256 hands off from change detection to the tail parser), and
+  internal/ops defines every read operation once with the CLI and MCP
+  generated from it (ten ops each, matching HTTP; the once-missing
+  model/full filters everywhere).
+
+**Schema baseline decision:** the migration machinery stays parked until
+this branch lands on main; at that merge the baseline freezes and every
+later schema change ships as a migration. New agents (Gemini CLI,
+Droid, Amp, …) land post-launch per §6 as demand shows up.
 
 **Schema policy:** the store is an archive, not a cache — it retains
 sessions whose source files were cleaned up (prune is opt-in),
