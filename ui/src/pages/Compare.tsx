@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, fmtCost, fmtTokens, type SessionDetail } from "../api";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import {
+  api,
+  fmtCost,
+  fmtTokens,
+  fmtWhen,
+  shortPath,
+  type SessionDetail,
+} from "../api";
+import { AgentChip, EmptyNote, SkeletonRows } from "../ui";
 
 const PICKER_PAGE = 100;
 
@@ -9,8 +18,10 @@ const PICKER_PAGE = 100;
 // so ANY session is reachable — the old single 200-row fetch silently
 // hid everything older.
 export function ComparePage() {
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
+  const search = useSearch({ from: "/compare" });
+  const navigate = useNavigate({ from: "/compare" });
+  const a = search.a ?? "";
+  const b = search.b ?? "";
 
   const [agentA, idA] = a.split("|");
   const [agentB, idB] = b.split("|");
@@ -20,67 +31,187 @@ export function ComparePage() {
   return (
     <div>
       <h1 className="mb-4 text-xl font-semibold">Compare sessions</h1>
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <SessionPicker value={a} onChange={setA} label="Session A" />
-        <SessionPicker value={b} onChange={setB} label="Session B" />
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <SessionPicker
+          value={a}
+          onChange={(value) =>
+            void navigate({
+              search: (prev: { a?: string; b?: string }) => ({
+                ...prev,
+                a: value || undefined,
+              }),
+              replace: true,
+            })
+          }
+          label="Session A"
+        />
+        <button
+          type="button"
+          onClick={() =>
+            void navigate({
+              search: { a: b || undefined, b: a || undefined },
+              replace: true,
+            })
+          }
+          disabled={!a && !b}
+          className="self-center justify-self-center rounded-md border border-edge px-2 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-edge-strong hover:text-ink disabled:opacity-40 sm:self-end sm:mb-1"
+          aria-label="Swap compared sessions"
+          title="Swap sessions"
+        >
+          ⇄
+        </button>
+        <SessionPicker
+          value={b}
+          onChange={(value) =>
+            void navigate({
+              search: (prev: { a?: string; b?: string }) => ({
+                ...prev,
+                b: value || undefined,
+              }),
+              replace: true,
+            })
+          }
+          label="Session B"
+        />
       </div>
 
-      {left && right && (
-        <div className="overflow-hidden rounded-lg border border-edge">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-ink-dim">
-              <tr>
-                <th className="px-4 py-2">Metric</th>
-                <th className="px-4 py-2 text-right">A</th>
-                <th className="px-4 py-2 text-right">B</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-edge bg-surface-1">
-              <Row
-                label="Cost"
-                a={fmtCost(left.costUSD, left.unpricedTokens)}
-                b={fmtCost(right.costUSD, right.unpricedTokens)}
-              />
-              <Row
-                label="Messages"
-                a={String(left.messages)}
-                b={String(right.messages)}
-              />
-              <Row
-                label="Tool calls"
-                a={String(left.toolCalls)}
-                b={String(right.toolCalls)}
-              />
-              <Row
-                label="Input tokens"
-                a={fmtTokens(left.tokens.input)}
-                b={fmtTokens(right.tokens.input)}
-              />
-              <Row
-                label="Output tokens"
-                a={fmtTokens(left.tokens.output)}
-                b={fmtTokens(right.tokens.output)}
-              />
-              <Row
-                label="Cache read"
-                a={fmtTokens(left.tokens.cacheRead)}
-                b={fmtTokens(right.tokens.cacheRead)}
-              />
-              <Row
-                label="Cache write"
-                a={fmtTokens(left.tokens.cacheWrite)}
-                b={fmtTokens(right.tokens.cacheWrite)}
-              />
-              <Row
-                label="Models"
-                a={(left.models ?? []).join(", ")}
-                b={(right.models ?? []).join(", ")}
-              />
-            </tbody>
-          </table>
+      {(!a || !b) && (
+        <div role="status">
+          <EmptyNote>
+            {a || b
+              ? "Pick one more session to compare."
+              : "Pick two sessions to compare."}
+          </EmptyNote>
         </div>
       )}
+      {a && b && (left.error || right.error) && (
+        <p role="alert" className="text-warn">
+          Failed to load: {String(left.error ?? right.error)}
+        </p>
+      )}
+      {a &&
+        b &&
+        !left.error &&
+        !right.error &&
+        (left.isLoading || right.isLoading) && (
+          <div role="status">
+            <span className="sr-only">Loading session comparison…</span>
+            <SkeletonRows rows={8} />
+          </div>
+        )}
+      {!left.error && !right.error && left.data && right.data && (
+        <ComparisonTable left={left.data} right={right.data} />
+      )}
     </div>
+  );
+}
+
+function ComparisonTable({
+  left,
+  right,
+}: {
+  left: SessionDetail;
+  right: SessionDetail;
+}) {
+  const leftDuration = durationMs(left);
+  const rightDuration = durationMs(right);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-edge">
+      <table className="w-full min-w-[720px] text-sm">
+        <thead className="bg-surface-2 text-left text-xs text-ink-dim">
+          <tr>
+            <th className="px-4 py-2 uppercase tracking-wide">Metric</th>
+            <SessionHeading session={left} />
+            <SessionHeading session={right} />
+            <th className="px-4 py-2 text-right font-mono text-[11px] uppercase tracking-wide">
+              Δ B−A
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-edge bg-surface-1">
+          <TextRow
+            label="Started"
+            a={fmtWhen(left.createdAt)}
+            b={fmtWhen(right.createdAt)}
+          />
+          <NumericRow
+            label="Duration"
+            a={leftDuration}
+            b={rightDuration}
+            format={fmtDuration}
+            deltaFormat={fmtDuration}
+          />
+          <TextRow
+            label="Workspace"
+            a={shortPath(left.cwd)}
+            b={shortPath(right.cwd)}
+            mono
+          />
+          <NumericRow
+            label="Cost"
+            a={left.costUSD}
+            b={right.costUSD}
+            formatA={(n) => fmtCost(n, left.unpricedTokens)}
+            formatB={(n) => fmtCost(n, right.unpricedTokens)}
+            deltaFormat={(n) => fmtCost(n)}
+            direction="lower"
+            cost
+          />
+          <NumericRow label="Messages" a={left.messages} b={right.messages} />
+          <NumericRow
+            label="Tool calls"
+            a={left.toolCalls}
+            b={right.toolCalls}
+          />
+          <NumericRow
+            label="Input tokens"
+            a={left.tokens.input}
+            b={right.tokens.input}
+            format={fmtTokens}
+            deltaFormat={fmtTokens}
+          />
+          <NumericRow
+            label="Output tokens"
+            a={left.tokens.output}
+            b={right.tokens.output}
+            format={fmtTokens}
+            deltaFormat={fmtTokens}
+          />
+          <NumericRow
+            label="Cache read"
+            a={left.tokens.cacheRead}
+            b={right.tokens.cacheRead}
+            format={fmtTokens}
+            deltaFormat={fmtTokens}
+          />
+          <NumericRow
+            label="Cache write"
+            a={left.tokens.cacheWrite}
+            b={right.tokens.cacheWrite}
+            format={fmtTokens}
+            deltaFormat={fmtTokens}
+          />
+          <ModelsRow a={left.models ?? []} b={right.models ?? []} />
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SessionHeading({ session }: { session: SessionDetail }) {
+  return (
+    <th className="max-w-72 px-4 py-2">
+      <Link
+        to="/sessions/$agent/$sessionId"
+        params={{ agent: session.agent, sessionId: session.id }}
+        className="flex items-center justify-end gap-2 hover:text-accent"
+      >
+        <AgentChip agent={session.agent} />
+        <span className="truncate font-medium text-ink">
+          {session.title || session.id}
+        </span>
+      </Link>
+    </th>
   );
 }
 
@@ -104,8 +235,9 @@ function SessionPicker({
   });
   const list = sessions.data ?? [];
   const truncated = list.length === PICKER_PAGE;
+  const selectedVisible = list.some((s) => `${s.agent}|${s.id}` === value);
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -116,13 +248,17 @@ function SessionPicker({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-md border border-edge bg-surface-1 px-2 py-2 text-sm"
+        className="min-w-0 rounded-md border border-edge bg-surface-1 px-2 py-2 text-sm"
         aria-label={label}
       >
         <option value="">{label}…</option>
+        {value && !selectedVisible && (
+          <option value={value}>{value.replace("|", " · ")} (selected)</option>
+        )}
         {list.map((s) => (
           <option key={`${s.agent}|${s.id}`} value={`${s.agent}|${s.id}`}>
-            [{s.agent}] {s.title || s.id} ({fmtCost(s.costUSD)})
+            {fmtWhen(s.modifiedAt)} · [{s.agent}] {s.title || s.id} (
+            {fmtCost(s.costUSD)})
           </option>
         ))}
         {truncated && (
@@ -135,21 +271,168 @@ function SessionPicker({
   );
 }
 
-function Row({ label, a, b }: { label: string; a: string; b: string }) {
+function NumericRow({
+  label,
+  a,
+  b,
+  format = String,
+  formatA = format,
+  formatB = format,
+  deltaFormat = format,
+  direction,
+  cost = false,
+}: {
+  label: string;
+  a: number;
+  b: number;
+  format?: (n: number) => string;
+  formatA?: (n: number) => string;
+  formatB?: (n: number) => string;
+  deltaFormat?: (n: number) => string;
+  direction?: "lower";
+  cost?: boolean;
+}) {
+  const delta = b - a;
+  const valueClass = (value: number, other: number) =>
+    cost
+      ? "font-mono text-ok"
+      : value > other
+        ? "font-medium text-ink"
+        : value < other
+          ? "text-ink-dim"
+          : "text-ink";
+  const deltaTone =
+    direction === "lower" && delta !== 0
+      ? delta < 0
+        ? "text-ok"
+        : "text-warn"
+      : "text-ink-dim";
   return (
     <tr>
       <td className="px-4 py-2 text-ink-dim">{label}</td>
-      <td className="px-4 py-2 text-right tabular-nums">{a}</td>
-      <td className="px-4 py-2 text-right tabular-nums">{b}</td>
+      <td className={`px-4 py-2 text-right tabular-nums ${valueClass(a, b)}`}>
+        {formatA(a)}
+      </td>
+      <td className={`px-4 py-2 text-right tabular-nums ${valueClass(b, a)}`}>
+        {formatB(b)}
+      </td>
+      <td
+        className={`px-4 py-2 text-right font-mono tabular-nums ${deltaTone}`}
+      >
+        {formatDelta(delta, deltaFormat)}
+      </td>
     </tr>
   );
 }
 
-function useQueryDetail(agent?: string, id?: string): SessionDetail | null {
-  const q = useQuery({
+function TextRow({
+  label,
+  a,
+  b,
+  mono = false,
+}: {
+  label: string;
+  a: string;
+  b: string;
+  mono?: boolean;
+}) {
+  return (
+    <tr>
+      <td className="px-4 py-2 text-ink-dim">{label}</td>
+      <td
+        className={`max-w-72 truncate px-4 py-2 text-right ${mono ? "font-mono text-xs" : ""}`}
+        title={a}
+      >
+        {a || "—"}
+      </td>
+      <td
+        className={`max-w-72 truncate px-4 py-2 text-right ${mono ? "font-mono text-xs" : ""}`}
+        title={b}
+      >
+        {b || "—"}
+      </td>
+      <td className="px-4 py-2 text-right font-mono text-ink-faint">—</td>
+    </tr>
+  );
+}
+
+function ModelsRow({ a, b }: { a: string[]; b: string[] }) {
+  const left = new Set(a);
+  const right = new Set(b);
+  return (
+    <tr>
+      <td className="px-4 py-2 text-ink-dim">Models</td>
+      <td className="px-4 py-2">
+        <ModelChips models={a} other={right} />
+      </td>
+      <td className="px-4 py-2">
+        <ModelChips models={b} other={left} />
+      </td>
+      <td className="px-4 py-2 text-right font-mono text-ink-faint">—</td>
+    </tr>
+  );
+}
+
+function ModelChips({
+  models,
+  other,
+}: {
+  models: string[];
+  other: Set<string>;
+}) {
+  if (models.length === 0)
+    return <span className="block text-right text-ink-faint">—</span>;
+  return (
+    <div className="flex flex-wrap justify-end gap-1">
+      {models.map((model) => {
+        const shared = other.has(model);
+        return (
+          <span
+            key={model}
+            className={`rounded border px-2 py-0.5 font-mono text-xs ${
+              shared
+                ? "border-edge text-ink-faint"
+                : "border-accent/40 text-accent"
+            }`}
+          >
+            {model}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatDelta(delta: number, format: (n: number) => string): string {
+  if (delta === 0) return "—";
+  return `${delta > 0 ? "+" : "−"}${format(Math.abs(delta))}`;
+}
+
+function durationMs(session: SessionDetail): number {
+  const start = new Date(session.createdAt).getTime();
+  const end = new Date(session.modifiedAt).getTime();
+  return Number.isFinite(start) && Number.isFinite(end)
+    ? Math.max(0, end - start)
+    : 0;
+}
+
+function fmtDuration(ms: number): string {
+  const seconds = Math.round(ms / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours < 24)
+    return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
+function useQueryDetail(agent?: string, id?: string) {
+  return useQuery({
     queryKey: ["session", agent, id],
     queryFn: () => api.session(agent!, id!),
     enabled: Boolean(agent && id),
   });
-  return q.data ?? null;
 }

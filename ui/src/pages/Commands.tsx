@@ -103,7 +103,7 @@ export function CommandsPage() {
 
       {error && <p className="text-warn">Failed to load: {String(error)}</p>}
       {isLoading && <SkeletonRows rows={8} />}
-      {!isLoading && rows.length === 0 && (
+      {!isLoading && !error && rows.length === 0 && (
         <EmptyNote>No commands match.</EmptyNote>
       )}
 

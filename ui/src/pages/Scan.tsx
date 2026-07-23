@@ -1,16 +1,19 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { parityApi } from "../api";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { fmtWhen, parityApi, type ScanFinding } from "../api";
+import { EmptyNote, SkeletonRows } from "../ui";
 
 // Secret-scan findings across EVERY agent's history, with ignore toggles
 // persisted as user state (survives rescans and rebuilds).
 export function ScanPage() {
-  const [showIgnored, setShowIgnored] = useState(false);
+  const search = useSearch({ from: "/scan" });
+  const navigate = useNavigate({ from: "/scan" });
+  const showIgnored = search.ignored ?? false;
   const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["scan", showIgnored],
-    queryFn: () => parityApi.scan(showIgnored),
+    queryKey: ["scan"],
+    queryFn: () => parityApi.scan(true),
   });
 
   const toggle = useMutation({
@@ -19,8 +22,12 @@ export function ScanPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["scan"] }),
   });
 
-  const findings = data ?? [];
-  const active = findings.filter((f) => !f.ignored).length;
+  const allFindings = data ?? [];
+  const active = allFindings.filter((f) => !f.ignored).length;
+  const ignored = allFindings.length - active;
+  const findings = showIgnored
+    ? allFindings
+    : allFindings.filter((f) => !f.ignored);
 
   return (
     <div>
@@ -31,49 +38,144 @@ export function ScanPage() {
             {active} active
           </span>
         )}
-        <label className="ml-auto flex items-center gap-2 text-sm text-ink-dim">
-          <input
-            type="checkbox"
-            checked={showIgnored}
-            onChange={(e) => setShowIgnored(e.target.checked)}
-          />
+        <button
+          type="button"
+          aria-pressed={showIgnored}
+          onClick={() =>
+            void navigate({
+              search: showIgnored ? {} : { ignored: true },
+              replace: true,
+            })
+          }
+          className={`ml-auto rounded-md border border-edge px-2 py-1.5 font-mono text-xs transition-colors hover:border-edge-strong ${
+            showIgnored ? "bg-surface-2 text-ink" : "text-ink-dim"
+          }`}
+        >
           show ignored
-        </label>
+        </button>
       </div>
 
-      {error && <p className="text-warn">Failed to load: {String(error)}</p>}
-      {isLoading && <p className="text-ink-dim">Loading…</p>}
-      {!isLoading && findings.length === 0 && (
-        <p className="text-ok">No secrets detected. Run `ccpeek scan` to rescan.</p>
+      {error && (
+        <p role="alert" className="text-warn">
+          Failed to load: {String(error)}
+        </p>
+      )}
+      {isLoading && (
+        <div role="status">
+          <span className="sr-only">Loading scan findings…</span>
+          <SkeletonRows rows={6} />
+        </div>
+      )}
+      {!isLoading && !error && findings.length === 0 && (
+        <div role="status">
+          <EmptyNote>
+            {allFindings.length === 0 ? (
+              <>
+                <span className="text-ok">No secrets detected.</span> Run{" "}
+                <code className="font-mono text-ink">ccpeek scan</code> to
+                rescan.
+              </>
+            ) : (
+              <>No active findings · {ignored} ignored.</>
+            )}
+          </EmptyNote>
+        </div>
       )}
 
-      <ul className="divide-y divide-edge overflow-hidden rounded-lg border border-edge">
-        {findings.map((f) => (
-          <li
-            key={f.id}
-            className={`flex items-center gap-3 bg-surface-1 px-4 py-3 ${
-              f.ignored ? "opacity-50" : ""
-            }`}
-          >
-            <span className="rounded bg-warn/20 px-1.5 py-0.5 font-mono text-xs text-warn">
-              {f.ruleId}
-            </span>
-            <div className="min-w-0">
-              <div className="truncate text-sm">
-                {f.naturalKey}
-                {f.line > 0 && <span className="text-ink-dim"> · entry {f.line}</span>}
-              </div>
-              <div className="font-mono text-xs text-ink-dim">{f.matchRedacted}</div>
-            </div>
-            <button
-              onClick={() => toggle.mutate({ id: f.id, ignored: !f.ignored })}
-              className="ml-auto shrink-0 rounded-md border border-edge px-2 py-1 text-xs text-ink-dim hover:text-ink"
+      {findings.length > 0 && (
+        <ul className="divide-y divide-edge overflow-hidden rounded-lg border border-edge">
+          {findings.map((f) => (
+            <li
+              key={f.id}
+              className={`flex items-start gap-3 bg-surface-1 px-4 py-3 ${
+                f.ignored ? "opacity-50" : ""
+              }`}
             >
-              {f.ignored ? "unignore" : "ignore"}
-            </button>
-          </li>
-        ))}
-      </ul>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    title={f.description}
+                    className="rounded bg-warn/20 px-1.5 py-0.5 font-mono text-xs text-warn"
+                  >
+                    {f.ruleId}
+                  </span>
+                  <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-dim">
+                    {f.entityType}
+                  </span>
+                  <span className="min-w-0 truncate text-sm">
+                    {f.description}
+                  </span>
+                  <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-faint">
+                    {fmtWhen(f.scannedAt)}
+                  </span>
+                </div>
+                <FindingLocation finding={f} />
+                <div className="truncate font-mono text-xs text-ink-dim">
+                  {f.matchRedacted}
+                </div>
+              </div>
+              <button
+                onClick={() => toggle.mutate({ id: f.id, ignored: !f.ignored })}
+                aria-label={`${f.ignored ? "Unignore" : "Ignore"} ${f.ruleId} finding in ${f.naturalKey}`}
+                aria-pressed={f.ignored}
+                className="shrink-0 rounded-md border border-edge px-2 py-1 text-xs text-ink-dim transition-colors hover:border-edge-strong hover:text-ink"
+              >
+                {f.ignored ? "unignore" : "ignore"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function FindingLocation({ finding: f }: { finding: ScanFinding }) {
+  const parts = f.naturalKey.split("/");
+  if (
+    f.entityType === "message" &&
+    parts[0] === "message" &&
+    parts.length >= 3
+  ) {
+    const agent = parts[1];
+    const sessionId = parts.slice(2).join("/");
+    return (
+      <Link
+        to="/sessions/$agent/$sessionId"
+        params={{ agent, sessionId }}
+        search={f.line > 0 ? { seq: f.line } : {}}
+        className="mt-1 block truncate text-sm text-accent hover:underline"
+      >
+        {f.naturalKey}
+        {f.line > 0 && (
+          <span className="text-ink-dim"> · message #{f.line}</span>
+        )}
+      </Link>
+    );
+  }
+  if (
+    f.entityType === "artifact" &&
+    parts[0] === "artifact" &&
+    parts.length >= 4
+  ) {
+    const agent = parts[1];
+    const kind = parts[2];
+    const name = parts.slice(3).join("/");
+    return (
+      <Link
+        to="/artifacts/$agent/$kind/$name"
+        params={{ agent, kind, name }}
+        className="mt-1 block truncate text-sm text-accent hover:underline"
+      >
+        {f.naturalKey}
+        {f.line > 0 && <span className="text-ink-dim"> · line {f.line}</span>}
+      </Link>
+    );
+  }
+  return (
+    <div className="mt-1 truncate text-sm">
+      {f.naturalKey}
+      {f.line > 0 && <span className="text-ink-dim"> · entry {f.line}</span>}
     </div>
   );
 }

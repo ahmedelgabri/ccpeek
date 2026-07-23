@@ -12,8 +12,8 @@ test.describe("browse artifacts", () => {
 
     await page.locator("ul li a").first().click();
     await expect(page).toHaveURL(/\/artifacts\//);
-    // Detail header shows "<agent> · <size> bytes".
-    await expect(page.getByText(/bytes/)).toBeVisible();
+    // Detail header shows an agent chip and a human-readable size.
+    await expect(page.getByText(/\d+(?:\.\d+)? (?:B|KB|MB)/)).toBeVisible();
   });
 
   test("kind filter narrows the list to plans", async ({ page }) => {

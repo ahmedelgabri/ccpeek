@@ -256,6 +256,12 @@ const routeTree = rootRoute.addChildren([
     getParentRoute: () => rootRoute,
     path: "/artifacts",
     component: ArtifactsPage,
+    validateSearch: (s: Record<string, unknown>) => {
+      const out: { agent?: string; kind?: string } = {};
+      if (typeof s.agent === "string" && s.agent !== "") out.agent = s.agent;
+      if (typeof s.kind === "string" && s.kind !== "") out.kind = s.kind;
+      return out;
+    },
   }),
   createRoute({
     getParentRoute: () => rootRoute,
@@ -266,11 +272,19 @@ const routeTree = rootRoute.addChildren([
     getParentRoute: () => rootRoute,
     path: "/scan",
     component: ScanPage,
+    validateSearch: (s: Record<string, unknown>) =>
+      s.ignored === true ? { ignored: true } : {},
   }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/compare",
     component: ComparePage,
+    validateSearch: (s: Record<string, unknown>) => {
+      const out: { a?: string; b?: string } = {};
+      if (typeof s.a === "string" && /^[^|]+\|[^|]+$/.test(s.a)) out.a = s.a;
+      if (typeof s.b === "string" && /^[^|]+\|[^|]+$/.test(s.b)) out.b = s.b;
+      return out;
+    },
   }),
 ]);
 

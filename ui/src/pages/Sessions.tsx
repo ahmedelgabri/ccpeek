@@ -112,7 +112,7 @@ export function SessionsPage() {
 
       {error && <p className="text-warn">Failed to load: {String(error)}</p>}
       {isLoading && <SkeletonRows rows={8} />}
-      {!isLoading && sessions.length === 0 && (
+      {!isLoading && !error && sessions.length === 0 && (
         <EmptyNote>No sessions match.</EmptyNote>
       )}
 

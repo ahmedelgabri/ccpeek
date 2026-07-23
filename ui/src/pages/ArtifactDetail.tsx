@@ -1,9 +1,9 @@
 import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { parityApi } from "../api";
+import { fmtBytes, parityApi } from "../api";
 import { useHighlight } from "../highlight";
-import { SkeletonRows } from "../ui";
+import { AgentChip, CopyButton, SkeletonRows } from "../ui";
 
 export function ArtifactDetailPage() {
   const { agent, kind, name } = useParams({
@@ -39,8 +39,19 @@ export function ArtifactDetailPage() {
     });
   };
 
-  if (isLoading) return <SkeletonRows rows={5} />;
-  if (error) return <p className="text-warn">{String(error)}</p>;
+  if (isLoading)
+    return (
+      <div role="status">
+        <span className="sr-only">Loading artifact…</span>
+        <SkeletonRows rows={5} />
+      </div>
+    );
+  if (error)
+    return (
+      <p role="alert" className="text-warn">
+        Failed to load: {String(error)}
+      </p>
+    );
   const a = data!;
 
   const rawURL = `/api/v1/artifacts/${agent}/${kind}/${encodeURIComponent(name)}/raw`;
@@ -48,14 +59,25 @@ export function ArtifactDetailPage() {
   return (
     <div>
       <div className="mb-1 flex items-baseline gap-3">
-        <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-accent">
+        <Link
+          to="/artifacts"
+          search={{ kind: a.kind }}
+          className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-accent hover:bg-surface-2/70"
+        >
           {a.kind.replaceAll("_", " ")}
-        </span>
+        </Link>
         <h1 className="truncate text-xl font-semibold">{a.name}</h1>
       </div>
-      <p className="mb-4 text-xs text-ink-dim">
-        {a.agent} · {a.size} bytes
-      </p>
+      <div className="mb-4 flex items-center gap-2 text-xs text-ink-dim">
+        <AgentChip agent={a.agent} />
+        <span>·</span>
+        <span>{fmtBytes(a.size)}</span>
+        <span>·</span>
+        <a href={rawURL} className="font-mono text-accent hover:underline">
+          raw
+        </a>
+        {a.content && <CopyButton text={a.content} />}
+      </div>
 
       {a.sessionIds && a.sessionIds.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2 text-xs">
@@ -100,7 +122,9 @@ export function ArtifactDetailPage() {
       ) : a.content ? (
         <div ref={body}>
           <pre className="overflow-x-auto rounded-lg border border-edge bg-surface-1 p-4 text-xs leading-relaxed">
-            <code className={a.kind === "shell_snapshot" ? "language-bash" : ""}>
+            <code
+              className={a.kind === "shell_snapshot" ? "language-bash" : ""}
+            >
               {a.content}
             </code>
           </pre>
