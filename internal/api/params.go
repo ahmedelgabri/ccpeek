@@ -61,10 +61,19 @@ func (p *params) Date(name string) string {
 	return s
 }
 
-// Bool reads a flag parameter: present and not "0"/"false" means true.
+// Bool reads a flag parameter strictly: ""/"0"/"false" are false,
+// "1"/"true" are true, anything else is a 400 — consistent with the
+// integer and date parameters rather than a permissive truthiness.
 func (p *params) Bool(name string) bool {
-	s := p.values.Get(name)
-	return s != "" && s != "0" && s != "false"
+	switch s := p.values.Get(name); s {
+	case "", "0", "false":
+		return false
+	case "1", "true":
+		return true
+	default:
+		p.fail(name, s, `"1", "true", "0", or "false"`)
+		return false
+	}
 }
 
 // Err reports the first parse failure, wrapped as query.ErrBadRequest.

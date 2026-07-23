@@ -84,6 +84,9 @@ func TestParamContractsRejectMalformedInput(t *testing.T) {
 		"/api/v1/sessions/claude-code/x/transcript?from=abc",
 		"/api/v1/sessions/claude-code/x/tools?from_seq=-2",
 		"/api/v1/sessions/claude-code/x/tools/abc",
+		"/api/v1/sessions/claude-code/x/tools?compact=yes",
+		"/api/v1/sessions/claude-code/x/transcript?full=maybe",
+		"/api/v1/scan?ignored=2",
 	}
 	for _, path := range bad {
 		code, body := rawGet(t, h, path)

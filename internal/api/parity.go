@@ -99,7 +99,12 @@ func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) scanFindings(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
-	findings, err := h.svc.ScanFindings(r.Context(), p.Bool("ignored"))
+	includeIgnored := p.Bool("ignored")
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	findings, err := h.svc.ScanFindings(r.Context(), includeIgnored)
 	if err != nil {
 		writeError(w, err)
 		return

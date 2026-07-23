@@ -186,7 +186,7 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
-  }) => get<SessionSummary[] | null>("/sessions", filters),
+  }) => get<SessionSummary[]>("/sessions", filters),
 
   session: (agent: string, id: string) =>
     get<SessionDetail>(`/sessions/${agent}/${id}`),
@@ -195,11 +195,7 @@ export const api = {
     agent: string,
     id: string,
     opts?: { from?: string; limit?: string; full?: string },
-  ) =>
-    get<TranscriptMessage[] | null>(
-      `/sessions/${agent}/${id}/transcript`,
-      opts,
-    ),
+  ) => get<TranscriptMessage[]>(`/sessions/${agent}/${id}/transcript`, opts),
 
   usage: (filters: {
     group?: string;
@@ -208,10 +204,10 @@ export const api = {
     since?: string;
     until?: string;
     limit?: string;
-  }) => get<UsageRow[] | null>("/usage", filters),
+  }) => get<UsageRow[]>("/usage", filters),
 
   search: (q: string, agent = "", limit = "20") =>
-    get<SearchHit[] | null>("/search", { q, agent, limit }),
+    get<SearchHit[]>("/search", { q, agent, limit }),
 
   stats: () => get<Stats>("/stats"),
 
@@ -223,7 +219,7 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
-  }) => get<CommandRow[] | null>("/commands", filters),
+  }) => get<CommandRow[]>("/commands", filters),
 
   sessionTools: (
     agent: string,
@@ -236,7 +232,7 @@ export const api = {
       compact?: boolean;
     },
   ) =>
-    get<ToolCallRow[] | null>(`/sessions/${agent}/${id}/tools`, {
+    get<ToolCallRow[]>(`/sessions/${agent}/${id}/tools`, {
       limit: String(opts?.limit ?? 0),
       offset: String(opts?.offset ?? 0),
       from_seq: opts?.fromSeq ? String(opts.fromSeq) : "",
@@ -356,7 +352,7 @@ async function send<T>(
 
 export const parityApi = {
   artifacts: (kind?: string, agent?: string, limit = 100, offset = 0) =>
-    get<ArtifactSummary[] | null>("/artifacts", {
+    get<ArtifactSummary[]>("/artifacts", {
       kind: kind ?? "",
       agent: agent ?? "",
       limit: String(limit),
@@ -367,11 +363,11 @@ export const parityApi = {
       `/artifacts/${agent}/${kind}/${encodeURIComponent(name)}`,
     ),
   scan: (includeIgnored: boolean) =>
-    get<ScanFinding[] | null>("/scan", { ignored: includeIgnored ? "1" : "" }),
+    get<ScanFinding[]>("/scan", { ignored: includeIgnored ? "1" : "" }),
   scanIgnore: (id: number, ignored: boolean) =>
     send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
   blocks: (limit = 24, agent = "") =>
-    get<BlockRow[] | null>("/blocks", { limit: String(limit), agent }),
+    get<BlockRow[]>("/blocks", { limit: String(limit), agent }),
   budget: () => get<Budget>("/budget"),
   setBudget: (monthlyUSD: number) =>
     send<Budget>("PUT", "/budget", { monthlyUSD }),
