@@ -1020,17 +1020,17 @@ low-risk):
 
 ## 10. Risks & mitigations
 
-| Risk                                                                            | Mitigation                                                                                                                                                         |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| modernc.org/sqlite slower or FTS5 gaps                                          | P0 benchmark gate; fallback = keep CGO driver (plan otherwise unchanged; driver stays behind sqlx)                                                                 |
-| Other agents' formats change without notice (only Pi's is documented/versioned) | version-tolerant parsers; per-version fixture corpus; ingest diagnostics surface unknown shapes as warnings, never hard failures                                   |
-| Usage double-counting (resumed/forked sessions, cumulative counters)            | dedupe by (external message id, request id); delta derivation with reset detection; unit fixtures for resume/fork cases                                            |
-| Pricing wrong or stale                                                          | embedded snapshot + `pricing update`; unknown models shown as "unpriced," never $0; costs labeled as estimates for subscription users                              |
-| Rewrite stalls / scope creep                                                    | phases each ship; v1 stays maintained (quick-wins track) until v2.0 stable; P1 exit = v1 e2e suite green on the new engine                                         |
-| SPA rewrite balloons P1                                                         | parity pages first (lists/tables are fast in a component system), analytics deferred to P2; ported e2e suite is the objective gate; P0 spike de-risks the scaffold |
-| SPA regresses v1's speed/lightness                                              | localhost latency ≈ 0; code-splitting + prefetch + virtualization; strict CSP and embedded assets kept; perceived-perf checks in e2e                               |
-| Migration bugs lose user data                                                   | new DB file (v1 untouched); upgrade-path CI; natural-key imports; beta soak before tap update                                                                      |
-| Large histories (multi-GB) strain SQLite/UI                                     | per-file transactions, rollups, server-side pagination, FTS-only text storage; optional content compression later                                                  |
+| Risk                                                                            | Mitigation                                                                                                                                                                 |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| modernc.org/sqlite slower or FTS5 gaps                                          | P0 benchmark gate; fallback = keep CGO driver (plan otherwise unchanged; driver stays behind sqlx)                                                                         |
+| Other agents' formats change without notice (only Pi's is documented/versioned) | version-tolerant parsers; per-version fixture corpus; ingest diagnostics surface unknown shapes as warnings, never hard failures                                           |
+| Usage double-counting (resumed/forked sessions, cumulative counters)            | dedupe by (external message id, request id); delta derivation with reset detection; unit fixtures for resume/fork cases                                                    |
+| Pricing wrong or stale                                                          | embedded snapshot, refreshed at build time by `scripts/update-pricing.sh`; unknown models shown as "unpriced," never $0; costs labeled as estimates for subscription users |
+| Rewrite stalls / scope creep                                                    | phases each ship; v1 stays maintained (quick-wins track) until v2.0 stable; P1 exit = v1 e2e suite green on the new engine                                                 |
+| SPA rewrite balloons P1                                                         | parity pages first (lists/tables are fast in a component system), analytics deferred to P2; ported e2e suite is the objective gate; P0 spike de-risks the scaffold         |
+| SPA regresses v1's speed/lightness                                              | localhost latency ≈ 0; code-splitting + prefetch + virtualization; strict CSP and embedded assets kept; perceived-perf checks in e2e                                       |
+| Migration bugs lose user data                                                   | new DB file (v1 untouched); upgrade-path CI; natural-key imports; beta soak before tap update                                                                              |
+| Large histories (multi-GB) strain SQLite/UI                                     | per-file transactions, rollups, server-side pagination, FTS-only text storage; optional content compression later                                                          |
 
 ---
 

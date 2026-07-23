@@ -1,7 +1,8 @@
 // Package pricing computes estimated USD cost from token usage
 // (docs/v2-plan.md §5.3). Rates come from an embedded snapshot of LiteLLM's
-// cross-provider pricing database, refreshable with
-// scripts/update-pricing.sh (and, at runtime, `ccpeek pricing update`).
+// cross-provider pricing database, refreshed at BUILD time with
+// scripts/update-pricing.sh — the snapshot is the only runtime source
+// (a runtime refresh is parked until it has a consumer).
 //
 // Unknown models must stay visible: Lookup reports found=false and callers
 // aggregate those tokens as "unpriced" — never silently $0.
