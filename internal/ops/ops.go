@@ -29,6 +29,12 @@ type Param struct {
 	Positional bool   // CLI positional argument, in declaration order
 	Variadic   bool   // CLI: remaining args joined with spaces (search terms)
 	CLIFlag    string // CLI flag name when it must differ from Name
+	// Default is the value the query layer applies when this parameter is
+	// omitted, declared so every transport documents it identically. The
+	// CLI used to special-case one op by name to get its help text right,
+	// which meant the generic builder knew an op — and HTTP and MCP showed
+	// no default at all, the exact drift this registry exists to prevent.
+	Default string
 }
 
 // Args carries decoded inputs for an executor.
@@ -118,7 +124,10 @@ func Registry() []Op {
 			Name: "usage",
 			Desc: "Token and cost aggregates from all agents, grouped by day, model, project, or agent, with optional date range and model filter. Unpriced groups are flagged.",
 			Params: []Param{
-				{Name: "group", Type: "string", Desc: "Group by: day | model | project | agent"},
+				{
+					Name: "group", Type: "string", Default: "day",
+					Desc: "Group by: day | model | project | agent",
+				},
 				agentParam,
 				{Name: "model", Type: "string", Desc: "Filter to one model"},
 				sinceParam, untilParam, limitParam,

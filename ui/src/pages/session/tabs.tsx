@@ -157,34 +157,27 @@ function ToolRow({
 export interface FileGroup {
   path: string;
   reads: number;
-  writes: number;
-  edits: number;
-  // changes holds the edit/write rows; their diff payloads are fetched
-  // per row when expanded.
+  // changes holds every edit/write row; their diff payloads are fetched
+  // per row when expanded. The write and edit counts are derived from it
+  // rather than tracked alongside — kept as separate fields they had to
+  // stay in lockstep by hand, and the sort depended on that equality.
   changes: ToolCallRow[];
 }
+
+const countKind = (g: FileGroup, kind: string) =>
+  g.changes.reduce((n, t) => (t.kind === kind ? n + 1 : n), 0);
 
 export function groupFiles(tools: ToolCallRow[]): FileGroup[] {
   const map = new Map<string, FileGroup>();
   for (const t of tools) {
     if (!t.detail || !t.kind.startsWith("file_")) continue;
-    const g = map.get(t.detail) ?? {
-      path: t.detail,
-      reads: 0,
-      writes: 0,
-      edits: 0,
-      changes: [],
-    };
+    const g = map.get(t.detail) ?? { path: t.detail, reads: 0, changes: [] };
     if (t.kind === "file_read") g.reads++;
-    if (t.kind === "file_write") g.writes++;
-    if (t.kind === "file_edit") g.edits++;
-    if (t.kind === "file_edit" || t.kind === "file_write") {
-      g.changes.push(t);
-    }
+    if (t.kind === "file_edit" || t.kind === "file_write") g.changes.push(t);
     map.set(t.detail, g);
   }
   return Array.from(map.values()).toSorted(
-    (a, b) => b.writes + b.edits - (a.writes + a.edits),
+    (a, b) => b.changes.length - a.changes.length,
   );
 }
 
@@ -229,6 +222,8 @@ function FileRow({
 }) {
   const [open, setOpen] = useState(false);
   const diffs = f.changes;
+  const edits = countKind(f, "file_edit");
+  const writes = countKind(f, "file_write");
   return (
     <li className="bg-surface-1">
       <div
@@ -244,8 +239,8 @@ function FileRow({
         )}
         <span className="truncate font-mono text-xs">{shortPath(f.path)}</span>
         <span className="ml-auto flex shrink-0 gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
-          {f.edits > 0 && <span className="text-warn">{f.edits} edits</span>}
-          {f.writes > 0 && <span className="text-ok">{f.writes} writes</span>}
+          {edits > 0 && <span className="text-warn">{edits} edits</span>}
+          {writes > 0 && <span className="text-ok">{writes} writes</span>}
           {f.reads > 0 && <span>{f.reads} reads</span>}
         </span>
         <CopyButton text={f.path} />

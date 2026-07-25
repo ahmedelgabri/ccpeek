@@ -33,8 +33,6 @@ import (
 // Slug identifies this adapter.
 const Slug = canon.AgentSlug("cursor")
 
-const titleLimit = 200
-
 // Adapter implements agent.Adapter for Cursor.
 type Adapter struct{}
 
@@ -144,7 +142,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				(meta.Name == "" && meta.WorkspaceRoot == "" && meta.CreatedAt == 0) {
 				continue
 			}
-			sess.Title = canon.TruncateBytes(meta.Name, titleLimit)
+			sess.Title = canon.TruncateBytes(meta.Name, canon.SessionTitleLimit)
 			sess.CWD = meta.WorkspaceRoot
 			if meta.CreatedAt > 0 {
 				sess.CreatedAt = time.UnixMilli(meta.CreatedAt).UTC()
@@ -220,7 +218,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		for _, b := range msgs {
 			if b.msg.Role == "user" {
 				if t := contentText(b.msg.Content); t != "" {
-					sess.Title = canon.TruncateBytes(strings.TrimSpace(t), titleLimit)
+					sess.Title = canon.TruncateBytes(strings.TrimSpace(t), canon.SessionTitleLimit)
 					break
 				}
 			}

@@ -95,10 +95,7 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 			SUM(u.cache_read_tokens),
 			SUM(u.cache_write_tokens),
 			SUM(COALESCE(u.reported_cost_usd, 0)),
-			SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.input_tokens ELSE 0 END),
-			SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.output_tokens ELSE 0 END),
-			SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_read_tokens ELSE 0 END),
-			SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_write_tokens ELSE 0 END),
+			`+UnpricedTokenSums+`,
 			SUM(CASE WHEN u.reported_cost_usd IS NULL THEN 1 ELSE 0 END)
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id

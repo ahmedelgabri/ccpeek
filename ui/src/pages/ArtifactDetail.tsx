@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { fmtBytes, parityApi } from "../api";
 import { useHighlight } from "../highlight";
-import { AgentChip, CopyButton, SkeletonRows } from "../ui";
+import { AgentChip, CopyButton, LoadError, SkeletonRows } from "../ui";
 
 export function ArtifactDetailPage() {
   const { agent, kind, name } = useParams({
@@ -46,12 +46,7 @@ export function ArtifactDetailPage() {
         <SkeletonRows rows={5} />
       </div>
     );
-  if (error)
-    return (
-      <p role="alert" className="text-warn">
-        Failed to load: {String(error)}
-      </p>
-    );
+  if (error) return <LoadError error={error} />;
   const a = data!;
 
   const rawURL = `/api/v1/artifacts/${agent}/${kind}/${encodeURIComponent(name)}/raw`;

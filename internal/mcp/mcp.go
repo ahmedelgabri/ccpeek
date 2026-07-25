@@ -169,7 +169,13 @@ func buildToolDefs() []map[string]any {
 		props := map[string]any{}
 		var required []string
 		for _, p := range op.Params {
-			props[p.Name] = map[string]string{"type": p.Type, "description": p.Desc}
+			prop := map[string]string{"type": p.Type, "description": p.Desc}
+			if p.Default != "" {
+				// Declared once in the registry, so every transport
+				// documents the same default.
+				prop["default"] = p.Default
+			}
+			props[p.Name] = prop
 			if p.Required {
 				required = append(required, p.Name)
 			}

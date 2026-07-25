@@ -8,6 +8,7 @@ import {
   CopyButton,
   EmptyNote,
   FilterBar,
+  LoadError,
   SkeletonRows,
   useDebounced,
 } from "../ui";
@@ -104,7 +105,7 @@ export function CommandsPage() {
         </FilterBar>
       </div>
 
-      {error && <p className="text-warn">Failed to load: {String(error)}</p>}
+      {error && <LoadError error={error} />}
       {isLoading && <SkeletonRows rows={8} />}
       {!isLoading && !error && rows.length === 0 && (
         <EmptyNote>No commands match.</EmptyNote>

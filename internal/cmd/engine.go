@@ -16,6 +16,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/cursor"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/opencode"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
+	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
@@ -88,10 +89,7 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 		store.Close()
 		return nil, nil, err
 	}
-	// The full launch set (docs/v2-plan.md §6): Claude Code, Pi, Codex,
-	// OpenCode, Cursor.
-	runner := ingest.New(store, table,
-		claude.New(), pi.New(), codex.New(), opencode.New(), cursor.New())
+	runner := ingest.New(store, table, launchAdapters()...)
 	eng := &engine{
 		store:   store,
 		pricing: table,
@@ -283,7 +281,7 @@ func ingestOptions(cmd *cobra.Command) (ingest.Options, error) {
 		if !ok || slug == "" || path == "" {
 			return opts, fmt.Errorf("--root %q: want <agent>=<path>, e.g. --root claude-code=~/backup/claude", spec)
 		}
-		if !knownAgents[canon.AgentSlug(slug)] {
+		if !knownAgent(canon.AgentSlug(slug)) {
 			return opts, fmt.Errorf("--root %q: unknown agent %q (want one of %s)",
 				spec, slug, strings.Join(agentSlugs(), ", "))
 		}
@@ -296,17 +294,30 @@ func ingestOptions(cmd *cobra.Command) (ingest.Options, error) {
 	return opts, nil
 }
 
-// knownAgents is the launch set, so --root rejects a typo instead of
-// silently overriding a nonexistent adapter's roots.
-var knownAgents = map[canon.AgentSlug]bool{
-	claude.Slug: true, pi.Slug: true, codex.Slug: true,
-	opencode.Slug: true, cursor.Slug: true,
+// launchAdapters is THE launch set (docs/v2-plan.md §6): Claude Code, Pi,
+// Codex, OpenCode, Cursor. The pipeline, `ccpeek doctor`, and --root's
+// validator all derive from it — listing them separately meant a sixth
+// adapter needed three coordinated edits, and missing the validator's
+// would reject `--root sixth=/path` for an agent ingest handles fine.
+func launchAdapters() []agent.Adapter {
+	return []agent.Adapter{
+		claude.New(), pi.New(), codex.New(), opencode.New(), cursor.New(),
+	}
+}
+
+func knownAgent(slug canon.AgentSlug) bool {
+	for _, a := range launchAdapters() {
+		if a.Slug() == slug {
+			return true
+		}
+	}
+	return false
 }
 
 func agentSlugs() []string {
-	out := make([]string, 0, len(knownAgents))
-	for slug := range knownAgents {
-		out = append(out, string(slug))
+	out := make([]string, 0, 5)
+	for _, a := range launchAdapters() {
+		out = append(out, string(a.Slug()))
 	}
 	slices.Sort(out)
 	return out

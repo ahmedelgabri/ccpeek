@@ -122,11 +122,7 @@ func opCommand(op ops.Op) *cobra.Command {
 	for _, p := range flags {
 		switch p.Type {
 		case "string":
-			def := ""
-			if op.Name == "usage" && p.Name == "group" {
-				def = "day"
-			}
-			c.Flags().String(p.FlagName(), def, p.Desc)
+			c.Flags().String(p.FlagName(), p.Default, p.Desc)
 		case "integer":
 			c.Flags().Int(p.FlagName(), 0, p.Desc)
 		case "boolean":

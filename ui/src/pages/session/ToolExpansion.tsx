@@ -1,3 +1,4 @@
+import { LoadError } from "../../ui";
 import { useQuery } from "@tanstack/react-query";
 import { DiffView } from "../../Diff";
 import { api } from "../../api";
@@ -21,12 +22,7 @@ export function ToolExpansion({
   if (q.isLoading)
     return <p className="font-mono text-[11px] text-ink-dim">Loading…</p>;
   const d = q.data;
-  if (!d)
-    return (
-      <p className="font-mono text-[11px] text-warn">
-        Failed to load: {String(q.error ?? "not found")}
-      </p>
-    );
+  if (!d) return <LoadError error={q.error ?? "not found"} compact />;
   if ((d.kind === "file_edit" || d.kind === "file_write") && (d.old || d.new)) {
     return <DiffView old={d.old ?? ""} new={d.new ?? ""} />;
   }

@@ -2,7 +2,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, fmtCost, fmtTokens, parityApi, totalTokens } from "../api";
-import { FilterBar, SkeletonRows, useTooltip } from "../ui";
+import { FilterBar, LoadError, SkeletonRows, useTooltip } from "../ui";
 
 // Lazy so echarts ships as its own chunk, loaded only on this page.
 const CostTimeline = lazy(() =>
@@ -216,9 +216,7 @@ export function UsagePage() {
               <GroupBars rows={rows} group={group} />
             )}
           </Suspense>
-          {error && (
-            <p className="text-warn">Failed to load: {String(error)}</p>
-          )}
+          {error && <LoadError error={error} />}
           {isLoading && <SkeletonRows rows={6} className="mb-4" />}
           {!isLoading && rows.length === 0 && (
             <p className="text-ink-dim">No usage recorded yet.</p>

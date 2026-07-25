@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -228,36 +229,46 @@ export function OverviewPage() {
 // Heatmap draws the GitHub-style activity grid as plain SVG: a
 // sequential single-hue ramp (accent at four opacity steps — magnitude,
 // not identity), native tooltips, no chart library needed.
+const CELL = 13;
+const GAP = 3;
+const WEEKS = 52;
+
 function Heatmap({ days }: { days: DayActivity[] }) {
   const tooltip = useTooltip();
-  const byDay = new Map(days.map((d) => [d.day, d]));
-  const CELL = 13;
-  const GAP = 3;
-  const WEEKS = 52;
 
-  // Grid anchored to the current week's Sunday, going back WEEKS weeks.
-  // All calendar math runs in UTC: mixing local Date arithmetic with
-  // toISOString (which is UTC) shifts every cell by a day in zones far
-  // from UTC, and the activity days from the API are date strings.
-  const now = new Date();
-  const todayUTC = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const endUTC = todayUTC + (6 - new Date(todayUTC).getUTCDay()) * DAY_MS;
-  const cells: { day: string; week: number; dow: number; d?: DayActivity }[] =
-    [];
-  for (let w = 0; w < WEEKS; w++) {
-    for (let dow = 0; dow < 7; dow++) {
-      const t = endUTC - ((WEEKS - 1 - w) * 7 + (6 - dow)) * DAY_MS;
-      if (t > todayUTC) continue;
-      const day = new Date(t).toISOString().slice(0, 10);
-      cells.push({ day, week: w, dow, d: byDay.get(day) });
+  // Memoized because the tooltip's hover state lives in this component:
+  // every cell the pointer crosses sets state twice, and each render
+  // otherwise rebuilt the day map, ran 364 Date→toISOString conversions,
+  // and spread the whole activity array through Math.max — hundreds of
+  // times during one sweep across the grid.
+  const { cells, max } = useMemo(() => {
+    const byDay = new Map(days.map((d) => [d.day, d]));
+    // Grid anchored to the current week's Sunday, going back WEEKS weeks.
+    // All calendar math runs in UTC: mixing local Date arithmetic with
+    // toISOString (which is UTC) shifts every cell by a day in zones far
+    // from UTC, and the activity days from the API are date strings.
+    const now = new Date();
+    const todayUTC = Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+    );
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const endUTC = todayUTC + (6 - new Date(todayUTC).getUTCDay()) * DAY_MS;
+    const out: { day: string; week: number; dow: number; d?: DayActivity }[] =
+      [];
+    for (let w = 0; w < WEEKS; w++) {
+      for (let dow = 0; dow < 7; dow++) {
+        const t = endUTC - ((WEEKS - 1 - w) * 7 + (6 - dow)) * DAY_MS;
+        if (t > todayUTC) continue;
+        const day = new Date(t).toISOString().slice(0, 10);
+        out.push({ day, week: w, dow, d: byDay.get(day) });
+      }
     }
-  }
-  const max = Math.max(...days.map((d) => d.sessions), 1);
+    let peak = 1;
+    for (const d of days) peak = Math.max(peak, d.sessions);
+    return { cells: out, max: peak };
+  }, [days]);
   // sqrt scaling: one 40-session outlier must not flatten normal days
   // into the faintest step.
   const level = (n: number) =>

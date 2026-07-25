@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { fmtWhen, parityApi, type ScanFinding } from "../api";
-import { EmptyNote, SkeletonRows } from "../ui";
+import { EmptyNote, LoadError, SkeletonRows } from "../ui";
 
 // Secret-scan findings across EVERY agent's history, with ignore toggles
 // persisted as user state (survives rescans and rebuilds).
@@ -55,11 +55,7 @@ export function ScanPage() {
         </button>
       </div>
 
-      {error && (
-        <p role="alert" className="text-warn">
-          Failed to load: {String(error)}
-        </p>
-      )}
+      {error && <LoadError error={error} />}
       {isLoading && (
         <div role="status">
           <span className="sr-only">Loading scan findings…</span>

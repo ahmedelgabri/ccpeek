@@ -30,8 +30,6 @@ const Slug = canon.AgentSlug("codex")
 
 const (
 	maxLineBytes = 10 * 1024 * 1024
-	titleLimit   = 200
-	excerptCap   = 400
 )
 
 // Adapter implements agent.Adapter for Codex CLI.
@@ -265,7 +263,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}
 				messageCount++
 				if msg.Role == canon.RoleUser && sess.Title == "" && msg.Text != "" {
-					sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), titleLimit)
+					sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.SessionTitleLimit)
 				}
 				if msg.Role == canon.RoleAssistant {
 					pendingAsst = &msg
@@ -306,7 +304,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				if err := emitSession(); err != nil {
 					return err
 				}
-				out := canon.TruncateBytes(strings.TrimSpace(item.Output), excerptCap)
+				out := canon.TruncateBytes(strings.TrimSpace(item.Output), canon.ToolResultExcerptLimit)
 				return sink.ToolResult(canon.ToolResult{
 					SessionExternalID: sess.ExternalID,
 					CallExternalID:    item.CallID,

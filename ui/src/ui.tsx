@@ -290,7 +290,7 @@ export function TokenMixBar({
 // TOOL_COLOR maps tool-call kinds to their fixed hues (CSS vars from
 // styles.css). Chips and badges always pair the color with the kind or
 // tool name as text.
-export const TOOL_COLOR: Record<string, string> = {
+const TOOL_COLOR: Record<string, string> = {
   shell: "var(--color-tool-shell)",
   file_edit: "var(--color-tool-edit)",
   file_write: "var(--color-tool-write)",
@@ -468,4 +468,25 @@ export function useDebounced<T>(value: T, ms = 250): T {
     return () => window.clearTimeout(t);
   }, [value, ms]);
   return settled;
+}
+
+// LoadError is the query-failure line. It carries role="alert" so a failed
+// load is announced — eight pages hand-rolled this string and only three
+// of them did, which is exactly the kind of split no single file owned.
+// `compact` is the inline variant used inside an expanded row.
+export function LoadError({
+  error,
+  compact = false,
+}: {
+  error: unknown;
+  compact?: boolean;
+}) {
+  return (
+    <p
+      role="alert"
+      className={compact ? "font-mono text-[11px] text-warn" : "text-warn"}
+    >
+      Failed to load: {String(error)}
+    </p>
+  );
 }

@@ -9,7 +9,7 @@ import {
   shortPath,
   type SessionDetail,
 } from "../api";
-import { AgentChip, EmptyNote, SkeletonRows } from "../ui";
+import { AgentChip, EmptyNote, LoadError, SkeletonRows } from "../ui";
 
 const PICKER_PAGE = 100;
 
@@ -85,9 +85,7 @@ export function ComparePage() {
         </div>
       )}
       {a && b && (left.error || right.error) && (
-        <p role="alert" className="text-warn">
-          Failed to load: {String(left.error ?? right.error)}
-        </p>
+        <LoadError error={left.error ?? right.error} />
       )}
       {a &&
         b &&

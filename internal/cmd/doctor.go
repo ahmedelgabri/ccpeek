@@ -6,11 +6,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/codex"
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/cursor"
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/opencode"
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/spf13/cobra"
 )
@@ -31,10 +26,7 @@ var doctorCmd = &cobra.Command{
 		}
 
 		fmt.Println("Agent roots (flag/config > env > default):")
-		adapters := []agent.Adapter{
-			claude.New(), pi.New(), codex.New(), opencode.New(), cursor.New(),
-		}
-		for _, a := range adapters {
+		for _, a := range launchAdapters() {
 			roots := agent.ResolveRoots(a.Slug(), a.RootSpec(),
 				opts.ConfigRoots[a.Slug()], os.Getenv, home)
 			for _, root := range roots {

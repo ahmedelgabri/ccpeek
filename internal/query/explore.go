@@ -211,7 +211,7 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	rows, err = rdb.QueryContext(ctx, `
 		SELECT tc.file_path, tc.kind, a.slug, se.external_id,
 		       COALESCE(tc.started_at, '')
-		FROM tool_calls tc INDEXED BY idx_tool_calls_recent_files
+		FROM tool_calls tc INDEXED BY `+db.IdxToolCallsRecentFiles+`
 		JOIN sessions se ON se.id = tc.session_id
 		JOIN agents a ON a.id = se.agent_id
 		WHERE tc.kind IN ('file_write', 'file_edit') AND tc.file_path <> ''
@@ -270,12 +270,7 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Limit > 1000 {
-		f.Limit = 1000
-	}
+	f.Limit = clampLimit(f.Limit, 100, 1000)
 	where := []string{
 		`tc.kind = 'shell'`,
 		`tc.command <> ''`,
@@ -493,9 +488,7 @@ func (s *Service) History(ctx context.Context, f HistoryFilter) ([]HistoryRow, e
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
+	f.Limit = clampLimit(f.Limit, 100, 0)
 	where := "WHERE h.display <> ''"
 	var args []any
 	if f.Agent != "" {

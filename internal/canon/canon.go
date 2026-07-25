@@ -68,8 +68,11 @@ type Origin string
 const (
 	OriginIngest     Origin = "ingest"      // parsed from a source on disk
 	OriginImportedV1 Origin = "imported-v1" // carried over from a v1 database
-	OriginArchive    Origin = "archive"     // restored from a ccpeek archive bundle
 )
+
+// SessionTitleLimit bounds Session.Title. Titles come from a first prompt,
+// which is unbounded; five adapters each carried this number.
+const SessionTitleLimit = 200
 
 // Session is the hub of the model. ExternalID is the agent's own stable
 // identifier (session UUID, rollout id, …); (Agent, ExternalID) is the
@@ -94,10 +97,8 @@ type Session struct {
 type SessionRelationKind string
 
 const (
-	RelResumedFrom   SessionRelationKind = "resumed_from"
-	RelForkOf        SessionRelationKind = "fork_of"
-	RelSidechainOf   SessionRelationKind = "sidechain_of"   // e.g. Claude Task subagents
-	RelCompactedInto SessionRelationKind = "compacted_into" // compaction lineage
+	RelResumedFrom SessionRelationKind = "resumed_from"
+	RelForkOf      SessionRelationKind = "fork_of"
 )
 
 // SessionRelation is a directed session→session edge. Both endpoints are
@@ -230,6 +231,12 @@ type ToolCall struct {
 	StartedAt time.Time
 }
 
+// ToolResultExcerptLimit bounds ResultExcerpt — a tool result is a whole
+// command's output or a file's contents, and only an excerpt is stored.
+// Every adapter had its own copy of this number under three different
+// names, and the v1 importer had a fourth that sliced raw bytes.
+const ToolResultExcerptLimit = 400
+
 // ToolEditExcerptLimit bounds OldText/NewText. The full arguments stay in
 // Input; these are duplicated only up to what a diff view renders, so an
 // edit that rewrites a megabyte costs a bounded amount of extra storage.
@@ -259,7 +266,6 @@ const (
 	ArtifactFileHistory   ArtifactKind = "file_history"
 	ArtifactUsageFacet    ArtifactKind = "usage_facet"
 	ArtifactUsageReport   ArtifactKind = "usage_report"
-	ArtifactCheckpoint    ArtifactKind = "checkpoint"
 )
 
 // Artifact stands alone; sessions attach via ArtifactLink. (Agent, Kind,
@@ -290,7 +296,6 @@ const (
 	EvidenceFilenameUUID LinkEvidence = "filename_uuid" // session uuid embedded in file name
 	EvidenceCWDMatch     LinkEvidence = "cwd_match"     // artifact scope matches session cwd
 	EvidenceContentRef   LinkEvidence = "content_ref"   // session content references artifact
-	EvidenceManual       LinkEvidence = "manual"        // user-asserted
 )
 
 // ArtifactLink connects an artifact to a session with explicit evidence.

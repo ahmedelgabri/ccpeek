@@ -315,9 +315,8 @@ func importToolCalls(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.Writer
 		if err := rows.Scan(&seq, &ts, &name, &kind, &input, &result, &filePath); err != nil {
 			return n, err
 		}
-		if len(result) > 400 {
-			result = result[:400] // v2 stores a bounded excerpt
-		}
+		// Rune-safe, and the same bound every adapter applies.
+		result = canon.TruncateBytes(result, canon.ToolResultExcerptLimit)
 		if err := w.InsertToolCall(sessionID, canon.ToolCall{
 			Seq:           seq,
 			Name:          name,

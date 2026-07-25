@@ -36,9 +36,7 @@ func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactS
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
+	f.Limit = clampLimit(f.Limit, 100, 0)
 	var where []string
 	var args []any
 	if f.Agent != "" {
@@ -142,16 +140,25 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 	// on every request — re-normalizing plan markdown, re-deriving memory
 	// path suffixes — with two extra queries per artifact, and that is the
 	// only reason those helpers were exported from db at all.
-	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT se.external_id,
-		       COALESCE(ass.anchor_seq,
+	// Only kinds WITH a producer tool pay for the fallback. With an empty
+	// tool name the subquery can never match, yet SQLite still walked the
+	// session's whole tool_calls row set — including the 16 KiB-capped
+	// old_text/new_text and input_json — once per linked session, to
+	// return NULL. That is 9 of the 10 artifact kinds.
+	anchorExpr, args := `ass.anchor_seq`, []any{id}
+	if tool := producerTool[kind]; tool != "" {
+		anchorExpr = `COALESCE(ass.anchor_seq,
 		                (SELECT tc.message_seq FROM tool_calls tc
 		                 WHERE tc.session_id = se.id AND tc.name = ?
-		                 ORDER BY tc.seq DESC LIMIT 1)) AS anchor
+		                 ORDER BY tc.seq DESC LIMIT 1))`
+		args = []any{tool, id}
+	}
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
+		SELECT se.external_id, `+anchorExpr+` AS anchor
 		FROM artifact_sessions ass
 		JOIN sessions se ON se.id = ass.session_id
 		WHERE ass.artifact_id = ?
-		ORDER BY se.modified_at DESC`, producerTool[kind], id)
+		ORDER BY se.modified_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}

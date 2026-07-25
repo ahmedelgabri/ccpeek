@@ -38,12 +38,7 @@ const blockSeconds = 5 * 60 * 60
 func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockRow, error) {
 	// Clamp to the CEILING, not down to the default: limit=500 used to
 	// yield 24 windows, so asking for more silently gave you fewer.
-	if limit <= 0 {
-		limit = 24
-	}
-	if limit > 200 {
-		limit = 200
-	}
+	limit = clampLimit(limit, 24, 200)
 	agentFilter := ""
 	var agentArgs []any
 	if agent != "" {

@@ -104,12 +104,7 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	if f.Limit <= 0 {
-		f.Limit = 50
-	}
-	if f.Limit > 500 {
-		f.Limit = 500
-	}
+	f.Limit = clampLimit(f.Limit, 50, 500)
 	var where []string
 	var args []any
 	if f.Agent != "" {
@@ -402,12 +397,7 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 	if err != nil {
 		return nil, err
 	}
-	if opts.Limit <= 0 {
-		opts.Limit = 200
-	}
-	if opts.Limit > 1000 {
-		opts.Limit = 1000
-	}
+	opts.Limit = clampLimit(opts.Limit, 200, 1000)
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.seq, m.external_id, m.parent_external_id,
 		       m.role, m.kind, COALESCE(m.created_at, ''), m.model,

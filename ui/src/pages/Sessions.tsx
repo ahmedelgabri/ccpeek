@@ -9,7 +9,13 @@ import {
   totalTokens,
   type SessionSummary,
 } from "../api";
-import { AgentChip, EmptyNote, FilterBar, SkeletonRows } from "../ui";
+import {
+  AgentChip,
+  EmptyNote,
+  FilterBar,
+  LoadError,
+  SkeletonRows,
+} from "../ui";
 
 const PAGE = 100;
 
@@ -108,7 +114,7 @@ export function SessionsPage() {
         </FilterBar>
       </div>
 
-      {error && <p className="text-warn">Failed to load: {String(error)}</p>}
+      {error && <LoadError error={error} />}
       {isLoading && <SkeletonRows rows={8} />}
       {!isLoading && !error && sessions.length === 0 && (
         <EmptyNote>No sessions match.</EmptyNote>

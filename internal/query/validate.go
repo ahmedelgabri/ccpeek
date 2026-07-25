@@ -47,3 +47,21 @@ func checkPaging(limit, offset int) error {
 	}
 	return nil
 }
+
+// clampLimit resolves a caller's page size: zero means "unset" and takes
+// the op's default, anything above the ceiling is capped. Pass max = 0 for
+// an op with no ceiling.
+//
+// The three-line if/if pair was written out at seven call sites with seven
+// different pairs of numbers, which made the ceilings impossible to see
+// side by side — and one of them (Blocks) had already been fixed once for
+// clamping DOWN to the default instead of up to the ceiling.
+func clampLimit(limit, def, max int) int {
+	if limit <= 0 {
+		limit = def
+	}
+	if max > 0 && limit > max {
+		limit = max
+	}
+	return limit
+}

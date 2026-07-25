@@ -1,7 +1,13 @@
 import { LoadMore, usePagedList } from "../paged";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { fmtBytes, parityApi } from "../api";
-import { AgentChip, EmptyNote, FilterBar, SkeletonRows } from "../ui";
+import {
+  AgentChip,
+  EmptyNote,
+  FilterBar,
+  LoadError,
+  SkeletonRows,
+} from "../ui";
 
 const KINDS = [
   "",
@@ -70,11 +76,7 @@ export function ArtifactsPage() {
         </FilterBar>
       </div>
 
-      {error && (
-        <p role="alert" className="text-warn">
-          Failed to load: {String(error)}
-        </p>
-      )}
+      {error && <LoadError error={error} />}
       {isLoading && (
         <div role="status">
           <span className="sr-only">Loading artifacts…</span>

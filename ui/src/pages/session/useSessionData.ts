@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { api, type ToolCallRow, type TranscriptMessage } from "../../api";
+import { usePagedList } from "../../paged";
 
 // Tool-call page size: bounds each /tools response; pages auto-fetch
 // until the session's full set is loaded.
@@ -201,8 +202,8 @@ export function useTranscriptWindow(
 
 // useSessionTools loads the FULL tool rows, and only once a tab that needs
 // them has been opened — never on transcript mount, which is served by the
-// compact chips above. Once requested it pages to completion; rows carry no
-// diff payloads, so excerpts still load per expansion.
+// compact chips above. Rows carry no diff payloads, so excerpts still load
+// per expansion.
 export function useSessionTools(
   agent: string,
   sessionId: string,
@@ -213,30 +214,23 @@ export function useSessionTools(
     if (wanted) setRequested(true);
   }, [wanted]);
 
-  const tools = useInfiniteQuery({
-    queryKey: ["tools", agent, sessionId],
-    queryFn: ({ pageParam }) =>
-      api.sessionTools(agent, sessionId, {
-        limit: TOOLS_PAGE,
-        offset: pageParam,
-      }),
-    initialPageParam: 0,
-    getNextPageParam: (last, _all, lastParam) =>
-      last && last.length === TOOLS_PAGE ? lastParam + TOOLS_PAGE : undefined,
-    enabled: requested,
-  });
-
-  const { hasNextPage, isFetchingNextPage } = tools;
-  useEffect(() => {
-    if (requested && hasNextPage && !isFetchingNextPage) {
-      void tools.fetchNextPage();
-    }
-  }, [requested, hasNextPage, isFetchingNextPage, tools]);
-
-  const pages = tools.data;
-  const rows = useMemo(
-    () => (pages?.pages ?? []).flatMap((p) => p ?? []),
-    [pages],
+  const tools = usePagedList(
+    ["tools", agent, sessionId],
+    (offset) =>
+      api.sessionTools(agent, sessionId, { limit: TOOLS_PAGE, offset }),
+    TOOLS_PAGE,
+    { enabled: requested },
   );
-  return { rows, loading: requested && (tools.isLoading || hasNextPage) };
+
+  // Unlike the browse pages, this one runs itself to completion: the tabs
+  // show counts and group by file, both of which need every row.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = tools;
+  useEffect(() => {
+    if (requested && hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [requested, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  return {
+    rows: tools.rows,
+    loading: requested && (tools.isLoading || hasNextPage),
+  };
 }

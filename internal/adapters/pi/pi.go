@@ -27,7 +27,6 @@ const Slug = canon.AgentSlug("pi")
 
 const (
 	maxLineBytes = 10 * 1024 * 1024
-	titleLimit   = 200
 )
 
 // Adapter implements agent.Adapter for Pi.
@@ -157,8 +156,6 @@ type piBlock struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
 }
-
-const resultExcerptCap = 400
 
 // normalizeTool maps Pi's tool names (bash, read, edit, write,
 // web_search, todo, …) onto the shared taxonomy.
@@ -293,7 +290,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					SessionExternalID: sess.ExternalID,
 					CallExternalID:    dec.pm.ToolCallID,
 					Status:            status,
-					Excerpt:           canon.TruncateBytes(strings.TrimSpace(msg.Text), resultExcerptCap),
+					Excerpt:           canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.ToolResultExcerptLimit),
 				}); err != nil {
 					return err
 				}
@@ -324,7 +321,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			}
 		}
 		if sess.Title == "" && msg.Role == canon.RoleUser && msg.Text != "" {
-			sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), titleLimit)
+			sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.SessionTitleLimit)
 		}
 		if err := sink.Message(msg); err != nil {
 			return err
@@ -433,7 +430,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 		return base, decodedMessage{}, true
 
 	case "session_info":
-		sess.Title = canon.TruncateBytes(e.Name, titleLimit)
+		sess.Title = canon.TruncateBytes(e.Name, canon.SessionTitleLimit)
 		return canon.Message{}, decodedMessage{}, false
 
 	case "custom_message":

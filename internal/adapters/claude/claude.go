@@ -34,9 +34,7 @@ import (
 const Slug = canon.AgentSlug("claude-code")
 
 const (
-	maxLineBytes     = 10 * 1024 * 1024
-	titleLimit       = 200
-	resultExcerptCap = 400
+	maxLineBytes = 10 * 1024 * 1024
 )
 
 // Adapter implements agent.Adapter for Claude Code.
@@ -544,7 +542,7 @@ func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Messag
 		sess.GitBranch = raw.GitBranch
 	}
 	if sess.Title == "" && msg.Role == canon.RoleUser && !msg.IsSidechain && msg.Text != "" {
-		sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), titleLimit)
+		sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.SessionTitleLimit)
 	}
 }
 
@@ -600,7 +598,7 @@ func excerpt(content json.RawMessage) string {
 		// Structured tool_result content: keep a bounded raw slice.
 		s = string(content)
 	}
-	return canon.TruncateBytes(strings.TrimSpace(s), resultExcerptCap)
+	return canon.TruncateBytes(strings.TrimSpace(s), canon.ToolResultExcerptLimit)
 }
 
 func normalizeTool(name string) canon.ToolKind {

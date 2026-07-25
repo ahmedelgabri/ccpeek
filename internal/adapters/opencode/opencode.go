@@ -25,8 +25,6 @@ import (
 // Slug identifies this adapter.
 const Slug = canon.AgentSlug("opencode")
 
-const titleLimit = 200
-
 // Adapter implements agent.Adapter for OpenCode.
 type Adapter struct{}
 
@@ -165,7 +163,7 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 	sess := canon.Session{
 		Agent:      Slug,
 		ExternalID: doc.ID,
-		Title:      canon.TruncateBytes(doc.Title, titleLimit),
+		Title:      canon.TruncateBytes(doc.Title, canon.SessionTitleLimit),
 		CreatedAt:  millis(doc.Time.Created),
 		ModifiedAt: millis(doc.Time.Updated),
 		CWD:        doc.Directory,
@@ -250,19 +248,19 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 			if p.Type != "tool" || p.Tool == "" {
 				continue
 			}
-			args := toolArgs(p.State)
+			st := decodeToolState(p.State)
 			tc := canon.ToolCall{
 				SessionExternalID: doc.ID,
 				MessageSeq:        seq,
 				Seq:               toolSeq,
 				Name:              p.Tool,
 				Kind:              normalizeTool(p.Tool),
-				Input:             toolInput(p.State),
-				ResultStatus:      toolStatus(p.State),
-				FilePath:          args.FilePath,
-				Command:           args.Command,
-				OldText:           args.OldString,
-				NewText:           cmp.Or(args.NewString, args.Content),
+				Input:             st.rawInput(),
+				ResultStatus:      st.status(),
+				FilePath:          st.Args.FilePath,
+				Command:           st.Args.Command,
+				OldText:           st.Args.OldString,
+				NewText:           cmp.Or(st.Args.NewString, st.Args.Content),
 				StartedAt:         millis(md.Time.Created),
 			}
 			if err := sink.ToolCall(tc); err != nil {
@@ -285,33 +283,6 @@ func partsText(parts []part) string {
 	return strings.Join(out, "\n")
 }
 
-func toolInput(state json.RawMessage) json.RawMessage {
-	var s struct {
-		Input json.RawMessage `json:"input"`
-	}
-	if json.Unmarshal(state, &s) == nil && len(s.Input) > 0 {
-		return s.Input
-	}
-	return json.RawMessage(`{}`)
-}
-
-func toolStatus(state json.RawMessage) string {
-	var s struct {
-		Status string `json:"status"`
-	}
-	if json.Unmarshal(state, &s) != nil {
-		return ""
-	}
-	switch s.Status {
-	case "completed":
-		return "ok"
-	case "error":
-		return "error"
-	default:
-		return s.Status
-	}
-}
-
 // opencodeToolArgs is the subset of a tool part's arguments the canonical
 // record keeps beside the verbatim JSON. OpenCode nests them one level
 // deeper than the other agents — under state.input — which is exactly the
@@ -324,12 +295,42 @@ type opencodeToolArgs struct {
 	Content   string `json:"content"`
 }
 
-func toolArgs(state json.RawMessage) opencodeToolArgs {
-	var s struct {
-		Input opencodeToolArgs `json:"input"`
+// toolState is a tool part's state decoded ONCE. Its three consumers —
+// the raw input, the result status, and the normalized arguments — each
+// used to unmarshal the whole blob independently, and an OpenCode write
+// state carries the file's full contents.
+type toolState struct {
+	Status string           `json:"status"`
+	Input  json.RawMessage  `json:"input"`
+	Args   opencodeToolArgs `json:"-"`
+}
+
+func decodeToolState(state json.RawMessage) toolState {
+	var st toolState
+	if json.Unmarshal(state, &st) != nil {
+		return toolState{}
 	}
-	_ = json.Unmarshal(state, &s)
-	return s.Input
+	_ = json.Unmarshal(st.Input, &st.Args)
+	return st
+}
+
+// rawInput is the agent-native arguments, preserved verbatim on the record.
+func (s toolState) rawInput() json.RawMessage {
+	if len(s.Input) > 0 {
+		return s.Input
+	}
+	return json.RawMessage(`{}`)
+}
+
+func (s toolState) status() string {
+	switch s.Status {
+	case "completed":
+		return "ok"
+	case "error":
+		return "error"
+	default:
+		return s.Status
+	}
 }
 
 func normalizeTool(name string) canon.ToolKind {

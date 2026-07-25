@@ -20,14 +20,25 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 11
+const schemaVersion = 12
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 11
+const baseVersion = 12
+
+// Two partial indexes are PINNED with INDEXED BY by the queries they
+// exist for — the planner will not choose either on its own. Their names
+// are constants rather than literals so those pins are compile-checked:
+// internal/query is a different package, and a rename there would
+// otherwise fail only at runtime, with "no such index", and only if a
+// test happened to exercise that query.
+const (
+	IdxToolCallsRecentFiles  = "idx_tool_calls_recent_files"
+	IdxToolCallsMemoryWrites = "idx_tool_calls_memory_writes"
+)
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -161,10 +172,10 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path) WHERE fi
 -- at 120. Its predicate is spelled here literally so the planner uses the
 -- index for both the filter AND the order, letting the LIMIT stop early
 -- instead of sorting every file-touching call in the corpus.
-CREATE INDEX IF NOT EXISTS idx_tool_calls_recent_files
+CREATE INDEX IF NOT EXISTS ` + IdxToolCallsRecentFiles + `
 	ON tool_calls(started_at DESC)
 	WHERE kind IN ('file_write', 'file_edit') AND file_path <> '';
-CREATE INDEX IF NOT EXISTS idx_tool_calls_memory_writes
+CREATE INDEX IF NOT EXISTS ` + IdxToolCallsMemoryWrites + `
 	ON tool_calls(file_path, session_id)
 	WHERE kind IN ('file_write', 'file_edit') AND file_path LIKE '%/memory/%';
 
@@ -196,6 +207,12 @@ CREATE TABLE IF NOT EXISTS artifact_sessions (
 	PRIMARY KEY (artifact_id, session_id, relation)
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_sessions_session ON artifact_sessions(session_id);
+-- The link resolvers reconcile by (relation, evidence): without this they
+-- SCAN every link row in the database — one per paste, snapshot, todo list
+-- and file-history link — and probe artifacts for each, twice per ingest
+-- pass, just to find the content_ref ones.
+CREATE INDEX IF NOT EXISTS idx_artifact_sessions_resolver
+	ON artifact_sessions(relation, evidence, artifact_id);
 
 -- Artifact→session links whose session hasn't been ingested yet; resolved
 -- opportunistically at the end of each ingest run. attempts ages out rows

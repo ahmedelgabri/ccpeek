@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -61,8 +62,13 @@ func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactK
 	}
 	defer tx.Rollback()
 
+	// anchor_seq comes back too, so an unchanged link can be recognized and
+	// left alone. Without it every already-correct link was re-UPDATEd on
+	// every pass — 15ms of a 22ms no-op reconcile at 1000 links, doubled
+	// (plans and memories), and each write dirtied a WAL page, so the WAL
+	// grew on every watch-mode debounce that changed nothing.
 	rows, err := tx.QueryContext(ctx, `
-		SELECT ass.artifact_id, ass.session_id
+		SELECT ass.artifact_id, ass.session_id, ass.anchor_seq
 		FROM artifact_sessions ass
 		JOIN artifacts ar ON ar.id = ass.artifact_id
 		WHERE ar.kind = ? AND ass.relation = ? AND ass.evidence = ?`,
@@ -70,14 +76,15 @@ func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactK
 	if err != nil {
 		return 0, 0, fmt.Errorf("listing %s links: %w", kind, err)
 	}
-	existing := map[pair]bool{}
+	existing := map[pair]sql.NullInt64{}
 	for rows.Next() {
 		var p pair
-		if err := rows.Scan(&p.artifactID, &p.sessionID); err != nil {
+		var anchor sql.NullInt64
+		if err := rows.Scan(&p.artifactID, &p.sessionID, &anchor); err != nil {
 			rows.Close()
 			return 0, 0, err
 		}
-		existing[p] = true
+		existing[p] = anchor
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -85,9 +92,13 @@ func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactK
 	}
 
 	for p, anchor := range expected {
-		if existing[p] {
-			// The link stands; its anchor may still have moved (a resumed
-			// session re-approving the same plan writes a later call).
+		if stored, ok := existing[p]; ok {
+			// The link stands. Its anchor may still have moved — a resumed
+			// session re-approving the same plan writes a later call — but
+			// only then is a write warranted.
+			if stored.Valid && stored.Int64 == int64(anchor) {
+				continue
+			}
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE artifact_sessions SET anchor_seq = ?
 				WHERE artifact_id = ? AND session_id = ? AND relation = ? AND evidence = ?`,
@@ -154,7 +165,6 @@ func (s *Store) LinkPlanArtifacts(ctx context.Context) (added, removed int, err 
 		text    string
 	}
 	plansByText := map[planKey][]int64{}
-	nPlans := 0
 	for rows.Next() {
 		var id, agentID int64
 		var content string
@@ -164,13 +174,12 @@ func (s *Store) LinkPlanArtifacts(ctx context.Context) (added, removed int, err 
 		}
 		k := planKey{agentID, normalizePlanText(content)}
 		plansByText[k] = append(plansByText[k], id)
-		nPlans++
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, 0, err
 	}
-	if nPlans == 0 {
+	if len(plansByText) == 0 {
 		return s.reconcileResolverLinks(ctx, canon.ArtifactPlan, nil)
 	}
 
@@ -254,7 +263,6 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 		suffix  string
 	}
 	memoriesBySuffix := map[memKey][]int64{}
-	nMemories := 0
 	for rows.Next() {
 		var id, agentID int64
 		var name string
@@ -265,14 +273,13 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 		if suffix, ok := memoryPathSuffix(name); ok {
 			k := memKey{agentID, suffix}
 			memoriesBySuffix[k] = append(memoriesBySuffix[k], id)
-			nMemories++
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, 0, err
 	}
-	if nMemories == 0 {
+	if len(memoriesBySuffix) == 0 {
 		return s.reconcileResolverLinks(ctx, canon.ArtifactMemory, nil)
 	}
 
@@ -290,7 +297,7 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 	// state the artifact holds.
 	rows, err = s.db.QueryContext(ctx, `
 		SELECT se.agent_id, tc.session_id, tc.message_seq, tc.file_path
-		FROM tool_calls tc INDEXED BY idx_tool_calls_memory_writes
+		FROM tool_calls tc INDEXED BY `+IdxToolCallsMemoryWrites+`
 		JOIN sessions se ON se.id = tc.session_id
 		WHERE tc.kind IN ('file_write', 'file_edit')
 		  AND tc.file_path LIKE '%/memory/%'

@@ -114,16 +114,38 @@ func TestRecentFileEditsStopsAtTheLimit(t *testing.T) {
 	plan := planFor(t, planStore(t), `
 		SELECT tc.file_path, tc.kind, a.slug, se.external_id,
 		       COALESCE(tc.started_at, '')
-		FROM tool_calls tc INDEXED BY idx_tool_calls_recent_files
+		FROM tool_calls tc INDEXED BY `+IdxToolCallsRecentFiles+`
 		JOIN sessions se ON se.id = tc.session_id
 		JOIN agents a ON a.id = se.agent_id
 		WHERE tc.kind IN ('file_write', 'file_edit') AND tc.file_path <> ''
 		ORDER BY tc.started_at DESC LIMIT 120`)
 
-	if !strings.Contains(plan, "idx_tool_calls_recent_files") {
+	if !strings.Contains(plan, IdxToolCallsRecentFiles) {
 		t.Errorf("recent-files feed does not use its partial index:\n%s", plan)
 	}
 	if strings.Contains(plan, "TEMP B-TREE FOR ORDER BY") {
 		t.Errorf("recent-files feed sorts everything before its LIMIT:\n%s", plan)
+	}
+}
+
+// The link resolvers run twice per ingest pass and filter links by
+// (relation, evidence). artifact_sessions holds a row per paste, shell
+// snapshot, todo list and file-history link, so a scan here is a scan of
+// the whole link table — on every watch-mode debounce.
+func TestResolverReconcileSeeksItsLinks(t *testing.T) {
+	plan := planFor(t, planStore(t), `
+		SELECT ass.artifact_id, ass.session_id, ass.anchor_seq
+		FROM artifact_sessions ass
+		JOIN artifacts ar ON ar.id = ass.artifact_id
+		WHERE ar.kind = ? AND ass.relation = ? AND ass.evidence = ?`,
+		"plan", "produced_by", "content_ref")
+
+	for line := range strings.SplitSeq(plan, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "SCAN ass") {
+			t.Errorf("resolver reconcile scans the whole link table:\n%s", plan)
+		}
+	}
+	if !strings.Contains(plan, "idx_artifact_sessions_resolver") {
+		t.Errorf("resolver reconcile does not use its index:\n%s", plan)
 	}
 }
