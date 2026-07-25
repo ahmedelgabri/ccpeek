@@ -192,23 +192,20 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	} else {
 		report.LinksPending = pending
 	}
-	// Plans land on disk as slug-named markdown with no session id; link
-	// them to the ExitPlanMode call that produced them by plan text.
-	// Memories link to the sessions whose file_write/file_edit calls
-	// targeted their path. Both RECONCILE the complete (artifact, session)
-	// pair set every pass — a later session approving an already-linked
-	// plan gains its link, and a plan rewritten under the same name loses
-	// links whose evidence no longer holds.
+	// Artifacts whose provenance lives in their CONTENT — a plan matched by
+	// its markdown, a memory by the path a tool call wrote — are linked by
+	// rules each adapter declares (agent.LinkRuler). The rules RECONCILE
+	// the complete (artifact, session) pair set every pass: a later session
+	// producing an already-linked artifact gains its link, and one
+	// rewritten under the same name loses the links whose evidence no
+	// longer holds.
 	//
-	// Gated on the pass having changed something. Reconciliation reads
-	// every plan's content and every memory-writing tool call, so running
-	// it unconditionally made each watch-mode debounce fire — most of
+	// Gated on the pass having changed something. A rule reads every
+	// artifact of its kind and every call that could have produced one, so
+	// running them unconditionally made each watch-mode debounce — most of
 	// which change nothing relevant — pay a full pass over the corpus.
 	if report.FilesChanged > 0 || prunedSources > 0 {
-		if _, _, err := r.store.LinkPlanArtifacts(ctx); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-		if _, _, err := r.store.LinkMemoryArtifacts(ctx); err != nil {
+		if _, _, err := r.store.ResolveArtifactLinks(ctx, r.linkRules()); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
 	}
@@ -477,6 +474,19 @@ func (r *Runner) resolveRoots(opts Options) ([]resolvedRoot, []canon.Issue) {
 		}
 	}
 	return roots, issues
+}
+
+// linkRules collects the provenance rules from every adapter that
+// declares them (agent.LinkRuler is optional — most agents keep no
+// content-linked artifacts).
+func (r *Runner) linkRules() []canon.LinkRule {
+	var rules []canon.LinkRule
+	for _, a := range r.adapters {
+		if lr, ok := a.(agent.LinkRuler); ok {
+			rules = append(rules, lr.LinkRules()...)
+		}
+	}
+	return rules
 }
 
 func (r *Runner) counts(report *Report) db.RunCounts {

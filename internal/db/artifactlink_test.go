@@ -2,11 +2,87 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
+
+// The rule engine is agent-neutral, so these tests declare their own rules
+// rather than importing an adapter's — which is also what keeps them from
+// silently passing on a Claude-shaped assumption baked into the store.
+func planRule() canon.LinkRule {
+	norm := func(s string) (string, bool) {
+		if strings.TrimSpace(s) == "" {
+			return "", false
+		}
+		lines := strings.Split(strings.TrimSpace(s), "\n")
+		for i, l := range lines {
+			lines[i] = strings.TrimRight(l, " \t\r")
+		}
+		return strings.Join(lines, "\n"), true
+	}
+	return canon.LinkRule{
+		Kind:        canon.ArtifactPlan,
+		Calls:       canon.ToolCallSelector{ToolName: "ExitPlanMode"},
+		ArtifactKey: func(a canon.LinkArtifact) (string, bool) { return norm(a.Content) },
+		CallKey: func(c canon.LinkToolCall) (string, bool) {
+			var in struct {
+				Plan string `json:"plan"`
+			}
+			if json.Unmarshal([]byte(c.InputJSON), &in) != nil {
+				return "", false
+			}
+			return norm(in.Plan)
+		},
+	}
+}
+
+func memoryRule() canon.LinkRule {
+	tail := func(path string) (string, bool) {
+		i := strings.LastIndex(path, "/projects/")
+		if i < 0 || !strings.Contains(path[i:], "/memory/") {
+			return "", false
+		}
+		return path[i:], true
+	}
+	return canon.LinkRule{
+		Kind: canon.ArtifactMemory,
+		Calls: canon.ToolCallSelector{
+			Kinds:            []canon.ToolKind{canon.ToolFileWrite, canon.ToolFileEdit},
+			FilePathContains: "/memory/",
+		},
+		ArtifactKey: func(a canon.LinkArtifact) (string, bool) {
+			dir, base, found := strings.Cut(a.Name, "/")
+			if !found || dir == "" || base == "" {
+				return "", false
+			}
+			return "/projects/" + dir + "/memory/" + base, true
+		},
+		CallKey: func(c canon.LinkToolCall) (string, bool) { return tail(c.FilePath) },
+	}
+}
+
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func linkPlans(ctx context.Context, s *Store) (int, int, error) {
+	return s.ResolveArtifactLinks(ctx, []canon.LinkRule{planRule()})
+}
+
+func linkMemories(ctx context.Context, s *Store) (int, int, error) {
+	return s.ResolveArtifactLinks(ctx, []canon.LinkRule{memoryRule()})
+}
 
 // TestLinkPlanArtifacts proves plans link to the session whose
 // ExitPlanMode call carries the same plan text — despite whitespace
@@ -66,9 +142,9 @@ func TestLinkPlanArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	linked, _, err := s.LinkPlanArtifacts(ctx)
+	linked, _, err := linkPlans(ctx, s)
 	if err != nil {
-		t.Fatalf("LinkPlanArtifacts: %v", err)
+		t.Fatalf("resolving plan links: %v", err)
 	}
 	if linked != 1 {
 		t.Fatalf("linked = %d, want 1", linked)
@@ -98,7 +174,7 @@ func TestLinkPlanArtifacts(t *testing.T) {
 
 	// Second pass: nothing new (linked plans are skipped, the orphan still
 	// matches nothing).
-	linked, _, err = s.LinkPlanArtifacts(ctx)
+	linked, _, err = linkPlans(ctx, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,9 +227,9 @@ func TestLinkMemoryArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	linked, _, err := s.LinkMemoryArtifacts(ctx)
+	linked, _, err := linkMemories(ctx, s)
 	if err != nil {
-		t.Fatalf("LinkMemoryArtifacts: %v", err)
+		t.Fatalf("resolving memory links: %v", err)
 	}
 	if linked != 1 {
 		t.Fatalf("linked = %d, want 1 (write links, read does not)", linked)
@@ -171,7 +247,7 @@ func TestLinkMemoryArtifacts(t *testing.T) {
 		t.Errorf("link = %s/%s, want sess-mem/content_ref", ext, evidence)
 	}
 
-	linked, _, err = s.LinkMemoryArtifacts(ctx)
+	linked, _, err = linkMemories(ctx, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +290,7 @@ func TestLaterSessionLinksToExistingPlan(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if n, _, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
+	if n, _, err := linkPlans(ctx, s); err != nil || n != 1 {
 		t.Fatalf("first pass linked = %d (err %v), want 1", n, err)
 	}
 
@@ -237,7 +313,7 @@ func TestLaterSessionLinksToExistingPlan(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if n, _, err := s.LinkPlanArtifacts(ctx); err != nil || n != 1 {
+	if n, _, err := linkPlans(ctx, s); err != nil || n != 1 {
 		t.Fatalf("second pass linked = %d (err %v), want 1 (the new pair)", n, err)
 	}
 	var links int
@@ -287,7 +363,7 @@ func TestLinkPlanArtifactsReconcilesStaleEvidence(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if added, removed, err := s.LinkPlanArtifacts(ctx); err != nil || added != 1 || removed != 0 {
+	if added, removed, err := linkPlans(ctx, s); err != nil || added != 1 || removed != 0 {
 		t.Fatalf("first pass = +%d -%d (%v), want +1 -0", added, removed, err)
 	}
 
@@ -314,7 +390,7 @@ func TestLinkPlanArtifactsReconcilesStaleEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if added, removed, err := s.LinkPlanArtifacts(ctx); err != nil || added != 0 || removed != 1 {
+	if added, removed, err := linkPlans(ctx, s); err != nil || added != 0 || removed != 1 {
 		t.Fatalf("reconcile pass = +%d -%d (%v), want +0 -1 (stale evidence)", added, removed, err)
 	}
 	var n int
@@ -333,5 +409,147 @@ func TestLinkPlanArtifactsReconcilesStaleEvidence(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("non-resolver link count = %d, want 1 (must be preserved)", n)
+	}
+}
+
+// The whole point of moving the rules out of the store: an agent that is
+// not Claude Code, with its own tool name and its own artifact shape, gets
+// its artifacts linked without a line of code in internal/db.
+//
+// This rule shares nothing with Claude's — a different tool name, a
+// different key derivation, a different artifact kind.
+func TestRuleEngineServesAnyAgentsShape(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	w, err := s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID, err := w.UpsertSession(canon.Session{
+		Agent: "pi", ExternalID: "sess-invented",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A made-up agent convention: a "publish_note" call whose input names
+	// the note it wrote, and note artifacts named "notes/<slug>".
+	if err := w.InsertToolCall(sessID, canon.ToolCall{
+		Seq: 0, MessageSeq: 4, Name: "publish_note", Kind: canon.ToolOther,
+		Input: []byte(`{"slug":"weekly-summary"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "pi", Kind: canon.ArtifactPlan, Name: "notes/weekly-summary",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := canon.LinkRule{
+		Kind:  canon.ArtifactPlan,
+		Calls: canon.ToolCallSelector{ToolName: "publish_note"},
+		ArtifactKey: func(a canon.LinkArtifact) (string, bool) {
+			return strings.CutPrefix(a.Name, "notes/")
+		},
+		CallKey: func(c canon.LinkToolCall) (string, bool) {
+			var in struct {
+				Slug string `json:"slug"`
+			}
+			if json.Unmarshal([]byte(c.InputJSON), &in) != nil || in.Slug == "" {
+				return "", false
+			}
+			return in.Slug, true
+		},
+	}
+
+	added, _, err := s.ResolveArtifactLinks(ctx, []canon.LinkRule{rule})
+	if err != nil {
+		t.Fatalf("ResolveArtifactLinks: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("links added = %d, want 1", added)
+	}
+
+	var anchor sql.NullInt64
+	if err := s.ReadDB().QueryRowContext(ctx,
+		`SELECT anchor_seq FROM artifact_sessions`).Scan(&anchor); err != nil {
+		t.Fatal(err)
+	}
+	if !anchor.Valid || anchor.Int64 != 4 {
+		t.Errorf("anchor = %v, want the publish_note call's message seq (4)", anchor)
+	}
+}
+
+// An anchor-only rule records where an artifact was produced without
+// creating or removing the link — the link belongs to other evidence.
+func TestAnchorOnlyRuleLeavesTheLinkAlone(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	w, err := s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "sess-anchor-only",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, seq := range []int{2, 7} {
+		if err := w.InsertToolCall(sessID, canon.ToolCall{
+			Seq: seq, MessageSeq: seq, Name: "TodoWrite", Kind: canon.ToolOther,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artID, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactTodoList, Name: "todo.json",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The link exists on OTHER evidence — the session uuid in the name.
+	if _, err := w.LinkArtifact(artID, canon.ArtifactLink{
+		Agent: "claude-code", ArtifactKind: canon.ArtifactTodoList,
+		ArtifactName: "todo.json", SessionExternalID: "sess-anchor-only",
+		Relation: canon.LinkProducedBy, Evidence: canon.EvidenceFilenameUUID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := canon.LinkRule{
+		Kind:  canon.ArtifactTodoList,
+		Calls: canon.ToolCallSelector{ToolName: "TodoWrite"},
+	}
+	if !rule.Anchors() {
+		t.Fatal("a rule with no key functions must be anchor-only")
+	}
+	added, removed, err := s.ResolveArtifactLinks(ctx, []canon.LinkRule{rule})
+	if err != nil {
+		t.Fatalf("ResolveArtifactLinks: %v", err)
+	}
+	if added != 0 || removed != 0 {
+		t.Errorf("anchor-only rule changed links: +%d -%d", added, removed)
+	}
+
+	var evidence string
+	var anchor sql.NullInt64
+	if err := s.ReadDB().QueryRowContext(ctx,
+		`SELECT evidence, anchor_seq FROM artifact_sessions`).Scan(&evidence, &anchor); err != nil {
+		t.Fatal(err)
+	}
+	if evidence != string(canon.EvidenceFilenameUUID) {
+		t.Errorf("evidence = %q, want the original %q", evidence, canon.EvidenceFilenameUUID)
+	}
+	if !anchor.Valid || anchor.Int64 != 7 {
+		t.Errorf("anchor = %v, want 7 (the LAST TodoWrite)", anchor)
 	}
 }

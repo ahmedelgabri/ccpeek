@@ -145,3 +145,12 @@ var ErrTailInvalid = errors.New("source cannot be resumed from its cursor")
 type TailParser interface {
 	ParseTail(ctx context.Context, src SourceRef, state TailState, sink RecordSink) (TailState, error)
 }
+
+// LinkRuler is an OPTIONAL adapter capability: an agent whose artifacts
+// carry their provenance in their content — rather than in a session id
+// embedded in the file name — declares how to match them here, and the
+// store runs the rules generically. Adapters without such artifacts do not
+// implement it.
+type LinkRuler interface {
+	LinkRules() []canon.LinkRule
+}

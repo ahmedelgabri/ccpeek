@@ -7,10 +7,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
+
+// The query tests resolve links through the real Claude rules, so what
+// they assert is what ingest actually produces.
+func linkPlansForTest(ctx context.Context, store *db.Store) (int, int, error) {
+	return store.ResolveArtifactLinks(ctx, claudeRules(canon.ArtifactPlan))
+}
+
+func linkMemoriesForTest(ctx context.Context, store *db.Store) (int, int, error) {
+	return store.ResolveArtifactLinks(ctx, claudeRules(canon.ArtifactMemory))
+}
+
+func claudeRules(kinds ...canon.ArtifactKind) []canon.LinkRule {
+	var out []canon.LinkRule
+	for _, r := range claude.New().LinkRules() {
+		for _, k := range kinds {
+			if r.Kind == k {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
+}
 
 // TestArtifactSessionAnchors proves the artifact detail resolves the
 // transcript seq of the tool call that produced a kind (TodoWrite for a
@@ -72,6 +95,12 @@ func TestArtifactSessionAnchors(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The anchor is written at RESOLVE time now, by the adapter's rules —
+	// the read path no longer re-derives it with a per-session subquery.
+	if _, _, err := store.ResolveArtifactLinks(ctx, claude.New().LinkRules()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +174,7 @@ func TestPlanAnchorMatchesItsOwnCall(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.LinkPlanArtifacts(ctx); err != nil {
+	if _, _, err := linkPlansForTest(ctx, store); err != nil {
 		t.Fatal(err)
 	}
 
@@ -213,7 +242,7 @@ func TestMemoryAnchorPointsAtItsWrite(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.LinkMemoryArtifacts(ctx); err != nil {
+	if _, _, err := linkMemoriesForTest(ctx, store); err != nil {
 		t.Fatal(err)
 	}
 
@@ -381,7 +410,7 @@ func TestResolverRecordsTheAnchorItMatched(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.LinkPlanArtifacts(ctx); err != nil {
+	if _, _, err := linkPlansForTest(ctx, store); err != nil {
 		t.Fatal(err)
 	}
 
@@ -414,7 +443,7 @@ func TestResolverRecordsTheAnchorItMatched(t *testing.T) {
 	if err := w2.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.LinkPlanArtifacts(ctx); err != nil {
+	if _, _, err := linkPlansForTest(ctx, store); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.ReadDB().QueryRowContext(ctx, `

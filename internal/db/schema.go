@@ -20,14 +20,14 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 12
+const schemaVersion = 13
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 12
+const baseVersion = 13
 
 // Two partial indexes are PINNED with INDEXED BY by the queries they
 // exist for — the planner will not choose either on its own. Their names
@@ -36,8 +36,8 @@ const baseVersion = 12
 // otherwise fail only at runtime, with "no such index", and only if a
 // test happened to exercise that query.
 const (
-	IdxToolCallsRecentFiles  = "idx_tool_calls_recent_files"
-	IdxToolCallsMemoryWrites = "idx_tool_calls_memory_writes"
+	IdxToolCallsRecentFiles = "idx_tool_calls_recent_files"
+	IdxToolCallsFileWrites  = "idx_tool_calls_file_writes"
 )
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
@@ -162,12 +162,6 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_kind ON tool_calls(kind, started_at DE
 CREATE INDEX IF NOT EXISTS idx_tool_calls_external ON tool_calls(session_id, external_id) WHERE external_id <> '';
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path) WHERE file_path <> '';
--- The memory resolver's exact predicate. Without it that reconciliation
--- visits every file_write/file_edit call ever indexed on each pass just
--- to discard the ones outside a memory directory; with it the scan is
--- over the handful of rows that can actually produce a link. The index
--- WHERE clause must match the query's literally for the planner to use it
--- (see LinkMemoryArtifacts).
 -- The Overview's recent-file-edits feed: newest write/edit first, capped
 -- at 120. Its predicate is spelled here literally so the planner uses the
 -- index for both the filter AND the order, letting the LIMIT stop early
@@ -175,9 +169,19 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path) WHERE fi
 CREATE INDEX IF NOT EXISTS ` + IdxToolCallsRecentFiles + `
 	ON tool_calls(started_at DESC)
 	WHERE kind IN ('file_write', 'file_edit') AND file_path <> '';
-CREATE INDEX IF NOT EXISTS ` + IdxToolCallsMemoryWrites + `
-	ON tool_calls(file_path, session_id)
-	WHERE kind IN ('file_write', 'file_edit') AND file_path LIKE '%/memory/%';
+-- A COVERING index over file-touching calls, for the link rules that match
+-- on a path substring (canon.ToolCallSelector.FilePathContains). A
+-- leading-wildcard LIKE cannot seek, so the substring test has to scan —
+-- but over index pages rather than faulting in each matching row's table
+-- page, which carries input_json and the 16 KiB-capped old/new text. Every
+-- column the rule engine reads is here.
+--
+-- It used to bake one agent's memory-directory layout into its WHERE
+-- clause, which made the store's schema depend on Claude Code's on-disk
+-- format.
+CREATE INDEX IF NOT EXISTS ` + IdxToolCallsFileWrites + `
+	ON tool_calls(file_path, session_id, message_seq, name, kind, input_json)
+	WHERE kind IN ('file_write', 'file_edit');
 
 -- Artifacts stand alone; sessions attach via artifact_sessions with
 -- explicit relation + evidence.

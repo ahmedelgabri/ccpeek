@@ -84,21 +84,12 @@ type ArtifactDetail struct {
 	Metadata    string   `json:"metadata,omitempty"`    // raw JSON payload
 	SessionIDs  []string `json:"sessionIds,omitempty"`  // linked session external ids
 	// SessionAnchors maps a linked session's external id to the transcript
-	// seq of the tool call that produced this artifact (a TodoWrite for a
-	// todo list, an ExitPlanMode for a plan), when one is found — letting
-	// the UI deep-link the artifact to the message it came from. Kinds with
-	// no producing tool call (memories, snapshots, file history) have none.
+	// seq of the tool call that produced this artifact, recorded at ingest
+	// time by the adapter's link rules (canon.LinkRule) — it lets the UI
+	// deep-link an artifact to the message it came from. Kinds whose
+	// adapter declares no rule, and links whose producing call is not in
+	// the transcript, have none.
 	SessionAnchors map[string]int `json:"sessionAnchors,omitempty"`
-}
-
-// producerTool names the tool call whose latest occurrence in a session
-// produced an artifact of a given kind. Only kinds emitted by a tool call
-// appear here; the rest have no message-level provenance. Plans are not
-// listed: a session can hold several plans, so their anchor is resolved
-// by matching plan text against ExitPlanMode inputs instead of "last
-// call wins" (see the plan block in Artifact).
-var producerTool = map[string]string{
-	"todo_list": "TodoWrite",
 }
 
 // Artifact fetches one artifact with content and linked sessions.
@@ -129,36 +120,17 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 		d.ContentHTML = render(d.Kind, d.Content)
 	}
 
-	// anchor_seq is what the plan/memory resolvers recorded when they
-	// matched the link — they knew exactly which call produced it. Links
-	// from other evidence carry no anchor, so those fall back to the
-	// generic heuristic: the last producing tool call in the session (the
-	// correlated subquery yields NULL when the kind has no producer or the
-	// session has no such call).
-	//
-	// The read path used to have neither: it re-ran the resolvers' matching
-	// on every request — re-normalizing plan markdown, re-deriving memory
-	// path suffixes — with two extra queries per artifact, and that is the
-	// only reason those helpers were exported from db at all.
-	// Only kinds WITH a producer tool pay for the fallback. With an empty
-	// tool name the subquery can never match, yet SQLite still walked the
-	// session's whole tool_calls row set — including the 16 KiB-capped
-	// old_text/new_text and input_json — once per linked session, to
-	// return NULL. That is 9 of the 10 artifact kinds.
-	anchorExpr, args := `ass.anchor_seq`, []any{id}
-	if tool := producerTool[kind]; tool != "" {
-		anchorExpr = `COALESCE(ass.anchor_seq,
-		                (SELECT tc.message_seq FROM tool_calls tc
-		                 WHERE tc.session_id = se.id AND tc.name = ?
-		                 ORDER BY tc.seq DESC LIMIT 1))`
-		args = []any{tool, id}
-	}
+	// anchor_seq is recorded at INGEST time by the adapter-declared link
+	// rules, which knew exactly which call produced each link. The read
+	// path used to re-derive it — re-running the resolvers' matching on
+	// every request for the content-linked kinds, and a correlated
+	// subquery per linked session for the rest.
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT se.external_id, `+anchorExpr+` AS anchor
+		SELECT se.external_id, ass.anchor_seq
 		FROM artifact_sessions ass
 		JOIN sessions se ON se.id = ass.session_id
 		WHERE ass.artifact_id = ?
-		ORDER BY se.modified_at DESC`, args...)
+		ORDER BY se.modified_at DESC`, id)
 	if err != nil {
 		return nil, err
 	}
