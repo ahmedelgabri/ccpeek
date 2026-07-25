@@ -197,6 +197,23 @@ function Layout() {
   );
 }
 
+// pickStrings keeps the non-empty string parameters a route understands
+// and drops everything else, so URLs stay clean and an unknown or blank
+// value can never reach a query. Each route spelled this out per key —
+// eleven near-identical `if (typeof s.x === "string" && s.x !== "")` lines
+// whose only interesting property was that none of them differed.
+function pickStrings<K extends string>(
+  s: Record<string, unknown>,
+  keys: readonly K[],
+): Partial<Record<K, string>> {
+  const out: Partial<Record<K, string>> = {};
+  for (const k of keys) {
+    const v = s[k];
+    if (typeof v === "string" && v !== "") out[k] = v;
+  }
+  return out;
+}
+
 const rootRoute = createRootRoute({ component: Layout });
 
 // Session-centric URLs (docs/v2-plan.md §8.2): /sessions/$agent/$sessionId.
@@ -211,33 +228,18 @@ const routeTree = rootRoute.addChildren([
     path: "/sessions",
     component: SessionsPage,
     // Only non-empty filters serialize, keeping /sessions URLs clean.
-    validateSearch: (s: Record<string, unknown>) => {
-      const out: {
-        agent?: string;
-        q?: string;
-        project?: string;
-        model?: string;
-        since?: string;
-        until?: string;
-      } = {};
-      if (typeof s.agent === "string" && s.agent !== "") out.agent = s.agent;
-      if (typeof s.model === "string" && s.model !== "") out.model = s.model;
-      if (typeof s.q === "string" && s.q !== "") out.q = s.q;
-      if (typeof s.project === "string" && s.project !== "")
-        out.project = s.project;
-      if (typeof s.since === "string" && s.since !== "") out.since = s.since;
-      if (typeof s.until === "string" && s.until !== "") out.until = s.until;
-      return out;
-    },
+    validateSearch: (s: Record<string, unknown>) =>
+      pickStrings(s, ["agent", "q", "project", "model", "since", "until"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/sessions/$agent/$sessionId",
     component: SessionDetailPage,
     validateSearch: (s: Record<string, unknown>) => {
+      // "transcript" is the default tab and stays out of the URL.
+      const { tab } = pickStrings(s, ["tab"]);
       const out: { tab?: string; seq?: number } = {};
-      if (typeof s.tab === "string" && s.tab !== "" && s.tab !== "transcript")
-        out.tab = s.tab;
+      if (tab !== undefined && tab !== "transcript") out.tab = tab;
       if (typeof s.seq === "number") out.seq = s.seq;
       return out;
     },
@@ -261,12 +263,8 @@ const routeTree = rootRoute.addChildren([
     getParentRoute: () => rootRoute,
     path: "/artifacts",
     component: ArtifactsPage,
-    validateSearch: (s: Record<string, unknown>) => {
-      const out: { agent?: string; kind?: string } = {};
-      if (typeof s.agent === "string" && s.agent !== "") out.agent = s.agent;
-      if (typeof s.kind === "string" && s.kind !== "") out.kind = s.kind;
-      return out;
-    },
+    validateSearch: (s: Record<string, unknown>) =>
+      pickStrings(s, ["agent", "kind"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,

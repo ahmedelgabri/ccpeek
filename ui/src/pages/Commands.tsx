@@ -9,6 +9,7 @@ import {
   EmptyNote,
   FilterBar,
   SkeletonRows,
+  useDebounced,
 } from "../ui";
 
 const FORMATS = ["zsh", "bash", "fish", "plain"] as const;
@@ -19,6 +20,9 @@ const PAGE = 100;
 // into real shell history files (same formats as `ccpeek export`).
 export function CommandsPage() {
   const [q, setQ] = useState("");
+  // The commands query scans and orders across the whole corpus, so it is
+  // not something to run per keystroke.
+  const debouncedQ = useDebounced(q);
   const [agent, setAgent] = useState("");
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
@@ -33,10 +37,10 @@ export function CommandsPage() {
     isFetchingNextPage,
     fetchNextPage,
   } = usePagedList(
-    ["commands", q, agent, since, until],
+    ["commands", debouncedQ, agent, since, until],
     (offset) =>
       api.commands({
-        q,
+        q: debouncedQ,
         agent,
         since,
         until: until,

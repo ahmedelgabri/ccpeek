@@ -985,8 +985,9 @@ func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1S
 	insert := func(key string) error {
 		_, err := store.DB().ExecContext(ctx, `
 			INSERT INTO user_annotations (entity_type, natural_key, kind, value_json, created_at)
-			VALUES ('scan_finding', ?, 'scan_ignore', '{}', ?)
-			ON CONFLICT(entity_type, natural_key, kind) DO NOTHING`, key, now)
+			VALUES (?, ?, ?, '{}', ?)
+			ON CONFLICT(entity_type, natural_key, kind) DO NOTHING`,
+			db.ScanFindingEntity, key, db.ScanIgnoreKind, now)
 		return err
 	}
 	for rows.Next() {
@@ -994,9 +995,14 @@ func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1S
 		if err := rows.Scan(&ruleID, &sourceType, &sourceID); err != nil {
 			return err
 		}
+		// The key formats live in db, which every surface reading them
+		// shares; the importer only decides WHICH entity each v1 row maps
+		// to. Artifacts always take the wildcard form: v1's line numbering
+		// has no v2 equivalent.
 		artifactKey := func(kind canon.ArtifactKind, name string) string {
-			return fmt.Sprintf("artifact/%s/%s/%s/%s/*",
-				claudeSlug, kind, name, ruleID)
+			return db.ScanIgnoreWildcardKey(
+				fmt.Sprintf("artifact/%s/%s/%s", claudeSlug, kind, name), ruleID,
+			)
 		}
 		var keys []string
 		switch sourceType {
@@ -1004,14 +1010,14 @@ func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1S
 			// v1 scanned commands out of the same transcript entries the
 			// v2 scanner covers as messages.
 			session, ts, ok := splitV1MessageID(sourceID)
-			base := fmt.Sprintf("message/%s/%s/%s", claudeSlug, session, ruleID)
+			entity := fmt.Sprintf("message/%s/%s", claudeSlug, session)
 			if ok {
 				for _, seq := range messageSeqsAt(ctx, store, session, ts) {
-					keys = append(keys, fmt.Sprintf("%s/%d", base, seq))
+					keys = append(keys, db.ScanIgnoreKey(entity, ruleID, seq))
 				}
 			}
 			if len(keys) == 0 {
-				keys = append(keys, base+"/*")
+				keys = append(keys, db.ScanIgnoreWildcardKey(entity, ruleID))
 			}
 		case "plan":
 			keys = append(keys, artifactKey(canon.ArtifactPlan, sourceID))
@@ -1045,8 +1051,9 @@ func importIgnoreFlags(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1S
 			// A source type this importer does not know (a v1 newer than
 			// its final release shape). Preserve the identity verbatim so
 			// the decision is at least kept, even if it cannot re-attach.
-			keys = append(keys, fmt.Sprintf("artifact/%s/%s/%s/%s/*",
-				claudeSlug, sourceType, sourceID, ruleID))
+			keys = append(keys, db.ScanIgnoreWildcardKey(
+				fmt.Sprintf("artifact/%s/%s/%s", claudeSlug, sourceType, sourceID), ruleID,
+			))
 		}
 		for _, key := range keys {
 			if err := insert(key); err != nil {

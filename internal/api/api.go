@@ -14,17 +14,9 @@ import (
 	"strconv"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
-
-// payloadSchema versions every response envelope.
-const payloadSchema = "ccpeek/v1"
-
-type envelope struct {
-	Schema string `json:"schema"`
-	Data   any    `json:"data,omitempty"`
-	Error  string `json:"error,omitempty"`
-}
 
 // IndexProgress is a live snapshot of the initial index pass, surfaced
 // through /api/v1/health while /api/v1/ready still answers 503, so the
@@ -393,15 +385,15 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 // writeEnvelope is the ONE place a response envelope reaches the wire.
 // It was hand-rolled in four places and the fourth copy (the cross-origin
 // 403) had already lost its Content-Type header.
-func writeEnvelope(w http.ResponseWriter, status int, e envelope) {
-	e.Schema = payloadSchema
+func writeEnvelope(w http.ResponseWriter, status int, e ops.Envelope) {
+	e.Schema = ops.PayloadSchema
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(e)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
-	writeEnvelope(w, status, envelope{Data: data})
+	writeEnvelope(w, status, ops.Envelope{Data: data})
 }
 
 // writeError maps domain errors onto statuses: caller mistakes
@@ -428,7 +420,7 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		log.Printf("api error: %v", err)
 	}
-	writeEnvelope(w, status, envelope{Error: detail})
+	writeEnvelope(w, status, ops.Envelope{Error: detail})
 }
 
 // maxRequestBody bounds the mutating endpoints' payloads. Both carry a
@@ -452,5 +444,5 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 // (format validation, path-segment parsing) produce bare errors that
 // writeError would classify as a 500.
 func writeBadRequest(w http.ResponseWriter, err error) {
-	writeEnvelope(w, http.StatusBadRequest, envelope{Error: err.Error()})
+	writeEnvelope(w, http.StatusBadRequest, ops.Envelope{Error: err.Error()})
 }

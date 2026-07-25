@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
 
@@ -23,7 +24,7 @@ func sameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || !isLoopbackHost(u.Hostname()) {
-				writeEnvelope(w, http.StatusForbidden, envelope{
+				writeEnvelope(w, http.StatusForbidden, ops.Envelope{
 					Error: "cross-origin requests are not allowed",
 				})
 				return

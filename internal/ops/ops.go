@@ -290,3 +290,24 @@ func Registry() []Op {
 		},
 	}
 }
+
+// PayloadSchema versions every agent-facing response envelope. It is the
+// contract all three transports promise, so it is defined ONCE: the HTTP
+// API, `ccpeek query`, and the MCP server each used to carry their own
+// copy, and MCP's was an inline map rather than a struct — so a field
+// added to the envelope would never have reached MCP clients at all.
+const PayloadSchema = "ccpeek/v1"
+
+// Envelope wraps every response. Data is omitted when absent so an error
+// envelope stays minimal; the CLI's list ops substitute an empty slice
+// rather than null before they get here.
+type Envelope struct {
+	Schema string `json:"schema"`
+	Data   any    `json:"data,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// Wrap builds a success envelope.
+func Wrap(data any) Envelope {
+	return Envelope{Schema: PayloadSchema, Data: data}
+}

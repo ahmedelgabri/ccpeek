@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
+
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
@@ -117,8 +119,8 @@ func TestRunIngestLatestJSONShowsDetails(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("expected valid json output, got error %v and output %q", err, stdout)
 	}
-	if env.Schema != payloadSchema {
-		t.Errorf("schema = %q, want %q", env.Schema, payloadSchema)
+	if env.Schema != ops.PayloadSchema {
+		t.Errorf("schema = %q, want %q", env.Schema, ops.PayloadSchema)
 	}
 	payload := env.Data
 	if payload.Run == nil || payload.Run.Status != "partial" {

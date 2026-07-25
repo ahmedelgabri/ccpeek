@@ -19,18 +19,10 @@ import (
 // parsing.
 const exitNoMatches = 3
 
-// payloadSchema versions every JSON response envelope.
-const payloadSchema = "ccpeek/v1"
-
-type envelope struct {
-	Schema string `json:"schema"`
-	Data   any    `json:"data"`
-}
-
 func emit(data any, empty bool) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(envelope{Schema: payloadSchema, Data: data}); err != nil {
+	if err := enc.Encode(ops.Wrap(data)); err != nil {
 		return err
 	}
 	if empty {
@@ -169,18 +161,16 @@ database is opened read-only and never modified.`,
 		defer eng.Close()
 
 		dataFile, _ := cmd.Flags().GetString("data-file")
-		if _, err := os.Stat(dataFile); err != nil {
-			if os.IsNotExist(err) {
-				_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
-				_ = eng.store.SetMeta(ctx, "v1_import_error", "")
-				fmt.Fprintf(os.Stderr, "no v1 database at %s; nothing to import\n", dataFile)
-				return nil
-			}
-			// Unreachable is not absent: record the failure and exit
-			// non-zero so it is retried rather than written off.
-			_ = eng.store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
-			_ = eng.store.SetMeta(ctx, "v1_import_error", err.Error())
-			return fmt.Errorf("checking v1 database: %w", err)
+		// Same state machine the bootstrap runs; only the tail differs —
+		// unreachable is not absent, so it exits non-zero here to be
+		// retried rather than written off.
+		present, err := checkV1Source(ctx, eng.store, dataFile)
+		if err != nil {
+			return err
+		}
+		if !present {
+			fmt.Fprintf(os.Stderr, "no v1 database at %s; nothing to import\n", dataFile)
+			return nil
 		}
 		// runV1Import records the outcome metas either way; a failure here
 		// exits non-zero, unlike the bootstrap's warn-and-retry path.

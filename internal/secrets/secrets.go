@@ -522,7 +522,8 @@ func (sc *Scanner) allFindings(ctx context.Context) ([]Finding, error) {
 	ignored := map[string]bool{}
 	irows, err := sc.store.ReadDB().QueryContext(ctx, `
 		SELECT natural_key FROM user_annotations
-		WHERE entity_type = 'scan_finding' AND kind = 'scan_ignore'`)
+		WHERE entity_type = ? AND kind = ?`,
+		db.ScanFindingEntity, db.ScanIgnoreKind)
 	if err != nil {
 		return nil, err
 	}
@@ -544,14 +545,14 @@ func (sc *Scanner) allFindings(ctx context.Context) ([]Finding, error) {
 }
 
 // annotationKey is the exact ignore key for one finding; wildcardKey
-// ignores every finding of the rule on the entity (used by the v1
-// importer where old line numbering has no v2 equivalent).
+// ignores every finding of the rule on the entity. Both forms are defined
+// in internal/db, which every surface reading them shares.
 func annotationKey(f Finding) string {
-	return fmt.Sprintf("%s/%s/%d", f.NaturalKey, f.RuleID, f.Line)
+	return db.ScanIgnoreKey(f.NaturalKey, f.RuleID, f.Line)
 }
 
 func wildcardKey(f Finding) string {
-	return f.NaturalKey + "/" + f.RuleID + "/*"
+	return db.ScanIgnoreWildcardKey(f.NaturalKey, f.RuleID)
 }
 
 // redact keeps just enough of a secret to recognize it. Both ends are cut

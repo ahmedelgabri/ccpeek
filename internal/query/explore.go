@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
 // AgentStat is one agent's slice of the overview.
@@ -75,32 +77,26 @@ type Stats struct {
 
 // Stats builds the overview in a handful of aggregate queries.
 func (s *Service) Stats(ctx context.Context) (*Stats, error) {
-	db := s.store.ReadDB()
+	rdb := s.store.ReadDB()
 	st := &Stats{}
 
-	// Scan findings count only ACTIVE ones: a finding the user ignored
-	// (user_annotations key "<natural_key>/<rule_id>/<line>") must not keep
-	// the overview tile in its warning state.
-	err := db.QueryRowContext(ctx, `
+	// Scan findings count only ACTIVE ones: a finding the user ignored must
+	// not keep the overview tile in its warning state. The ignore-match
+	// rule lives in db so every surface reading it agrees.
+	err := rdb.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM sessions),
 		       (SELECT COUNT(*) FROM messages),
 		       (SELECT COUNT(*) FROM tool_calls),
 		       (SELECT COUNT(*) FROM tool_calls WHERE kind = 'shell'),
 		       (SELECT COUNT(*) FROM artifacts),
-		       (SELECT COUNT(*) FROM scan_findings f
-		        WHERE NOT EXISTS (
-		          SELECT 1 FROM user_annotations ua
-		          WHERE ua.entity_type = 'scan_finding' AND ua.kind = 'scan_ignore'
-		            AND ua.natural_key IN (
-		              f.natural_key || '/' || f.rule_id || '/' || f.line_number,
-		              f.natural_key || '/' || f.rule_id || '/*')))`).
+		       (SELECT COUNT(*) FROM scan_findings f WHERE NOT `+db.ScanIgnoredSQL("f")+`)`).
 		Scan(&st.Sessions, &st.Messages, &st.ToolCalls, &st.Commands,
 			&st.Artifacts, &st.ScanFindings)
 	if err != nil {
 		return nil, fmt.Errorf("overview counts: %w", err)
 	}
 
-	err = db.QueryRowContext(ctx, `
+	err = rdb.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0),
 		       COALESCE(SUM(cost_usd), 0),
 		       COALESCE(SUM(CASE WHEN day >= strftime('%Y-%m-01', 'now') THEN cost_usd ELSE 0 END), 0)
@@ -111,7 +107,7 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	}
 
 	// Per-agent: session counts from the hub, usage from the rollups.
-	rows, err := db.QueryContext(ctx, `
+	rows, err := rdb.QueryContext(ctx, `
 		SELECT a.slug,
 		       (SELECT COUNT(*) FROM sessions se WHERE se.agent_id = a.id),
 		       COALESCE((SELECT MAX(se.modified_at) FROM sessions se WHERE se.agent_id = a.id), ''),
@@ -140,7 +136,7 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 
 	// Activity: sessions touched per day + that day's cost. 371 days
 	// covers the UI's 52-week grid plus the partial week at each end.
-	rows, err = db.QueryContext(ctx, `
+	rows, err = rdb.QueryContext(ctx, `
 		SELECT act.day, act.n, COALESCE(r.cost, 0)
 		FROM (SELECT substr(modified_at, 1, 10) AS day, COUNT(*) AS n
 		      FROM sessions
@@ -165,7 +161,7 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	}
 	rows.Close()
 
-	rows, err = db.QueryContext(ctx, `
+	rows, err = rdb.QueryContext(ctx, `
 		SELECT cwd, COUNT(*), COALESCE(MAX(modified_at), '')
 		FROM sessions WHERE cwd <> ''
 		GROUP BY cwd ORDER BY 3 DESC LIMIT 8`)
@@ -185,7 +181,7 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	}
 	rows.Close()
 
-	rows, err = db.QueryContext(ctx, `
+	rows, err = rdb.QueryContext(ctx, `
 		SELECT kind, COUNT(*) FROM tool_calls GROUP BY kind ORDER BY 2 DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("tool kinds: %w", err)
@@ -212,7 +208,7 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	// /stats call. The pin makes the index serve both the filter and the
 	// order, so the LIMIT stops the scan; like the memory resolver's pin,
 	// it also fails loudly if the index is ever renamed away.
-	rows, err = db.QueryContext(ctx, `
+	rows, err = rdb.QueryContext(ctx, `
 		SELECT tc.file_path, tc.kind, a.slug, se.external_id,
 		       COALESCE(tc.started_at, '')
 		FROM tool_calls tc INDEXED BY idx_tool_calls_recent_files

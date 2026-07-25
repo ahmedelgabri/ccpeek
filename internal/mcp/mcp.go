@@ -197,9 +197,7 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 
 	if call.Name == "status" && s.status != nil {
-		text, err := json.MarshalIndent(map[string]any{
-			"schema": "ccpeek/v1", "data": s.status(),
-		}, "", "  ")
+		text, err := json.MarshalIndent(ops.Wrap(s.status()), "", "  ")
 		if err != nil {
 			return nil, err
 		}
@@ -259,7 +257,7 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 		return nil, err
 	}
 
-	text, err := json.MarshalIndent(map[string]any{"schema": "ccpeek/v1", "data": data}, "", "  ")
+	text, err := json.MarshalIndent(ops.Wrap(data), "", "  ")
 	if err != nil {
 		return nil, err
 	}

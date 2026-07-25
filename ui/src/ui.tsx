@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { AGENT_COLOR } from "./api";
 
@@ -455,4 +455,17 @@ export function useToggleSet<T>(): [ReadonlySet<T>, (item: T) => void] {
     });
   }, []);
   return [open, toggle];
+}
+
+// useDebounced trails a fast-changing value (a filter box) so the query
+// keyed on it fires once the typing settles instead of once per
+// keystroke. The input stays fully controlled and responsive; only what
+// hits the server waits.
+export function useDebounced<T>(value: T, ms = 250): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(t);
+  }, [value, ms]);
+  return settled;
 }

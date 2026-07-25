@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
 // ScanFinding is one row of the `scan` op, with ignore state resolved from
@@ -26,15 +28,7 @@ func (s *Service) ScanFindings(ctx context.Context, includeIgnored bool) ([]Scan
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT f.id, f.rule_id, f.description, f.entity_type, f.natural_key,
 		       f.match_redacted, f.line_number, f.scanned_at,
-		       EXISTS (
-		         SELECT 1 FROM user_annotations ua
-		         WHERE ua.entity_type = 'scan_finding'
-		           AND ua.kind = 'scan_ignore'
-		           AND ua.natural_key IN (
-		             f.natural_key || '/' || f.rule_id || '/' || f.line_number,
-		             f.natural_key || '/' || f.rule_id || '/*'
-		           )
-		       )
+		       `+db.ScanIgnoredSQL("f")+`
 		FROM scan_findings f
 		ORDER BY f.rule_id, f.natural_key, f.line_number`)
 	if err != nil {
@@ -70,17 +64,19 @@ func (s *Service) SetScanIgnore(ctx context.Context, findingID int64, ignored bo
 	if err != nil {
 		return fmt.Errorf("%w: scan finding %d", ErrNotFound, findingID)
 	}
-	key := fmt.Sprintf("%s/%s/%d", naturalKey, ruleID, line)
+	key := db.ScanIgnoreKey(naturalKey, ruleID, line)
 	if ignored {
 		_, err = s.store.DB().ExecContext(ctx, `
 			INSERT INTO user_annotations (entity_type, natural_key, kind, value_json, created_at)
-			VALUES ('scan_finding', ?, 'scan_ignore', '{}', ?)
+			VALUES (?, ?, ?, '{}', ?)
 			ON CONFLICT(entity_type, natural_key, kind) DO NOTHING`,
-			key, time.Now().UTC().Format(time.RFC3339))
+			db.ScanFindingEntity, key, db.ScanIgnoreKind,
+			time.Now().UTC().Format(time.RFC3339))
 	} else {
 		_, err = s.store.DB().ExecContext(ctx, `
 			DELETE FROM user_annotations
-			WHERE entity_type = 'scan_finding' AND kind = 'scan_ignore' AND natural_key = ?`, key)
+			WHERE entity_type = ? AND kind = ? AND natural_key = ?`,
+			db.ScanFindingEntity, db.ScanIgnoreKind, key)
 	}
 	return err
 }

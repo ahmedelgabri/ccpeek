@@ -13,6 +13,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
@@ -49,16 +50,16 @@ func newHandler(t *testing.T) http.Handler {
 	return Handler(query.New(store, table), nil, nil, nil, nil)
 }
 
-func get(t *testing.T, h http.Handler, path string) (int, envelope) {
+func get(t *testing.T, h http.Handler, path string) (int, ops.Envelope) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	var env envelope
+	var env ops.Envelope
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("GET %s: bad JSON: %v\n%s", path, err, rec.Body.String())
 	}
-	if env.Schema != payloadSchema {
+	if env.Schema != ops.PayloadSchema {
 		t.Errorf("GET %s: schema = %q", path, env.Schema)
 	}
 	return rec.Code, env

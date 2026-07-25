@@ -174,6 +174,28 @@ func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw i
 	if err == nil && (state == v1ImportSuccess || state == v1ImportNoLegacyDB) {
 		return
 	}
+	present, err := checkV1Source(ctx, store, dataFile)
+	if err != nil {
+		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
+		return
+	}
+	if !present {
+		return
+	}
+	if _, err := runV1Import(ctx, store, dataFile, logw); err != nil {
+		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
+	}
+}
+
+// checkV1Source records the terminal meta state for a legacy database
+// that cannot be read, and reports whether one is there to import.
+//
+// Both entry points — the bootstrap's warn-and-retry path and
+// `ccpeek migrate`'s exit-non-zero one — need exactly this state machine
+// and differ only in what they do afterwards. Written out twice, a new
+// terminal state added to one would leave the other reporting something
+// /api/v1/ready does not recognize.
+func checkV1Source(ctx context.Context, store *db.Store, dataFile string) (present bool, err error) {
 	if _, err := os.Stat(dataFile); err != nil {
 		if os.IsNotExist(err) {
 			// A previous failed attempt may have recorded an error; the
@@ -181,18 +203,15 @@ func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw i
 			// showing a stale message next to the terminal state.
 			_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
 			_ = store.SetMeta(ctx, "v1_import_error", "")
-			return
+			return false, nil
 		}
 		// Permission or I/O trouble reaching the legacy file is a failed
 		// attempt to retry, not proof there is nothing to import.
 		_ = store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
 		_ = store.SetMeta(ctx, "v1_import_error", err.Error())
-		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
-		return
+		return false, fmt.Errorf("checking v1 database: %w", err)
 	}
-	if _, err := runV1Import(ctx, store, dataFile, logw); err != nil {
-		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
-	}
+	return true, nil
 }
 
 // runV1Import executes the import and records its outcome in meta:

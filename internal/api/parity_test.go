@@ -12,7 +12,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
 
-func post(t *testing.T, h http.Handler, path, body string, headers map[string]string) (int, envelope) {
+func post(t *testing.T, h http.Handler, path, body string, headers map[string]string) (int, ops.Envelope) {
 	t.Helper()
 	method := http.MethodPost
 	if strings.HasPrefix(path, "PUT ") {
@@ -25,12 +25,12 @@ func post(t *testing.T, h http.Handler, path, body string, headers map[string]st
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	var env envelope
+	var env ops.Envelope
 	_ = envUnmarshal(rec.Body.Bytes(), &env)
 	return rec.Code, env
 }
 
-func envUnmarshal(b []byte, env *envelope) error {
+func envUnmarshal(b []byte, env *ops.Envelope) error {
 	return jsonUnmarshal(b, env)
 }
 
