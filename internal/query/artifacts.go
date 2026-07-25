@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
 // ArtifactSummary is one row of the `artifacts` op.
@@ -130,14 +128,23 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 		d.ContentHTML = render(d.Kind, d.Content)
 	}
 
-	// The correlated subquery picks the last producing tool call in each
-	// linked session; it yields NULL when the kind has no producer (empty
-	// tool name matches nothing) or the session has no such call.
+	// anchor_seq is what the plan/memory resolvers recorded when they
+	// matched the link — they knew exactly which call produced it. Links
+	// from other evidence carry no anchor, so those fall back to the
+	// generic heuristic: the last producing tool call in the session (the
+	// correlated subquery yields NULL when the kind has no producer or the
+	// session has no such call).
+	//
+	// The read path used to have neither: it re-ran the resolvers' matching
+	// on every request — re-normalizing plan markdown, re-deriving memory
+	// path suffixes — with two extra queries per artifact, and that is the
+	// only reason those helpers were exported from db at all.
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT se.external_id,
-		       (SELECT tc.message_seq FROM tool_calls tc
-		        WHERE tc.session_id = se.id AND tc.name = ?
-		        ORDER BY tc.seq DESC LIMIT 1) AS anchor
+		       COALESCE(ass.anchor_seq,
+		                (SELECT tc.message_seq FROM tool_calls tc
+		                 WHERE tc.session_id = se.id AND tc.name = ?
+		                 ORDER BY tc.seq DESC LIMIT 1)) AS anchor
 		FROM artifact_sessions ass
 		JOIN sessions se ON se.id = ass.session_id
 		WHERE ass.artifact_id = ?
@@ -160,80 +167,10 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 			d.SessionAnchors[sid] = int(anchor.Int64)
 		}
 	}
-	d.Sessions = len(d.SessionIDs)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	d.Sessions = len(d.SessionIDs)
 
-	// Plans anchor to the specific ExitPlanMode call whose plan text
-	// matches this artifact — a session can hold several plans, so the
-	// generic last-producer heuristic would point them all at one message.
-	// Calls scan in seq order so a repeated approval (resumed session)
-	// settles on the latest occurrence.
-	if kind == "plan" && len(d.SessionIDs) > 0 && d.Content != "" {
-		want := db.NormalizePlanText(d.Content)
-		prows, err := s.store.ReadDB().QueryContext(ctx, `
-			SELECT se.external_id, tc.message_seq, tc.input_json
-			FROM artifact_sessions ass
-			JOIN tool_calls tc ON tc.session_id = ass.session_id
-			JOIN sessions se ON se.id = tc.session_id
-			WHERE ass.artifact_id = ? AND tc.name = 'ExitPlanMode'
-			ORDER BY tc.seq`, id)
-		if err != nil {
-			return nil, err
-		}
-		defer prows.Close()
-		for prows.Next() {
-			var sid, input string
-			var seq int
-			if err := prows.Scan(&sid, &seq, &input); err != nil {
-				return nil, err
-			}
-			if text, ok := db.ExtractPlanText(input); ok && db.NormalizePlanText(text) == want {
-				if d.SessionAnchors == nil {
-					d.SessionAnchors = map[string]int{}
-				}
-				d.SessionAnchors[sid] = seq
-			}
-		}
-		if err := prows.Err(); err != nil {
-			return nil, err
-		}
-	}
-
-	// Memories anchor to the last file_write/file_edit that targeted their
-	// on-disk path in each linked session — the call that actually wrote
-	// this memory, scanning in seq order so the final update wins.
-	if kind == "memory" && len(d.SessionIDs) > 0 {
-		if suffix, ok := db.MemoryPathSuffix(name); ok {
-			mrows, err := s.store.ReadDB().QueryContext(ctx, `
-				SELECT se.external_id, tc.message_seq, tc.file_path
-				FROM artifact_sessions ass
-				JOIN tool_calls tc ON tc.session_id = ass.session_id
-				JOIN sessions se ON se.id = tc.session_id
-				WHERE ass.artifact_id = ? AND tc.kind IN ('file_write', 'file_edit')
-				ORDER BY tc.seq`, id)
-			if err != nil {
-				return nil, err
-			}
-			defer mrows.Close()
-			for mrows.Next() {
-				var sid, path string
-				var seq int
-				if err := mrows.Scan(&sid, &seq, &path); err != nil {
-					return nil, err
-				}
-				if strings.HasSuffix(path, suffix) {
-					if d.SessionAnchors == nil {
-						d.SessionAnchors = map[string]int{}
-					}
-					d.SessionAnchors[sid] = seq
-				}
-			}
-			if err := mrows.Err(); err != nil {
-				return nil, err
-			}
-		}
-	}
 	return d, nil
 }

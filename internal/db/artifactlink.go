@@ -9,11 +9,11 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
 
-// NormalizePlanText canonicalizes plan markdown for matching: the plan
+// normalizePlanText canonicalizes plan markdown for matching: the plan
 // file on disk and the ExitPlanMode input differ in trailing whitespace
 // and final newlines, nothing else (measured 36/37 exact matches on a
 // real corpus under this normalization).
-func NormalizePlanText(s string) string {
+func normalizePlanText(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRight(l, " \t\r")
@@ -21,9 +21,9 @@ func NormalizePlanText(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// ExtractPlanText pulls the plan markdown out of an ExitPlanMode call's
+// extractPlanText pulls the plan markdown out of an ExitPlanMode call's
 // input JSON; ok=false when the input carries no plan.
-func ExtractPlanText(inputJSON string) (string, bool) {
+func extractPlanText(inputJSON string) (string, bool) {
 	var in struct {
 		Plan string `json:"plan"`
 	}
@@ -40,13 +40,21 @@ type pair struct {
 	sessionID  int64
 }
 
+// anchors maps each expected link to the message seq of the tool call
+// that produced it. The resolvers already know which call matched — they
+// scanned it to decide the link exists — so recording it here is free.
+// Without it the read path had to re-run the matching (re-normalizing plan
+// text, re-deriving memory path suffixes) on every artifact request, which
+// is why those helpers were exported at all.
+type anchors map[pair]int
+
 // reconcileResolverLinks makes the stored content_ref links of the given
 // artifact kind exactly match the expected pair set: missing pairs are
 // inserted, stale ones (the evidence no longer holds — e.g. a plan file
 // rewritten under the same name) are deleted. Only rows this resolver
 // owns are touched: content_ref evidence on this kind. Links from other
 // evidence (id_match, filename_uuid, adapter emits) are never removed.
-func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactKind, expected map[pair]bool) (added, removed int, err error) {
+func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactKind, expected anchors) (added, removed int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
@@ -76,18 +84,27 @@ func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactK
 		return 0, 0, err
 	}
 
-	for p := range expected {
+	for p, anchor := range expected {
 		if existing[p] {
+			// The link stands; its anchor may still have moved (a resumed
+			// session re-approving the same plan writes a later call).
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE artifact_sessions SET anchor_seq = ?
+				WHERE artifact_id = ? AND session_id = ? AND relation = ? AND evidence = ?`,
+				anchor, p.artifactID, p.sessionID,
+				string(canon.LinkProducedBy), string(canon.EvidenceContentRef)); err != nil {
+				return 0, 0, fmt.Errorf("anchoring %s %d: %w", kind, p.artifactID, err)
+			}
 			continue
 		}
 		// The conflict clause yields to a link some OTHER evidence already
 		// established for this (artifact, session, relation).
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO artifact_sessions (artifact_id, session_id, relation, evidence)
-			VALUES (?, ?, ?, ?)
+			INSERT INTO artifact_sessions (artifact_id, session_id, relation, evidence, anchor_seq)
+			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT(artifact_id, session_id, relation) DO NOTHING`,
 			p.artifactID, p.sessionID,
-			string(canon.LinkProducedBy), string(canon.EvidenceContentRef))
+			string(canon.LinkProducedBy), string(canon.EvidenceContentRef), anchor)
 		if err != nil {
 			return 0, 0, fmt.Errorf("linking %s %d: %w", kind, p.artifactID, err)
 		}
@@ -96,7 +113,7 @@ func (s *Store) reconcileResolverLinks(ctx context.Context, kind canon.ArtifactK
 		}
 	}
 	for p := range existing {
-		if expected[p] {
+		if _, ok := expected[p]; ok {
 			continue
 		}
 		res, err := tx.ExecContext(ctx, `
@@ -145,7 +162,7 @@ func (s *Store) LinkPlanArtifacts(ctx context.Context) (added, removed int, err 
 			rows.Close()
 			return 0, 0, err
 		}
-		k := planKey{agentID, NormalizePlanText(content)}
+		k := planKey{agentID, normalizePlanText(content)}
 		plansByText[k] = append(plansByText[k], id)
 		nPlans++
 	}
@@ -157,28 +174,32 @@ func (s *Store) LinkPlanArtifacts(ctx context.Context) (added, removed int, err 
 		return s.reconcileResolverLinks(ctx, canon.ArtifactPlan, nil)
 	}
 
+	// Ordered by seq so a repeated approval in a resumed session settles
+	// the anchor on the LATEST matching call.
 	rows, err = s.db.QueryContext(ctx, `
-		SELECT se.agent_id, tc.session_id, tc.input_json
+		SELECT se.agent_id, tc.session_id, tc.message_seq, tc.input_json
 		FROM tool_calls tc
 		JOIN sessions se ON se.id = tc.session_id
-		WHERE tc.name = 'ExitPlanMode'`)
+		WHERE tc.name = 'ExitPlanMode'
+		ORDER BY tc.seq`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("listing plan calls: %w", err)
 	}
-	expected := map[pair]bool{}
+	expected := anchors{}
 	for rows.Next() {
 		var agentID, sessionID int64
+		var messageSeq int
 		var input string
-		if err := rows.Scan(&agentID, &sessionID, &input); err != nil {
+		if err := rows.Scan(&agentID, &sessionID, &messageSeq, &input); err != nil {
 			rows.Close()
 			return 0, 0, err
 		}
-		text, ok := ExtractPlanText(input)
+		text, ok := extractPlanText(input)
 		if !ok {
 			continue
 		}
-		for _, planID := range plansByText[planKey{agentID, NormalizePlanText(text)}] {
-			expected[pair{planID, sessionID}] = true
+		for _, planID := range plansByText[planKey{agentID, normalizePlanText(text)}] {
+			expected[pair{planID, sessionID}] = messageSeq
 		}
 	}
 	rows.Close()
@@ -188,11 +209,11 @@ func (s *Store) LinkPlanArtifacts(ctx context.Context) (added, removed int, err 
 	return s.reconcileResolverLinks(ctx, canon.ArtifactPlan, expected)
 }
 
-// MemoryPathSuffix maps a memory artifact's name ("<projectDir>/<file>")
+// memoryPathSuffix maps a memory artifact's name ("<projectDir>/<file>")
 // to the tail of the on-disk path a tool call writes it at
 // (".../projects/<projectDir>/memory/<file>"); ok=false when the name
 // has no directory component.
-func MemoryPathSuffix(name string) (string, bool) {
+func memoryPathSuffix(name string) (string, bool) {
 	dir, base, found := strings.Cut(name, "/")
 	if !found || dir == "" || base == "" {
 		return "", false
@@ -241,7 +262,7 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 			rows.Close()
 			return 0, 0, err
 		}
-		if suffix, ok := MemoryPathSuffix(name); ok {
+		if suffix, ok := memoryPathSuffix(name); ok {
 			k := memKey{agentID, suffix}
 			memoriesBySuffix[k] = append(memoriesBySuffix[k], id)
 			nMemories++
@@ -263,20 +284,26 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 	// a covering scan of only the rows that can produce a link, and it
 	// fails loudly rather than silently degrading if the index is ever
 	// renamed away.
+	//
+	// Ordered by seq, and no longer DISTINCT, so the anchor settles on the
+	// LAST write to each memory path — the call that left the file in the
+	// state the artifact holds.
 	rows, err = s.db.QueryContext(ctx, `
-		SELECT DISTINCT se.agent_id, tc.session_id, tc.file_path
+		SELECT se.agent_id, tc.session_id, tc.message_seq, tc.file_path
 		FROM tool_calls tc INDEXED BY idx_tool_calls_memory_writes
 		JOIN sessions se ON se.id = tc.session_id
 		WHERE tc.kind IN ('file_write', 'file_edit')
-		  AND tc.file_path LIKE '%/memory/%'`)
+		  AND tc.file_path LIKE '%/memory/%'
+		ORDER BY tc.seq`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("listing memory writes: %w", err)
 	}
-	expected := map[pair]bool{}
+	expected := anchors{}
 	for rows.Next() {
 		var agentID, sessionID int64
+		var messageSeq int
 		var path string
-		if err := rows.Scan(&agentID, &sessionID, &path); err != nil {
+		if err := rows.Scan(&agentID, &sessionID, &messageSeq, &path); err != nil {
 			rows.Close()
 			return 0, 0, err
 		}
@@ -285,7 +312,7 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 			continue
 		}
 		for _, memID := range memoriesBySuffix[memKey{agentID, suffix}] {
-			expected[pair{memID, sessionID}] = true
+			expected[pair{memID, sessionID}] = messageSeq
 		}
 	}
 	rows.Close()

@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -328,4 +329,102 @@ func mustTime(t *testing.T, s string) (out time.Time) {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// The resolver records WHICH call produced each link it matches, in
+// artifact_sessions.anchor_seq. The read path reads that column; it used
+// to re-run the resolver's matching on every request instead.
+//
+// Asserted at the column, not through Artifact(): plans have a producer
+// tool, so the generic last-producer fallback would answer too and could
+// mask an anchor that was never written.
+func TestResolverRecordsTheAnchorItMatched(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "sess-anchor",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The matching plan is approved at message 3; a LATER, different plan
+	// at message 12 is what the generic last-producer heuristic would pick.
+	for _, tc := range []struct {
+		msgSeq, seq int
+		plan        string
+	}{
+		{3, 0, `{"plan":"# The one"}`},
+		{12, 1, `{"plan":"# Something else"}`},
+	} {
+		if err := w.InsertToolCall(sessID, canon.ToolCall{
+			MessageSeq: tc.msgSeq, Seq: tc.seq, Name: "ExitPlanMode",
+			Kind: canon.ToolOther, Input: []byte(tc.plan),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactPlan, Name: "the-one.md",
+		Content: "# The one\n",
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LinkPlanArtifacts(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var anchor sql.NullInt64
+	if err := store.ReadDB().QueryRowContext(ctx, `
+		SELECT ass.anchor_seq
+		FROM artifact_sessions ass
+		JOIN artifacts ar ON ar.id = ass.artifact_id
+		WHERE ar.name = 'the-one.md'`).Scan(&anchor); err != nil {
+		t.Fatal(err)
+	}
+	if !anchor.Valid {
+		t.Fatal("resolver linked the plan without recording an anchor")
+	}
+	if anchor.Int64 != 3 {
+		t.Errorf("anchor_seq = %d, want 3 (the call carrying THIS plan's text)", anchor.Int64)
+	}
+
+	// And a re-approval in a resumed session moves it forward.
+	w2, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w2.InsertToolCall(sessID, canon.ToolCall{
+		MessageSeq: 40, Seq: 2, Name: "ExitPlanMode",
+		Kind: canon.ToolOther, Input: []byte(`{"plan":"# The one"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w2.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LinkPlanArtifacts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReadDB().QueryRowContext(ctx, `
+		SELECT ass.anchor_seq
+		FROM artifact_sessions ass
+		JOIN artifacts ar ON ar.id = ass.artifact_id
+		WHERE ar.name = 'the-one.md'`).Scan(&anchor); err != nil {
+		t.Fatal(err)
+	}
+	if anchor.Int64 != 40 {
+		t.Errorf("anchor_seq after re-approval = %d, want 40", anchor.Int64)
+	}
 }

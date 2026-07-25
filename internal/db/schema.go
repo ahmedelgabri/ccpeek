@@ -188,6 +188,11 @@ CREATE TABLE IF NOT EXISTS artifact_sessions (
 	session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
 	relation TEXT NOT NULL,
 	evidence TEXT NOT NULL DEFAULT '',
+	-- The message seq of the tool call that produced this link, recorded by
+	-- the resolver that matched it. NULL for links from other evidence
+	-- (id_match, filename_uuid, adapter emits), where the read path falls
+	-- back to the generic last-producer heuristic.
+	anchor_seq INTEGER,
 	PRIMARY KEY (artifact_id, session_id, relation)
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_sessions_session ON artifact_sessions(session_id);
