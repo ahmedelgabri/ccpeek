@@ -114,6 +114,13 @@ func TestShellCallPairing(t *testing.T) {
 	if tc.Name != "shell" || tc.Kind != canon.ToolShell {
 		t.Errorf("call = %s/%s", tc.Name, tc.Kind)
 	}
+	// Codex writes a shell command as an ARRAY of argv, wrapped in a shell
+	// invocation. The commands browser reads canon.Command, so the wrapper
+	// is unwrapped here — otherwise every Codex row rendered as the raw
+	// JSON array `["bash","-lc","…"]`.
+	if want := "go test -bench Login ./internal/auth"; tc.Command != want {
+		t.Errorf("command = %q, want %q", tc.Command, want)
+	}
 	// Streaming parses never mutate an already-emitted call: the result
 	// arrives as a ToolResult record the store pairs by call id.
 	if len(sink.ToolResults) != 1 {
@@ -127,6 +134,27 @@ func TestShellCallPairing(t *testing.T) {
 	// Bad line surfaced.
 	if len(sink.Issues) != 1 || sink.Issues[0].Line != 9 {
 		t.Errorf("issues = %+v, want one at line 9", sink.Issues)
+	}
+}
+
+func TestArgvRendersAsACommandLine(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		argv string
+		want string
+	}{
+		{"shell wrapper unwrapped", `{"command":["bash","-lc","ls -la | wc -l"]}`, "ls -la | wc -l"},
+		{"sh -c too", `{"command":["sh","-c","echo hi"]}`, "echo hi"},
+		{"plain argv joined", `{"command":["ls","-la"]}`, "ls -la"},
+		{"single element", `{"command":["pwd"]}`, "pwd"},
+		{"absent", `{}`, ""},
+		{"not an array", `{"command":"already a string"}`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := toolArgs(tt.argv).command(); got != tt.want {
+				t.Errorf("command() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

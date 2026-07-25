@@ -8,6 +8,7 @@
 package opencode
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -249,6 +250,7 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 			if p.Type != "tool" || p.Tool == "" {
 				continue
 			}
+			args := toolArgs(p.State)
 			tc := canon.ToolCall{
 				SessionExternalID: doc.ID,
 				MessageSeq:        seq,
@@ -257,7 +259,10 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 				Kind:              normalizeTool(p.Tool),
 				Input:             toolInput(p.State),
 				ResultStatus:      toolStatus(p.State),
-				FilePath:          toolFilePath(p.State),
+				FilePath:          args.FilePath,
+				Command:           args.Command,
+				OldText:           args.OldString,
+				NewText:           cmp.Or(args.NewString, args.Content),
 				StartedAt:         millis(md.Time.Created),
 			}
 			if err := sink.ToolCall(tc); err != nil {
@@ -307,14 +312,24 @@ func toolStatus(state json.RawMessage) string {
 	}
 }
 
-func toolFilePath(state json.RawMessage) string {
+// opencodeToolArgs is the subset of a tool part's arguments the canonical
+// record keeps beside the verbatim JSON. OpenCode nests them one level
+// deeper than the other agents — under state.input — which is exactly the
+// kind of shape the query layer should not have to know.
+type opencodeToolArgs struct {
+	FilePath  string `json:"filePath"`
+	Command   string `json:"command"`
+	OldString string `json:"oldString"`
+	NewString string `json:"newString"`
+	Content   string `json:"content"`
+}
+
+func toolArgs(state json.RawMessage) opencodeToolArgs {
 	var s struct {
-		Input struct {
-			FilePath string `json:"filePath"`
-		} `json:"input"`
+		Input opencodeToolArgs `json:"input"`
 	}
 	_ = json.Unmarshal(state, &s)
-	return s.Input.FilePath
+	return s.Input
 }
 
 func normalizeTool(name string) canon.ToolKind {

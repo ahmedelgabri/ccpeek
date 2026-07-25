@@ -20,14 +20,14 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 10
+const schemaVersion = 11
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 10
+const baseVersion = 11
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -134,7 +134,13 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 	input_json TEXT NOT NULL DEFAULT '{}',
 	result_status TEXT NOT NULL DEFAULT '',
 	result_excerpt TEXT NOT NULL DEFAULT '',
+	-- Normalized arguments, lifted out of input_json by the adapter that
+	-- knows the agent's shape (see canon.ToolCall). Cross-agent surfaces
+	-- read these; input_json keeps the native form verbatim.
 	file_path TEXT NOT NULL DEFAULT '',
+	command TEXT NOT NULL DEFAULT '',
+	old_text TEXT NOT NULL DEFAULT '',
+	new_text TEXT NOT NULL DEFAULT '',
 	started_at TEXT,
 	UNIQUE (session_id, seq)
 );
@@ -151,6 +157,13 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path) WHERE fi
 -- over the handful of rows that can actually produce a link. The index
 -- WHERE clause must match the query's literally for the planner to use it
 -- (see LinkMemoryArtifacts).
+-- The Overview's recent-file-edits feed: newest write/edit first, capped
+-- at 120. Its predicate is spelled here literally so the planner uses the
+-- index for both the filter AND the order, letting the LIMIT stop early
+-- instead of sorting every file-touching call in the corpus.
+CREATE INDEX IF NOT EXISTS idx_tool_calls_recent_files
+	ON tool_calls(started_at DESC)
+	WHERE kind IN ('file_write', 'file_edit') AND file_path <> '';
 CREATE INDEX IF NOT EXISTS idx_tool_calls_memory_writes
 	ON tool_calls(file_path, session_id)
 	WHERE kind IN ('file_write', 'file_edit') AND file_path LIKE '%/memory/%';

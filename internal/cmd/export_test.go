@@ -84,11 +84,13 @@ func seedExportCommandsDB(t *testing.T) string {
 		`INSERT INTO agents (id, slug, display_name) VALUES (1, 'claude-code', 'Claude Code')`,
 		`INSERT INTO sessions (id, agent_id, external_id, cwd, created_at, source_path)
 		 VALUES (1, 1, 'sess-1', '/src/proj', '2025-01-01T00:00:00Z', '/src/sess-1.jsonl')`,
-		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, started_at)
-		 VALUES (1, 0, 'Bash', 'shell', '{"command":"ls -la"}', '2025-01-01T00:00:00Z')`,
+		// command is the normalized column every agent's adapter fills;
+		// input_json keeps the native shape beside it.
+		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, command, started_at)
+		 VALUES (1, 0, 'Bash', 'shell', '{"command":"ls -la"}', 'ls -la', '2025-01-01T00:00:00Z')`,
 		// A second command the NEXT day, so a --to boundary is observable.
-		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, started_at)
-		 VALUES (1, 1, 'Bash', 'shell', '{"command":"whoami"}', '2025-01-02T00:00:00Z')`,
+		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, command, started_at)
+		 VALUES (1, 1, 'Bash', 'shell', '{"command":"whoami"}', 'whoami', '2025-01-02T00:00:00Z')`,
 	}
 	for _, q := range stmts {
 		if _, err := store.DB().ExecContext(ctx, q); err != nil {

@@ -204,14 +204,22 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	rows.Close()
 
 	// Recent file edits: latest write/edit per path (agentsview-style feed).
+	// Ordered on tc.started_at alone, and PINNED to
+	// idx_tool_calls_recent_files, whose partial WHERE is exactly this
+	// one. Left to itself the planner takes idx_tool_calls_kind for the
+	// equality on kind and then sorts the whole result — every file
+	// write/edit ever indexed — before the LIMIT can apply, on every
+	// /stats call. The pin makes the index serve both the filter and the
+	// order, so the LIMIT stops the scan; like the memory resolver's pin,
+	// it also fails loudly if the index is ever renamed away.
 	rows, err = db.QueryContext(ctx, `
 		SELECT tc.file_path, tc.kind, a.slug, se.external_id,
-		       COALESCE(tc.started_at, se.modified_at, '') AS at
-		FROM tool_calls tc
+		       COALESCE(tc.started_at, '')
+		FROM tool_calls tc INDEXED BY idx_tool_calls_recent_files
 		JOIN sessions se ON se.id = tc.session_id
 		JOIN agents a ON a.id = se.agent_id
-		WHERE tc.file_path <> '' AND tc.kind IN ('file_write', 'file_edit')
-		ORDER BY at DESC LIMIT 120`)
+		WHERE tc.kind IN ('file_write', 'file_edit') AND tc.file_path <> ''
+		ORDER BY tc.started_at DESC LIMIT 120`)
 	if err != nil {
 		return nil, fmt.Errorf("recent files: %w", err)
 	}
@@ -268,7 +276,7 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	}
 	where := []string{
 		`tc.kind = 'shell'`,
-		`json_extract(tc.input_json, '$.command') IS NOT NULL`,
+		`tc.command <> ''`,
 	}
 	var args []any
 	if f.Agent != "" {
@@ -280,28 +288,35 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 		args = append(args, "%"+escapeLike(f.Project)+"%")
 	}
 	if f.Query != "" {
-		where = append(where, `json_extract(tc.input_json, '$.command') LIKE ? ESCAPE '\'`)
+		where = append(where, `tc.command LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(f.Query)+"%")
 	}
+	// Ordered and filtered on tc.started_at ALONE, not a COALESCE with the
+	// session's timestamp: no index can supply an expression, so the
+	// COALESCE forced SQLite to materialize and sort every shell call in
+	// the corpus before the LIMIT could apply. Every adapter sets a tool
+	// call's timestamp, so the fallback never fired anyway; on
+	// idx_tool_calls_kind (kind, started_at DESC) the LIMIT now
+	// short-circuits.
 	if f.Since != "" {
-		where = append(where, `COALESCE(tc.started_at, se.created_at, '') >= ?`)
+		where = append(where, `tc.started_at >= ?`)
 		args = append(args, f.Since)
 	}
 	if f.Until != "" {
-		where = append(where, `COALESCE(tc.started_at, se.created_at, '') < ?`)
+		where = append(where, `tc.started_at < ?`)
 		args = append(args, exclusiveUntil(f.Until))
 	}
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT json_extract(tc.input_json, '$.command'),
-		       COALESCE(tc.started_at, se.created_at, ''),
+		SELECT tc.command,
+		       COALESCE(tc.started_at, ''),
 		       a.slug, se.external_id, se.cwd
 		FROM tool_calls tc
 		JOIN sessions se ON se.id = tc.session_id
 		JOIN agents a ON a.id = se.agent_id
 		WHERE %s
-		ORDER BY COALESCE(tc.started_at, se.created_at, '') DESC, tc.id DESC
+		ORDER BY tc.started_at DESC, tc.id DESC
 		LIMIT ? OFFSET ?`, strings.Join(where, " AND ")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing commands: %w", err)
@@ -318,10 +333,6 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	}
 	return out, rows.Err()
 }
-
-// editExcerptLimit caps the old/new payloads shipped for diff rendering;
-// pathological edits fall back to "diff too large".
-const editExcerptLimit = 16 * 1024
 
 // chipDetailCap bounds the detail column of a compact chip row: a chip
 // label shows at most the first line's start, so shipping whole shell
@@ -374,7 +385,7 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	if err != nil {
 		return nil, err
 	}
-	detailExpr := `COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, '')`
+	detailExpr := `COALESCE(NULLIF(tc.command, ''), tc.file_path, '')`
 	atExpr := `COALESCE(tc.started_at, '')`
 	var args []any
 	if f.Compact {
@@ -434,18 +445,11 @@ func (s *Service) SessionToolDetail(ctx context.Context, agentSlug, externalID s
 	var d ToolCallDetail
 	err = s.store.ReadDB().QueryRowContext(ctx, `
 		SELECT tc.seq, tc.message_seq, tc.name, tc.kind,
-		       COALESCE(json_extract(tc.input_json, '$.command'), tc.file_path, ''),
+		       COALESCE(NULLIF(tc.command, ''), tc.file_path, ''),
 		       tc.result_status, COALESCE(tc.started_at, ''),
-		       CASE WHEN tc.kind = 'file_edit'
-		            THEN substr(COALESCE(json_extract(tc.input_json, '$.old_string'), ''), 1, ?)
-		            ELSE '' END,
-		       CASE WHEN tc.kind = 'file_edit'
-		            THEN substr(COALESCE(json_extract(tc.input_json, '$.new_string'), ''), 1, ?)
-		            WHEN tc.kind = 'file_write'
-		            THEN substr(COALESCE(json_extract(tc.input_json, '$.content'), ''), 1, ?)
-		            ELSE '' END
+		       tc.old_text, tc.new_text
 		FROM tool_calls tc WHERE tc.session_id = ? AND tc.seq = ?`,
-		editExcerptLimit, editExcerptLimit, editExcerptLimit, rowID, seq).
+		rowID, seq).
 		Scan(&d.Seq, &d.MessageSeq, &d.Name, &d.Kind,
 			&d.Detail, &d.Status, &d.At, &d.Old, &d.New)
 	if errors.Is(err, sql.ErrNoRows) {

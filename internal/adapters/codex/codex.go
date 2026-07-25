@@ -10,6 +10,7 @@
 package codex
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -279,6 +280,8 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				if err := emitSession(); err != nil {
 					return err
 				}
+				argsJSON := argumentsJSON(item.Arguments)
+				args := toolArgs(argsJSON)
 				tc := canon.ToolCall{
 					SessionExternalID: sess.ExternalID,
 					MessageSeq:        max(messageCount-1, 0),
@@ -286,7 +289,11 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					ExternalID:        item.CallID,
 					Name:              item.Name,
 					Kind:              normalizeTool(item.Name),
-					Input:             json.RawMessage(argumentsJSON(item.Arguments)),
+					Input:             json.RawMessage(argsJSON),
+					FilePath:          args.Path,
+					Command:           args.command(),
+					OldText:           args.OldText,
+					NewText:           cmp.Or(args.NewText, args.Content),
 					StartedAt:         line.Timestamp,
 				}
 				toolCount++
@@ -406,6 +413,42 @@ func itemText(item responseItem) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// codexToolArgs is the subset of a function call's arguments the
+// canonical record keeps beside the verbatim JSON.
+//
+// Codex writes shell commands as an ARRAY of argv, not a string —
+// typically ["bash", "-lc", "<script>"]. Rendering that array's JSON was
+// what the commands browser did before Command existed, so every Codex row
+// read as `["bash","-lc","go test ./..."]`.
+type codexToolArgs struct {
+	Command []string `json:"command"`
+	Path    string   `json:"path"`
+	OldText string   `json:"old_text"`
+	NewText string   `json:"new_text"`
+	Content string   `json:"content"`
+}
+
+func toolArgs(raw string) codexToolArgs {
+	var a codexToolArgs
+	_ = json.Unmarshal([]byte(raw), &a)
+	return a
+}
+
+// command renders the argv as the line a user would actually run. The
+// shell wrapper is unwrapped — `["bash","-lc","go test ./..."]` is the
+// script, not three arguments — and anything else is joined.
+func (a codexToolArgs) command() string {
+	switch {
+	case len(a.Command) == 0:
+		return ""
+	case len(a.Command) == 3 && strings.HasPrefix(a.Command[1], "-") &&
+		strings.Contains(a.Command[1], "c"):
+		return a.Command[2]
+	default:
+		return strings.Join(a.Command, " ")
+	}
 }
 
 // argumentsJSON keeps the function-call arguments as raw JSON; Codex

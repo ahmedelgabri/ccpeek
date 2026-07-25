@@ -602,14 +602,19 @@ func TestToolChipsAndLazyDetail(t *testing.T) {
 	edit, _ := json.Marshal(map[string]string{
 		"file_path": "a.go", "old_string": bigOld, "new_string": bigNew,
 	})
+	// Command/OldText/NewText are what the adapter lifts out of Input; the
+	// query layer reads only those, so the fixture supplies both halves
+	// exactly as a real adapter does.
 	calls := []canon.ToolCall{
 		{
 			Seq: 0, MessageSeq: 1, Name: "Bash", Kind: canon.ToolShell,
-			Input: json.RawMessage(`{"command":"` + longCmd + `"}`),
+			Input:   json.RawMessage(`{"command":"` + longCmd + `"}`),
+			Command: longCmd,
 		},
 		{
 			Seq: 1, MessageSeq: 5, Name: "Edit", Kind: canon.ToolFileEdit,
 			Input: edit, FilePath: "a.go",
+			OldText: bigOld, NewText: bigNew,
 		},
 		{
 			Seq: 2, MessageSeq: 9, Name: "Read", Kind: canon.ToolFileRead,

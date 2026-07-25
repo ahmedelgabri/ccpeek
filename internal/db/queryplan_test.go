@@ -81,3 +81,49 @@ func TestSearchDocDeleteBySessionStaysIndexed(t *testing.T) {
 		t.Errorf("delete-by-session lost its index:\n%s", plan)
 	}
 }
+
+// The commands browser orders newest-first across the whole corpus and
+// pages with LIMIT/OFFSET. Ordering on tc.started_at ALONE lets
+// idx_tool_calls_kind (kind, started_at DESC) supply both the filter and
+// the order, so the LIMIT short-circuits. The previous
+// COALESCE(tc.started_at, se.created_at, ”) was an expression no index
+// can serve, which forced a full materialize-and-sort of every shell call
+// ever indexed before the LIMIT applied.
+func TestCommandsListStopsAtTheLimit(t *testing.T) {
+	plan := planFor(t, planStore(t), `
+		SELECT tc.command, COALESCE(tc.started_at, ''),
+		       a.slug, se.external_id, se.cwd
+		FROM tool_calls tc
+		JOIN sessions se ON se.id = tc.session_id
+		JOIN agents a ON a.id = se.agent_id
+		WHERE tc.kind = 'shell' AND tc.command <> ''
+		ORDER BY tc.started_at DESC, tc.id DESC
+		LIMIT ? OFFSET ?`, 100, 0)
+
+	if !strings.Contains(plan, "idx_tool_calls_kind") {
+		t.Errorf("commands list does not use idx_tool_calls_kind:\n%s", plan)
+	}
+	if strings.Contains(plan, "TEMP B-TREE FOR ORDER BY") {
+		t.Errorf("commands list sorts the whole result set before its LIMIT:\n%s", plan)
+	}
+}
+
+// The Overview's recent-file-edits feed. Same shape as the commands list:
+// the LIMIT must stop the scan, not trim a fully sorted result.
+func TestRecentFileEditsStopsAtTheLimit(t *testing.T) {
+	plan := planFor(t, planStore(t), `
+		SELECT tc.file_path, tc.kind, a.slug, se.external_id,
+		       COALESCE(tc.started_at, '')
+		FROM tool_calls tc INDEXED BY idx_tool_calls_recent_files
+		JOIN sessions se ON se.id = tc.session_id
+		JOIN agents a ON a.id = se.agent_id
+		WHERE tc.kind IN ('file_write', 'file_edit') AND tc.file_path <> ''
+		ORDER BY tc.started_at DESC LIMIT 120`)
+
+	if !strings.Contains(plan, "idx_tool_calls_recent_files") {
+		t.Errorf("recent-files feed does not use its partial index:\n%s", plan)
+	}
+	if strings.Contains(plan, "TEMP B-TREE FOR ORDER BY") {
+		t.Errorf("recent-files feed sorts everything before its LIMIT:\n%s", plan)
+	}
+}

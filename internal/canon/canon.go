@@ -210,9 +210,30 @@ type ToolCall struct {
 	Input             json.RawMessage
 	ResultStatus      string // ok | error | "" when unknown
 	ResultExcerpt     string // bounded excerpt, not the full blob
-	FilePath          string // primary file argument, when the tool has one
-	StartedAt         time.Time
+
+	// The normalized arguments. Input keeps each agent's native shape
+	// verbatim; these are the few fields the cross-agent surfaces actually
+	// read, lifted out by the adapter that knows the shape.
+	//
+	// The query layer used to dig them out of Input with Claude's key
+	// names — json_extract('$.command'), '$.old_string', '$.new_string',
+	// '$.content'. Every other agent spells them differently: Pi's edit
+	// uses oldText/newText, OpenCode nests arguments under state.input,
+	// and Codex writes command as an ARRAY, which the commands browser
+	// then rendered as raw JSON. FilePath already established the pattern;
+	// these are its siblings.
+	FilePath string // primary file argument, when the tool has one
+	Command  string // shell command as a user would run it
+	OldText  string // file_edit: the replaced text, bounded
+	NewText  string // file_edit/file_write: the replacement, bounded
+
+	StartedAt time.Time
 }
+
+// ToolEditExcerptLimit bounds OldText/NewText. The full arguments stay in
+// Input; these are duplicated only up to what a diff view renders, so an
+// edit that rewrites a megabyte costs a bounded amount of extra storage.
+const ToolEditExcerptLimit = 16 * 1024
 
 // ToolResult attaches a late outcome to an already-emitted tool call by
 // its agent-native call id. Adapters emit it when a result appears in

@@ -8,6 +8,7 @@
 package pi
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -182,15 +183,22 @@ func normalizeTool(name string) canon.ToolKind {
 	}
 }
 
-// argPath pulls the primary file argument out of a toolCall's arguments.
-func argPath(arguments json.RawMessage) string {
-	var a struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(arguments, &a); err != nil {
-		return ""
-	}
-	return a.Path
+// piToolArgs is the subset of a toolCall's arguments the canonical record
+// keeps beside the verbatim JSON. Pi spells the edit payload oldText /
+// newText where Claude spells it old_string / new_string — normalizing
+// here is what lets the query layer stop knowing either.
+type piToolArgs struct {
+	Path    string `json:"path"`
+	Command string `json:"command"`
+	OldText string `json:"oldText"`
+	NewText string `json:"newText"`
+	Content string `json:"content"` // write
+}
+
+func toolArgs(arguments json.RawMessage) piToolArgs {
+	var a piToolArgs
+	_ = json.Unmarshal(arguments, &a)
+	return a
 }
 
 // Parse reads one Pi session file: header first, then tree entries.
@@ -294,6 +302,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					if b.Type != "toolCall" {
 						continue
 					}
+					args := toolArgs(b.Arguments)
 					if err := sink.ToolCall(canon.ToolCall{
 						SessionExternalID: sess.ExternalID,
 						MessageSeq:        msg.Seq,
@@ -302,7 +311,10 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 						Name:              b.Name,
 						Kind:              normalizeTool(b.Name),
 						Input:             b.Arguments,
-						FilePath:          argPath(b.Arguments),
+						FilePath:          args.Path,
+						Command:           args.Command,
+						OldText:           args.OldText,
+						NewText:           cmp.Or(args.NewText, args.Content),
 						StartedAt:         e.Timestamp,
 					}); err != nil {
 						return err

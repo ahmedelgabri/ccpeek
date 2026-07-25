@@ -271,13 +271,20 @@ func (w *Writer) InsertToolCall(sessionID int64, tc canon.ToolCall) error {
 	if input == "" {
 		input = "{}"
 	}
+	// The excerpt bound is applied here, where every adapter's calls
+	// converge, rather than trusted from each of them.
 	_, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO tool_calls
 			(session_id, message_seq, seq, external_id, name, kind, input_json,
-			 result_status, result_excerpt, file_path, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 result_status, result_excerpt, file_path, command, old_text, new_text,
+			 started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, tc.MessageSeq, tc.Seq, tc.ExternalID, tc.Name, string(kind), input,
-		tc.ResultStatus, tc.ResultExcerpt, tc.FilePath, timeText(tc.StartedAt))
+		tc.ResultStatus, tc.ResultExcerpt, tc.FilePath,
+		tc.Command,
+		canon.TruncateBytes(tc.OldText, canon.ToolEditExcerptLimit),
+		canon.TruncateBytes(tc.NewText, canon.ToolEditExcerptLimit),
+		timeText(tc.StartedAt))
 	if err != nil {
 		return fmt.Errorf("inserting tool call seq %d (%s): %w", tc.Seq, tc.Name, err)
 	}

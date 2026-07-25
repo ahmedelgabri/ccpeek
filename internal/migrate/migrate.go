@@ -335,8 +335,9 @@ func importToolCalls(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.Writer
 }
 
 // importLegacyCommands rescues the commands table of vintages that
-// predate tool_calls. The {"command": …} input shape is what the v2
-// commands browser reads (json_extract '$.command').
+// predate tool_calls. v1 stored the command as plain text, which is
+// exactly what canon.ToolCall.Command holds — the input JSON is
+// reconstructed alongside it only so the row's native shape is not empty.
 func importLegacyCommands(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.Writer, v1SessionID, sessionID int64) (int, error) {
 	if !sch.table("commands") {
 		return 0, nil
@@ -364,6 +365,7 @@ func importLegacyCommands(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.W
 			Name:      "Bash",
 			Kind:      canon.ToolShell,
 			Input:     input,
+			Command:   command,
 			StartedAt: parseTime(ts),
 		}); err != nil {
 			return n, err

@@ -11,6 +11,7 @@ package claude
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding"
@@ -489,14 +490,20 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 	for _, block := range content {
 		switch block.Type {
 		case "tool_use":
+			args := toolArgs(block.Input)
 			calls = append(calls, canon.ToolCall{
 				MessageSeq: seq,
 				ExternalID: block.ID,
 				Name:       block.Name,
 				Kind:       normalizeTool(block.Name),
 				Input:      block.Input,
-				FilePath:   inputFilePath(block.Input),
-				StartedAt:  raw.Timestamp,
+				FilePath:   args.filePath(),
+				Command:    args.Command,
+				OldText:    args.OldString,
+				// Write carries the whole new file in `content`; Edit carries
+				// just the replacement in `new_string`.
+				NewText:   cmp.Or(args.NewString, args.Content),
+				StartedAt: raw.Timestamp,
 			})
 		case "tool_result":
 			// Only a cleanly decoded payload yields results — the sink
@@ -619,16 +626,23 @@ func normalizeTool(name string) canon.ToolKind {
 	}
 }
 
-func inputFilePath(input json.RawMessage) string {
-	var in struct {
-		FilePath     string `json:"file_path"`
-		NotebookPath string `json:"notebook_path"`
-	}
-	if err := json.Unmarshal(input, &in); err != nil {
-		return ""
-	}
-	if in.FilePath != "" {
-		return in.FilePath
-	}
-	return in.NotebookPath
+// toolArgs is the subset of a tool_use block's input the canonical record
+// keeps beside the verbatim JSON. Decoded once per call.
+type claudeToolArgs struct {
+	FilePath     string `json:"file_path"`
+	NotebookPath string `json:"notebook_path"`
+	Command      string `json:"command"`
+	OldString    string `json:"old_string"`
+	NewString    string `json:"new_string"`
+	Content      string `json:"content"`
+}
+
+func toolArgs(input json.RawMessage) claudeToolArgs {
+	var in claudeToolArgs
+	_ = json.Unmarshal(input, &in)
+	return in
+}
+
+func (a claudeToolArgs) filePath() string {
+	return cmp.Or(a.FilePath, a.NotebookPath)
 }
