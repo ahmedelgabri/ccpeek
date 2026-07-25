@@ -20,14 +20,14 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 9
+const schemaVersion = 10
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 9
+const baseVersion = 10
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -344,8 +344,16 @@ CREATE TABLE IF NOT EXISTS search_docs (
 	title TEXT NOT NULL DEFAULT '',
 	text_content TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_search_docs_session ON search_docs(session_id);
 CREATE INDEX IF NOT EXISTS idx_search_docs_artifact ON search_docs(artifact_id);
+-- The transcript is not a search query, but it reads through this table:
+-- messages has no text column, so query.Transcript LEFT JOINs a message's
+-- search doc on (session_id, doc_type, seq). Indexed on session_id alone,
+-- that join seeks the session and then SCANS all of its docs for every
+-- message in the page — quadratic in session length, and a 6000-message
+-- session took 2.5s to return one 1000-message page. All three columns
+-- make it a seek. This index also serves the session_id-only lookups the
+-- old idx_search_docs_session covered, so that one is gone.
+CREATE INDEX IF NOT EXISTS idx_search_docs_msg ON search_docs(session_id, doc_type, seq);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 	text_content,

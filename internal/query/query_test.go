@@ -119,6 +119,20 @@ func TestSessionsFilters(t *testing.T) {
 	if err != nil || len(titled) == 0 {
 		t.Fatalf("title filter = %d (err %v), want >0", len(titled), err)
 	}
+
+	// LIKE metacharacters are literal, matching how the commands and
+	// history filters in this package already behave. Unescaped, "%" is a
+	// wildcard that matches every session — the filter would appear to do
+	// nothing rather than to find nothing.
+	for _, q := range []string{"%", "_ate limiting", "rate%limiting"} {
+		got, err := s.Sessions(ctx, SessionsFilter{Query: q})
+		if err != nil {
+			t.Fatalf("Sessions(%q): %v", q, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("title filter %q matched %d sessions, want 0 — wildcards must be literal", q, len(got))
+		}
+	}
 }
 
 func TestSessionDetail(t *testing.T) {

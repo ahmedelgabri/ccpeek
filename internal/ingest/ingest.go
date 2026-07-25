@@ -547,12 +547,30 @@ func statFingerprint(src agent.SourceRef) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(src.CompanionPaths) == 0 {
-		return sig, nil
+	folded, err := foldCompanions(sig, src.CompanionPaths, statSignature)
+	if err != nil || len(src.CompanionPaths) == 0 {
+		return folded, err
+	}
+	return "c:" + folded, nil
+}
+
+// foldCompanions combines a source's own signature with its companions'
+// into one. Both tiers of the change check fold companions identically —
+// they have to, or the cheap stat tier would report "unchanged" for a
+// source whose content the hash tier considers changed, and the file would
+// stop re-indexing. per computes one path's signature.
+//
+// A companion that does not exist contributes an "absent" marker rather
+// than an error: a session whose message directory has not been created
+// yet is normal, and the directory appearing later has to register as a
+// change.
+func foldCompanions(base string, paths []string, per func(path string, isDir bool) (string, error)) (string, error) {
+	if len(paths) == 0 {
+		return base, nil
 	}
 	h := sha256.New()
-	io.WriteString(h, sig)
-	for _, p := range src.CompanionPaths {
+	io.WriteString(h, base)
+	for _, p := range paths {
 		fi, err := os.Stat(p)
 		switch {
 		case os.IsNotExist(err):
@@ -561,13 +579,13 @@ func statFingerprint(src agent.SourceRef) (string, error) {
 		case err != nil:
 			return "", err
 		}
-		csig, err := statSignature(p, fi.IsDir())
+		sig, err := per(p, fi.IsDir())
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(h, "\x01%s\x00%s", p, csig)
+		fmt.Fprintf(h, "\x01%s\x00%s", p, sig)
 	}
-	return "c:" + hex.EncodeToString(h.Sum(nil)), nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func statSignature(path string, isDir bool) (string, error) {
@@ -613,27 +631,7 @@ func hashSource(src agent.SourceRef) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(src.CompanionPaths) == 0 {
-		return hash, nil
-	}
-	h := sha256.New()
-	io.WriteString(h, hash)
-	for _, p := range src.CompanionPaths {
-		fi, err := os.Stat(p)
-		switch {
-		case os.IsNotExist(err):
-			fmt.Fprintf(h, "\x01%s\x00absent", p)
-			continue
-		case err != nil:
-			return "", err
-		}
-		ch, err := hashPath(p, fi.IsDir())
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(h, "\x01%s\x00%s", p, ch)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return foldCompanions(hash, src.CompanionPaths, hashPath)
 }
 
 func hashPath(path string, isDir bool) (string, error) {

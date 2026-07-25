@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
 // BlockRow is one 5-hour quota window — how Claude subscription limits are
@@ -106,10 +106,7 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
 		       SUM(COALESCE(u.reported_cost_usd, 0)),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.input_tokens ELSE 0 END),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.output_tokens ELSE 0 END),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_read_tokens ELSE 0 END),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_write_tokens ELSE 0 END)
+		       `+db.UnpricedTokenSums+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
@@ -148,16 +145,9 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		b.Tokens.CacheRead += cr
 		b.Tokens.CacheWrite += cw
 		b.CostUSD += reported
-		if uin+uout+ucr+ucw > 0 {
-			if rate, ok := s.pricer.Lookup(model); ok {
-				b.CostUSD += rate.Cost(canon.Usage{
-					InputTokens: uin, OutputTokens: uout,
-					CacheReadTokens: ucr, CacheWriteTokens: ucw,
-				})
-			} else {
-				b.UnpricedTokens += uin + uout + ucr + ucw
-			}
-		}
+		cost, unpriced, _ := db.AutoCost(s.pricer, model, uin, uout, ucr, ucw)
+		b.CostUSD += cost
+		b.UnpricedTokens += unpriced
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

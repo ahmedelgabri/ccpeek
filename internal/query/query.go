@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
@@ -135,8 +134,10 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 		args = append(args, exclusiveUntil(f.Until))
 	}
 	if f.Query != "" {
-		where = append(where, `se.title LIKE ?`)
-		args = append(args, "%"+f.Query+"%")
+		// Escaped like every other LIKE filter in this package: a "%" or
+		// "_" the user types is a literal, not a wildcard.
+		where = append(where, `se.title LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(f.Query)+"%")
 	}
 	clause := ""
 	if len(where) > 0 {
@@ -210,10 +211,7 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
 		       SUM(COALESCE(u.reported_cost_usd, 0)),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.input_tokens ELSE 0 END),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.output_tokens ELSE 0 END),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_read_tokens ELSE 0 END),
-		       SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_write_tokens ELSE 0 END)
+		       `+db.UnpricedTokenSums+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		WHERE m.session_id IN (%s)
@@ -242,16 +240,9 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 		sum.Tokens.CacheRead += cr
 		sum.Tokens.CacheWrite += cw
 		sum.CostUSD += reported
-		if uin+uout+ucr+ucw > 0 {
-			if rate, ok := s.pricer.Lookup(model); ok {
-				sum.CostUSD += rate.Cost(canon.Usage{
-					InputTokens: uin, OutputTokens: uout,
-					CacheReadTokens: ucr, CacheWriteTokens: ucw,
-				})
-			} else {
-				sum.UnpricedTokens += uin + uout + ucr + ucw
-			}
-		}
+		cost, unpriced, _ := db.AutoCost(s.pricer, model, uin, uout, ucr, ucw)
+		sum.CostUSD += cost
+		sum.UnpricedTokens += unpriced
 	}
 	if err := rows.Err(); err != nil {
 		return err

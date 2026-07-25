@@ -14,6 +14,43 @@ type Pricer interface {
 	Lookup(model string) (pricing.Rate, bool)
 }
 
+// UnpricedTokenSums are the four token columns restricted to the rows the
+// agent did NOT report a cost for — the tokens auto mode has to price
+// itself. Every surface that computes a cost selects exactly these, in
+// this order, and feeds them to AutoCost. The alias `u` is message_usage.
+const UnpricedTokenSums = `SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.input_tokens ELSE 0 END),
+	SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.output_tokens ELSE 0 END),
+	SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_read_tokens ELSE 0 END),
+	SUM(CASE WHEN u.reported_cost_usd IS NULL THEN u.cache_write_tokens ELSE 0 END)`
+
+// AutoCost prices the tokens an agent did not report a cost for — the
+// second half of cost mode "auto" (docs/v2-plan.md §5.3), the first being
+// SUM(COALESCE(u.reported_cost_usd, 0)) which needs no pricing table.
+//
+// It reports the cost, the tokens left UNPRICED because the table could
+// not resolve the model, and whether it resolved at all. Surfaces show the
+// unpriced count rather than a silent $0; the rollups keep the boolean
+// because they count unpriceable GROUPS, not tokens.
+//
+// This is the product's core arithmetic and it used to be written out at
+// each of its three call sites, where the rule could drift by surface: the
+// session list, the blocks view, and the usage rollups all read different
+// queries over the same corpus, so a divergence would be invisible.
+func AutoCost(p Pricer, model string, in, out, cacheRead, cacheWrite int64) (cost float64, unpriced int64, priced bool) {
+	rate, ok := p.Lookup(model)
+	total := in + out + cacheRead + cacheWrite
+	switch {
+	case total == 0:
+		return 0, 0, ok
+	case !ok:
+		return 0, total, false
+	}
+	return rate.Cost(canon.Usage{
+		InputTokens: in, OutputTokens: out,
+		CacheReadTokens: cacheRead, CacheWriteTokens: cacheWrite,
+	}), 0, true
+}
+
 // RegenerateRollups rebuilds rollup_usage_daily from message_usage in
 // cost mode "auto" (docs/v2-plan.md §5.3): where the agent reported its own
 // cost (Pi, legacy Claude costUSD) that figure is used; otherwise cost is
@@ -129,12 +166,11 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		r.cw += cw
 		r.reported += reported
 		if unreported > 0 {
-			if rate, ok := pricer.Lookup(k.model); ok {
-				r.estimated += rate.Cost(canon.Usage{
-					InputTokens: uin, OutputTokens: uout,
-					CacheReadTokens: ucr, CacheWriteTokens: ucw,
-				})
-			} else {
+			// The rollups count unpriceable GROUPS, not tokens, so this is
+			// the one caller that reads AutoCost's third return.
+			cost, _, priced := AutoCost(pricer, k.model, uin, uout, ucr, ucw)
+			r.estimated += cost
+			if !priced {
 				r.unpriced++
 			}
 		}
