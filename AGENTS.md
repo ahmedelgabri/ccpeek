@@ -15,10 +15,17 @@ All tasks are managed via [just](https://github.com/casey/just). Install tools w
 | `just ui`        | Build the SPA (`ui/` -> `internal/webui/dist`, embedded via go:embed)         |
 | `just ui-dev`    | Vite dev server with HMR, proxying `/api` to a running ccpeek server          |
 | `just test`      | Run all tests (unit + e2e)                                                    |
-| `just test-unit` | `go test ./...`                                                               |
+| `just test-unit` | `go test ./...`, plus `internal/webui` again under `withui` (the real embed)  |
 | `just test-e2e`  | Playwright e2e tests (builds the UI first, starts the Go server on port 4322) |
 | `just lint`      | oxlint with type checking                                                     |
 | `just format`    | treefmt via `nix fmt` (gofumpt + prettier + alejandra)                        |
-| `just vet`       | `go vet` with the right build tags                                            |
+| `just vet`       | `go vet` over both build variants (untagged and `withui`)                     |
+
+Two build variants exist: a plain `go build` produces the API-only
+binary, and the `withui` tag produces the full product with the SPA
+embedded (see `internal/webui`). `just vet`, `just staticcheck`, and
+`just test-unit` run over BOTH — only the tagged pass compiles
+`embed_withui.go`, so an untagged-only check leaves the variant every
+release ships completely unexamined.
 
 The e2e suite pins every agent root at `testdata/` (via env in `playwright-go.config.ts`) so it never ingests real agent data from the developer's machine.

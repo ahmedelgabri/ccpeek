@@ -12,14 +12,14 @@ import (
 
 // ArtifactSummary is one row of the `artifacts` op.
 type ArtifactSummary struct {
-	Agent    string `json:"agent"`
-	Kind     string `json:"kind"`
-	Name     string `json:"name"`
+	Agent string `json:"agent"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
 	// Size is BYTES. SQLite's LENGTH() on a TEXT value counts characters,
 	// so for any non-ASCII content the figure the UI formatted as KB/MB
 	// was under the real one; the CAST makes it a byte count.
-	Size int `json:"size"`
-	Sessions int    `json:"sessions"` // linked session count
+	Size     int `json:"size"`
+	Sessions int `json:"sessions"` // linked session count
 }
 
 // ArtifactsFilter narrows the artifacts op.

@@ -27,11 +27,20 @@ build: ui
 dev: ui
     go run -tags withui ./cmd/ccpeek --open --watch
 
-vet:
+# The static checks run TWICE: untagged for the API-only variant that a
+# plain `go build`/`go install` produces, and with withui for the variant
+# every release path actually ships. Only the tagged pass compiles
+# internal/webui/embed_withui.go at all, so without it a mistake behind
+# the build tag reached the release job untouched by vet, staticcheck or
+# the tests. The tagged pass needs the SPA built first — the embed
+# pattern is what enforces its presence.
+vet: ui
     go vet ./...
+    go vet -tags withui ./...
 
-staticcheck:
+staticcheck: ui
     staticcheck ./...
+    staticcheck -tags withui ./...
 
 govulncheck:
     govulncheck ./...
@@ -48,8 +57,13 @@ format:
 format-check:
     nix --extra-experimental-features 'nix-command flakes' fmt -- --fail-on-change
 
-test-unit:
+# Unit tests likewise cover both variants: internal/webui's tests only
+# exercise the API-only path untagged (Embedded() reports false), so the
+# real embed — the SPA-serving handler users get — is covered only by the
+# tagged pass.
+test-unit: ui
     go test ./...
+    go test -tags withui ./internal/webui/...
 
 test-race:
     go test -race ./...

@@ -174,7 +174,9 @@ async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const detail = env?.error ?? body.trim().split("\n")[0];
     throw new Error(
-      detail ? `${res.status} ${res.statusText}: ${detail}` : `HTTP ${res.status}`,
+      detail
+        ? `${res.status} ${res.statusText}: ${detail}`
+        : `HTTP ${res.status}`,
     );
   }
   if (!env) {
