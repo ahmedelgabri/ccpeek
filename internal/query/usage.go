@@ -81,6 +81,12 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	if err != nil {
 		return nil, err
 	}
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return nil, err
+	}
+	if err := checkPaging(f.Limit, 0); err != nil {
+		return nil, err
+	}
 	// Usage is an aggregate surface: its group cardinality is naturally
 	// bounded (days, models, agents, workspaces), so the default is ALL
 	// groups — totals, charts, and CSV exports must never be silently

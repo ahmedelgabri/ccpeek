@@ -189,8 +189,8 @@ func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 		Agent:   p.Str("agent"),
 		Project: p.Str("project"),
 		Model:   p.Str("model"),
-		Since:   p.Date("since"),
-		Until:   p.Date("until"),
+		Since:   p.Str("since"),
+		Until:   p.Str("until"),
 		Query:   p.Str("q"),
 		Limit:   p.Int("limit"),
 		Offset:  p.Int("offset"),
@@ -293,8 +293,8 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 		Agent:   p.Str("agent"),
 		Project: p.Str("project"),
 		Query:   p.Str("q"),
-		Since:   p.Date("since"),
-		Until:   p.Date("until"),
+		Since:   p.Str("since"),
+		Until:   p.Str("until"),
 		Limit:   p.Int("limit"),
 		Offset:  p.Int("offset"),
 	}
@@ -356,8 +356,8 @@ func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 		GroupBy: p.Str("group"),
 		Agent:   p.Str("agent"),
 		Model:   p.Str("model"),
-		Since:   p.Date("since"),
-		Until:   p.Date("until"),
+		Since:   p.Str("since"),
+		Until:   p.Str("until"),
 		Limit:   p.Int("limit"),
 	}
 	if err := p.Err(); err != nil {

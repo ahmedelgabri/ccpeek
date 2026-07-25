@@ -25,7 +25,10 @@ var doctorCmd = &cobra.Command{
 	Short: "Print detected agent roots, store paths, and migration state",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
-		opts := ingestOptions(cmd)
+		opts, err := ingestOptions(cmd)
+		if err != nil {
+			return err
+		}
 
 		fmt.Println("Agent roots (flag/config > env > default):")
 		adapters := []agent.Adapter{

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -113,7 +114,10 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 		fmt.Fprintf(logw, "--skip-index ignored: %s does not exist yet, so there is nothing to serve\n", storePath)
 	}
 
-	opts := ingestOptions(cmd)
+	opts, err := ingestOptions(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, t := range tweak {
 		if t != nil {
 			t(&opts)
@@ -234,17 +238,57 @@ func openEngine(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io
 
 func (e *engine) Close() error { return e.store.Close() }
 
-// ingestOptions maps CLI flags to pipeline options. --claude-dir keeps
-// working as the Claude adapter's root override (§8.2 CLI compatibility);
-// it is only passed when explicitly set so CLAUDE_CONFIG_DIR still applies
-// otherwise.
-func ingestOptions(cmd *cobra.Command) ingest.Options {
+// ingestOptions maps CLI flags to pipeline options.
+//
+// ingest.Options.ConfigRoots is per-agent and agent.ResolveRoots applies it
+// uniformly to all five adapters — but the only flag feeding it was
+// --claude-dir, so users of the other four could relocate their data only
+// through each agent's own environment variable. --root <agent>=<path>
+// (docs/v2-plan.md §5.4) is the general mechanism the layer below already
+// implemented; it repeats, and --claude-dir remains its Claude-specific
+// alias for v1 CLI compatibility (§8.2).
+//
+// Overrides are only passed when explicitly set, so the environment
+// variables still apply otherwise.
+func ingestOptions(cmd *cobra.Command) (ingest.Options, error) {
 	opts := ingest.Options{}
+	roots := map[canon.AgentSlug][]string{}
+
 	if cmd.Flags().Changed("claude-dir") {
 		claudeDir, _ := cmd.Flags().GetString("claude-dir")
-		opts.ConfigRoots = map[canon.AgentSlug][]string{
-			claude.Slug: {claudeDir},
-		}
+		roots[claude.Slug] = []string{claudeDir}
 	}
-	return opts
+	specs, _ := cmd.Flags().GetStringArray("root")
+	for _, spec := range specs {
+		slug, path, ok := strings.Cut(spec, "=")
+		if !ok || slug == "" || path == "" {
+			return opts, fmt.Errorf("--root %q: want <agent>=<path>, e.g. --root claude-code=~/backup/claude", spec)
+		}
+		if !knownAgents[canon.AgentSlug(slug)] {
+			return opts, fmt.Errorf("--root %q: unknown agent %q (want one of %s)",
+				spec, slug, strings.Join(agentSlugs(), ", "))
+		}
+		roots[canon.AgentSlug(slug)] = append(roots[canon.AgentSlug(slug)], path)
+	}
+
+	if len(roots) > 0 {
+		opts.ConfigRoots = roots
+	}
+	return opts, nil
+}
+
+// knownAgents is the launch set, so --root rejects a typo instead of
+// silently overriding a nonexistent adapter's roots.
+var knownAgents = map[canon.AgentSlug]bool{
+	claude.Slug: true, pi.Slug: true, codex.Slug: true,
+	opencode.Slug: true, cursor.Slug: true,
+}
+
+func agentSlugs() []string {
+	out := make([]string, 0, len(knownAgents))
+	for slug := range knownAgents {
+		out = append(out, string(slug))
+	}
+	slices.Sort(out)
+	return out
 }

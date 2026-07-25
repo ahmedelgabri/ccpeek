@@ -5,15 +5,19 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
 
-// params centralizes typed query-parameter parsing for the versioned
-// API: a malformed integer or date, or a negative limit/offset, is a
-// caller mistake answered with 400 — never silently coerced to a zero
-// default that would quietly change the query's meaning.
+// params centralizes typed query-parameter parsing for the versioned API.
+// It handles what is genuinely a TRANSPORT concern: an HTTP query string
+// is all strings, so "10" has to become an int, and "abc" is a caller
+// mistake answered with 400 rather than silently coerced to a zero default
+// that would change the query's meaning.
+//
+// Value validation that does not depend on the wire format — date shapes,
+// negative bounds, unknown enum values — lives in the query layer instead,
+// so `ccpeek query` and the MCP server get it too (see query/validate.go).
 type params struct {
 	values url.Values
 	err    error
@@ -46,19 +50,6 @@ func (p *params) Int(name string) int {
 		return 0
 	}
 	return n
-}
-
-// Date validates a YYYY-MM-DD parameter and returns it; absent is fine.
-func (p *params) Date(name string) string {
-	s := p.values.Get(name)
-	if s == "" {
-		return ""
-	}
-	if _, err := time.Parse("2006-01-02", s); err != nil {
-		p.fail(name, s, "a YYYY-MM-DD date")
-		return ""
-	}
-	return s
 }
 
 // Bool reads a flag parameter strictly: ""/"0"/"false" are false,

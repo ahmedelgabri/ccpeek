@@ -268,6 +268,12 @@ type CommandsFilter struct {
 
 // Commands lists shell commands newest-first across every agent.
 func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow, error) {
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return nil, err
+	}
+	if err := checkPaging(f.Limit, f.Offset); err != nil {
+		return nil, err
+	}
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}
@@ -488,6 +494,9 @@ type HistoryFilter struct {
 
 // History lists prompt-history entries newest first.
 func (s *Service) History(ctx context.Context, f HistoryFilter) ([]HistoryRow, error) {
+	if err := checkPaging(f.Limit, f.Offset); err != nil {
+		return nil, err
+	}
 	if f.Limit <= 0 {
 		f.Limit = 100
 	}

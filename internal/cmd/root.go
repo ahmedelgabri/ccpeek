@@ -38,7 +38,8 @@ func init() {
 		home = ""
 	}
 
-	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Path to Claude Code data directory")
+	rootCmd.PersistentFlags().String("claude-dir", filepath.Join(home, ".claude"), "Path to Claude Code data directory (alias for --root claude-code=<path>)")
+	rootCmd.PersistentFlags().StringArray("root", nil, "Override an agent's data directory: <agent>=<path>. Repeatable, e.g. --root codex=~/backup/codex")
 	rootCmd.PersistentFlags().String("data-file", filepath.Join(dataDir(), "ccpeek.db"), "Database identity path: the v2 index lives at a sibling derived from this name; a v1 database at this exact path is imported")
 
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
@@ -239,6 +240,17 @@ func run(cmd *cobra.Command, args []string) error {
 			colorYellow, colorReset)
 	}
 
+	// The watch pass reuses the run's root overrides, resolved here so a
+	// malformed --root fails the command rather than a background
+	// goroutine (openEngineDeferred has already validated them, so this
+	// cannot realistically fail — but the error has nowhere to go inside
+	// the goroutine).
+	watchOpts, err := ingestOptions(cmd)
+	if err != nil {
+		return err
+	}
+	watchOpts.Prune = prune
+
 	var ready atomic.Bool
 	go func() {
 		if bootstrap != nil {
@@ -271,8 +283,6 @@ func run(cmd *cobra.Command, args []string) error {
 			// Watch passes carry the prune policy the serve run started
 			// with, and re-scan what each pass changed — otherwise new
 			// secrets (and pruned sources) stay stale until a restart.
-			watchOpts := ingestOptions(cmd)
-			watchOpts.Prune = prune
 			if err := eng.runner.Watch(ctx, watchOpts, 0, func(rep *ingest.Report) {
 				events.Notify() // fresh data first; the scan follows
 				if err := runScan(ctx, rep); err != nil && ctx.Err() == nil {

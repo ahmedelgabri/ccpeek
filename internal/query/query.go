@@ -98,6 +98,12 @@ type SessionsFilter struct {
 // Sessions lists sessions newest-first — the primary op of the
 // session-centric model.
 func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSummary, error) {
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return nil, err
+	}
+	if err := checkPaging(f.Limit, f.Offset); err != nil {
+		return nil, err
+	}
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
@@ -185,15 +191,18 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 
 // attachCost computes one session's token totals and auto-mode cost.
 func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary) error {
-	return s.attachCosts(ctx, []int64{sessionRowID}, []SessionSummary{*sum},
-		func(i int, updated SessionSummary) { *sum = updated })
+	one := []SessionSummary{*sum}
+	if err := s.attachCosts(ctx, []int64{sessionRowID}, one); err != nil {
+		return err
+	}
+	*sum = one[0]
+	return nil
 }
 
 // attachCosts computes token totals and auto-mode cost for a whole page
 // of sessions in ONE grouped query — per-row queries made a 100-session
-// list cost 101 round trips. apply, when given, receives each updated
-// summary (the single-session path writes through a pointer).
-func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary, apply ...func(int, SessionSummary)) error {
+// list cost 101 round trips. It writes through the slice.
+func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary) error {
 	if len(rowIDs) == 0 {
 		return nil
 	}
@@ -246,11 +255,6 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 	}
 	if err := rows.Err(); err != nil {
 		return err
-	}
-	for _, fn := range apply {
-		for i := range sums {
-			fn(i, sums[i])
-		}
 	}
 	return nil
 }

@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/spf13/cobra"
 )
 
@@ -130,5 +133,75 @@ func TestRunRejectsMissingClaudeDirWhenIndexing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "claude data directory not found") {
 		t.Fatalf("expected missing claude dir error, got %v", err)
+	}
+}
+
+// ingest.Options.ConfigRoots has always been per-agent, and
+// agent.ResolveRoots applies it to all five adapters — but --claude-dir
+// was the only flag feeding it, so users of the other four could relocate
+// their data only through each agent's own environment variable.
+func TestRootFlagOverridesAnyAgent(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want map[canon.AgentSlug][]string
+	}{
+		{
+			name: "no overrides leaves the env in charge",
+			args: nil,
+			want: nil,
+		},
+		{
+			name: "claude-dir still works",
+			args: []string{"--claude-dir", "/backup/claude"},
+			want: map[canon.AgentSlug][]string{"claude-code": {"/backup/claude"}},
+		},
+		{
+			name: "root covers the other adapters",
+			args: []string{"--root", "codex=/backup/codex"},
+			want: map[canon.AgentSlug][]string{"codex": {"/backup/codex"}},
+		},
+		{
+			name: "root repeats",
+			args: []string{"--root", "pi=/a", "--root", "cursor=/b"},
+			want: map[canon.AgentSlug][]string{"pi": {"/a"}, "cursor": {"/b"}},
+		},
+		{
+			name: "root and claude-dir compose",
+			args: []string{"--claude-dir", "/c", "--root", "opencode=/o"},
+			want: map[canon.AgentSlug][]string{"claude-code": {"/c"}, "opencode": {"/o"}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().String("claude-dir", "", "")
+			cmd.Flags().StringArray("root", nil, "")
+			if err := cmd.ParseFlags(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			opts, err := ingestOptions(cmd)
+			if err != nil {
+				t.Fatalf("ingestOptions: %v", err)
+			}
+			if !maps.EqualFunc(opts.ConfigRoots, tt.want, slices.Equal) {
+				t.Errorf("ConfigRoots = %v, want %v", opts.ConfigRoots, tt.want)
+			}
+		})
+	}
+}
+
+// A typo in --root must fail loudly rather than silently override the
+// roots of an adapter that does not exist.
+func TestRootFlagRejectsMalformedSpecs(t *testing.T) {
+	for _, spec := range []string{"nopath", "=/only/path", "claude-code=", "nosuchagent=/p"} {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("claude-dir", "", "")
+		cmd.Flags().StringArray("root", nil, "")
+		if err := cmd.ParseFlags([]string{"--root", spec}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ingestOptions(cmd); err == nil {
+			t.Errorf("--root %q accepted, want an error", spec)
+		}
 	}
 }
