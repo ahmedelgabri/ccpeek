@@ -15,7 +15,10 @@ type ArtifactSummary struct {
 	Agent    string `json:"agent"`
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
-	Size     int    `json:"size"`
+	// Size is BYTES. SQLite's LENGTH() on a TEXT value counts characters,
+	// so for any non-ASCII content the figure the UI formatted as KB/MB
+	// was under the real one; the CAST makes it a byte count.
+	Size int `json:"size"`
 	Sessions int    `json:"sessions"` // linked session count
 }
 
@@ -52,7 +55,7 @@ func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactS
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT a.slug, ar.kind, ar.name, LENGTH(ar.content),
+		SELECT a.slug, ar.kind, ar.name, LENGTH(CAST(ar.content AS BLOB)),
 		       (SELECT COUNT(*) FROM artifact_sessions ass WHERE ass.artifact_id = ar.id)
 		FROM artifacts ar
 		JOIN agents a ON a.id = ar.agent_id
@@ -107,7 +110,7 @@ func (s *Service) Artifact(ctx context.Context, agentSlug, kind, name string, re
 	d := &ArtifactDetail{}
 	var id int64
 	err := s.store.ReadDB().QueryRowContext(ctx, `
-		SELECT ar.id, a.slug, ar.kind, ar.name, LENGTH(ar.content),
+		SELECT ar.id, a.slug, ar.kind, ar.name, LENGTH(CAST(ar.content AS BLOB)),
 		       ar.content, ar.metadata_json
 		FROM artifacts ar
 		JOIN agents a ON a.id = ar.agent_id

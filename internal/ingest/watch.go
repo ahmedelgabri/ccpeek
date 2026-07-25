@@ -3,8 +3,10 @@ package ingest
 import (
 	"context"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -27,6 +29,12 @@ func (r *Runner) Watch(ctx context.Context, opts Options, debounce time.Duration
 	defer watcher.Close()
 
 	watched := map[string]bool{}
+	// Watch registration can fail per directory — on Linux the per-user
+	// inotify limit (often 8192) is reachable by a large projects tree
+	// plus the sidecar trees. Silently dropping those left the user with
+	// "watch mode enabled" and no live updates. Failures are counted and
+	// reported once per pass, naming the knob.
+	warned := false
 	addRoots := func() {
 		if opts.Getenv == nil {
 			opts.Getenv = os.Getenv
@@ -35,8 +43,16 @@ func (r *Runner) Watch(ctx context.Context, opts Options, debounce time.Duration
 			opts.Home, _ = os.UserHomeDir()
 		}
 		roots, _ := r.resolveRoots(opts)
+		failed := 0
 		for _, rr := range roots {
-			addRecursive(watcher, rr.root.Path, watched)
+			failed += addRecursive(watcher, rr.root.Path, watched)
+		}
+		if failed > 0 && !warned {
+			warned = true
+			log.Printf("ccpeek: watching %d of %d directories — %d could not be registered; "+
+				"live updates for those rely on the periodic rescan "+
+				"(on Linux, raise fs.inotify.max_user_watches)",
+				len(watched), len(watched)+failed, failed)
 		}
 	}
 	addRoots()
@@ -83,7 +99,13 @@ func (r *Runner) Watch(ctx context.Context, opts Options, debounce time.Duration
 			}
 			arm()
 
-		case <-watcher.Errors:
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			if err != nil {
+				log.Printf("ccpeek: watcher error: %v", err)
+			}
 			arm() // err on the side of re-indexing
 
 		case <-timerCh:
@@ -105,14 +127,33 @@ func (r *Runner) Watch(ctx context.Context, opts Options, debounce time.Duration
 	}
 }
 
-func addRecursive(watcher *fsnotify.Watcher, root string, watched map[string]bool) {
+// addRecursive registers a watch on root and every directory under it,
+// returning how many registrations FAILED. Directories that have since
+// been deleted are dropped from the watched set so it tracks reality
+// rather than only ever growing.
+func addRecursive(watcher *fsnotify.Watcher, root string, watched map[string]bool) int {
+	failed := 0
+	seen := map[string]bool{}
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || !d.IsDir() || watched[path] {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		seen[path] = true
+		if watched[path] {
 			return nil
 		}
 		if watcher.Add(path) == nil {
 			watched[path] = true
+		} else {
+			failed++
 		}
 		return nil
 	})
+	for path := range watched {
+		if !seen[path] && strings.HasPrefix(path, root) {
+			_ = watcher.Remove(path)
+			delete(watched, path)
+		}
+	}
+	return failed
 }

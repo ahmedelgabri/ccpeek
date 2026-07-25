@@ -132,11 +132,20 @@ func requestLog(next http.Handler) http.Handler {
 	})
 }
 
-// serve runs the HTTP server with graceful shutdown, mirroring v1's
-// timeouts.
-func serve(ctx context.Context, addr string, handler http.Handler) error {
+// listen binds addr before anything observable depends on the server
+// being up. --open used to launch the browser on the line before
+// ListenAndServe, so a fast browser could hit connection refused on the
+// tab ccpeek had just opened for it; binding first also means "address
+// already in use" fails before a browser window appears.
+func listen(ctx context.Context, addr string) (net.Listener, error) {
+	var lc net.ListenConfig
+	return lc.Listen(ctx, "tcp", addr)
+}
+
+// serve runs the HTTP server on an already-bound listener, with graceful
+// shutdown, mirroring v1's timeouts.
+func serve(ctx context.Context, ln net.Listener, handler http.Handler) error {
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -154,7 +163,7 @@ func serve(ctx context.Context, addr string, handler http.Handler) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
-	err := srv.ListenAndServe()
+	err := srv.Serve(ln)
 	if err == http.ErrServerClosed {
 		return nil
 	}

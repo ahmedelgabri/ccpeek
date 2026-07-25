@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -54,9 +55,17 @@ func (s *Service) GetBudget(ctx context.Context) (*Budget, error) {
 }
 
 // SetBudget stores the monthly target; zero clears it.
+//
+// Validation failures are wrapped as ErrBadRequest so the transports can
+// tell them apart from a store failure. The handler used to route EVERY
+// error from here through its 400 path, which meant a locked or full
+// database reported itself as the caller's mistake.
 func (s *Service) SetBudget(ctx context.Context, monthlyUSD float64) error {
+	if math.IsNaN(monthlyUSD) || math.IsInf(monthlyUSD, 0) {
+		return fmt.Errorf("%w: budget must be a finite number", ErrBadRequest)
+	}
 	if monthlyUSD < 0 {
-		return fmt.Errorf("budget must be >= 0")
+		return fmt.Errorf("%w: budget must be >= 0", ErrBadRequest)
 	}
 	if monthlyUSD == 0 {
 		_, err := s.store.DB().ExecContext(ctx, `

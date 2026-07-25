@@ -393,3 +393,72 @@ func TestDataFileIsolation(t *testing.T) {
 		t.Errorf("profile B sees profile A's data (%q): stores alias", v)
 	}
 }
+
+// The v1 import retries on every engine open, --skip-index included. It
+// used to hang off the bootstrap closure, which is nil when indexing is
+// skipped — so the documented "retried on every start until it succeeds"
+// contract silently did not hold for anyone who runs --skip-index, and
+// the UI banner stayed red forever.
+func TestV1ImportRetriesUnderSkipIndex(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dataFile := filepath.Join(dir, "ccpeek.db")
+	liveSource := filepath.Join(t.TempDir(), "live.jsonl")
+
+	emptyRoot := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", emptyRoot)
+	t.Setenv("CODEX_HOME", emptyRoot)
+	t.Setenv("OPENCODE_DATA_DIR", emptyRoot)
+	t.Setenv("CCPEEK_CURSOR_DIR", emptyRoot)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
+	if err := cmd.Flags().Set("claude-dir", emptyRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	// First open: an unreadable legacy file, so the import fails.
+	if err := os.WriteFile(dataFile, []byte("this is not a sqlite database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := eng.store.GetMeta(ctx, "v1_import_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != v1ImportFailed {
+		t.Fatalf("precondition: v1_import_state = %q, want failed", state)
+	}
+	eng.Close()
+
+	// Replace it with a readable one and reopen with --skip-index. The
+	// import must be attempted anyway.
+	if err := os.Remove(dataFile); err != nil {
+		t.Fatal(err)
+	}
+	seedV1DB(t, dataFile, liveSource)
+
+	eng, err = openEngine(ctx, cmd, true /* skipIndex */, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	state, _, err = eng.store.GetMeta(ctx, "v1_import_state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != v1ImportSuccess {
+		t.Errorf("v1_import_state = %q after a --skip-index open, want success", state)
+	}
+	if v, _, _ := eng.store.GetMeta(ctx, "v1_import_error"); v != "" {
+		t.Errorf("v1_import_error = %q, want it cleared after success", v)
+	}
+	if _, ok, _ := eng.store.GetMeta(ctx, "v1_imported_at"); !ok {
+		t.Error("v1_imported_at not stamped")
+	}
+}

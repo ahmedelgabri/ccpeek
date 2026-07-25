@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, fmtWhen, inclusiveUntil, shortPath } from "../api";
+import { api, fmtWhen, shortPath } from "../api";
 import { useHighlight } from "../highlight";
 import {
   AgentDot,
@@ -33,7 +33,7 @@ export function CommandsPage() {
           q,
           agent,
           since,
-          until: inclusiveUntil(until),
+          until: until,
           limit: String(PAGE),
           offset: String(pageParam),
         }),
@@ -54,7 +54,7 @@ export function CommandsPage() {
     if (q) p.set("q", q);
     if (agent) p.set("agent", agent);
     if (since) p.set("since", since);
-    if (until) p.set("until", inclusiveUntil(until));
+    if (until) p.set("until", until);
     return `/api/v1/commands?${p.toString()}`;
   };
 

@@ -90,18 +90,22 @@ The server reads each agent's data from its default root (for Claude Code,
 
 ### Flags
 
-| Flag           | Default                           | Description                                                                                                                                                              |
-| -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `-p`, `--port` | `3000`                            | Server port                                                                                                                                                              |
-| `--claude-dir` | `~/.claude`                       | Source directory (Claude data)                                                                                                                                           |
-| `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | Database identity: the v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`); a v1 database at this exact path is imported |
-| `--skip-index` | `false`                           | Skip indexing, serve existing data                                                                                                                                       |
-| `--index-only` | `false`                           | Index and exit                                                                                                                                                           |
-| `--open`       | `false`                           | Open browser after starting                                                                                                                                              |
-| `--watch`      | `false`                           | Re-index periodically while serving                                                                                                                                      |
-| `--rebuild`    | `false`                           | Force full rebuild (drop all data and re-index)                                                                                                                          |
-| `--prune`      | `false`                           | Remove data from source files that no longer exist                                                                                                                       |
-| `--skip-scan`  | `false`                           | Skip secret scanning after indexing                                                                                                                                      |
+| Flag             | Default                           | Description                                                                                                                                                              |
+| ---------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-p`, `--port`   | `3000`                            | Server port                                                                                                                                                              |
+| `--claude-dir`   | `~/.claude`                       | Source directory (Claude data)                                                                                                                                           |
+| `--data-file`    | `~/.local/share/ccpeek/ccpeek.db` | Database identity: the v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`); a v1 database at this exact path is imported |
+| `--skip-index`   | `false`                           | Skip indexing, serve existing data                                                                                                                                       |
+| `--index-only`   | `false`                           | Index and exit                                                                                                                                                           |
+| `-o`, `--open`   | `false`                           | Open browser after starting                                                                                                                                              |
+| `-w`, `--watch`  | `false`                           | Re-index while serving, on filesystem changes                                                                                                                            |
+| `--rebuild`      | `false`                           | Force full rebuild (drop all data and re-index)                                                                                                                          |
+| `--prune`        | `false`                           | Remove data from source files that no longer exist                                                                                                                       |
+| `--skip-scan`    | `false`                           | Skip secret scanning after indexing                                                                                                                                      |
+| `-q`, `--quiet`  | `false`                           | Suppress informational output                                                                                                                                            |
+
+`--watch-interval` is accepted for v1 compatibility and ignored: v2
+re-indexes on filesystem events rather than on a timer.
 
 ### Shell completions
 

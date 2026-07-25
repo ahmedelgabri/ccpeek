@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/ops"
+	"github.com/ahmedelgabri/ccpeek/internal/query"
 )
 
 func post(t *testing.T, h http.Handler, path, body string, headers map[string]string) (int, envelope) {
@@ -224,5 +226,86 @@ func TestLoopbackOnlyCoversReadsWithoutOrigin(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s from a rebound host = %d, want 403", path, rec.Code)
 		}
+	}
+}
+
+// Only caller-facing errors carry their message to the client. The
+// wrapped internal errors name SQL fragments and absolute filesystem
+// paths, and returning those verbatim on a 500 handed them to whoever
+// asked — which matters more now that a rebound host is a real caller.
+func TestInternalErrorsDoNotLeakDetail(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeError(rec, fmt.Errorf("listing sessions: opening /Users/someone/.local/share/ccpeek/ccpeek2.db: permission denied"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, leaked := range []string{"/Users/someone", "ccpeek2.db", "listing sessions"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("500 response leaked %q: %s", leaked, body)
+		}
+	}
+	if !strings.Contains(body, "internal error") {
+		t.Errorf("500 response has no generic message: %s", body)
+	}
+}
+
+// Caller mistakes and misses keep their detail — that is what makes them
+// actionable.
+func TestCallerFacingErrorsKeepTheirMessage(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		want   string
+	}{
+		{fmt.Errorf("%w: parameter limit=%q (want a non-negative integer)", query.ErrBadRequest, "abc"),
+			http.StatusBadRequest, "limit"},
+		{fmt.Errorf("%w: session claude-code/nope", query.ErrNotFound),
+			http.StatusNotFound, "claude-code/nope"},
+	} {
+		rec := httptest.NewRecorder()
+		writeError(rec, tc.err)
+		if rec.Code != tc.status {
+			t.Errorf("status = %d, want %d", rec.Code, tc.status)
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("body %q does not mention %q", rec.Body.String(), tc.want)
+		}
+	}
+}
+
+// The mutating endpoints bound their request bodies and reject unknown
+// fields, so an oversized payload cannot make the server allocate and a
+// client typo surfaces instead of being silently ignored.
+func TestMutatingEndpointsBoundAndValidateBodies(t *testing.T) {
+	h := newHandler(t)
+
+	huge := `{"monthlyUSD": 1, "pad": "` + strings.Repeat("x", 64*1024) + `"}`
+	code, _ := post(t, h, "PUT /api/v1/budget", huge, nil)
+	if code != http.StatusBadRequest {
+		t.Errorf("oversized body = %d, want 400", code)
+	}
+
+	// An unknown field is a 400 that names it, rather than a silent
+	// no-op that stores nothing and reports success. (Go matches field
+	// names case-insensitively, so only a genuinely different name is
+	// unknown.)
+	code, env := post(t, h, "PUT /api/v1/budget", `{"monthlyBudget": 25}`, nil)
+	if code != http.StatusBadRequest {
+		t.Errorf("unknown field = %d, want 400", code)
+	} else if !strings.Contains(env.Error, "monthlyBudget") {
+		t.Errorf("400 does not name the unknown field: %q", env.Error)
+	}
+
+	// Non-finite values are a caller mistake, not a stored budget.
+	code, _ = post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": -1}`, nil)
+	if code != http.StatusBadRequest {
+		t.Errorf("negative budget = %d, want 400", code)
+	}
+
+	// The valid shape still works.
+	code, _ = post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": 25}`, nil)
+	if code != http.StatusOK {
+		t.Errorf("valid budget = %d, want 200", code)
 	}
 }

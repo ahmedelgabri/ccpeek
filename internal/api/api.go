@@ -5,9 +5,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -397,17 +399,46 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 // (query.ErrBadRequest) are 400, misses are 404, everything else is a
 // 500 — a canceled request or store failure must never masquerade as a
 // caller mistake in the access log.
+//
+// Only the two CALLER-FACING classes carry their message to the client.
+// The wrapped errors are informative by design ("listing sessions: …",
+// "opening /Users/…/ccpeek2.db: …"), so returning them verbatim on a 500
+// handed the caller SQL fragments and absolute filesystem paths. Those go
+// to the operator's log instead.
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	if errors.Is(err, query.ErrBadRequest) {
-		status = http.StatusBadRequest
-	}
-	if errors.Is(err, query.ErrNotFound) {
-		status = http.StatusNotFound
+	detail := "internal error"
+	switch {
+	case errors.Is(err, query.ErrBadRequest):
+		status, detail = http.StatusBadRequest, err.Error()
+	case errors.Is(err, query.ErrNotFound):
+		status, detail = http.StatusNotFound, err.Error()
+	case errors.Is(err, context.Canceled):
+		// The client went away mid-query; nothing went wrong here.
+		status, detail = 499, "request canceled"
+	default:
+		log.Printf("api error: %v", err)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Error: err.Error()})
+	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Error: detail})
+}
+
+// maxRequestBody bounds the mutating endpoints' payloads. Both carry a
+// single field; anything larger is a mistake or an attempt to make the
+// server allocate. ReadTimeout bounds the duration but not the memory.
+const maxRequestBody = 4 << 10
+
+// decodeBody reads a bounded, strict JSON body: unknown fields are a 400
+// rather than a silent no-op, so a client typo surfaces instead of being
+// swallowed.
+func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("%w: %v", query.ErrBadRequest, err)
+	}
+	return nil
 }
 
 func writeBadRequest(w http.ResponseWriter, err error) {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -442,5 +444,85 @@ func TestParseTailLeavesPartialLineForNextPass(t *testing.T) {
 	fi, _ := os.Stat(path)
 	if done.Offset != fi.Size() {
 		t.Errorf("final offset = %d, want %d", done.Offset, fi.Size())
+	}
+}
+
+// Identity is the file name — stable, and known before a line parses.
+// The sessionId inside the JSONL is therefore never a fallback (the guard
+// that pretended otherwise could not fire), but a disagreement means the
+// transcript was copied or renamed and is worth saying out loud once.
+func TestSessionIDMismatchWarnsOnceAndKeepsFilenameIdentity(t *testing.T) {
+	dir := t.TempDir()
+	projects := filepath.Join(dir, "projects", "-home-u-x")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const fileID = "aaaaaaaa-1111-2222-3333-444444444444"
+	const innerID = "bbbbbbbb-9999-8888-7777-666666666666"
+	path := filepath.Join(projects, fileID+".jsonl")
+
+	var body strings.Builder
+	for i := range 3 {
+		body.WriteString(`{"type":"user","uuid":"u` + strconv.Itoa(i) +
+			`","sessionId":"` + innerID +
+			`","timestamp":"2026-07-01T10:00:0` + strconv.Itoa(i) +
+			`Z","cwd":"/home/u/x","message":{"role":"user","content":"hi"}}` + "\n")
+	}
+	if err := os.WriteFile(path, []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := &agenttest.Sink{}
+	src := agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: dir},
+		Path: path,
+		Kind: agent.SourceFile,
+	}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	// Identity stays the file name.
+	if len(sink.Sessions) == 0 {
+		t.Fatal("no session emitted")
+	}
+	for _, s := range sink.Sessions {
+		if s.ExternalID != fileID {
+			t.Errorf("session id = %q, want the file name %q", s.ExternalID, fileID)
+		}
+	}
+
+	// Exactly one warning, however many lines disagree.
+	var warnings []canon.Issue
+	for _, is := range sink.Issues {
+		if is.Category == "identity" {
+			warnings = append(warnings, is)
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("identity warnings = %d, want 1: %+v", len(warnings), sink.Issues)
+	}
+	if warnings[0].Severity != canon.SeverityWarn {
+		t.Errorf("severity = %q, want warn", warnings[0].Severity)
+	}
+	for _, want := range []string{innerID, fileID} {
+		if !strings.Contains(warnings[0].Detail, want) {
+			t.Errorf("warning %q does not mention %q", warnings[0].Detail, want)
+		}
+	}
+}
+
+// The normal case — file name and sessionId agree — stays silent.
+func TestMatchingSessionIDIsSilent(t *testing.T) {
+	for _, ref := range discover(t) {
+		sink := &agenttest.Sink{}
+		if err := New().Parse(context.Background(), ref, sink); err != nil {
+			t.Fatalf("Parse(%s): %v", ref.Path, err)
+		}
+		for _, is := range sink.Issues {
+			if is.Category == "identity" {
+				t.Errorf("unexpected identity warning on %s: %+v", ref.Path, is)
+			}
+		}
 	}
 }

@@ -13,10 +13,32 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
+
+// exclusiveUntil converts an INCLUSIVE YYYY-MM-DD upper bound into the
+// exclusive one the date comparisons use.
+//
+// "until" is inclusive on every transport. It used to be exclusive in the
+// service, and only the web UI knew: it added a day client-side before
+// sending. The CLI and MCP had no such helper, so the same nominal
+// argument meant different ranges depending on who sent it, and an agent
+// asking for "usage from the 1st to the 25th" silently lost the 25th.
+func exclusiveUntil(until string) string {
+	if until == "" {
+		return ""
+	}
+	d, err := time.Parse("2006-01-02", until)
+	if err != nil {
+		// Transports validate the format; anything else passes through and
+		// simply matches nothing rather than widening the range.
+		return until
+	}
+	return d.AddDate(0, 0, 1).Format("2006-01-02")
+}
 
 // ErrNotFound marks lookups for entities that don't exist.
 var ErrNotFound = errors.New("not found")
@@ -68,7 +90,7 @@ type SessionsFilter struct {
 	Project string // workspace canonical path, "" = all
 	Model   string // sessions with ≥1 message on this model
 	Since   string // inclusive YYYY-MM-DD on modified_at
-	Until   string // exclusive YYYY-MM-DD upper bound on modified_at
+	Until   string // INCLUSIVE YYYY-MM-DD upper bound on modified_at
 	Query   string // substring on title
 	Limit   int
 	Offset  int
@@ -107,7 +129,7 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	}
 	if f.Until != "" {
 		where = append(where, `se.modified_at < ?`)
-		args = append(args, f.Until)
+		args = append(args, exclusiveUntil(f.Until))
 	}
 	if f.Query != "" {
 		where = append(where, `se.title LIKE ?`)

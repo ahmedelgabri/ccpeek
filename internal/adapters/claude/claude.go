@@ -214,6 +214,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 	// instead of an in-memory index, the same mechanism late results
 	// already used.
 	emittedSession := false
+	warnedIDMismatch := false
 	emitSession := func() error {
 		if emittedSession {
 			return nil
@@ -303,8 +304,23 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		default:
 			continue // progress lines and future types are not transcript entries
 		}
-		if entry.SessionID != "" && sess.ExternalID == "" {
-			sess.ExternalID = entry.SessionID
+		// Identity is the FILE NAME, always: it is stable, and it is known
+		// before a single line parses, so children can be emitted from the
+		// first entry onward. The sessionId inside the JSONL is therefore
+		// never a fallback — it used to be guarded by an ExternalID == ""
+		// test that could not fire. A disagreement is worth saying out
+		// loud though: it means the transcript was copied or renamed, and
+		// it will index under a different id than the agent recorded.
+		if entry.SessionID != "" && entry.SessionID != sessionID && !warnedIDMismatch {
+			warnedIDMismatch = true
+			if serr := sink.Issue(canon.Issue{
+				Agent: Slug, Severity: canon.SeverityWarn, Category: "identity",
+				SourcePath: src.Path, Line: lineNo,
+				Detail: fmt.Sprintf("entry sessionId %q differs from the file name %q; indexing under the file name",
+					entry.SessionID, sessionID),
+			}); serr != nil {
+				return state, serr
+			}
 		}
 
 		msg, calls := a.convertLine(entry, state.MessageSeq+messageCount)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -154,5 +155,97 @@ func TestStatusTool(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("status payload lacks %s: %s", want, text)
 		}
+	}
+}
+
+// A parse error carries "id": null, as JSON-RPC 2.0 requires when the
+// request's id cannot be determined. Omitting the field entirely — which
+// omitempty did — makes strict clients reject the response.
+func TestParseErrorCarriesNullID(t *testing.T) {
+	srv := New(nil, "test", nil)
+	var out bytes.Buffer
+	if err := srv.Serve(context.Background(),
+		strings.NewReader("{ this is not json\n"), &out); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
+		t.Fatalf("response is not JSON (%q): %v", out.String(), err)
+	}
+	id, present := raw["id"]
+	if !present {
+		t.Fatal("response has no id field; the spec requires an explicit null")
+	}
+	if string(id) != "null" {
+		t.Errorf("id = %s, want null", id)
+	}
+	if _, ok := raw["error"]; !ok {
+		t.Error("parse error response has no error member")
+	}
+}
+
+// Every reply echoes its request's id, whatever JSON type it is.
+func TestResponsesEchoTheRequestID(t *testing.T) {
+	srv := New(nil, "test", nil)
+	for _, id := range []string{`1`, `"abc"`, `0`} {
+		var out bytes.Buffer
+		in := `{"jsonrpc":"2.0","id":` + id + `,"method":"ping"}` + "\n"
+		if err := srv.Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
+			t.Fatalf("id %s: %v (%q)", id, err, out.String())
+		}
+		if string(raw["id"]) != id {
+			t.Errorf("id = %s, want %s", raw["id"], id)
+		}
+		if _, ok := raw["result"]; !ok {
+			t.Errorf("ping with id %s returned no result member", id)
+		}
+	}
+}
+
+// One oversized message costs that message, not the session: the whole
+// MCP connection used to die with bufio.ErrTooLong.
+func TestOversizedMessageDoesNotKillTheSession(t *testing.T) {
+	srv := New(nil, "test", nil)
+	var in strings.Builder
+	in.WriteString(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
+	in.WriteString(`{"jsonrpc":"2.0","id":2,"method":"ping","params":{"pad":"` +
+		strings.Repeat("x", maxMessageBytes+1024) + `"}}` + "\n")
+	in.WriteString(`{"jsonrpc":"2.0","id":3,"method":"ping"}` + "\n")
+
+	var out bytes.Buffer
+	if err := srv.Serve(context.Background(), strings.NewReader(in.String()), &out); err != nil {
+		t.Fatalf("Serve died on an oversized message: %v", err)
+	}
+
+	var ids []string
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			t.Fatalf("bad response line %q: %v", line, err)
+		}
+		ids = append(ids, string(raw["id"]))
+	}
+	// Three replies: ping 1, the oversized message's error, ping 3.
+	want := []string{"1", "null", "3"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Errorf("response ids = %v, want %v", ids, want)
+	}
+}
+
+// Notifications (no id) get no reply at all.
+func TestNotificationsAreSilent(t *testing.T) {
+	srv := New(nil, "test", nil)
+	var out bytes.Buffer
+	in := `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"
+	if err := srv.Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("notification produced %q, want no reply", out.String())
 	}
 }

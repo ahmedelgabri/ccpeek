@@ -98,8 +98,19 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 		runner:  runner,
 	}
 
+	// The v1 import retries on EVERY engine open, not only when indexing
+	// runs. It is keyed on its own meta and is a no-op once it has
+	// succeeded (or established there is no legacy database), so the cost
+	// is one meta read — and hanging it off bootstrap meant the documented
+	// "retried on every start until it succeeds" contract silently did not
+	// hold for anyone who runs --skip-index.
+	maybeImportV1(ctx, store, dataFile, logw)
+
 	if skipIndex && !firstRun {
 		return eng, nil, nil
+	}
+	if skipIndex && firstRun {
+		fmt.Fprintf(logw, "--skip-index ignored: %s does not exist yet, so there is nothing to serve\n", storePath)
 	}
 
 	opts := ingestOptions(cmd)
@@ -124,6 +135,10 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 				report.Artifacts, report.Duration.Round(time.Millisecond))
 		}
 
+		// Retried here too: a first run indexes before the import, and a
+		// legacy database that appeared since the engine opened (or an
+		// import that failed above) gets its next attempt without waiting
+		// for a restart.
 		maybeImportV1(ctx, store, dataFile, logw)
 		if firstRun {
 			_ = store.SetMeta(ctx, "migrated_at", time.Now().UTC().Format(time.RFC3339))

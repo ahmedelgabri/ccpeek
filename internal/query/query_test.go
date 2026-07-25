@@ -229,12 +229,21 @@ func TestUsageAggregates(t *testing.T) {
 		t.Fatalf("agent groups = %d, want 2", len(byAgent))
 	}
 
-	byDay, err := s.Usage(ctx, UsageFilter{GroupBy: "day", Since: "2026-07-01", Until: "2026-07-02"})
+	// until is INCLUSIVE on every transport, so a single-day range names
+	// the same date twice.
+	byDay, err := s.Usage(ctx, UsageFilter{GroupBy: "day", Since: "2026-07-01", Until: "2026-07-01"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(byDay) != 1 || byDay[0].Group != "2026-07-01" {
 		t.Errorf("day groups = %+v, want exactly 2026-07-01", byDay)
+	}
+	twoDays, err := s.Usage(ctx, UsageFilter{GroupBy: "day", Since: "2026-07-01", Until: "2026-07-02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(twoDays) != 2 {
+		t.Errorf("two-day range = %d groups, want 2 (the bound is inclusive)", len(twoDays))
 	}
 
 	if _, err := s.Usage(ctx, UsageFilter{GroupBy: "bogus"}); err == nil {
@@ -722,13 +731,16 @@ func seedUsage(t *testing.T, store *db.Store, rows []struct{ session, model, ts 
 	}
 	seq := map[string]int{}
 	for _, r := range rows {
-		id, err := w.UpsertSession(canon.Session{
-			Agent: "claude-code", ExternalID: r.session, CWD: "/home/u/proj",
-		}, "h-"+r.session)
+		ts, err := time.Parse(time.RFC3339, r.ts)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ts, err := time.Parse(time.RFC3339, r.ts)
+		// Session timestamps track the messages, so date filters over
+		// sessions and over usage see the same corpus.
+		id, err := w.UpsertSession(canon.Session{
+			Agent: "claude-code", ExternalID: r.session, CWD: "/home/u/proj",
+			CreatedAt: ts, ModifiedAt: ts,
+		}, "h-"+r.session)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -836,7 +848,7 @@ func TestUsageDistinctSessionsRespectFilters(t *testing.T) {
 	svc := New(store, table)
 
 	rows, err := svc.Usage(ctx, UsageFilter{
-		GroupBy: "agent", Since: "2026-07-04", Until: "2026-07-09",
+		GroupBy: "agent", Since: "2026-07-04", Until: "2026-07-08",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -846,6 +858,17 @@ func TestUsageDistinctSessionsRespectFilters(t *testing.T) {
 	}
 	if rows[0].Sessions != 1 {
 		t.Errorf("sessions in range = %d, want 1 (only s2)", rows[0].Sessions)
+	}
+
+	// The inclusive upper bound reaches the named day itself.
+	rows, err = svc.Usage(ctx, UsageFilter{
+		GroupBy: "agent", Since: "2026-07-04", Until: "2026-07-09",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Sessions != 2 {
+		t.Errorf("range ending on the 9th = %+v, want 2 sessions (s2 and s3)", rows)
 	}
 
 	rows, err = svc.Usage(ctx, UsageFilter{GroupBy: "agent", Model: "model-b"})
@@ -994,5 +1017,111 @@ func TestSearchSnippetDelimitersSurviveBracketyContent(t *testing.T) {
 		if !strings.Contains(snippet, literal) {
 			t.Errorf("content %q was mangled out of %q", literal, snippet)
 		}
+	}
+}
+
+// "until" means the same thing on every transport: inclusive. It used to
+// be exclusive in the service, with only the web UI compensating by
+// adding a day client-side, so the same nominal argument produced
+// different ranges depending on who sent it.
+func TestUntilIsInclusiveEverywhere(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+	seedUsage(t, store, []struct{ session, model, ts string }{
+		{"before", "model-a", "2026-07-01T10:00:00Z"},
+		{"onTheDay", "model-a", "2026-07-02T23:59:00Z"},
+		{"after", "model-a", "2026-07-03T00:01:00Z"},
+	})
+	if err := store.RegenerateWorkspaces(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	// Usage: the named day is in.
+	days, err := svc.Usage(ctx, UsageFilter{GroupBy: "day", Until: "2026-07-02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range days {
+		got[r.Group] = true
+	}
+	if !got["2026-07-02"] {
+		t.Error("usage until=2026-07-02 excluded that day")
+	}
+	if got["2026-07-03"] {
+		t.Error("usage until=2026-07-02 reached past the bound")
+	}
+
+	// Sessions: same rule, against modified_at.
+	sessions, err := svc.Sessions(ctx, SessionsFilter{Until: "2026-07-02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, s := range sessions {
+		ids[s.ID] = true
+	}
+	if !ids["onTheDay"] {
+		t.Error("sessions until=2026-07-02 excluded a session modified that day")
+	}
+	if ids["after"] {
+		t.Error("sessions until=2026-07-02 reached past the bound")
+	}
+
+	// A single-day window is since == until and is not empty.
+	oneDay, err := svc.Sessions(ctx, SessionsFilter{Since: "2026-07-02", Until: "2026-07-02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oneDay) != 1 || oneDay[0].ID != "onTheDay" {
+		t.Errorf("single-day window = %+v, want just onTheDay", oneDay)
+	}
+}
+
+// Artifact size is reported in BYTES: SQLite's LENGTH() counts characters
+// on a TEXT value, so for non-ASCII content the figure the UI formats as
+// KB/MB was under the real one.
+func TestArtifactSizeIsBytes(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("日", 100) // 100 characters, 300 bytes
+	if _, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactPlan, Name: "multibyte.md",
+		Content: content,
+	}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(store, table)
+	list, err := svc.Artifacts(ctx, ArtifactsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("artifacts = %d, want 1", len(list))
+	}
+	if list[0].Size != len(content) {
+		t.Errorf("list size = %d, want %d bytes (not %d characters)",
+			list[0].Size, len(content), len([]rune(content)))
+	}
+
+	detail, err := svc.Artifact(ctx, "claude-code", "plan", "multibyte.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Size != len(content) {
+		t.Errorf("detail size = %d, want %d bytes", detail.Size, len(content))
 	}
 }

@@ -253,7 +253,7 @@ type CommandsFilter struct {
 	Project string // substring of the session cwd
 	Query   string // substring of the command text
 	Since   string
-	Until   string
+	Until   string // INCLUSIVE YYYY-MM-DD
 	Limit   int
 	Offset  int
 }
@@ -289,7 +289,7 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	}
 	if f.Until != "" {
 		where = append(where, `COALESCE(tc.started_at, se.created_at, '') < ?`)
-		args = append(args, f.Until)
+		args = append(args, exclusiveUntil(f.Until))
 	}
 	args = append(args, f.Limit, f.Offset)
 

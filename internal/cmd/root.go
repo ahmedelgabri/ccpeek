@@ -45,12 +45,20 @@ func init() {
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().BoolP("open", "o", false, "Open browser after starting server")
-	rootCmd.Flags().BoolP("watch", "w", false, "Re-index periodically while serving")
+	rootCmd.Flags().BoolP("watch", "w", false, "Re-index while serving, on filesystem changes")
 	rootCmd.Flags().Bool("rebuild", false, "Force full rebuild (drop all data and re-index from scratch)")
 	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
 	rootCmd.Flags().Bool("skip-scan", false, "Skip secret scanning after indexing")
 	rootCmd.Flags().BoolP("quiet", "q", false, "Suppress informational output")
-	rootCmd.Flags().Int("watch-interval", 30, "Re-index interval in seconds (used with --watch)")
+	// v2 watches with fsnotify, so there is no interval to set. The flag
+	// stays accepted so existing scripts keep working, but it is marked
+	// deprecated (cobra prints the notice when it is passed) rather than
+	// advertised with help text that describes behaviour it no longer has
+	// — and it is no longer validated, since rejecting a value that
+	// changes nothing is the worst of both.
+	rootCmd.Flags().Int("watch-interval", 30, "Re-index interval in seconds")
+	_ = rootCmd.Flags().MarkDeprecated("watch-interval",
+		"v2 re-indexes on filesystem events; the interval is ignored")
 }
 
 func Execute() {
@@ -74,7 +82,6 @@ func run(cmd *cobra.Command, args []string) error {
 	prune, _ := cmd.Flags().GetBool("prune")
 	skipScan, _ := cmd.Flags().GetBool("skip-scan")
 	quiet, _ := cmd.Flags().GetBool("quiet")
-	watchInterval, _ := cmd.Flags().GetInt("watch-interval")
 
 	// Validate mutually exclusive flags
 	if skipIndex && indexOnly {
@@ -87,9 +94,6 @@ func run(cmd *cobra.Command, args []string) error {
 	// Validate port early to avoid failing after indexing
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
-	}
-	if watchInterval <= 0 {
-		return fmt.Errorf("invalid watch interval %d: must be greater than 0", watchInterval)
 	}
 
 	// logf prints to stderr unless --quiet is set
@@ -220,8 +224,16 @@ func run(cmd *cobra.Command, args []string) error {
 	// Serve first: the port is reachable immediately and the first index
 	// pass (minutes on a large history) runs behind it, streaming into the
 	// UI via SSE when done. /api/v1/ready flips to 200 at that point.
+	//
+	// The listener is bound HERE, before the browser is launched or the
+	// index goroutine starts, so "address already in use" fails cleanly
+	// and --open can never race the bind.
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	ln, err := listen(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("listening on %s: %w", addr, err)
+	}
 	logf("Serving on %s\n", url)
 	if !webui.Embedded() {
 		logf("%sWARNING%s this binary has no embedded web UI (built with plain `go build`?) — the API works; use a released binary or `just build` for the UI\n",
@@ -256,7 +268,7 @@ func run(cmd *cobra.Command, args []string) error {
 			ready.Store(true)
 		}
 		if watch {
-			logf("Watch mode enabled (fsnotify; --watch-interval is a v1 no-op)\n")
+			logf("Watch mode enabled (re-indexing on filesystem events)\n")
 			// Watch passes carry the prune policy the serve run started
 			// with, and re-scan what each pass changed — otherwise new
 			// secrets (and pruned sources) stay stale until a restart.
@@ -278,7 +290,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return serve(ctx, addr, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import)))
+	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import)))
 }
 
 // newProgressLogger prints ingest progress to w: one line per discovered

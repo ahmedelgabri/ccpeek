@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -55,11 +56,27 @@ type rpcRequest struct {
 	Params  json.RawMessage `json:"params"`
 }
 
+// rpcResponse carries ID as a POINTER so a nil id encodes as the literal
+// null JSON-RPC 2.0 requires when the request's id could not be
+// determined. With omitempty the field vanished entirely, and strict
+// clients reject a response with neither id nor error placement.
 type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id"`
+	Result  any              `json:"result,omitempty"`
+	Error   *rpcError        `json:"error,omitempty"`
+}
+
+// respondTo builds a reply carrying the request's id.
+func respondTo(id json.RawMessage) rpcResponse {
+	return rpcResponse{JSONRPC: "2.0", ID: &id}
+}
+
+// nullIDResponse is the shape for errors raised before an id could be
+// read (parse errors): "id": null, per the spec.
+func nullIDResponse(code int, message string) rpcResponse {
+	null := json.RawMessage("null")
+	return rpcResponse{JSONRPC: "2.0", ID: &null, Error: &rpcError{Code: code, Message: message}}
 }
 
 type rpcError struct {
@@ -67,38 +84,95 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+// maxMessageBytes bounds one JSON-RPC message.
+const maxMessageBytes = 10 * 1024 * 1024
+
 // Serve processes requests until EOF or context cancellation.
+//
+// An over-long line costs that MESSAGE, not the session. A bufio.Scanner
+// capped at the same size returned ErrTooLong from Err() and Serve
+// returned with it, so one oversized request killed the whole MCP
+// connection instead of failing the request that caused it.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	br := bufio.NewReaderSize(r, 64*1024)
 	enc := json.NewEncoder(w)
 
-	for scanner.Scan() {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		line := strings.TrimSpace(scanner.Text())
+		raw, err := readMessage(br)
+		if err == errMessageTooLong {
+			if encErr := enc.Encode(nullIDResponse(-32700,
+				"message exceeds the 10 MiB limit")); encErr != nil {
+				return encErr
+			}
+			continue
+		}
+		if err != nil && err != io.EOF {
+			return err
+		}
+		line := strings.TrimSpace(string(raw))
 		if line == "" {
+			if err == io.EOF {
+				return nil
+			}
 			continue
 		}
 		var req rpcRequest
-		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			_ = enc.Encode(rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		if jsonErr := json.Unmarshal([]byte(line), &req); jsonErr != nil {
+			if encErr := enc.Encode(nullIDResponse(-32700, "parse error")); encErr != nil {
+				return encErr
+			}
+			if err == io.EOF {
+				return nil
+			}
 			continue
 		}
-		if req.ID == nil {
-			continue // notification (e.g. notifications/initialized): no response
+		if req.ID != nil {
+			// A notification (e.g. notifications/initialized) gets no reply.
+			if encErr := enc.Encode(s.handle(ctx, req)); encErr != nil {
+				return encErr
+			}
 		}
-		resp := s.handle(ctx, req)
-		if err := enc.Encode(resp); err != nil {
-			return err
+		if err == io.EOF {
+			return nil
 		}
 	}
-	return scanner.Err()
+}
+
+var errMessageTooLong = errors.New("message exceeds the size limit")
+
+// readMessage returns one newline-delimited message. Past
+// maxMessageBytes it drains the rest of the line and reports
+// errMessageTooLong, so the connection survives.
+func readMessage(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		line = append(line, frag...)
+		if err == bufio.ErrBufferFull {
+			if len(line) > maxMessageBytes {
+				// Drain to the newline so the next read starts on a message.
+				for {
+					_, derr := r.ReadSlice('\n')
+					if derr != bufio.ErrBufferFull {
+						break
+					}
+				}
+				return nil, errMessageTooLong
+			}
+			continue
+		}
+		if err == nil && len(line) > maxMessageBytes {
+			return nil, errMessageTooLong
+		}
+		return line, err
+	}
 }
 
 func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
-	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
+	resp := respondTo(req.ID)
 	switch req.Method {
 	case "initialize":
 		resp.Result = map[string]any{

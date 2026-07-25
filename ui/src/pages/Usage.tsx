@@ -5,7 +5,6 @@ import {
   api,
   fmtCost,
   fmtTokens,
-  inclusiveUntil,
   parityApi,
   totalTokens,
 } from "../api";
@@ -83,7 +82,7 @@ export function UsagePage() {
       api.usage({
         group,
         since,
-        until: inclusiveUntil(until),
+        until: until,
         agent,
         model,
       }),
@@ -198,7 +197,7 @@ export function UsagePage() {
             {group === "day" ? (
               <CostTimeline
                 since={since}
-                until={inclusiveUntil(until)}
+                until={until}
                 agent={agent}
                 model={model}
               />

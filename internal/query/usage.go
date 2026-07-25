@@ -26,7 +26,7 @@ type UsageFilter struct {
 	Agent   string
 	Model   string
 	Since   string // inclusive YYYY-MM-DD
-	Until   string // exclusive YYYY-MM-DD
+	Until   string // INCLUSIVE YYYY-MM-DD
 	Limit   int
 }
 
@@ -70,7 +70,7 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	}
 	if f.Until != "" {
 		where += " AND r.day < ?"
-		args = append(args, f.Until)
+		args = append(args, exclusiveUntil(f.Until))
 	}
 	limitClause := ""
 	if f.Limit > 0 {
@@ -168,7 +168,7 @@ func (s *Service) distinctUsageSessions(ctx context.Context, f UsageFilter) (map
 	}
 	if f.Until != "" {
 		where += " AND r.day < ?"
-		args = append(args, f.Until)
+		args = append(args, exclusiveUntil(f.Until))
 	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`

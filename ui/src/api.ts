@@ -274,16 +274,6 @@ export const AGENT_COLOR: Record<string, string> = {
   cursor: "var(--color-agent-cursor)",
 };
 
-// inclusiveUntil converts a date-picker "to" (inclusive) into the API's
-// exclusive upper bound (next day).
-export function inclusiveUntil(until: string): string {
-  if (!until) return "";
-  const d = new Date(until + "T00:00:00Z");
-  if (Number.isNaN(d.getTime())) return until;
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
 export function fmtWhen(ts: string): string {
   if (!ts) return "";
   return ts.slice(0, 16).replace("T", " ");

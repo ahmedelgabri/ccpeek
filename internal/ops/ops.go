@@ -60,7 +60,7 @@ func Registry() []Op {
 	agentParam := Param{Name: "agent", Type: "string", Desc: "Filter by agent slug (claude-code, pi, codex, opencode, cursor)"}
 	limitParam := Param{Name: "limit", Type: "integer", Desc: "Maximum results"}
 	sinceParam := Param{Name: "since", Type: "string", Desc: "Inclusive YYYY-MM-DD lower bound"}
-	untilParam := Param{Name: "until", Type: "string", Desc: "Exclusive YYYY-MM-DD upper bound"}
+	untilParam := Param{Name: "until", Type: "string", Desc: "Inclusive YYYY-MM-DD upper bound"}
 
 	return []Op{
 		{

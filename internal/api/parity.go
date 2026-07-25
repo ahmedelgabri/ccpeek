@@ -175,7 +175,7 @@ func (h *handlers) scanIgnore(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Ignored bool `json:"ignored"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
@@ -214,12 +214,14 @@ func (h *handlers) setBudget(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		MonthlyUSD float64 `json:"monthlyUSD"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeBody(w, r, &body); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
+	// writeError, not writeBadRequest: a store failure here is a 500, and
+	// only the validation error inside SetBudget is the caller's fault.
 	if err := h.svc.SetBudget(r.Context(), body.MonthlyUSD); err != nil {
-		writeBadRequest(w, err)
+		writeError(w, err)
 		return
 	}
 	b, err := h.svc.GetBudget(r.Context())
