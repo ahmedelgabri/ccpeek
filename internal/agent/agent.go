@@ -46,10 +46,21 @@ const (
 // SourceRef is one indexable unit discovered under a root. Path is
 // absolute. The pipeline hashes it, compares against the store, and calls
 // Parse only when the content changed.
+//
+// CompanionPaths covers agents that split ONE session across separate
+// files: OpenCode keeps the session document and the session's messages in
+// different trees, and a single Parse reads both. Discovering them as two
+// sources parsed the whole session twice per pass and double-counted every
+// record; folding the companions into this source's fingerprint keeps one
+// source per session while still re-indexing when either side moves. A
+// companion that does not exist contributes an "absent" marker rather than
+// an error — a session with no messages yet is normal, and its directory
+// appearing later must register as a change.
 type SourceRef struct {
-	Root Root
-	Path string
-	Kind SourceKind
+	Root           Root
+	Path           string
+	Kind           SourceKind
+	CompanionPaths []string
 }
 
 // RecordSink receives canonical records during Parse. Implementations

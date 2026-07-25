@@ -45,9 +45,15 @@ func (*Adapter) RootSpec() agent.RootSpec {
 	}
 }
 
-// Discover treats each session document as one source: a session's message
-// directory is folded into its hash so message edits re-index the session.
-// The SourceRef points at the session JSON; Parse locates the message dir.
+// Discover treats each session document as ONE source, with the session's
+// message directory folded into its hash as a companion so message edits
+// re-index the session. The SourceRef points at the session JSON; Parse
+// locates the message dir.
+//
+// The message directory was previously discovered as a source of its own,
+// which meant Parse ran the whole session twice on every pass that touched
+// it — the same messages inserted twice and counted twice in
+// records_indexed — because either ref parses the complete session.
 func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
 	sessionDir := filepath.Join(root.Path, "storage", "session")
 	entries, err := os.ReadDir(sessionDir)
@@ -73,25 +79,19 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
 				continue
 			}
+			docPath := filepath.Join(sessionDir, dir.Name(), f.Name())
 			refs = append(refs, agent.SourceRef{
 				Root: root,
-				Path: filepath.Join(sessionDir, dir.Name(), f.Name()),
+				Path: docPath,
 				Kind: agent.SourceFile,
+				// The id is the file name; a doc whose id disagrees is
+				// caught by Parse, and pairing it with a directory that
+				// does not exist is harmless (absent contributes a marker).
+				CompanionPaths: []string{filepath.Join(
+					root.Path, "storage", "message",
+					strings.TrimSuffix(f.Name(), ".json"),
+				)},
 			})
-		}
-	}
-	// Message directories change independently of the session document, so
-	// they are sources too (dir kind → hashed by children).
-	messageDir := filepath.Join(root.Path, "storage", "message")
-	if dirs, err := os.ReadDir(messageDir); err == nil {
-		for _, d := range dirs {
-			if d.IsDir() {
-				refs = append(refs, agent.SourceRef{
-					Root: root,
-					Path: filepath.Join(messageDir, d.Name()),
-					Kind: agent.SourceDir,
-				})
-			}
 		}
 	}
 	return refs, nil
@@ -136,24 +136,9 @@ type part struct {
 	State json.RawMessage `json:"state"`
 }
 
-// Parse handles both source shapes: a session document (emits the session
-// plus its messages) and a message directory (re-emits its session by
-// reading the session doc, so either changing triggers a consistent
-// re-index).
+// Parse reads the session document and the messages it points at — one
+// source, one complete session.
 func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
-	if src.Kind == agent.SourceDir {
-		// storage/message/<sessionID> changed: find its session document.
-		sessionID := filepath.Base(src.Path)
-		docPath, err := findSessionDoc(src.Root.Path, sessionID)
-		if err != nil {
-			return sink.Issue(canon.Issue{
-				Agent: Slug, Severity: canon.SeverityWarn, Category: "format",
-				SourcePath: src.Path,
-				Detail:     fmt.Sprintf("message dir without session document: %v", err),
-			})
-		}
-		return a.parseSession(ctx, src.Root, docPath, sink)
-	}
 	return a.parseSession(ctx, src.Root, src.Path, sink)
 }
 
@@ -283,25 +268,6 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 		seq++
 	}
 	return nil
-}
-
-// findSessionDoc scans storage/session/*/ for <sessionID>.json.
-func findSessionDoc(rootPath, sessionID string) (string, error) {
-	sessionDir := filepath.Join(rootPath, "storage", "session")
-	dirs, err := os.ReadDir(sessionDir)
-	if err != nil {
-		return "", err
-	}
-	for _, d := range dirs {
-		if !d.IsDir() {
-			continue
-		}
-		candidate := filepath.Join(sessionDir, d.Name(), sessionID+".json")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("no session document for %s", sessionID)
 }
 
 func partsText(parts []part) string {

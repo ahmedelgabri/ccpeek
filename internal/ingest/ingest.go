@@ -539,16 +539,47 @@ func rootSummary(roots []resolvedRoot) []map[string]string {
 // for files, and a digest of sorted child (name, size, mtime) for
 // directories. No content is read. An equal fingerprint means "assume
 // unchanged"; anything else falls through to the content hash.
+//
+// A source's CompanionPaths are folded in, so a session split across two
+// trees still re-indexes when either side moves.
 func statFingerprint(src agent.SourceRef) (string, error) {
-	if src.Kind != agent.SourceDir {
-		fi, err := os.Stat(src.Path)
+	sig, err := statSignature(src.Path, src.Kind == agent.SourceDir)
+	if err != nil {
+		return "", err
+	}
+	if len(src.CompanionPaths) == 0 {
+		return sig, nil
+	}
+	h := sha256.New()
+	io.WriteString(h, sig)
+	for _, p := range src.CompanionPaths {
+		fi, err := os.Stat(p)
+		switch {
+		case os.IsNotExist(err):
+			fmt.Fprintf(h, "\x01%s\x00absent", p)
+			continue
+		case err != nil:
+			return "", err
+		}
+		csig, err := statSignature(p, fi.IsDir())
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "\x01%s\x00%s", p, csig)
+	}
+	return "c:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func statSignature(path string, isDir bool) (string, error) {
+	if !isDir {
+		fi, err := os.Stat(path)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("f:%d:%d", fi.Size(), fi.ModTime().UnixNano()), nil
 	}
 
-	entries, err := os.ReadDir(src.Path)
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		return "", err
 	}
@@ -575,14 +606,41 @@ func statFingerprint(src agent.SourceRef) (string, error) {
 }
 
 // hashSource fingerprints a source: files (including per-session SQLite
-// databases) by content, directories by sorted child names + contents.
+// databases) by content, directories by sorted child names + contents, and
+// any CompanionPaths folded in after the primary.
 func hashSource(src agent.SourceRef) (string, error) {
-	switch src.Kind {
-	case agent.SourceDir:
-		return hashDir(src.Path)
-	default:
-		return hashFile(src.Path)
+	hash, err := hashPath(src.Path, src.Kind == agent.SourceDir)
+	if err != nil {
+		return "", err
 	}
+	if len(src.CompanionPaths) == 0 {
+		return hash, nil
+	}
+	h := sha256.New()
+	io.WriteString(h, hash)
+	for _, p := range src.CompanionPaths {
+		fi, err := os.Stat(p)
+		switch {
+		case os.IsNotExist(err):
+			fmt.Fprintf(h, "\x01%s\x00absent", p)
+			continue
+		case err != nil:
+			return "", err
+		}
+		ch, err := hashPath(p, fi.IsDir())
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "\x01%s\x00%s", p, ch)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func hashPath(path string, isDir bool) (string, error) {
+	if isDir {
+		return hashDir(path)
+	}
+	return hashFile(path)
 }
 
 func hashFile(path string) (string, error) {
