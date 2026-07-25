@@ -158,6 +158,27 @@ interface Envelope<T> {
   error?: string;
 }
 
+// parseEnvelope narrows an unchecked JSON.parse result to the response
+// envelope. JSON.parse returns `any`, so asserting the shape would be a
+// promise the parser cannot keep — a proxy error page that happens to be
+// valid JSON would sail through and fail later as a confusing undefined.
+// The guard checks the one field the contract guarantees.
+function parseEnvelope<T>(body: string): Envelope<T> | undefined {
+  let parsed: Envelope<T>;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined; // not JSON at all
+  }
+  // The declared type is a claim about the server, not a fact about these
+  // bytes, so it is checked: `schema` is the one field every ccpeek
+  // response carries.
+  if (typeof parsed !== "object" || typeof parsed?.schema !== "string") {
+    return undefined; // JSON, but not one of our envelopes
+  }
+  return parsed;
+}
+
 // unwrap reads the response body ONCE and tolerates it not being JSON.
 // Parsing before checking the status meant any non-JSON reply — the
 // API-only build's text/plain 501, a proxy error page, the Host guard's
@@ -165,12 +186,7 @@ interface Envelope<T> {
 // and that string is what every page's error branch showed the user.
 async function unwrap<T>(res: Response): Promise<T> {
   const body = await res.text();
-  let env: Envelope<T> | undefined;
-  try {
-    env = JSON.parse(body) as Envelope<T>;
-  } catch {
-    // Not JSON: fall through to the status-based message below.
-  }
+  const env = parseEnvelope<T>(body);
   if (!res.ok) {
     const detail = env?.error ?? body.trim().split("\n")[0];
     throw new Error(
