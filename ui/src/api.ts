@@ -158,6 +158,31 @@ interface Envelope<T> {
   error?: string;
 }
 
+// unwrap reads the response body ONCE and tolerates it not being JSON.
+// Parsing before checking the status meant any non-JSON reply — the
+// API-only build's text/plain 501, a proxy error page, the Host guard's
+// 403 — threw "Unexpected token < in JSON" instead of the real problem,
+// and that string is what every page's error branch showed the user.
+async function unwrap<T>(res: Response): Promise<T> {
+  const body = await res.text();
+  let env: Envelope<T> | undefined;
+  try {
+    env = JSON.parse(body) as Envelope<T>;
+  } catch {
+    // Not JSON: fall through to the status-based message below.
+  }
+  if (!res.ok) {
+    const detail = env?.error ?? body.trim().split("\n")[0];
+    throw new Error(
+      detail ? `${res.status} ${res.statusText}: ${detail}` : `HTTP ${res.status}`,
+    );
+  }
+  if (!env) {
+    throw new Error(`${res.url}: expected JSON, got ${body.slice(0, 120)}`);
+  }
+  return env.data;
+}
+
 async function get<T>(
   path: string,
   params?: Record<string, string | undefined>,
@@ -168,12 +193,7 @@ async function get<T>(
   const qs = entries.length
     ? "?" + new URLSearchParams(entries).toString()
     : "";
-  const res = await fetch(`/api/v1${path}${qs}`);
-  const env: Envelope<T> = await res.json();
-  if (!res.ok) {
-    throw new Error(env.error ?? `HTTP ${res.status}`);
-  }
-  return env.data;
+  return unwrap<T>(await fetch(`/api/v1${path}${qs}`));
 }
 
 export const api = {
@@ -346,14 +366,13 @@ async function send<T>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const env: Envelope<T> = await res.json();
-  if (!res.ok) throw new Error(env.error ?? `HTTP ${res.status}`);
-  return env.data;
+  return unwrap<T>(
+    await fetch(`/api/v1${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 export const parityApi = {

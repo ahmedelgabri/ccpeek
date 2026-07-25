@@ -95,12 +95,21 @@ export function SearchPage() {
   );
 }
 
-// The API marks matches with [ and ]; escape everything else and convert
-// the markers to <mark>.
+// Escape everything, then convert the API's match markers to <mark>.
+// FTS5 wraps matched terms in U+0002/U+0003 (see query.SnippetOpen).
+// Brackets were the old delimiters, which made a hit inside a markdown
+// link, a slice expression or a JSON array indistinguishable from a match
+// and produced stray, unbalanced <mark> tags. Control characters cannot
+// occur in indexed text, so the split is unambiguous.
+const MATCH_OPEN = "\u0002";
+const MATCH_CLOSE = "\u0003";
+
 function highlight(snippet: string): string {
   const escaped = snippet
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
-  return escaped.replaceAll("[", "<mark>").replaceAll("]", "</mark>");
+  return escaped
+    .replaceAll(MATCH_OPEN, "<mark>")
+    .replaceAll(MATCH_CLOSE, "</mark>");
 }

@@ -18,6 +18,7 @@ import { ArtifactDetailPage } from "./pages/ArtifactDetail";
 import { ScanPage } from "./pages/Scan";
 import { ComparePage } from "./pages/Compare";
 import { Palette } from "./Palette";
+import { ErrorBoundary, ErrorPanel } from "./ErrorState";
 import { getThemePref, setThemePref, type ThemePref } from "./theme";
 
 // The sidebar mirrors the entity map: activity first, then the session
@@ -184,7 +185,11 @@ function Layout() {
             </nav>
           </div>
           <IndexingBanner />
-          <Outlet />
+          {/* Inside the layout, so a failing route keeps the nav rail
+              and the user can move on rather than facing a blank page. */}
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </div>
       <Palette />
@@ -290,6 +295,22 @@ const routeTree = rootRoute.addChildren([
 
 export const router = createRouter({
   routeTree,
+  // A route that throws during load or render degrades to a message
+  // rather than unmounting the app; an unknown path says so instead of
+  // rendering nothing.
+  defaultErrorComponent: ({ error }) => <ErrorPanel error={error} />,
+  defaultNotFoundComponent: () => (
+    <div className="rounded-lg border border-edge bg-surface-1 p-5 text-sm">
+      <h2 className="mb-1 font-semibold">Nothing here.</h2>
+      <p className="text-ink-dim">
+        That URL does not match any ccpeek view.{" "}
+        <Link to="/" className="text-accent hover:underline">
+          Back to the overview
+        </Link>
+        .
+      </p>
+    </div>
+  ),
 });
 
 declare module "@tanstack/react-router" {

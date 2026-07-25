@@ -97,3 +97,48 @@ test.describe("/api/v1", () => {
     expect(res.headers()["content-type"]).toContain("text/plain");
   });
 });
+
+test.describe("resilience", () => {
+  // The app had no error boundary: any uncaught render error unmounted
+  // the whole tree and left a blank page with the reason only in the
+  // console. An unknown URL must say so, with the shell still usable.
+  test("an unknown route explains itself instead of blanking", async ({
+    page,
+  }) => {
+    await page.goto("/no-such-view");
+    await expect(page.getByText("Nothing here.")).toBeVisible();
+    // The shell survives: navigation is still there and still works.
+    await page.getByRole("link", { name: "Back to the overview" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(
+      page.getByText("Sessions", { exact: true }).first(),
+    ).toBeVisible();
+  });
+
+  // A non-JSON error reply used to surface as "Unexpected token < in
+  // JSON" because the client parsed before checking the status. The Host
+  // guard returns exactly such a reply.
+  test("rejects a rebound Host with a plain-text 403", async ({ request }) => {
+    const res = await request.get("/api/v1/sessions", {
+      headers: { Host: "evil.example" },
+    });
+    expect(res.status()).toBe(403);
+    expect(res.headers()["content-type"]).toContain("text/plain");
+    expect(await res.text()).toContain("127.0.0.1 only");
+  });
+
+  // Search hits keep literal brackets literal: the FTS delimiters used to
+  // be [ and ], indistinguishable from brackets in source code. The
+  // control characters that replaced them must never reach the DOM.
+  test("search marks matches without leaking delimiters", async ({ page }) => {
+    await page.goto("/search");
+    await page.getByPlaceholder(/Search sessions/).fill("rate");
+    const results = page.locator("ul li");
+    await expect(results.first()).toBeVisible({ timeout: 10_000 });
+    const text = await results.first().innerText();
+    expect(text).not.toContain("\u0002");
+    expect(text).not.toContain("\u0003");
+    // The match itself is marked.
+    await expect(results.first().locator("mark").first()).toBeVisible();
+  });
+});

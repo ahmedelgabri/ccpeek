@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
+import { ErrorBoundary } from "./ErrorState";
 import "@fontsource/ibm-plex-sans/400.css";
 import "@fontsource/ibm-plex-sans/500.css";
 import "@fontsource/ibm-plex-sans/600.css";
@@ -17,17 +18,34 @@ const queryClient = new QueryClient({
 });
 
 // Live updates (§5.5): the server pushes "changed" over SSE whenever a
-// re-index landed new data; invalidating the cache refreshes every open
-// view. 501 (watch off) simply means no live events — nothing to do.
+// re-index landed new data. 501 (watch off) simply means no live events.
+//
+// Two bounds on what an event costs. Only ACTIVE queries refetch —
+// invalidating the whole cache also woke every view the user had merely
+// visited. And the handler coalesces: during the initial index pass the
+// server notifies every two seconds for its whole duration (minutes on a
+// large history), so an unthrottled handler refetched everything on
+// screen that often, against a database already saturated by ingest.
+const REFRESH_COALESCE_MS = 2000;
+let refreshTimer: number | undefined;
+
 const events = new EventSource("/api/v1/events");
 events.addEventListener("changed", () => {
-  void queryClient.invalidateQueries();
+  if (refreshTimer !== undefined) return;
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = undefined;
+    void queryClient.invalidateQueries({ refetchType: "active" });
+  }, REFRESH_COALESCE_MS);
 });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    {/* The outermost floor: the router has its own error component for
+        route failures, this catches anything above or around it. */}
+    <ErrorBoundary scope="ccpeek">
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

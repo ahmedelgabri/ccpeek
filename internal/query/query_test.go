@@ -934,3 +934,65 @@ func TestBlocksEmptyStore(t *testing.T) {
 		t.Errorf("blocks = %d, want 0", len(blocks))
 	}
 }
+
+// Snippet delimiters must be distinguishable from the content. With
+// brackets they were not: the corpus is source code and transcripts, so a
+// hit inside a markdown link, a slice expression or a JSON array produced
+// stray, unbalanced marks in the UI.
+func TestSearchSnippetDelimitersSurviveBracketyContent(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "brackets",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Short enough that the whole line fits inside the snippet window, so
+	// a missing bracket means mangling rather than elision.
+	body := "[docs] wins[:limit] [1,2,3] zebrafish"
+	if err := w.InsertMessage(id, "claude-code", canon.Message{
+		Seq: 0, Role: canon.RoleUser, Content: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.InsertSearchDoc(id, 0, "message", 0, "", body); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := New(store, table).Search(ctx, "zebrafish", SearchFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	snippet := hits[0].Snippet
+
+	// The match is wrapped in the control-character delimiters…
+	if !strings.Contains(snippet, SnippetOpen+"zebrafish"+SnippetClose) {
+		t.Errorf("match not delimited in %q", snippet)
+	}
+	// …and exactly one pair of them exists, however many brackets the
+	// content carries.
+	if got := strings.Count(snippet, SnippetOpen); got != 1 {
+		t.Errorf("open delimiters = %d, want 1, in %q", got, snippet)
+	}
+	if got := strings.Count(snippet, SnippetClose); got != 1 {
+		t.Errorf("close delimiters = %d, want 1, in %q", got, snippet)
+	}
+	// The literal brackets are still literal brackets.
+	for _, literal := range []string{"[docs]", "wins[:limit]", "[1,2,3]"} {
+		if !strings.Contains(snippet, literal) {
+			t.Errorf("content %q was mangled out of %q", literal, snippet)
+		}
+	}
+}

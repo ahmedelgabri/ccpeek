@@ -28,6 +28,19 @@ type SearchFilter struct {
 	Limit int
 }
 
+// Snippet match delimiters. FTS5 wraps matched terms in these, and the
+// caller splits on them to mark the hit.
+//
+// They are control characters, not brackets. With '[' and ']' the
+// delimiters were indistinguishable from brackets in the CONTENT, and the
+// corpus is source code and agent transcripts: a hit inside a markdown
+// link, a slice expression, a JSON array or a log prefix produced stray
+// and unbalanced marks. U+0002/U+0003 cannot occur in indexed text.
+const (
+	SnippetOpen  = "\x02"
+	SnippetClose = "\x03"
+)
+
 // Search runs full-text search across everything indexed.
 func (s *Service) Search(ctx context.Context, q string, f SearchFilter) ([]SearchHit, error) {
 	q = strings.TrimSpace(q)
@@ -53,7 +66,7 @@ func (s *Service) Search(ctx context.Context, q string, f SearchFilter) ([]Searc
 		SELECT d.doc_type, COALESCE(sa.slug, aa.slug, ''),
 		       COALESCE(se.external_id, ''), d.seq,
 		       COALESCE(ar.name, ''), d.title,
-		       snippet(search_fts, 0, '[', ']', '…', 12)
+		       snippet(search_fts, 0, char(2), char(3), '…', 12)
 		FROM search_fts
 		JOIN search_docs d ON d.id = search_fts.rowid
 		LEFT JOIN sessions se ON se.id = d.session_id
