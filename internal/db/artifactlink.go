@@ -104,11 +104,12 @@ func (s *Store) reconcileRuleLinks(ctx context.Context, rule canon.LinkRule) (ad
 			if !ok {
 				return
 			}
-			// Calls arrive in seq order, so a repeated production — a
-			// resumed session re-approving the same plan, a second write to
-			// the same memory — settles the anchor on the LATEST one.
+			// A repeated production — a resumed session re-approving the
+			// same plan, a second write to the same memory — anchors on the
+			// LATEST call. That is a max, not a last-row-wins: rows arrive
+			// in whatever order the index scan yields, not by seq.
 			for _, id := range byKey[artifactKey{agentID, key}] {
-				expected[pair{id, sessionID}] = messageSeq
+				expected.keepLatest(pair{id, sessionID}, messageSeq)
 			}
 		})
 	if err != nil {

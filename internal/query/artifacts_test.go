@@ -386,7 +386,7 @@ func TestResolverRecordsTheAnchorItMatched(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The matching plan is approved at message 3; a LATER, different plan
-	// at message 12 is what the generic last-producer heuristic would pick.
+	// at message 12 is what a generic last-producer heuristic would pick.
 	for _, tc := range []struct {
 		msgSeq, seq int
 		plan        string
@@ -429,16 +429,22 @@ func TestResolverRecordsTheAnchorItMatched(t *testing.T) {
 		t.Errorf("anchor_seq = %d, want 3 (the call carrying THIS plan's text)", anchor.Int64)
 	}
 
-	// And a re-approval in a resumed session moves it forward.
+	// And a re-approval in a resumed session moves it forward. Both the
+	// re-approval (seq 40) and an EARLIER matching call (seq 1) are added
+	// here, with the earlier one written LAST: the rule engine reads calls
+	// in index order, not seq order, so taking the last row instead of the
+	// max would settle on 1 and this would fail.
 	w2, err := store.BeginWrite(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w2.InsertToolCall(sessID, canon.ToolCall{
-		MessageSeq: 40, Seq: 2, Name: "ExitPlanMode",
-		Kind: canon.ToolOther, Input: []byte(`{"plan":"# The one"}`),
-	}); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct{ msgSeq, seq int }{{40, 2}, {1, 3}} {
+		if err := w2.InsertToolCall(sessID, canon.ToolCall{
+			MessageSeq: tc.msgSeq, Seq: tc.seq, Name: "ExitPlanMode",
+			Kind: canon.ToolOther, Input: []byte(`{"plan":"# The one"}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := w2.Commit(); err != nil {
 		t.Fatal(err)
