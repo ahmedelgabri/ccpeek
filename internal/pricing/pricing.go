@@ -95,7 +95,19 @@ var (
 
 // Candidates returns the ordered lookup keys tried for a model identifier.
 // Exported for tests and for explaining "why is this model unpriced".
+//
+// An empty (or whitespace-only) identifier has no candidates at all:
+// messages.model defaults to '' and adapters attach usage independently
+// of the model field — a Codex token_count that arrives before the
+// turn_context event, a Cursor blob without `model`, an OpenCode message
+// with tokens but no modelID — so this is ordinary data, and it must
+// resolve to "unpriced", never to a panic on the empty candidate list.
 func Candidates(model string) []string {
+	base := strings.ToLower(strings.TrimSpace(model))
+	if base == "" {
+		return nil
+	}
+
 	seen := make(map[string]bool, 6)
 	var out []string
 	add := func(k string) {
@@ -105,7 +117,6 @@ func Candidates(model string) []string {
 		}
 	}
 
-	base := strings.ToLower(strings.TrimSpace(model))
 	add(base)
 
 	// Router/provider prefix: "anthropic/claude-…", "openrouter/anthropic/…"

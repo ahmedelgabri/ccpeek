@@ -30,6 +30,26 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_usage_daily`); err != nil {
 		return fmt.Errorf("clearing rollups: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_session_days`); err != nil {
+		return fmt.Errorf("clearing session days: %w", err)
+	}
+	// The session-day membership set, carrying the same dimensions as the
+	// aggregate above so any grouping can COUNT(DISTINCT session_id) over
+	// pre-aggregated rows instead of re-scanning message_usage.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rollup_session_days (day, agent_id, workspace_id, model, session_id)
+		SELECT DISTINCT
+			substr(COALESCE(m.created_at, s.created_at, ''), 1, 10),
+			s.agent_id,
+			COALESCE(sw.workspace_id, 0),
+			m.model,
+			s.id
+		FROM message_usage u
+		JOIN messages m ON m.id = u.message_id
+		JOIN sessions s ON s.id = m.session_id
+		LEFT JOIN session_workspaces sw ON sw.session_id = s.id`); err != nil {
+		return fmt.Errorf("aggregating session days: %w", err)
+	}
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT

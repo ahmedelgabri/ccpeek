@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -531,5 +532,53 @@ func TestHistoryAppendDoesNotDuplicate(t *testing.T) {
 	// Provenance recorded so future replacement stays scoped.
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM history WHERE source_path = ''`); n != 0 {
 		t.Errorf("%d history rows missing source_path", n)
+	}
+}
+
+func queryString(t *testing.T, store *db.Store, q string, args ...any) string {
+	t.Helper()
+	var s string
+	if err := store.DB().QueryRowContext(context.Background(), q, args...).Scan(&s); err != nil {
+		t.Fatalf("%s: %v", q, err)
+	}
+	return s
+}
+
+// Cancelling mid-run (Ctrl-C over a long first pass) must still close the
+// ingest_runs row. Writing the outcome with the cancelled context made
+// both statements fail instantly and left the row at 'running' forever,
+// so `ccpeek ingest` and `ccpeek doctor` reported a run in flight that
+// had died minutes ago.
+func TestCancelledRunIsRecordedAsFailed(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	opts := fixtureOptions(t)
+	// Cancel from inside the pipeline, once it is definitely past StartRun.
+	opts.Progress = func(p Progress) {
+		if !p.Root {
+			cancel()
+		}
+	}
+
+	if _, err := runner.Run(ctx, opts); err == nil {
+		t.Fatal("Run returned nil error after cancellation")
+	} else if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM ingest_runs WHERE status = 'running'`); n != 0 {
+		t.Errorf("%d run(s) left at 'running' after cancellation", n)
+	}
+	status := queryString(t, store, `SELECT status FROM ingest_runs ORDER BY id DESC LIMIT 1`)
+	if status != "failed" {
+		t.Errorf("status = %q, want %q", status, "failed")
+	}
+	if msg := queryString(t, store, `SELECT error_message FROM ingest_runs ORDER BY id DESC LIMIT 1`); msg == "" {
+		t.Error("failed run recorded no error message")
+	}
+	if fin := queryString(t, store, `SELECT COALESCE(finished_at, '') FROM ingest_runs ORDER BY id DESC LIMIT 1`); fin == "" {
+		t.Error("failed run has no finished_at")
 	}
 }

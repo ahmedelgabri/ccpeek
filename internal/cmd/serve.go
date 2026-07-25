@@ -7,19 +7,26 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/api"
 	"github.com/ahmedelgabri/ccpeek/internal/webui"
 )
 
 // buildServeHandler assembles the v2.0 serving layout: the SPA at /, the
 // JSON API at /api/v1, and 301 redirects from every v1 UI route so
 // bookmarks keep working (docs/v2-plan.md §8.2).
+//
+// api.LoopbackOnly wraps the whole layout, not just the API: binding
+// 127.0.0.1 stops other machines from connecting, but it does not stop a
+// web page whose hostname has been rebound to 127.0.0.1 from reading the
+// archive through the victim's own browser. Checking the Host header is
+// what distinguishes those.
 func buildServeHandler(apiHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	spa := webui.Handler("/")
 	mux.Handle("/api/", apiHandler)
 	mux.Handle("/", spa)
 	registerLegacyRedirects(mux, spa)
-	return requestLog(mux)
+	return requestLog(api.LoopbackOnly(mux))
 }
 
 // registerLegacyRedirects maps v1 routes to their session-centric

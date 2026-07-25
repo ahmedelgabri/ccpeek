@@ -463,9 +463,21 @@ func (r *Runner) counts(report *Report) db.RunCounts {
 	}
 }
 
+// fail closes the run row and records what was collected before the
+// failure.
+//
+// The bookkeeping deliberately runs on a DETACHED context. The most
+// common way a run fails is cancellation — Ctrl-C or SIGTERM during the
+// first pass over a large history — and writing the "failed" status with
+// the very context that was just cancelled makes both statements fail
+// instantly, leaving the row StartRun opened stuck at 'running' forever.
+// A short deadline keeps a genuinely wedged database from hanging
+// shutdown.
 func (r *Runner) fail(ctx context.Context, report *Report, started time.Time, cause error) error {
-	_ = r.store.InsertIssues(ctx, report.RunID, report.Issues)
-	_ = r.store.FinishRun(ctx, report.RunID, "failed", started, r.counts(report), cause.Error())
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = r.store.InsertIssues(closeCtx, report.RunID, report.Issues)
+	_ = r.store.FinishRun(closeCtx, report.RunID, "failed", started, r.counts(report), cause.Error())
 	return cause
 }
 

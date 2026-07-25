@@ -2,6 +2,11 @@ package claude
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -124,5 +129,103 @@ func TestDecodeProjectDir(t *testing.T) {
 		if got := decodeProjectDir(in); got != want {
 			t.Errorf("decodeProjectDir(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// writeHistory builds a history.jsonl inside a throwaway root and returns
+// a SourceRef for it.
+func writeHistory(t *testing.T, lines ...string) (agent.SourceRef, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	body := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing history: %v", err)
+	}
+	return agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: dir},
+		Path: path,
+		Kind: agent.SourceFile,
+	}, path
+}
+
+func historyLine(display string) string {
+	return `{"display":` + strconv.Quote(display) + `,"timestamp":1751364000000}`
+}
+
+// One pathological entry costs that entry — never the rest of the file.
+// A bufio.Scanner used to stop at ErrTooLong, so a single pasted blob
+// dropped every command after it (and, because the sink clears the
+// source's rows before inserting, the whole file).
+func TestHistorySkipsOversizedLineAndKeepsGoing(t *testing.T) {
+	huge := historyLine(strings.Repeat("x", maxLineBytes+1024))
+	src, path := writeHistory(t,
+		historyLine("first"),
+		huge,
+		historyLine("after the blob"),
+		historyLine("last"),
+	)
+
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	var got []string
+	for _, h := range sink.HistoryItems {
+		got = append(got, h.Display)
+	}
+	want := []string{"first", "after the blob", "last"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("history = %v, want %v", got, want)
+	}
+
+	if len(sink.Issues) != 1 {
+		t.Fatalf("issues = %d, want 1 diagnostic for the skipped line", len(sink.Issues))
+	}
+	is := sink.Issues[0]
+	if is.Severity != canon.SeverityWarn {
+		t.Errorf("severity = %q, want warn", is.Severity)
+	}
+	if is.Line != 2 {
+		t.Errorf("issue line = %d, want 2", is.Line)
+	}
+	if is.SourcePath != path {
+		t.Errorf("issue source = %q, want %q", is.SourcePath, path)
+	}
+	if !strings.Contains(is.Detail, "oversized") {
+		t.Errorf("issue detail = %q, want it to name the oversized line", is.Detail)
+	}
+}
+
+// Malformed and blank lines are skipped individually too, and a file
+// without a trailing newline still yields its last entry.
+func TestHistoryTolerantOfMalformedLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	body := historyLine("one") + "\n" +
+		"{not json\n" +
+		"\n" +
+		`{"display":"","timestamp":1}` + "\n" +
+		historyLine("unterminated last line") // deliberately no trailing \n
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := agent.SourceRef{Root: agent.Root{Agent: Slug, Path: dir}, Path: path, Kind: agent.SourceFile}
+
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var got []string
+	for _, h := range sink.HistoryItems {
+		got = append(got, h.Display)
+	}
+	want := []string{"one", "unterminated last line"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("history = %v, want %v", got, want)
+	}
+	if len(sink.Issues) != 1 {
+		t.Errorf("issues = %d, want 1 (the malformed line only)", len(sink.Issues))
 	}
 }

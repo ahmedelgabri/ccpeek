@@ -130,15 +130,22 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	return out, nil
 }
 
-// distinctUsageSessions counts distinct usage-bearing sessions per group,
-// mirroring the rollup dimensions and the caller's filters.
+// distinctUsageSessions counts distinct usage-bearing sessions per group.
+//
+// It reads rollup_session_days, which carries the same dimensions and the
+// same filters as the aggregate above. That matters for more than tidiness:
+// the previous implementation re-derived the answer from message_usage ⋈
+// messages ⋈ sessions with the day filter written as a substr() over
+// created_at, so no index applied and every Usage call — including the
+// /api/v1/budget read the Overview page issues on mount — paid a full scan
+// of the corpus the rollups exist to avoid.
 func (s *Service) distinctUsageSessions(ctx context.Context, f UsageFilter) (map[string]int64, error) {
 	var groupExpr string
 	switch f.GroupBy {
 	case "", "day":
-		groupExpr = "substr(COALESCE(m.created_at, se.created_at, ''), 1, 10)"
+		groupExpr = "r.day"
 	case "model":
-		groupExpr = "m.model"
+		groupExpr = "r.model"
 	case "agent":
 		groupExpr = "a.slug"
 	case "project":
@@ -152,27 +159,23 @@ func (s *Service) distinctUsageSessions(ctx context.Context, f UsageFilter) (map
 		args = append(args, f.Agent)
 	}
 	if f.Model != "" {
-		where += " AND m.model = ?"
+		where += " AND r.model = ?"
 		args = append(args, f.Model)
 	}
-	dayExpr := "substr(COALESCE(m.created_at, se.created_at, ''), 1, 10)"
 	if f.Since != "" {
-		where += " AND " + dayExpr + " >= ?"
+		where += " AND r.day >= ?"
 		args = append(args, f.Since)
 	}
 	if f.Until != "" {
-		where += " AND " + dayExpr + " < ?"
+		where += " AND r.day < ?"
 		args = append(args, f.Until)
 	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT %s AS grp, COUNT(DISTINCT se.id)
-		FROM message_usage u
-		JOIN messages m ON m.id = u.message_id
-		JOIN sessions se ON se.id = m.session_id
-		JOIN agents a ON a.id = se.agent_id
-		LEFT JOIN session_workspaces sw ON sw.session_id = se.id
-		LEFT JOIN workspaces w ON w.id = sw.workspace_id
+		SELECT %s AS grp, COUNT(DISTINCT r.session_id)
+		FROM rollup_session_days r
+		JOIN agents a ON a.id = r.agent_id
+		LEFT JOIN workspaces w ON w.id = r.workspace_id
 		%s
 		GROUP BY grp`, groupExpr, where), args...)
 	if err != nil {

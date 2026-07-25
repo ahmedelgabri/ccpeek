@@ -152,3 +152,77 @@ func TestRouteRegistryParity(t *testing.T) {
 		}
 	}
 }
+
+// The Origin guard only ever fires when a browser sends Origin. Under DNS
+// rebinding the attacker's page is SAME origin with the server, so no
+// Origin header exists and every read would answer. The Host header is
+// what still carries the attacker's name.
+func TestLoopbackOnlyRejectsRebinding(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("secret transcript"))
+	})
+	h := LoopbackOnly(inner)
+
+	allowed := []string{
+		"127.0.0.1:3000",
+		"127.0.0.1",
+		"localhost:3000",
+		"localhost",
+		"[::1]:3000",
+		"::1",
+		"127.0.0.2:3000", // the whole 127/8 block is loopback
+		"[::ffff:127.0.0.1]:3000",
+	}
+	for _, host := range allowed {
+		req := httptest.NewRequest("GET", "http://example/api/v1/sessions", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Host %q = %d, want 200", host, rec.Code)
+		}
+	}
+
+	rejected := []string{
+		"evil.example:3000",      // classic rebinding target
+		"evil.localhost:3000",    // .localhost is not reliably loopback
+		"notlocalhost",           // no substring matching
+		"localhost.evil.example", // nor prefix matching
+		"192.168.1.5:3000",       // a LAN address the server may also answer on
+		"0.0.0.0:3000",
+		"", // an absent Host is not implicitly local
+	}
+	for _, host := range rejected {
+		req := httptest.NewRequest("GET", "http://example/api/v1/sessions", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Host %q = %d, want 403", host, rec.Code)
+		}
+		if body := rec.Body.String(); strings.Contains(body, "secret transcript") {
+			t.Errorf("Host %q reached the inner handler", host)
+		}
+	}
+}
+
+// The guard has to cover reads, not just the two mutating endpoints —
+// that is the entire point, since rebinding sends no Origin header.
+func TestLoopbackOnlyCoversReadsWithoutOrigin(t *testing.T) {
+	h := LoopbackOnly(Handler(nil, nil, nil, nil, nil))
+	for _, path := range []string{
+		"/api/v1/sessions",
+		"/api/v1/search?q=x",
+		"/api/v1/scan",
+		"/api/v1/health",
+	} {
+		req := httptest.NewRequest("GET", "http://evil.example"+path, nil)
+		req.Host = "evil.example:3000" // no Origin header, exactly as a same-origin fetch sends
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s from a rebound host = %d, want 403", path, rec.Code)
+		}
+	}
+}

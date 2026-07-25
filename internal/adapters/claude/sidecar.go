@@ -2,9 +2,11 @@ package claude
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -401,25 +403,68 @@ func parseUsageFacet(src agent.SourceRef, sink agent.RecordSink) error {
 	})
 }
 
+// parseHistory reads history.jsonl one entry per line.
+//
+// A single pathological line must cost that line and nothing more. A
+// bufio.Scanner cannot deliver that — past its buffer ceiling it stops
+// with ErrTooLong and every remaining entry is lost, and because the sink
+// clears this source's rows on the first History record, the failing
+// transaction rolls back and the file contributes nothing at all. One
+// pasted blob in a prompt would silently empty the command index. The
+// same readLine/drainLine pair the session parser uses skips the line and
+// keeps going instead.
 func parseHistory(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
 	f, err := os.Open(src.Path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src.Path, err)
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), maxLineBytes)
+	r := bufio.NewReaderSize(f, 64*1024)
 	lineNo := 0
-	for scanner.Scan() {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		raw, rerr := readLine(r)
+		if rerr == errLineTooLong {
+			lineNo++
+			size := int64(len(raw))
+			if len(raw) == 0 || raw[len(raw)-1] != '\n' {
+				n, _, derr := drainLine(r, io.Discard)
+				if derr != nil && derr != io.EOF {
+					return fmt.Errorf("reading %s: %w", src.Path, derr)
+				}
+				size += n
+			}
+			if serr := sink.Issue(canon.Issue{
+				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
+				SourcePath: src.Path, Line: lineNo,
+				Detail: fmt.Sprintf("skipping oversized history line (%d bytes > %d limit)",
+					size, maxLineBytes),
+			}); serr != nil {
+				return serr
+			}
+			continue
+		}
+		if rerr != nil && rerr != io.EOF {
+			return fmt.Errorf("reading %s: %w", src.Path, rerr)
+		}
+		if len(raw) == 0 {
+			break
+		}
 		lineNo++
+		line := bytes.TrimSpace(raw)
+		if len(line) == 0 {
+			if rerr == io.EOF {
+				break
+			}
+			continue
+		}
 		var entry struct {
 			Display   string `json:"display"`
 			Timestamp int64  `json:"timestamp"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil {
 			if serr := sink.Issue(canon.Issue{
 				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
 				SourcePath: src.Path, Line: lineNo,
@@ -427,18 +472,23 @@ func parseHistory(ctx context.Context, src agent.SourceRef, sink agent.RecordSin
 			}); serr != nil {
 				return serr
 			}
+			if rerr == io.EOF {
+				break
+			}
 			continue
 		}
-		if entry.Display == "" {
-			continue
+		if entry.Display != "" {
+			if err := sink.History(canon.HistoryEntry{
+				Agent:     Slug,
+				Display:   entry.Display,
+				Timestamp: time.UnixMilli(entry.Timestamp).UTC(),
+			}); err != nil {
+				return err
+			}
 		}
-		if err := sink.History(canon.HistoryEntry{
-			Agent:     Slug,
-			Display:   entry.Display,
-			Timestamp: time.UnixMilli(entry.Timestamp).UTC(),
-		}); err != nil {
-			return err
+		if rerr == io.EOF {
+			break
 		}
 	}
-	return scanner.Err()
+	return nil
 }

@@ -20,14 +20,14 @@ import (
 // which a rebuild-from-sources could restore — so every schema change
 // then ships as an entry in migrations, and migrating in place keeps
 // startup instant instead of re-ingesting the corpus.
-const schemaVersion = 8
+const schemaVersion = 9
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
 // len(migrations) == schemaVersion - baseVersion always holds. Until the
 // v2.0 release it tracks schemaVersion (no upgrade path); at the release
 // it freezes at the released baseline and never moves again.
-const baseVersion = 8
+const baseVersion = 9
 
 // derivedSchema holds everything rebuildable from agent sources. ResetDerived
 // may drop and recreate all of it.
@@ -265,6 +265,23 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 	PRIMARY KEY (day, agent_id, workspace_id, model)
 );
 
+-- Which sessions contributed usage on which day, per rollup dimension.
+-- Session counts are NOT additive across rollup_usage_daily rows (one
+-- session spanning two models on one day appears in both), so the Usage
+-- op used to recompute them with a full message_usage scan on every
+-- call — including every /api/v1/budget read behind the Overview page.
+-- Regenerating this alongside the rollups turns that into a COUNT over
+-- pre-aggregated rows.
+CREATE TABLE IF NOT EXISTS rollup_session_days (
+	day TEXT NOT NULL,
+	agent_id INTEGER NOT NULL,
+	workspace_id INTEGER NOT NULL DEFAULT 0,
+	model TEXT NOT NULL DEFAULT '',
+	session_id INTEGER NOT NULL,
+	PRIMARY KEY (day, agent_id, workspace_id, model, session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_rollup_session_days_session ON rollup_session_days(session_id);
+
 -- Secret-scan findings are derived (rescannable); the user's ignore
 -- decisions live in user_annotations keyed by natural key.
 -- scan_state records the content hash each entity carried when it was
@@ -347,6 +364,7 @@ CREATE TABLE IF NOT EXISTS user_annotations (
 var derivedTables = []string{
 	"scan_findings",
 	"scan_state",
+	"rollup_session_days",
 	"rollup_usage_daily",
 	"ingest_issues",
 	"ingest_runs",

@@ -106,3 +106,26 @@ func TestEmbeddedSnapshot(t *testing.T) {
 		t.Errorf("suspicious rate for stable model: %+v", rate)
 	}
 }
+
+// A message can legitimately carry usage with no model: Codex attaches a
+// token_count delta before the turn_context event names the model, Cursor
+// blobs may omit it, and messages.model defaults to ''. Lookup must report
+// "unpriced" for those rather than indexing an empty candidate list.
+func TestBlankModelIsUnpricedNotFatal(t *testing.T) {
+	tbl, err := Embedded()
+	if err != nil {
+		t.Fatalf("Embedded: %v", err)
+	}
+	for _, model := range []string{"", " ", "\t", "\n  \t"} {
+		if got := Candidates(model); len(got) != 0 {
+			t.Errorf("Candidates(%q) = %v, want no candidates", model, got)
+		}
+		rate, ok := tbl.Lookup(model)
+		if ok {
+			t.Errorf("Lookup(%q) reported priced (%+v), want unpriced", model, rate)
+		}
+		if rate != (Rate{}) {
+			t.Errorf("Lookup(%q) rate = %+v, want zero value", model, rate)
+		}
+	}
+}

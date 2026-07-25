@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -14,6 +16,9 @@ import (
 // endpoints (CSRF guard, matching v1's toggle-ignore protection). The
 // server only binds 127.0.0.1; this blocks malicious websites driving the
 // local API through a victim's browser.
+//
+// It is not sufficient on its own — see LoopbackOnly, which covers the
+// reads this cannot.
 func sameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
@@ -30,9 +35,58 @@ func sameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// LoopbackOnly rejects any request whose Host header is not a loopback
+// name, and belongs in front of the WHOLE server — SPA included.
+//
+// The Origin check above cannot stand alone. Under DNS rebinding a page
+// on evil.example, once the name resolves to 127.0.0.1, reaches the
+// server at http://evil.example:3000 — which the browser treats as SAME
+// origin, so it sends no Origin header and applies no CORS check. Every
+// read (sessions, transcripts, search, scan findings) would answer,
+// because nothing else in the request distinguishes it from a legitimate
+// one. The Host header does: the browser sends the name the page used,
+// and only a real loopback URL carries a loopback Host.
+func LoopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(hostname(r.Host)) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("ccpeek serves 127.0.0.1 only; refusing request for host " +
+				strconv.Quote(r.Host) + "\n"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostname strips any port from a Host header value, handling the
+// bracketed IPv6 form. An empty Host (HTTP/1.0, or a raw client) is not
+// loopback by default — callers must be explicit about where they point.
+func hostname(host string) string {
+	if host == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return strings.Trim(host, "[]")
+}
+
+// isLoopbackHost reports whether a hostname addresses this machine.
+// Named loopback aliases are limited to "localhost" itself: RFC 6761
+// reserves the .localhost subtree for loopback, but resolvers disagree in
+// practice and an attacker-chosen evil.localhost that resolves elsewhere
+// would otherwise pass. Literal addresses are checked numerically, so
+// every spelling of loopback (127.0.0.2, ::ffff:127.0.0.1) is covered
+// without an allowlist of strings.
 func isLoopbackHost(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" ||
-		strings.HasSuffix(host, ".localhost")
+	if host == "localhost" {
+		return true
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.IsLoopback() || (ip.Is4In6() && ip.Unmap().IsLoopback())
+	}
+	return false
 }
 
 func (h *handlers) artifacts(w http.ResponseWriter, r *http.Request) {
