@@ -184,3 +184,61 @@ test.describe("lazy tool payloads", () => {
       .toBeTruthy();
   });
 });
+
+// The Tools and Files tabs are DOM-windowed: a session's tool list pages
+// to completion (the tabs show counts and group by file, so they need
+// every row), and mounting all of them is what the windowing avoids. The
+// rows still have to render, stay expandable, and keep their table
+// semantics — a windowed grid is not a <table>, so the roles carry it.
+test.describe("session tool tabs", () => {
+  const editSession = "11111111-aaaa-bbbb-cccc-111111111111";
+
+  test("tools tab renders windowed rows that still expand", async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/claude-code/${editSession}?tab=tools`);
+
+    const grid = page.getByRole("table", { name: "Tool calls" });
+    await expect(grid).toBeVisible();
+    await expect(
+      grid.getByRole("columnheader", { name: "tool" }),
+    ).toBeVisible();
+
+    const rows = grid.getByRole("row");
+    // Header plus at least one call.
+    await expect.poll(() => rows.count()).toBeGreaterThan(1);
+
+    // The Edit call's row opens its diff in place.
+    const editRow = rows.filter({ hasText: "Edit" }).first();
+    await expect(editRow).toBeVisible();
+    await editRow.click();
+    await expect(page.getByText(/diff too large|^[-+]/).first()).toBeVisible();
+  });
+
+  test("files tab lists touched files and opens their changes", async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/claude-code/${editSession}?tab=files`);
+    // Rows show an edit/write tally; opening one reveals its changes.
+    const row = page
+      .locator("li")
+      .filter({ hasText: /edits|writes/ })
+      .first();
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(
+      page.getByRole("button", { name: /↗ #/ }).first(),
+    ).toBeVisible();
+  });
+
+  test("commands tab renders its windowed rows", async ({ page }) => {
+    await page.goto(
+      "/sessions/claude-code/22222222-aaaa-bbbb-cccc-222222222222?tab=commands",
+    );
+    // Highlighting splits the command into spans, so match the row rather
+    // than a contiguous text node.
+    await expect(
+      page.locator("li").filter({ hasText: "go test" }).first(),
+    ).toBeVisible();
+  });
+});

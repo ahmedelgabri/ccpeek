@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { useHighlight } from "../../highlight";
+import { useRowWindow } from "../../windowed";
 import { shortPath, type ToolCallRow, type TranscriptMessage } from "../../api";
 import type { TranscriptWindow } from "./useSessionData";
 import { EmptyNote, SkeletonRows, toolColor, useToggleSet } from "../../ui";
@@ -67,24 +67,14 @@ export function Transcript({
   );
   const hidden = msgs.length - visible.length;
 
-  // DOM windowing: only the on-screen slice of a session is mounted —
-  // scrolling a 10k-message transcript must not accumulate thousands of
-  // markdown nodes and highlight blocks. Rows are keyed by seq so
-  // measured heights survive page prepends, and heights are measured
-  // (markdown, diffs, expandable chips are all variable).
-  const listRef = useRef<HTMLOListElement>(null);
-  const listOffset = useRef(0);
-  useLayoutEffect(() => {
-    listOffset.current = listRef.current?.offsetTop ?? 0;
-  }, []);
-  const virtualizer = useWindowVirtualizer({
-    count: visible.length,
-    estimateSize: () => 96,
-    overscan: 10,
-    scrollMargin: listOffset.current,
-    getItemKey: (i) => visible[i].seq,
-  });
-  const virtualItems = virtualizer.getVirtualItems();
+  // Rows are keyed by seq so measured heights survive page prepends. The
+  // transcript uses the hook rather than WindowedList because it needs the
+  // virtualizer itself: the visible range drives infinite scroll in both
+  // directions, and deep links scroll a specific index into view.
+  const { listRef, virtualizer, virtualItems } = useRowWindow<
+    TranscriptMessage,
+    HTMLOListElement
+  >(visible, (m) => m.seq, 96);
   const range = virtualizer.range;
   // Highlight re-runs as the mounted window moves — freshly mounted rows
   // need their code blocks processed (already-highlighted ones are

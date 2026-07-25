@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { WindowedList } from "../../windowed";
 import { Link } from "@tanstack/react-router";
 import { useHighlight } from "../../highlight";
 import { shortPath, type ToolCallRow } from "../../api";
@@ -17,13 +18,18 @@ export function CommandsTab({
   if (commands.length === 0)
     return <EmptyNote>No shell commands in this session.</EmptyNote>;
   return (
-    <div ref={container}>
-      <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
-        {commands.map((c) => (
-          <li
-            key={c.seq}
-            className="flex items-start gap-3 bg-surface-1 px-3 py-2"
-          >
+    <div
+      ref={container}
+      className="overflow-hidden rounded-md border border-edge"
+    >
+      <WindowedList
+        items={commands}
+        getKey={(c) => c.seq}
+        estimateSize={38}
+        className="bg-surface-1"
+      >
+        {(c) => (
+          <div className="flex items-start gap-3 border-b border-edge bg-surface-1 px-3 py-2">
             <pre className="min-w-0 flex-1 text-xs leading-relaxed">
               <code className="language-bash block break-words whitespace-pre-wrap">
                 {c.detail}
@@ -34,9 +40,9 @@ export function CommandsTab({
               {c.at?.slice(11, 19)}
             </span>
             <CopyButton text={c.detail ?? ""} />
-          </li>
-        ))}
-      </ul>
+          </div>
+        )}
+      </WindowedList>
     </div>
   );
 }
@@ -68,34 +74,62 @@ export function ToolsTab({
         </div>
         <KindBars items={kinds} />
       </div>
-      <div className="overflow-hidden rounded-md border border-edge">
-        <table className="w-full text-sm">
-          <thead className="bg-surface-2 text-left font-mono text-[10px] tracking-wider text-ink-faint uppercase">
-            <tr>
-              <th className="px-3 py-1.5">#</th>
-              <th className="px-3 py-1.5">tool</th>
-              <th className="px-3 py-1.5">kind</th>
-              <th className="px-3 py-1.5">detail</th>
-              <th className="px-3 py-1.5 text-right">msg</th>
-              <th className="px-3 py-1.5 text-right">at</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-edge bg-surface-1">
-            {tools.map((t) => (
-              <ToolRow
-                key={t.seq}
-                agent={agent}
-                sessionId={sessionId}
-                t={t}
-                onJump={onJump}
-              />
-            ))}
-          </tbody>
-        </table>
+      {/* A grid rather than a <table>: windowed rows have to be
+          absolutely positioned, which a table layout cannot express.
+          ARIA roles keep the semantics a table gave for free. */}
+      <div
+        role="table"
+        aria-label="Tool calls"
+        aria-rowcount={tools.length}
+        className="overflow-hidden rounded-md border border-edge text-sm"
+      >
+        <div
+          role="row"
+          className={`${TOOL_COLUMNS} bg-surface-2 font-mono text-[10px] tracking-wider text-ink-faint uppercase`}
+        >
+          <span role="columnheader" className="px-3 py-1.5">
+            #
+          </span>
+          <span role="columnheader" className="px-3 py-1.5">
+            tool
+          </span>
+          <span role="columnheader" className="px-3 py-1.5">
+            kind
+          </span>
+          <span role="columnheader" className="px-3 py-1.5">
+            detail
+          </span>
+          <span role="columnheader" className="px-3 py-1.5 text-right">
+            msg
+          </span>
+          <span role="columnheader" className="px-3 py-1.5 text-right">
+            at
+          </span>
+        </div>
+        <WindowedList
+          items={tools}
+          getKey={(t) => t.seq}
+          estimateSize={30}
+          className="bg-surface-1"
+        >
+          {(t) => (
+            <ToolRow
+              agent={agent}
+              sessionId={sessionId}
+              t={t}
+              onJump={onJump}
+            />
+          )}
+        </WindowedList>
       </div>
     </div>
   );
 }
+
+// The tool grid's column track, shared by the header and every row so they
+// stay aligned without a table.
+const TOOL_COLUMNS =
+  "grid grid-cols-[4rem_8rem_7rem_minmax(0,1fr)_5rem_5rem] items-baseline";
 
 function ToolRow({
   agent,
@@ -111,16 +145,22 @@ function ToolRow({
   const [open, setOpen] = useState(false);
   const hasDiff = t.kind === "file_edit" || t.kind === "file_write";
   return (
-    <>
-      <tr
+    <div className="border-b border-edge">
+      <div
+        role="row"
         onClick={hasDiff ? () => setOpen((v) => !v) : undefined}
-        className={hasDiff ? "cursor-pointer hover:bg-surface-2/40" : undefined}
+        className={`${TOOL_COLUMNS} ${hasDiff ? "cursor-pointer hover:bg-surface-2/40" : ""}`}
       >
-        <td className="px-3 py-1.5 font-mono text-xs text-ink-faint tabular-nums">
+        <span
+          role="cell"
+          className="px-3 py-1.5 font-mono text-xs text-ink-faint tabular-nums"
+        >
           {t.seq}
-        </td>
-        <td className="px-3 py-1.5 font-mono text-xs">{t.name}</td>
-        <td className="px-3 py-1.5">
+        </span>
+        <span role="cell" className="truncate px-3 py-1.5 font-mono text-xs">
+          {t.name}
+        </span>
+        <span role="cell" className="px-3 py-1.5">
           <span className="inline-flex items-center gap-1.5 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
             <span
               aria-hidden
@@ -129,28 +169,32 @@ function ToolRow({
             />
             {t.kind}
           </span>
-        </td>
-        <td className="max-w-0 truncate px-3 py-1.5 font-mono text-xs text-ink-dim">
+        </span>
+        <span
+          role="cell"
+          className="truncate px-3 py-1.5 font-mono text-xs text-ink-dim"
+        >
           {hasDiff && (
             <span className="mr-1.5 text-accent">{open ? "▾" : "▸"} diff</span>
           )}
           {t.detail && shortPath(t.detail)}
-        </td>
-        <td className="px-3 py-1.5 text-right">
+        </span>
+        <span role="cell" className="px-3 py-1.5 text-right">
           <JumpButton seq={t.messageSeq} onJump={onJump} />
-        </td>
-        <td className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums">
+        </span>
+        <span
+          role="cell"
+          className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums"
+        >
           {t.at?.slice(11, 19)}
-        </td>
-      </tr>
+        </span>
+      </div>
       {hasDiff && open && (
-        <tr>
-          <td colSpan={6} className="px-3 py-2">
-            <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
-          </td>
-        </tr>
+        <div className="px-3 py-2">
+          <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -195,17 +239,18 @@ export function FilesTab({
   if (files.length === 0)
     return <EmptyNote>No files touched in this session.</EmptyNote>;
   return (
-    <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
-      {files.map((f) => (
-        <FileRow
-          key={f.path}
-          agent={agent}
-          sessionId={sessionId}
-          f={f}
-          onJump={onJump}
-        />
-      ))}
-    </ul>
+    <div className="overflow-hidden rounded-md border border-edge">
+      <WindowedList
+        items={files}
+        getKey={(f) => f.path}
+        estimateSize={32}
+        className="bg-surface-1"
+      >
+        {(f) => (
+          <FileRow agent={agent} sessionId={sessionId} f={f} onJump={onJump} />
+        )}
+      </WindowedList>
+    </div>
   );
 }
 
@@ -225,7 +270,7 @@ function FileRow({
   const edits = countKind(f, "file_edit");
   const writes = countKind(f, "file_write");
   return (
-    <li className="bg-surface-1">
+    <div className="border-b border-edge bg-surface-1">
       <div
         onClick={diffs.length > 0 ? () => setOpen((v) => !v) : undefined}
         className={`flex items-baseline gap-3 px-3 py-1.5 ${
@@ -261,7 +306,7 @@ function FileRow({
           ))}
         </div>
       )}
-    </li>
+    </div>
   );
 }
 
