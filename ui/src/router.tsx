@@ -31,9 +31,9 @@ import { useEffect } from "react";
 const NAV: { to: string; label: string; exact?: boolean }[] = [
   { to: "/", label: "Overview", exact: true },
   { to: "/sessions", label: "Sessions" },
+  { to: "/usage", label: "Usage" },
   { to: "/commands", label: "Commands" },
   { to: "/artifacts", label: "Artifacts" },
-  { to: "/usage", label: "Usage" },
   { to: "/scan", label: "Scan" },
   { to: "/compare", label: "Compare" },
 ];

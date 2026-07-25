@@ -19,11 +19,14 @@ interface Group {
   items: Item[];
 }
 
+// Mirrors the sidebar's order (see NAV in router.tsx): the jump list and
+// the rail are two views of the same map, and disagreeing about the order
+// makes the reader re-scan one of them.
 const PAGES: { label: string; to: string }[] = [
   { label: "Overview", to: "/" },
   { label: "Sessions", to: "/sessions" },
-  { label: "Commands", to: "/commands" },
   { label: "Usage", to: "/usage" },
+  { label: "Commands", to: "/commands" },
   { label: "Artifacts", to: "/artifacts" },
   { label: "Secret scan", to: "/scan" },
   { label: "Compare", to: "/compare" },
