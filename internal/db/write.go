@@ -331,6 +331,48 @@ func (w *Writer) UpsertArtifact(a canon.Artifact, contentHash string) (int64, er
 	return id, nil
 }
 
+// searchableArtifactKinds are the kinds worth full-text indexing. The
+// excluded ones are machine-generated (the usage report is a whole HTML
+// document, a shell snapshot is an environment dump) or hold their
+// substance in metadata rather than content (file history) — indexing them
+// cost a second copy of every byte in search_docs plus the FTS5 tokens,
+// and returned hits nobody searches for.
+var searchableArtifactKinds = map[canon.ArtifactKind]bool{
+	canon.ArtifactPlan:       true,
+	canon.ArtifactMemory:     true,
+	canon.ArtifactTodoList:   true,
+	canon.ArtifactTaskGroup:  true,
+	canon.ArtifactPaste:      true,
+	canon.ArtifactUsageFacet: true,
+}
+
+// WriteArtifact stores one artifact and brings its search index in line
+// with it: content is bounded at canon.ArtifactContentLimit, stale docs are
+// cleared, and only the kinds worth searching get a document. It reports
+// whether the content was truncated so a caller with a diagnostics channel
+// can say so.
+//
+// Every artifact in the store goes through here — live ingest and the v1
+// import alike. Each used to spell the sequence out for itself, and the
+// import's copy had already fallen behind: it indexed every kind including
+// the whole-HTML usage report, and bounded nothing.
+func (w *Writer) WriteArtifact(a canon.Artifact, contentHash string) (id int64, truncated bool, err error) {
+	a.Content, truncated = canon.TruncateArtifactContent(a.Content)
+	id, err = w.UpsertArtifact(a, contentHash)
+	if err != nil {
+		return 0, truncated, err
+	}
+	if err := w.ClearArtifactSearchDocs(id); err != nil {
+		return 0, truncated, err
+	}
+	if searchableArtifactKinds[a.Kind] {
+		if err := w.InsertSearchDoc(0, id, string(a.Kind), 0, a.Name, a.Content); err != nil {
+			return 0, truncated, err
+		}
+	}
+	return id, truncated, nil
+}
+
 // LinkArtifact connects an artifact to a session. When the session isn't
 // ingested yet the link is parked in pending_artifact_links; it reports
 // whether the link resolved immediately.

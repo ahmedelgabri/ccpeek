@@ -527,23 +527,14 @@ func importOrphanArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB, sch
 				return err
 			}
 			meta, _ := json.Marshal(map[string]bool{"importedV1": true})
-			id, err := w.UpsertArtifact(canon.Artifact{
+			if _, _, err := w.WriteArtifact(canon.Artifact{
 				Agent:      claudeSlug,
 				Kind:       spec.kind,
 				Name:       o.name,
 				Content:    o.content,
 				Metadata:   meta,
 				SourcePath: o.sourcePath,
-			}, "imported-v1")
-			if err != nil {
-				w.Rollback()
-				return err
-			}
-			if err := w.ClearArtifactSearchDocs(id); err != nil {
-				w.Rollback()
-				return err
-			}
-			if err := w.InsertSearchDoc(0, id, string(spec.kind), 0, o.name, o.content); err != nil {
+			}, "imported-v1"); err != nil {
 				w.Rollback()
 				return err
 			}
@@ -596,7 +587,7 @@ func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB,
 			if err != nil {
 				return err
 			}
-			id, err := w.UpsertArtifact(canon.Artifact{
+			id, _, err := w.WriteArtifact(canon.Artifact{
 				Agent:    claudeSlug,
 				Kind:     a.kind,
 				Name:     a.name,
@@ -604,14 +595,6 @@ func importStructuredArtifacts(ctx context.Context, store *db.Store, v1 *sql.DB,
 				Metadata: a.metadata,
 			}, "imported-v1")
 			if err != nil {
-				w.Rollback()
-				return err
-			}
-			if err := w.ClearArtifactSearchDocs(id); err != nil {
-				w.Rollback()
-				return err
-			}
-			if err := w.InsertSearchDoc(0, id, string(a.kind), 0, a.name, a.content); err != nil {
 				w.Rollback()
 				return err
 			}

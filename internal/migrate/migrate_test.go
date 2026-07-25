@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -452,5 +453,100 @@ func TestImportV1MissingDB(t *testing.T) {
 	defer store.Close()
 	if _, err := ImportV1(ctx, store, filepath.Join(t.TempDir(), "nope.db")); err == nil {
 		t.Fatal("missing v1 db must error, caller decides whether that's fatal")
+	}
+}
+
+// Imported artifacts must land under the SAME storage policy as ingested
+// ones: bounded content, and a search document only for the kinds worth
+// searching. The importer used to write its own artifact sequence, which
+// indexed every kind (including whole-HTML usage reports and shell-snapshot
+// environment dumps) and bounded nothing — so a v1 database could reinflate
+// search_docs with exactly the bytes ingest had learned to leave out.
+func TestImportV1AppliesArtifactStoragePolicy(t *testing.T) {
+	ctx := context.Background()
+	v1Path := filepath.Join(t.TempDir(), "ccpeek.db")
+	v1, err := sql.Open("sqlite", "file:"+v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// sessions/messages are how ImportV1 recognises a v1 database; both stay
+	// empty here so artifacts are the only thing under test.
+	if _, err := v1.Exec(`
+		CREATE TABLE projects (id INTEGER PRIMARY KEY, dir_name TEXT,
+			display_name TEXT, canonical_path TEXT);
+		CREATE TABLE sessions (id INTEGER PRIMARY KEY, session_id TEXT,
+			project_id INTEGER, first_prompt TEXT, message_count INTEGER,
+			created_at TEXT, modified_at TEXT, git_branch TEXT,
+			project_path TEXT, source_path TEXT);
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id INTEGER,
+			seq INTEGER, type TEXT, role TEXT, timestamp TEXT, uuid TEXT,
+			content TEXT, cwd TEXT, git_branch TEXT);
+		CREATE TABLE plans (id INTEGER PRIMARY KEY, file_name TEXT, title TEXT,
+			size_bytes INTEGER, content TEXT, source_path TEXT);
+		CREATE TABLE shell_snapshots (id INTEGER PRIMARY KEY, file_name TEXT,
+			content TEXT, source_path TEXT);`); err != nil {
+		t.Fatal(err)
+	}
+	// A plan past the content limit: searchable, and must be truncated.
+	oversized := strings.Repeat("plan step\n", canon.ArtifactContentLimit/10+512)
+	if _, err := v1.Exec(`INSERT INTO plans (file_name, content, source_path)
+		VALUES ('huge-plan.md', ?, '/gone/plans/huge-plan.md')`, oversized); err != nil {
+		t.Fatal(err)
+	}
+	// A shell snapshot: not a searchable kind, however small.
+	if _, err := v1.Exec(`INSERT INTO shell_snapshots (file_name, content, source_path)
+		VALUES ('snapshot-zsh-1.sh', 'export EDITOR=nvim\n', '/gone/snapshots/1.sh')`); err != nil {
+		t.Fatal(err)
+	}
+	v1.Close()
+
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := ImportV1(ctx, store, v1Path); err != nil {
+		t.Fatalf("ImportV1: %v", err)
+	}
+
+	docKinds := map[string]int{}
+	rows, err := store.ReadDB().QueryContext(ctx, `
+		SELECT a.kind, COUNT(d.rowid)
+		FROM artifacts a LEFT JOIN search_docs d ON d.artifact_id = a.id
+		GROUP BY a.kind`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var kind string
+		var n int
+		if err := rows.Scan(&kind, &n); err != nil {
+			t.Fatal(err)
+		}
+		docKinds[kind] = n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got := docKinds[string(canon.ArtifactPlan)]; got != 1 {
+		t.Errorf("plan search docs = %d, want 1", got)
+	}
+	if got, ok := docKinds[string(canon.ArtifactShellSnapshot)]; !ok || got != 0 {
+		t.Errorf("shell snapshot search docs = %d (present=%v), want 0 with the artifact still stored", got, ok)
+	}
+
+	var content string
+	if err := store.ReadDB().QueryRowContext(ctx,
+		`SELECT content FROM artifacts WHERE kind = ? AND name = 'huge-plan.md'`,
+		string(canon.ArtifactPlan)).Scan(&content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) >= len(oversized) {
+		t.Errorf("imported plan content = %d bytes, want it bounded below the v1 size %d",
+			len(content), len(oversized))
+	}
+	if !strings.HasSuffix(content, canon.ArtifactTruncationMarker) {
+		t.Error("truncated import is missing the truncation marker")
 	}
 }
