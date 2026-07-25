@@ -508,10 +508,20 @@ func (w *Writer) sessionID(agent canon.AgentSlug, externalID string) (int64, err
 	return id, nil
 }
 
+// pendingLinkAttemptLimit is how many resolution passes a parked link may
+// survive before it is dropped as unresolvable. Links waiting on a
+// not-yet-ingested endpoint resolve on the pass that indexes it; a link
+// still parked after this many passes is pointing at something that does
+// not exist (a task directory that is not a session id, a relation to a
+// transcript the user deleted), and keeping it forever both grows the
+// table without bound and misreports unresolved_links as a live signal.
+const pendingLinkAttemptLimit = 5
+
 // ResolvePending links parked relations and artifact links whose endpoint
 // sessions have since been ingested. Called once at the end of each ingest
-// run; rows that still don't resolve stay parked and are counted as
-// unresolved_links in run telemetry.
+// run; rows that still don't resolve have their attempt counter bumped and
+// are dropped once it passes pendingLinkAttemptLimit. What remains is
+// counted as unresolved_links in run telemetry.
 func (s *Store) ResolvePending(ctx context.Context) (resolved, remaining int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -560,6 +570,24 @@ func (s *Store) ResolvePending(ctx context.Context) (resolved, remaining int, er
 			WHERE s.agent_id = pending_artifact_links.agent_id
 			  AND s.external_id = pending_artifact_links.session_external_id)`); err != nil {
 		return 0, 0, fmt.Errorf("pruning resolved artifact links: %w", err)
+	}
+
+	// Anything still parked has now failed a pass. Bump its counter and
+	// drop what has failed too many — the endpoint is not late, it is
+	// absent.
+	for _, q := range []string{
+		`UPDATE pending_relations SET attempts = attempts + 1`,
+		`DELETE FROM pending_relations WHERE attempts > ?`,
+		`UPDATE pending_artifact_links SET attempts = attempts + 1`,
+		`DELETE FROM pending_artifact_links WHERE attempts > ?`,
+	} {
+		var args []any
+		if strings.HasPrefix(q, "DELETE") {
+			args = append(args, pendingLinkAttemptLimit)
+		}
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return 0, 0, fmt.Errorf("ageing pending links: %w", err)
+		}
 	}
 
 	var left int
@@ -636,6 +664,11 @@ func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string
 			`DELETE FROM search_docs WHERE artifact_id IN
 			   (SELECT id FROM artifacts WHERE source_path = ?)`,
 			`DELETE FROM artifacts WHERE source_path = ?`,
+			// history carries source_path too, and its rows are only ever
+			// cleared by re-parsing the file they came from — so a deleted
+			// history.jsonl left every command in the index with no path
+			// back out. --prune promises the opposite.
+			`DELETE FROM history WHERE source_path = ?`,
 			`DELETE FROM source_files WHERE path = ?`,
 		} {
 			if _, err := tx.ExecContext(ctx, q, p); err != nil {

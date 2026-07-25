@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
 
 func openTemp(t *testing.T) (*Store, string) {
@@ -319,5 +322,157 @@ func TestFTSRoundTrip(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("fts hits after delete = %d, want 0", n)
+	}
+}
+
+// The column is called canonical_path, so it must hold one. A trailing
+// separator (or a "." segment) used to split one project's sessions
+// across two Projects entries, and ?project= then matched only one.
+func TestWorkspaceCanonicalization(t *testing.T) {
+	for _, tc := range []struct{ in, wantPath, wantName string }{
+		{"/home/u/proj", "/home/u/proj", "proj"},
+		{"/home/u/proj/", "/home/u/proj", "proj"},
+		{"/home/u/proj//", "/home/u/proj", "proj"},
+		{"/home/u/./proj", "/home/u/proj", "proj"},
+		{"/home/u/x/../proj", "/home/u/proj", "proj"},
+		{"  /home/u/proj  ", "/home/u/proj", "proj"},
+		{"/", "/", "/"},
+		{"", "", ""},
+		{"   ", "", ""},
+		{"relative/dir", "relative/dir", "dir"},
+	} {
+		if got := CanonicalWorkspace(tc.in); got != tc.wantPath {
+			t.Errorf("CanonicalWorkspace(%q) = %q, want %q", tc.in, got, tc.wantPath)
+		}
+		if got := WorkspaceDisplayName(CanonicalWorkspace(tc.in)); got != tc.wantName {
+			t.Errorf("WorkspaceDisplayName(%q) = %q, want %q", tc.in, got, tc.wantName)
+		}
+	}
+}
+
+// Sessions whose cwd differs only by a trailing separator belong to the
+// SAME workspace, and every workspace keeps a usable display name.
+func TestRegenerateWorkspacesGroupsEquivalentPaths(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+
+	w, err := s.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, cwd := range []string{"/home/u/proj", "/home/u/proj/", "/home/u/other/"} {
+		sess := canon.Session{
+			Agent:      "claude-code",
+			ExternalID: fmt.Sprintf("s%d", i),
+			CWD:        cwd,
+			SourcePath: "/x.jsonl",
+		}
+		if _, err := w.UpsertSession(sess, "h"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegenerateWorkspaces(ctx); err != nil {
+		t.Fatalf("RegenerateWorkspaces: %v", err)
+	}
+
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspaces`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("workspaces = %d, want 2 (the trailing slash is not a second project)", n)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT canonical_path, display_name FROM workspaces ORDER BY canonical_path`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var p, d string
+		if err := rows.Scan(&p, &d); err != nil {
+			t.Fatal(err)
+		}
+		if d == "" {
+			t.Errorf("workspace %q has an empty display name", p)
+		}
+		got[p] = d
+	}
+	if got["/home/u/proj"] != "proj" || got["/home/u/other"] != "other" {
+		t.Errorf("workspaces = %v", got)
+	}
+
+	// Both sessions in /home/u/proj are members of the one workspace.
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM session_workspaces sw
+		JOIN workspaces w ON w.id = sw.workspace_id
+		WHERE w.canonical_path = '/home/u/proj'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("members of /home/u/proj = %d, want 2", n)
+	}
+}
+
+// A long-lived watch process opens a run row per debounce fire; the
+// history is trimmed so neither ingest_runs nor its issues grow forever.
+func TestTrimRunsKeepsTheNewestAndCascadesIssues(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+
+	var ids []int64
+	for i := range 12 {
+		id, err := s.StartRun(ctx, "incremental", "[]")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		if err := s.InsertIssues(ctx, id, []canon.Issue{{
+			Severity: canon.SeverityWarn, Category: "parse",
+			Detail: fmt.Sprintf("run %d", i),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removed, err := s.TrimRuns(ctx, 5)
+	if err != nil {
+		t.Fatalf("TrimRuns: %v", err)
+	}
+	if removed != 7 {
+		t.Errorf("removed = %d, want 7", removed)
+	}
+
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ingest_runs`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Errorf("runs = %d, want 5", n)
+	}
+	// Their issues went with them.
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ingest_issues`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Errorf("issues = %d, want 5 (one per surviving run)", n)
+	}
+	// The survivors are the newest.
+	var oldest int64
+	if err := s.db.QueryRowContext(ctx, `SELECT MIN(id) FROM ingest_runs`).Scan(&oldest); err != nil {
+		t.Fatal(err)
+	}
+	if oldest != ids[len(ids)-5] {
+		t.Errorf("oldest surviving run = %d, want %d", oldest, ids[len(ids)-5])
+	}
+
+	// Trimming below the retained count is a no-op.
+	if removed, err := s.TrimRuns(ctx, 100); err != nil || removed != 0 {
+		t.Errorf("TrimRuns(100) = %d, %v; want 0, nil", removed, err)
 	}
 }

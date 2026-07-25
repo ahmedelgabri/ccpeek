@@ -18,6 +18,12 @@ import (
 // existing children are kept — the adapter emitted only new records — and
 // the session row is advanced rather than re-upserted, so attributes
 // derived from the already-parsed prefix (title, created_at) survive.
+// The counters below accumulate into a SCRATCH report, merged into the
+// run's report only when the transaction commits (see commitTo). A tail
+// parse that fails rolls its writes back and falls through to a full
+// parse of the same source; counting into the shared report directly made
+// every record land twice in records_indexed and the startup summary, and
+// duplicated the diagnostics the failed attempt emitted.
 type dbSink struct {
 	writer     *db.Writer
 	agent      canon.AgentSlug
@@ -29,6 +35,40 @@ type dbSink struct {
 	sessionIDs     map[string]int64 // session external id → row id
 	artifactIDs    map[artifactKey]int64
 	historyCleared bool
+}
+
+// newSink builds a sink whose counts and issues are staged, not published.
+func newSink(w *db.Writer, slug canon.AgentSlug, sourcePath, sourceHash string, appendMode bool) *dbSink {
+	return &dbSink{
+		writer:     w,
+		agent:      slug,
+		sourcePath: sourcePath,
+		sourceHash: sourceHash,
+		report:     &Report{},
+		append:     appendMode,
+	}
+}
+
+// commitTo publishes what this source actually wrote into the run report.
+// Callers invoke it after a successful Commit and never after a rollback.
+func (s *dbSink) commitTo(report *Report) {
+	report.Sessions += s.report.Sessions
+	report.Messages += s.report.Messages
+	report.ToolCalls += s.report.ToolCalls
+	report.Artifacts += s.report.Artifacts
+	report.History += s.report.History
+	report.Issues = append(report.Issues, s.report.Issues...)
+}
+
+// publishIssues carries only the diagnostics across, for a parse that
+// failed with no retry behind it. The counts stay behind — nothing was
+// committed — but the line-level warnings are what make the failure
+// debuggable, and dropping them would leave only the coarse per-source
+// error the pipeline records. A FAILED TAIL attempt must not call this:
+// the full re-parse that follows re-emits the same warnings, and
+// publishing both would double them.
+func (s *dbSink) publishIssues(report *Report) {
+	report.Issues = append(report.Issues, s.report.Issues...)
 }
 
 type artifactKey struct {

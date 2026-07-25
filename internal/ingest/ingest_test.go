@@ -582,3 +582,185 @@ func TestCancelledRunIsRecordedAsFailed(t *testing.T) {
 		t.Error("failed run has no finished_at")
 	}
 }
+
+// A tail parse that has to fall back to a full parse must report what it
+// actually committed, once. The sink used to increment the run's counters
+// as records streamed, so the rolled-back attempt still inflated
+// records_indexed, the "Indexed N sources" summary, and the diagnostics.
+func TestTailFallbackCountsRecordsOnce(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite the prefix in place so the stored cursor no longer verifies:
+	// the append path is attempted, rejected, and the full parse re-runs.
+	target := filepath.Join(tmp, "claude-code", "projects", "-home-u-demo-api",
+		"22222222-aaaa-bbbb-cccc-222222222222.jsonl")
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := []byte(strings.Replace(string(data), `"gitBranch":"feat/limits"`, `"gitBranch":"feat/limitz"`, 1))
+	if len(rewritten) != len(data) || string(rewritten) == string(data) {
+		t.Fatal("fixture rewrite did not apply as a same-length prefix change")
+	}
+	if err := os.WriteFile(target, rewritten, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The one re-parsed session is the only thing that landed, so the
+	// report must match the rows that source actually owns.
+	var wantMessages, wantTools int
+	if err := store.DB().QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM messages m
+		        JOIN sessions s ON s.id = m.session_id WHERE s.source_path = ?),
+		       (SELECT COUNT(*) FROM tool_calls tc
+		        JOIN sessions s ON s.id = tc.session_id WHERE s.source_path = ?)`,
+		target, target).Scan(&wantMessages, &wantTools); err != nil {
+		t.Fatal(err)
+	}
+	if report.Sessions != 1 {
+		t.Errorf("report sessions = %d, want 1 (the attempt must not be counted too)", report.Sessions)
+	}
+	if report.Messages != wantMessages {
+		t.Errorf("report messages = %d, want %d (rows actually committed)", report.Messages, wantMessages)
+	}
+	if report.ToolCalls != wantTools {
+		t.Errorf("report tool calls = %d, want %d", report.ToolCalls, wantTools)
+	}
+
+	// records_indexed carries the same figure into run telemetry.
+	indexed := queryInt(t, store,
+		`SELECT records_indexed FROM ingest_runs ORDER BY id DESC LIMIT 1`)
+	if want := report.Sessions + report.Messages + report.ToolCalls + report.Artifacts + report.History; indexed != want {
+		t.Errorf("records_indexed = %d, want %d", indexed, want)
+	}
+}
+
+// A parse that fails partway rolls its writes back, so the run report
+// must not count the records it staged — records_indexed claims committed
+// rows. The line-level diagnostics DO survive: they are what makes the
+// failure debuggable, and no retry will re-emit them.
+//
+// Pi is the adapter that exposes this: it emits a warning for a malformed
+// line before its session header exists, then fails hard when the header
+// never arrives.
+func TestFailedParsePublishesIssuesButNoCounts(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "pi")
+	sessDir := filepath.Join(root, "sessions", "--home-u-x--")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(sessDir, "2026-07-01T10-00-00_bbbbbbbb-1111-2222-3333-444444444444.jsonl")
+	// Line 1 is unparseable (a warning); line 2 is a valid entry that is
+	// not a session header, which Pi rejects for the whole source.
+	body := "{ not json\n" + `{"type":"message","id":"m1"}` + "\n"
+	if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "no-claude-here")}
+	opts.ConfigRoots[pi.Slug] = []string{root}
+
+	report, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if report.Sessions != 0 || report.Messages != 0 || report.ToolCalls != 0 {
+		t.Errorf("report counted %d sessions / %d messages / %d tool calls from a rolled-back parse, want 0",
+			report.Sessions, report.Messages, report.ToolCalls)
+	}
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM sessions`); n != 0 {
+		t.Fatalf("precondition: %d session rows committed, expected the parse to roll back", n)
+	}
+	if n := queryInt(t, store,
+		`SELECT records_indexed FROM ingest_runs ORDER BY id DESC LIMIT 1`); n != 0 {
+		t.Errorf("records_indexed = %d, want 0", n)
+	}
+
+	// The warning survives, alongside the pipeline's own per-source error.
+	var warn, hard int
+	for _, is := range report.Issues {
+		if is.SourcePath != target {
+			continue
+		}
+		if is.Severity == canon.SeverityWarn {
+			warn++
+		} else {
+			hard++
+		}
+	}
+	if warn != 1 {
+		t.Errorf("warnings for the bad line = %d, want 1; issues: %+v", warn, report.Issues)
+	}
+	if hard != 1 {
+		t.Errorf("hard errors for the source = %d, want 1", hard)
+	}
+	if n := queryInt(t, store,
+		`SELECT COUNT(*) FROM ingest_issues WHERE source_path = ? AND severity = 'warn'`, target); n != 1 {
+		t.Errorf("stored warnings = %d, want 1", n)
+	}
+}
+
+// Re-running over the same broken source must not accumulate duplicate
+// diagnostics run over run — each run records its own, once.
+func TestFailedParseIssuesDoNotAccumulateWithinARun(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "claude-code")
+	if err := os.MkdirAll(filepath.Join(root, "projects", "-home-u-x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "projects", "-home-u-x",
+		"aaaaaaaa-1111-2222-3333-444444444444.jsonl")
+	good := `{"type":"user","uuid":"u1","sessionId":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-07-01T10:00:00Z","cwd":"/home/u/x","message":{"role":"user","content":"hello"}}`
+	if err := os.WriteFile(target, []byte(good+"\n{ not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{root}
+	opts.ConfigRoots[pi.Slug] = []string{filepath.Join(tmp, "no-pi-here")}
+
+	report, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseWarnings := 0
+	for _, is := range report.Issues {
+		if is.SourcePath == target {
+			parseWarnings++
+		}
+	}
+	if parseWarnings != 1 {
+		t.Errorf("issues for the bad line = %d, want 1; got %+v", parseWarnings, report.Issues)
+	}
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM ingest_issues WHERE source_path = ?`, target); n != 1 {
+		t.Errorf("stored issues = %d, want 1", n)
+	}
+	// The good line still landed — a bad line is not a bad file.
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM messages`); n != 1 {
+		t.Errorf("messages = %d, want 1", n)
+	}
+}

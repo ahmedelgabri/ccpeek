@@ -40,6 +40,15 @@ const (
 // <session-uuid>-agent-<agent-uuid>.json
 var todoFileRe = regexp.MustCompile(`^([0-9a-f-]{36})-agent-`)
 
+// sessionUUIDRe matches a bare session uuid. Task and file-history
+// directories are NAMED by the session that produced them, so the
+// directory name is the link target — but only when it actually looks
+// like one. Emitting a link for any directory name parked a row in
+// pending_artifact_links that could never resolve, and nothing ages those
+// out: they were re-scanned by every ResolvePending pass and inflated the
+// unresolved_links figure `ccpeek doctor` presents as a health signal.
+var sessionUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // classify determines what a source path is, relative to its root.
 func classify(root agent.Root, path string) sourceKind {
 	rel, err := filepath.Rel(root.Path, path)
@@ -304,7 +313,11 @@ func parseTaskDir(src agent.SourceRef, sink agent.RecordSink) error {
 	}); err != nil {
 		return err
 	}
-	// Task directories are named by the session uuid that spawned them.
+	// Task directories are named by the session uuid that spawned them —
+	// when the name is one. Anything else is not provenance.
+	if !sessionUUIDRe.MatchString(dirName) {
+		return nil
+	}
 	return sink.ArtifactLink(canon.ArtifactLink{
 		Agent:             Slug,
 		ArtifactKind:      canon.ArtifactTaskGroup,
@@ -354,6 +367,9 @@ func parseFileHistoryDir(src agent.SourceRef, sink agent.RecordSink) error {
 		return err
 	}
 	// file-history/<conversationId> matches the owning session's uuid.
+	if !sessionUUIDRe.MatchString(dirName) {
+		return nil
+	}
 	return sink.ArtifactLink(canon.ArtifactLink{
 		Agent:             Slug,
 		ArtifactKind:      canon.ArtifactFileHistory,

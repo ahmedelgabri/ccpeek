@@ -247,8 +247,23 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	if err := r.store.FinishRun(ctx, runID, report.Status, started, r.counts(report), ""); err != nil {
 		return nil, err
 	}
+	// Watch mode opens a run row per debounce fire, and nothing outside
+	// --rebuild removed them: an all-day `ccpeek --watch` alongside an
+	// active coding session grew ingest_runs and its issues without bound.
+	// Trimming is best-effort — losing old telemetry must never fail a run
+	// that otherwise succeeded.
+	if _, err := r.store.TrimRuns(ctx, RunHistoryLimit); err != nil {
+		report.Issues = append(report.Issues, canon.Issue{
+			Severity: canon.SeverityWarn, Category: "store",
+			Detail: fmt.Sprintf("trimming ingest run history: %v", err),
+		})
+	}
 	return report, nil
 }
+
+// RunHistoryLimit is how many ingest runs are retained. `ccpeek ingest`
+// lists ten by default, so this keeps well more than any surface shows.
+const RunHistoryLimit = 100
 
 // ingestIfChanged applies the two-tier change check for one source: a
 // cheap size+mtime fingerprint first (no bytes read on match — this is
@@ -367,21 +382,27 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	}
 	defer w.Rollback()
 
-	sink := &dbSink{writer: w, agent: a.Slug(), sourcePath: src.Path, sourceHash: hash, report: report}
+	sink := newSink(w, a.Slug(), src.Path, hash, false)
 	parseState := ""
 	if tp, ok := a.(agent.TailParser); ok {
 		state, err := tp.ParseTail(ctx, src, agent.TailState{}, sink)
 		if err != nil {
+			sink.publishIssues(report) // terminal: keep the line-level detail
 			return err
 		}
 		parseState = marshalTailState(state)
 	} else if err := a.Parse(ctx, src, sink); err != nil {
+		sink.publishIssues(report)
 		return err
 	}
 	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, parseState); err != nil {
 		return err
 	}
-	return w.Commit()
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	sink.commitTo(report)
+	return nil
 }
 
 // ingestTail parses only the bytes appended since state, in its own
@@ -394,15 +415,22 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 	}
 	defer w.Rollback()
 
-	sink := &dbSink{writer: w, agent: a.Slug(), sourcePath: src.Path, sourceHash: hash, report: report, append: true}
+	sink := newSink(w, a.Slug(), src.Path, hash, true)
 	newState, err := tp.ParseTail(ctx, src, state, sink)
 	if err != nil {
+		// Deliberately publishes nothing: the caller either re-parses the
+		// source in full (which re-emits these diagnostics) or surfaces
+		// the error itself.
 		return err
 	}
 	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, marshalTailState(newState)); err != nil {
 		return err
 	}
-	return w.Commit()
+	if err := w.Commit(); err != nil {
+		return err
+	}
+	sink.commitTo(report)
+	return nil
 }
 
 // marshalTailState serializes a cursor for source_files.parse_state; a

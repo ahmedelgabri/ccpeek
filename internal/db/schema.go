@@ -71,12 +71,20 @@ CREATE INDEX IF NOT EXISTS idx_session_relations_to ON session_relations(to_sess
 
 -- Relation edges whose endpoint session hasn't been ingested yet; resolved
 -- opportunistically at the end of each ingest run.
+--
+-- attempts counts the resolution passes a row has survived. A link whose
+-- endpoint is simply not indexed YET (a session about to be discovered in
+-- the same run, a transcript restored later) resolves within a pass or
+-- two; one that will NEVER resolve would otherwise sit here for the life
+-- of the database, be re-scanned every pass, and inflate the
+-- unresolved_links health figure. See pendingLinkAttemptLimit.
 CREATE TABLE IF NOT EXISTS pending_relations (
 	agent_id INTEGER NOT NULL REFERENCES agents(id),
 	from_external_id TEXT NOT NULL,
 	to_external_id TEXT NOT NULL,
 	kind TEXT NOT NULL,
 	evidence_json TEXT NOT NULL DEFAULT '{}',
+	attempts INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (agent_id, from_external_id, to_external_id, kind)
 );
 
@@ -163,13 +171,15 @@ CREATE TABLE IF NOT EXISTS artifact_sessions (
 CREATE INDEX IF NOT EXISTS idx_artifact_sessions_session ON artifact_sessions(session_id);
 
 -- Artifact→session links whose session hasn't been ingested yet; resolved
--- opportunistically at the end of each ingest run.
+-- opportunistically at the end of each ingest run. attempts ages out rows
+-- that will never resolve — see pending_relations.
 CREATE TABLE IF NOT EXISTS pending_artifact_links (
 	artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
 	agent_id INTEGER NOT NULL REFERENCES agents(id),
 	session_external_id TEXT NOT NULL,
 	relation TEXT NOT NULL,
 	evidence TEXT NOT NULL DEFAULT '',
+	attempts INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (artifact_id, session_external_id, relation)
 );
 

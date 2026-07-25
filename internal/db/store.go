@@ -191,6 +191,9 @@ func (s *Store) applyMigration(ctx context.Context, from int) error {
 	return tx.Commit()
 }
 
+// createAll builds the whole schema in ONE transaction, search index
+// included — FTS5 virtual tables and their triggers are transactional in
+// SQLite, so there is no reason to leave either phase exposed.
 func (s *Store) createAll(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -203,24 +206,21 @@ func (s *Store) createAll(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, userSchema); err != nil {
 		return fmt.Errorf("creating user schema: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, derivedVirtualSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {
 		return fmt.Errorf("creating search index: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ResetDerived drops and recreates everything rebuildable from sources.
 // User state (user_annotations) survives — this is what --rebuild calls.
+//
+// Every drop and every recreate lives in a SINGLE transaction. Dropping
+// the search index outside it meant a failure (or a kill) between the two
+// phases left a database with all derived tables intact and no
+// search_docs/search_fts — a state nothing detects, because Open performs
+// no repairs by design and these tables are only ever created here.
 func (s *Store) ResetDerived(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS search_fts`); err != nil {
-		return fmt.Errorf("dropping search index: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS search_docs`); err != nil {
-		return fmt.Errorf("dropping search docs: %w", err)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -228,6 +228,18 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
 		return err
+	}
+	// Triggers first: they reference both tables of the search pair.
+	for _, trigger := range []string{"search_docs_ai", "search_docs_ad", "search_docs_au"} {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+trigger); err != nil {
+			return fmt.Errorf("dropping %s: %w", trigger, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS search_fts`); err != nil {
+		return fmt.Errorf("dropping search index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS search_docs`); err != nil {
+		return fmt.Errorf("dropping search docs: %w", err)
 	}
 	for _, table := range derivedTables {
 		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+table); err != nil {
@@ -237,13 +249,10 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, derivedSchema); err != nil {
 		return fmt.Errorf("recreating derived schema: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, derivedVirtualSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {
 		return fmt.Errorf("recreating search index: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) readVersion(ctx context.Context) (int, error) {

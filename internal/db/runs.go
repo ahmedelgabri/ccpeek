@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
@@ -218,12 +221,12 @@ func (s *Store) SourceSigs(ctx context.Context) (map[string]SourceSig, error) {
 	defer rows.Close()
 	out := make(map[string]SourceSig)
 	for rows.Next() {
-		var path string
+		var sourcePath string // not "path": the path package is imported here
 		var sig SourceSig
-		if err := rows.Scan(&path, &sig.ContentHash, &sig.StatSig, &sig.ParseState); err != nil {
+		if err := rows.Scan(&sourcePath, &sig.ContentHash, &sig.StatSig, &sig.ParseState); err != nil {
 			return nil, err
 		}
-		out[path] = sig
+		out[sourcePath] = sig
 	}
 	return out, rows.Err()
 }
@@ -237,32 +240,131 @@ func (s *Store) TouchSourceStat(ctx context.Context, path, statSig string) error
 	return err
 }
 
+// CanonicalWorkspace normalizes a session cwd into the workspaces key.
+// Trailing separators and "." / ".." segments are removed, so /x/proj and
+// /x/proj/ are the SAME workspace rather than two — the column is named
+// canonical_path and previously held whatever the agent happened to
+// write, which split one project's sessions across two Projects entries
+// and made ?project= match only one of them.
+//
+// Symlinks are deliberately NOT resolved: the path may name a directory
+// that no longer exists (the archive outlives the checkout), and a
+// filesystem probe per session would make regeneration an I/O pass.
+func CanonicalWorkspace(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return ""
+	}
+	cleaned := path.Clean(filepath.ToSlash(cwd))
+	if cleaned == "." {
+		return ""
+	}
+	return cleaned
+}
+
+// WorkspaceDisplayName is the short label shown for a workspace: its last path
+// segment, falling back to the whole path when there is no segment to
+// take (a bare root).
+func WorkspaceDisplayName(canonical string) string {
+	if canonical == "" {
+		return ""
+	}
+	base := path.Base(canonical)
+	if base == "/" || base == "." {
+		return canonical
+	}
+	return base
+}
+
 // RegenerateWorkspaces rebuilds the derived workspace facet from
 // sessions.cwd (docs/v2-plan.md §5.2: a grouping facet, never a
 // container). Sessions with empty cwd simply have no workspace link.
+//
+// Canonicalization and the display name are computed in Go. They used to
+// be a nested replace(cwd, rtrim(cwd, replace(cwd,'/',”)), ”) — clever,
+// unreadable, and wrong for a cwd ending in '/', where it produced an
+// empty display name.
 func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, cwd FROM sessions WHERE cwd <> ''`)
+	if err != nil {
+		return fmt.Errorf("reading session cwds: %w", err)
+	}
+	type membership struct {
+		sessionID int64
+		canonical string
+	}
+	var members []membership
+	paths := map[string]bool{}
+	for rows.Next() {
+		var id int64
+		var cwd string
+		if err := rows.Scan(&id, &cwd); err != nil {
+			rows.Close()
+			return err
+		}
+		canonical := CanonicalWorkspace(cwd)
+		if canonical == "" {
+			continue
+		}
+		paths[canonical] = true
+		members = append(members, membership{id, canonical})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	stmts := []string{
-		`DELETE FROM session_workspaces`,
-		`DELETE FROM workspaces`,
-		`INSERT INTO workspaces (canonical_path, display_name)
-		 SELECT DISTINCT cwd,
-			CASE WHEN instr(cwd, '/') > 0
-			     THEN replace(cwd, rtrim(cwd, replace(cwd, '/', '')), '')
-			     ELSE cwd END
-		 FROM sessions WHERE cwd <> ''`,
-		`INSERT INTO session_workspaces (session_id, workspace_id)
-		 SELECT s.id, w.id FROM sessions s
-		 JOIN workspaces w ON w.canonical_path = s.cwd`,
-	}
-	for _, q := range stmts {
+	for _, q := range []string{`DELETE FROM session_workspaces`, `DELETE FROM workspaces`} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("regenerating workspaces: %w", err)
 		}
 	}
+
+	ids := make(map[string]int64, len(paths))
+	for canonical := range paths {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO workspaces (canonical_path, display_name) VALUES (?, ?)`,
+			canonical, WorkspaceDisplayName(canonical))
+		if err != nil {
+			return fmt.Errorf("inserting workspace %s: %w", canonical, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		ids[canonical] = id
+	}
+	for _, m := range members {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO session_workspaces (session_id, workspace_id) VALUES (?, ?)
+			 ON CONFLICT DO NOTHING`, m.sessionID, ids[m.canonical]); err != nil {
+			return fmt.Errorf("linking session %d to workspace: %w", m.sessionID, err)
+		}
+	}
 	return tx.Commit()
+}
+
+// TrimRuns keeps only the most recent keep ingest_runs rows (their issues
+// cascade). Watch mode opens a row per debounce fire, and nothing but
+// --rebuild ever removed them, so a long-lived `ccpeek --watch` grew both
+// tables without bound. ListRuns defaults to 10, so nothing downstream
+// needs the tail.
+func (s *Store) TrimRuns(ctx context.Context, keep int) (int, error) {
+	if keep < 1 {
+		keep = 1
+	}
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM ingest_runs WHERE id NOT IN (
+			SELECT id FROM ingest_runs ORDER BY id DESC LIMIT ?)`, keep)
+	if err != nil {
+		return 0, fmt.Errorf("trimming ingest runs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }

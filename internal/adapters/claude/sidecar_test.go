@@ -229,3 +229,54 @@ func TestHistoryTolerantOfMalformedLines(t *testing.T) {
 		t.Errorf("issues = %d, want 1 (the malformed line only)", len(sink.Issues))
 	}
 }
+
+// Task and file-history directories are NAMED by the session that
+// produced them, so the name is the link target — but only when it looks
+// like one. A link emitted for any directory name parked a row in
+// pending_artifact_links that could never resolve, and those are
+// re-scanned every pass and counted as a health signal.
+func TestNonUUIDSidecarDirsEmitNoLink(t *testing.T) {
+	root := t.TempDir()
+	mkfile := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two of each: one legitimately named, one not.
+	const uuid = "12345678-aaaa-bbbb-cccc-1234567890ab"
+	mkfile("tasks/"+uuid+"/1.json", `{"subject":"real","description":"d"}`)
+	mkfile("tasks/scratch-notes/1.json", `{"subject":"stray","description":"d"}`)
+	mkfile("file-history/"+uuid+"/abc@v1", "content")
+	mkfile("file-history/tmp-backup/abc@v1", "content")
+
+	refs, err := New().Discover(context.Background(), agent.Root{Agent: Slug, Path: root})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	sink := &agenttest.Sink{}
+	for _, ref := range refs {
+		if err := New().Parse(context.Background(), ref, sink); err != nil {
+			t.Fatalf("Parse(%s): %v", ref.Path, err)
+		}
+	}
+
+	// All four artifacts are still indexed — only the provenance claim is
+	// withheld.
+	if len(sink.Artifacts) != 4 {
+		t.Fatalf("artifacts = %d, want 4: %+v", len(sink.Artifacts), sink.Artifacts)
+	}
+	if len(sink.ArtifactLinks) != 2 {
+		t.Fatalf("links = %d, want 2 (the uuid-named dirs only): %+v",
+			len(sink.ArtifactLinks), sink.ArtifactLinks)
+	}
+	for _, l := range sink.ArtifactLinks {
+		if l.SessionExternalID != uuid {
+			t.Errorf("link targets %q, want the session uuid", l.SessionExternalID)
+		}
+	}
+}
