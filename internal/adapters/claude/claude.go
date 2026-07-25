@@ -26,6 +26,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/jsonl"
 )
 
 // Slug identifies this adapter.
@@ -323,7 +324,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			}
 		}
 
-		msg, calls := a.convertLine(entry, state.MessageSeq+messageCount)
+		msg, calls, results := a.convertLine(entry, state.MessageSeq+messageCount, sessionID)
 		a.foldSession(&sess, entry, msg)
 		if err := emitSession(); err != nil {
 			return state, err
@@ -337,7 +338,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			}
 			toolCount++
 		}
-		for _, res := range a.resultRecords(entry, sess.ExternalID) {
+		for _, res := range results {
 			if err := sink.ToolResult(res); err != nil {
 				return state, err
 			}
@@ -424,9 +425,16 @@ func drainLine(r *bufio.Reader, w io.Writer) (n int64, terminated bool, err erro
 	}
 }
 
-// convertLine maps one JSONL entry to a canonical message plus any tool
-// calls it issued.
-func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []canon.ToolCall) {
+// convertLine maps one JSONL entry to a canonical message, the tool calls
+// it issued, and the tool results it carried back.
+//
+// The three come out together because they all read the SAME decode. The
+// message JSON used to be unmarshalled once here and again for the
+// results, and its content array decoded on top of that a further three
+// times — for the text, for the calls, and for the results. Five decodes
+// of overlapping bytes, on every line of every transcript, which is the
+// hottest path in the whole indexer.
+func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Message, []canon.ToolCall, []canon.ToolResult) {
 	msg := canon.Message{
 		Seq:              seq,
 		ExternalID:       raw.UUID,
@@ -440,8 +448,10 @@ func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []canon.Tool
 	}
 
 	var payload rawMessage
+	payloadOK := false
 	if len(raw.Message) > 0 {
 		if err := json.Unmarshal(raw.Message, &payload); err == nil {
+			payloadOK = true
 			if payload.Role != "" {
 				msg.Role = canon.Role(payload.Role)
 			}
@@ -469,24 +479,45 @@ func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []canon.Tool
 		msg.Content = synth
 	}
 
-	msg.Text = extractText(payload.Content, raw.Content)
+	content := blocks(payload.Content)
+	msg.Text = extractText(payload.Content, content, raw.Content)
 
-	var calls []canon.ToolCall
-	for _, block := range blocks(payload.Content) {
-		if block.Type != "tool_use" {
-			continue
+	var (
+		calls   []canon.ToolCall
+		results []canon.ToolResult
+	)
+	for _, block := range content {
+		switch block.Type {
+		case "tool_use":
+			calls = append(calls, canon.ToolCall{
+				MessageSeq: seq,
+				ExternalID: block.ID,
+				Name:       block.Name,
+				Kind:       normalizeTool(block.Name),
+				Input:      block.Input,
+				FilePath:   inputFilePath(block.Input),
+				StartedAt:  raw.Timestamp,
+			})
+		case "tool_result":
+			// Only a cleanly decoded payload yields results — the sink
+			// attaches each to its call by tool_use id, whether the call
+			// landed in this pass or a previous one.
+			if !payloadOK || block.ToolUseID == "" {
+				continue
+			}
+			status := "ok"
+			if block.IsError {
+				status = "error"
+			}
+			results = append(results, canon.ToolResult{
+				SessionExternalID: sessionID,
+				CallExternalID:    block.ToolUseID,
+				Status:            status,
+				Excerpt:           excerpt(block.Content),
+			})
 		}
-		calls = append(calls, canon.ToolCall{
-			MessageSeq: seq,
-			ExternalID: block.ID,
-			Name:       block.Name,
-			Kind:       normalizeTool(block.Name),
-			Input:      block.Input,
-			FilePath:   inputFilePath(block.Input),
-			StartedAt:  raw.Timestamp,
-		})
 	}
-	return msg, calls
+	return msg, calls, results
 }
 
 // foldSession accumulates session attributes from entries: first
@@ -510,35 +541,11 @@ func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Messag
 	}
 }
 
-// resultRecords extracts every tool_result block as a canon.ToolResult;
-// the sink attaches each to its call by external id (tool_use block id),
-// whether the call landed in this pass or a previous one.
-func (a *Adapter) resultRecords(raw rawLine, sessionID string) []canon.ToolResult {
-	var payload rawMessage
-	if len(raw.Message) == 0 || json.Unmarshal(raw.Message, &payload) != nil {
-		return nil
-	}
-	var out []canon.ToolResult
-	for _, block := range blocks(payload.Content) {
-		if block.Type != "tool_result" || block.ToolUseID == "" {
-			continue
-		}
-		status := "ok"
-		if block.IsError {
-			status = "error"
-		}
-		out = append(out, canon.ToolResult{
-			SessionExternalID: sessionID,
-			CallExternalID:    block.ToolUseID,
-			Status:            status,
-			Excerpt:           excerpt(block.Content),
-		})
-	}
-	return out
-}
-
+// blocks decodes a message's content array. Claude writes a bare STRING
+// for most user turns, so the shape is checked first: attempting the array
+// decode anyway meant every user line paid for a failed unmarshal.
 func blocks(content json.RawMessage) []contentBlock {
-	if len(content) == 0 {
+	if jsonl.FirstByte(content) != '[' {
 		return nil
 	}
 	var arr []contentBlock
@@ -548,25 +555,36 @@ func blocks(content json.RawMessage) []contentBlock {
 	return arr
 }
 
-func extractText(content, topLevel json.RawMessage) string {
+// extractText takes the content array ALREADY decoded by the caller;
+// decoding it a second time here was the single biggest duplicate on the
+// parse path.
+func extractText(content json.RawMessage, decoded []contentBlock, topLevel json.RawMessage) string {
 	if len(content) > 0 {
-		var s string
-		if err := json.Unmarshal(content, &s); err == nil {
+		if s, ok := jsonString(content); ok {
 			return s
 		}
 		var parts []string
-		for _, b := range blocks(content) {
+		for _, b := range decoded {
 			if b.Type == "text" && b.Text != "" {
 				parts = append(parts, b.Text)
 			}
 		}
 		return strings.Join(parts, "\n")
 	}
-	var s string
-	if err := json.Unmarshal(topLevel, &s); err == nil {
-		return s
+	s, _ := jsonString(topLevel)
+	return s
+}
+
+// jsonString decodes raw only when it actually is a JSON string.
+func jsonString(raw json.RawMessage) (string, bool) {
+	if jsonl.FirstByte(raw) != '"' {
+		return "", false
 	}
-	return ""
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
 }
 
 func excerpt(content json.RawMessage) string {

@@ -69,3 +69,20 @@ func next(br *bufio.Reader, max int) (line []byte, size int64, tooLong bool, err
 		}
 	}
 }
+
+// FirstByte returns the first non-whitespace byte of a JSON value, or 0
+// when there is none. Agent transcripts write the same field as either a
+// bare string or an array of blocks depending on the turn, and checking
+// the shape here saves attempting a decode that is expected to fail on
+// every line of the other kind.
+func FirstByte(raw []byte) byte {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return b
+		}
+	}
+	return 0
+}

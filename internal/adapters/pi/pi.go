@@ -265,7 +265,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			sess.ModifiedAt = e.Timestamp
 		}
 
-		msg, ok := a.convertEntry(e, messageCount, &sess, &currentModel)
+		msg, dec, ok := a.convertEntry(e, messageCount, &sess, &currentModel)
 		if !ok {
 			return nil
 		}
@@ -273,47 +273,41 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 		// Tool calls ride in assistant content blocks; their results
 		// arrive later as dedicated role=toolResult messages referencing
-		// the call id.
-		if e.Type == "message" {
-			var pm piMessage
-			if json.Unmarshal(e.Message, &pm) == nil {
-				switch {
-				case pm.Role == "toolResult" && pm.ToolCallID != "":
-					status := "ok"
-					if pm.IsError {
-						status = "error"
+		// the call id. Both read the payload convertEntry already decoded.
+		if dec.ok {
+			switch {
+			case dec.pm.Role == "toolResult" && dec.pm.ToolCallID != "":
+				status := "ok"
+				if dec.pm.IsError {
+					status = "error"
+				}
+				if err := sink.ToolResult(canon.ToolResult{
+					SessionExternalID: sess.ExternalID,
+					CallExternalID:    dec.pm.ToolCallID,
+					Status:            status,
+					Excerpt:           canon.TruncateBytes(strings.TrimSpace(msg.Text), resultExcerptCap),
+				}); err != nil {
+					return err
+				}
+			default:
+				for _, b := range dec.blocks {
+					if b.Type != "toolCall" {
+						continue
 					}
-					if err := sink.ToolResult(canon.ToolResult{
+					if err := sink.ToolCall(canon.ToolCall{
 						SessionExternalID: sess.ExternalID,
-						CallExternalID:    pm.ToolCallID,
-						Status:            status,
-						Excerpt:           canon.TruncateBytes(strings.TrimSpace(piText(pm.Content)), resultExcerptCap),
+						MessageSeq:        msg.Seq,
+						Seq:               toolCount,
+						ExternalID:        b.ID,
+						Name:              b.Name,
+						Kind:              normalizeTool(b.Name),
+						Input:             b.Arguments,
+						FilePath:          argPath(b.Arguments),
+						StartedAt:         e.Timestamp,
 					}); err != nil {
 						return err
 					}
-				default:
-					var blocks []piBlock
-					if json.Unmarshal(pm.Content, &blocks) == nil {
-						for _, b := range blocks {
-							if b.Type != "toolCall" {
-								continue
-							}
-							if err := sink.ToolCall(canon.ToolCall{
-								SessionExternalID: sess.ExternalID,
-								MessageSeq:        msg.Seq,
-								Seq:               toolCount,
-								ExternalID:        b.ID,
-								Name:              b.Name,
-								Kind:              normalizeTool(b.Name),
-								Input:             b.Arguments,
-								FilePath:          argPath(b.Arguments),
-								StartedAt:         e.Timestamp,
-							}); err != nil {
-								return err
-							}
-							toolCount++
-						}
-					}
+					toolCount++
 				}
 			}
 		}
@@ -343,11 +337,22 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	return sink.Session(sess)
 }
 
-// convertEntry maps one non-header entry to a canonical message. Model is
-// per-entry state established by model_change entries; the walk is file
-// order, which matches the main path for non-branching sessions and is a
-// documented approximation for branched ones.
-func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentModel *string) (canon.Message, bool) {
+// decodedMessage is a "message" entry's payload decoded ONCE. The caller
+// needs the same piMessage and the same content blocks convertEntry has
+// already read, to emit tool calls and results; unmarshalling them again
+// cost two extra decodes of every message line on the parse path.
+type decodedMessage struct {
+	pm     piMessage
+	blocks []piBlock
+	ok     bool
+}
+
+// convertEntry maps one non-header entry to a canonical message, handing
+// back the decoded payload for "message" entries. Model is per-entry state
+// established by model_change entries; the walk is file order, which
+// matches the main path for non-branching sessions and is a documented
+// approximation for branched ones.
+func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentModel *string) (canon.Message, decodedMessage, bool) {
 	base := canon.Message{
 		Seq:              seq,
 		ExternalID:       e.ID,
@@ -360,12 +365,13 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 	case "message":
 		var pm piMessage
 		if err := json.Unmarshal(e.Message, &pm); err != nil {
-			return canon.Message{}, false
+			return canon.Message{}, decodedMessage{}, false
 		}
+		dec := decodedMessage{pm: pm, blocks: piBlocks(pm.Content), ok: true}
 		base.Kind = canon.KindMessage
 		base.Role = canon.Role(pm.Role)
 		base.Content = e.Message
-		base.Text = piText(pm.Content)
+		base.Text = piText(pm.Content, dec.blocks)
 		if pm.Usage != nil {
 			usage := &canon.Usage{
 				InputTokens:      pm.Usage.Input,
@@ -379,7 +385,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 			}
 			base.Usage = usage
 		}
-		return base, true
+		return base, dec, true
 
 	case "model_change":
 		*currentModel = e.ModelID
@@ -388,7 +394,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 		base.Model = e.ModelID
 		base.Text = fmt.Sprintf("model changed to %s/%s", e.Provider, e.ModelID)
 		base.Content = mustJSON(map[string]string{"provider": e.Provider, "modelId": e.ModelID})
-		return base, true
+		return base, decodedMessage{}, true
 
 	case "compaction":
 		base.Kind = canon.KindCompaction
@@ -398,54 +404,67 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 			"summary": e.Summary, "firstKeptEntryId": e.FirstKeptEntryID,
 			"tokensBefore": e.TokensBefore,
 		})
-		return base, true
+		return base, decodedMessage{}, true
 
 	case "branch_summary":
 		base.Kind = canon.KindBranchPoint
 		base.Role = canon.RoleSystem
 		base.Text = e.Summary
 		base.Content = mustJSON(map[string]string{"summary": e.Summary, "fromId": e.FromID})
-		return base, true
+		return base, decodedMessage{}, true
 
 	case "label":
 		base.Kind = canon.KindInfo
 		base.Role = canon.RoleSystem
 		base.Text = fmt.Sprintf("label %q on %s", e.Label, e.TargetID)
 		base.Content = mustJSON(map[string]string{"label": e.Label, "targetId": e.TargetID})
-		return base, true
+		return base, decodedMessage{}, true
 
 	case "session_info":
 		sess.Title = canon.TruncateBytes(e.Name, titleLimit)
-		return canon.Message{}, false
+		return canon.Message{}, decodedMessage{}, false
 
 	case "custom_message":
 		base.Kind = canon.KindInfo
 		base.Role = canon.RoleSystem
 		base.Text = e.CustomType
 		base.Content = e.Content
-		return base, true
+		return base, decodedMessage{}, true
 
 	default:
 		// "custom", "thinking_level_change", and future extension types are
 		// non-transcript state; tolerate silently per the spec.
-		return canon.Message{}, false
+		return canon.Message{}, decodedMessage{}, false
 	}
 }
 
-func piText(content json.RawMessage) string {
-	if len(content) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(content, &s); err == nil {
-		return s
+// piBlocks decodes a message's content array. A content field that is a
+// bare string (Pi's user turns and most tool results) is recognised by
+// shape rather than by attempting the array decode and letting it fail.
+func piBlocks(content json.RawMessage) []piBlock {
+	if jsonl.FirstByte(content) != '[' {
+		return nil
 	}
 	var arr []piBlock
 	if err := json.Unmarshal(content, &arr); err != nil {
+		return nil
+	}
+	return arr
+}
+
+// piText takes the content array ALREADY decoded by the caller.
+func piText(content json.RawMessage, decoded []piBlock) string {
+	if len(content) == 0 {
 		return ""
 	}
+	if jsonl.FirstByte(content) == '"' {
+		var s string
+		if err := json.Unmarshal(content, &s); err == nil {
+			return s
+		}
+	}
 	var parts []string
-	for _, b := range arr {
+	for _, b := range decoded {
 		if b.Type == "text" && b.Text != "" {
 			parts = append(parts, b.Text)
 		}
