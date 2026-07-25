@@ -18,12 +18,11 @@ test.describe("browse artifacts", () => {
 
   test("kind filter narrows the list to plans", async ({ page }) => {
     await page.goto("/artifacts");
-    await page.getByLabel("Filter by kind").selectOption("plan");
+    await page.getByRole("button", { name: /^plan\b/ }).click();
 
-    const rows = page.locator("ul li");
-    await expect(rows.first()).toBeVisible();
-    // Every visible row carries the plan badge.
-    await expect(rows.first().getByText("plan", { exact: true })).toBeVisible();
+    // The kind is a group heading now, not a badge repeated on every row.
+    await expect(page.getByRole("heading", { name: /^plan/ })).toBeVisible();
+    await expect(page.locator("section ul li a").first()).toBeVisible();
   });
 
   test("memory cross-links resolve to sibling artifacts", async ({ page }) => {
@@ -43,7 +42,7 @@ test.describe("browse artifacts", () => {
 
   test("a plan renders as prose, not raw markdown", async ({ page }) => {
     await page.goto("/artifacts");
-    await page.getByLabel("Filter by kind").selectOption("plan");
+    await page.getByRole("button", { name: /^plan\b/ }).click();
     await page.locator("ul li a").first().click();
 
     // Markdown artifacts render via the server-side goldmark hook.
@@ -66,7 +65,7 @@ test.describe("browse sessions", () => {
     // the session page (session-centric model: artifacts attach to
     // sessions, not directories).
     await page.goto("/artifacts");
-    await page.getByLabel("Filter by kind").selectOption("todo_list");
+    await page.getByRole("button", { name: /^todo list\b/ }).click();
     await page.locator("ul li a").first().click();
 
     const chip = page.locator("a[href*='/sessions/']").first();

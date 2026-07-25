@@ -40,10 +40,13 @@ test.describe("SPA", () => {
     ).toBeVisible();
   });
 
-  test("search returns hits with session links", async ({ page }) => {
-    await page.goto("/search");
-    await page.getByPlaceholder(/Search sessions/).fill("hello");
-    await expect(page.locator("ul li").first()).toBeVisible();
+  test("the palette searches and opens a hit", async ({ page }) => {
+    await page.goto("/");
+    await page.keyboard.press("ControlOrMeta+k");
+    const palette = page.getByRole("dialog", { name: /palette/i });
+    await expect(palette).toBeVisible();
+    await palette.getByLabel("Search query").fill("hello");
+    await expect(palette.getByText("Matches")).toBeVisible({ timeout: 10_000 });
   });
 
   test("commands browser lists shell commands", async ({ page }) => {
@@ -129,14 +132,14 @@ test.describe("resilience", () => {
   // be [ and ], indistinguishable from brackets in source code. The
   // control characters that replaced them must never reach the DOM.
   test("search marks matches without leaking delimiters", async ({ page }) => {
-    await page.goto("/search");
-    await page.getByPlaceholder(/Search sessions/).fill("rate");
-    const results = page.locator("ul li");
-    await expect(results.first()).toBeVisible({ timeout: 10_000 });
-    const text = await results.first().innerText();
+    await page.goto("/");
+    await page.keyboard.press("ControlOrMeta+k");
+    const palette = page.getByRole("dialog", { name: /palette/i });
+    await palette.getByLabel("Search query").fill("rate");
+    const marked = palette.locator("mark").first();
+    await expect(marked).toBeVisible({ timeout: 10_000 });
+    const text = await palette.innerText();
     expect(text).not.toContain("\u0002");
     expect(text).not.toContain("\u0003");
-    // The match itself is marked.
-    await expect(results.first().locator("mark").first()).toBeVisible();
   });
 });

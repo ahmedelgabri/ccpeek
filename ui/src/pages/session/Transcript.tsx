@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useHighlight } from "../../highlight";
 import { useRowWindow } from "../../windowed";
-import { Link } from "@tanstack/react-router";
 import {
   fmtCount,
   plural,
@@ -12,8 +11,10 @@ import {
 import type { TranscriptWindow } from "./useSessionData";
 import {
   EmptyNote,
+  PALETTE_KEY,
   Segmented,
   SkeletonRows,
+  openPalette,
   toolColor,
   useToggleSet,
 } from "../../ui";
@@ -262,9 +263,13 @@ export function Transcript({
       {needle && (
         <p className="mb-2 font-mono text-micro text-ink-faint">
           Searching the {fmtCount(msgs.length)} loaded messages. Use{" "}
-          <Link to="/search" className="text-accent hover:underline">
-            Search
-          </Link>{" "}
+          <button
+            type="button"
+            onClick={() => openPalette()}
+            className="text-accent hover:underline"
+          >
+            {PALETTE_KEY} search
+          </button>{" "}
           to cover every session.
         </p>
       )}

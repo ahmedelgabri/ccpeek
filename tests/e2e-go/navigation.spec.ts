@@ -17,7 +17,6 @@ test.describe("navigation", () => {
       { text: "Artifacts", url: "/artifacts" },
       { text: "Scan", url: "/scan" },
       { text: "Compare", url: "/compare" },
-      { text: "Search", url: "/search" },
       { text: "Overview", url: "/" },
     ];
 
@@ -42,8 +41,11 @@ test.describe("navigation", () => {
       page.getByRole("heading", { name: "Secret scan" }),
     ).toBeVisible();
 
-    await page.goto("/search");
-    await expect(page.getByRole("heading", { name: "Search" })).toBeVisible();
+    // /search has no page: it is a doorway that opens the palette and
+    // steps aside, so a v1 bookmark still lands on its results.
+    await page.goto("/search?q=rate");
+    await expect(page.getByRole("dialog", { name: /palette/i })).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
   });
 });
 

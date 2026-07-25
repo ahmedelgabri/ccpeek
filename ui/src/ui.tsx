@@ -9,6 +9,26 @@ import {
 import { Link } from "@tanstack/react-router";
 import { AGENT_COLOR, fmtCost } from "./api";
 
+// The palette's shortcut is Cmd on Apple platforms and Ctrl everywhere
+// else. The handler always accepted both; the hint claimed ⌘ on every
+// platform, which is simply wrong on the Linux and Windows machines this
+// runs on just as happily.
+//
+// It lives here, not in the router, because pages reference it — and a
+// page importing the router that imports the page is a cycle waiting to
+// evaluate in the wrong order.
+export const isApple =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad/.test(navigator.platform);
+export const PALETTE_KEY = isApple ? "⌘K" : "Ctrl K";
+
+/** openPalette raises the ⌘K palette from anywhere, including the places
+ *  that used to link to the /search page. An initial query prefills it, so
+ *  a v1 `/search?q=…` bookmark still lands on its results. */
+export function openPalette(q?: string) {
+  window.dispatchEvent(new CustomEvent("ccpeek-palette", { detail: { q } }));
+}
+
 // AgentDot is the identity mark: a small square in the agent's fixed
 // color. Identity never rides on color alone — pair it with the slug.
 export function AgentDot({ agent }: { agent: string }) {

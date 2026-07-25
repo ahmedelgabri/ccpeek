@@ -104,6 +104,7 @@ export interface Stats {
   workspaces?: WorkspaceStat[];
   recentFiles?: FileTouch[];
   toolKinds?: KindCount[];
+  artifactKinds?: KindCount[];
 }
 
 export interface CommandRow {

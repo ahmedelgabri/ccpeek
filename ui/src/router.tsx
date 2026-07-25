@@ -4,6 +4,8 @@ import {
   createRouter,
   Link,
   Outlet,
+  useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -12,7 +14,6 @@ import { SessionsPage } from "./pages/Sessions";
 import { SessionDetailPage } from "./pages/SessionDetail";
 import { CommandsPage } from "./pages/Commands";
 import { UsagePage } from "./pages/Usage";
-import { SearchPage } from "./pages/Search";
 import { ArtifactsPage } from "./pages/Artifacts";
 import { ArtifactDetailPage } from "./pages/ArtifactDetail";
 import { ScanPage } from "./pages/Scan";
@@ -20,9 +21,13 @@ import { ComparePage } from "./pages/Compare";
 import { Palette } from "./Palette";
 import { ErrorBoundary, ErrorPanel } from "./ErrorState";
 import { getThemePref, setThemePref, type ThemePref } from "./theme";
+import { PALETTE_KEY, openPalette } from "./ui";
+import { useEffect } from "react";
 
 // The sidebar mirrors the entity map: activity first, then the session
-// hub, then what hangs off it.
+// hub, then what hangs off it. Search is deliberately absent: it is the
+// palette (⌘/Ctrl K), reachable from every view, rather than a page you
+// must navigate to before you can start looking.
 const NAV: { to: string; label: string; exact?: boolean }[] = [
   { to: "/", label: "Overview", exact: true },
   { to: "/sessions", label: "Sessions" },
@@ -31,7 +36,6 @@ const NAV: { to: string; label: string; exact?: boolean }[] = [
   { to: "/usage", label: "Usage" },
   { to: "/scan", label: "Scan" },
   { to: "/compare", label: "Compare" },
-  { to: "/search", label: "Search" },
 ];
 
 // IndexingBanner shows while the server's initial index pass runs — the
@@ -127,14 +131,6 @@ function ThemeToggle() {
   );
 }
 
-// The palette's shortcut is Cmd on Apple platforms and Ctrl everywhere
-// else. The handler always accepted both; the hint claimed ⌘ on every
-// platform, which is simply wrong on the Linux and Windows machines this
-// runs on just as happily.
-export const isApple =
-  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-export const PALETTE_KEY = isApple ? "⌘K" : "Ctrl K";
-
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <>
@@ -172,7 +168,7 @@ function SidebarFooter() {
           exactly like a control, so clicking it did nothing. */}
       <button
         type="button"
-        onClick={() => window.dispatchEvent(new Event("ccpeek-palette"))}
+        onClick={() => openPalette()}
         className="microlabel rounded border border-edge px-1.5 py-0.5 transition-colors hover:border-edge-strong hover:text-ink"
       >
         {PALETTE_KEY} search
@@ -212,7 +208,7 @@ function Layout() {
               </Link>
               <button
                 type="button"
-                onClick={() => window.dispatchEvent(new Event("ccpeek-palette"))}
+                onClick={() => openPalette()}
                 aria-label="Search"
                 className="ml-auto rounded-md border border-edge px-2 py-1.5 font-mono text-xs text-ink-dim"
               >
@@ -273,6 +269,31 @@ function pickStrings<K extends string>(
   return out;
 }
 
+// SearchDoorway opens the palette (carrying any ?q) and steps aside to
+// the overview, so the URL never rests on a route with nothing to render.
+function SearchDoorway() {
+  const search = useSearch({ from: "/search" });
+  const navigate = useNavigate();
+  useEffect(() => {
+    // Deferred by a tick: effects run children-first, and this route is a
+    // child of the layout that renders the palette — so a synchronous
+    // dispatch fires before the palette has registered its listener and
+    // is simply lost.
+    // Both deferred by a tick, in this order. Effects run children-first
+    // and this route is a child of the layout that renders the palette, so
+    // a synchronous dispatch fires before the palette has registered its
+    // listener. Navigating first would be worse still: it unmounts this
+    // component, and the cleanup would cancel the very dispatch it is
+    // waiting on.
+    const t = window.setTimeout(() => {
+      openPalette(search.q ?? "");
+      void navigate({ to: "/", replace: true });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [search.q, navigate]);
+  return null;
+}
+
 const rootRoute = createRootRoute({ component: Layout });
 
 // Session-centric URLs (docs/v2-plan.md §8.2): /sessions/$agent/$sessionId.
@@ -313,10 +334,16 @@ const routeTree = rootRoute.addChildren([
     path: "/usage",
     component: UsagePage,
   }),
+  // /search has no page of its own any more — searching is the palette,
+  // reachable from every view. The ROUTE survives because the v1
+  // compatibility layer still 301s `/search/?q=…` here (see
+  // navigation.spec.ts), and a bookmark that lands on "nothing here" is a
+  // regression even when the feature moved somewhere better.
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/search",
-    component: SearchPage,
+    component: SearchDoorway,
+    validateSearch: (s: Record<string, unknown>) => pickStrings(s, ["q"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
