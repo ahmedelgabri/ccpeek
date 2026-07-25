@@ -97,7 +97,7 @@ var (
 // Exported for tests and for explaining "why is this model unpriced".
 //
 // An empty (or whitespace-only) identifier has no candidates at all:
-// messages.model defaults to '' and adapters attach usage independently
+// messages.model defaults to ” and adapters attach usage independently
 // of the model field — a Codex token_count that arrives before the
 // turn_context event, a Cursor blob without `model`, an OpenCode message
 // with tokens but no modelID — so this is ordinary data, and it must

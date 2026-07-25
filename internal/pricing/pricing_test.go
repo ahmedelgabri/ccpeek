@@ -109,7 +109,7 @@ func TestEmbeddedSnapshot(t *testing.T) {
 
 // A message can legitimately carry usage with no model: Codex attaches a
 // token_count delta before the turn_context event names the model, Cursor
-// blobs may omit it, and messages.model defaults to ''. Lookup must report
+// blobs may omit it, and messages.model defaults to ”. Lookup must report
 // "unpriced" for those rather than indexing an empty candidate list.
 func TestBlankModelIsUnpricedNotFatal(t *testing.T) {
 	tbl, err := Embedded()

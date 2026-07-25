@@ -255,9 +255,17 @@ func (s *Store) LinkMemoryArtifacts(ctx context.Context) (added, removed int, er
 		return s.reconcileResolverLinks(ctx, canon.ArtifactMemory, nil)
 	}
 
+	// INDEXED BY pins idx_tool_calls_memory_writes, whose WHERE clause is
+	// exactly this one. The planner will not choose it on its own — it
+	// cannot estimate the selectivity of a leading-wildcard LIKE, so it
+	// falls back to visiting every file_write/file_edit call ever indexed
+	// and discarding the ones outside a memory directory. The pin makes it
+	// a covering scan of only the rows that can produce a link, and it
+	// fails loudly rather than silently degrading if the index is ever
+	// renamed away.
 	rows, err = s.db.QueryContext(ctx, `
 		SELECT DISTINCT se.agent_id, tc.session_id, tc.file_path
-		FROM tool_calls tc
+		FROM tool_calls tc INDEXED BY idx_tool_calls_memory_writes
 		JOIN sessions se ON se.id = tc.session_id
 		WHERE tc.kind IN ('file_write', 'file_edit')
 		  AND tc.file_path LIKE '%/memory/%'`)

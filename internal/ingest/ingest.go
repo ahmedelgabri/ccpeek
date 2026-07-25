@@ -199,11 +199,18 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	// pair set every pass — a later session approving an already-linked
 	// plan gains its link, and a plan rewritten under the same name loses
 	// links whose evidence no longer holds.
-	if _, _, err := r.store.LinkPlanArtifacts(ctx); err != nil {
-		return nil, r.fail(ctx, report, started, err)
-	}
-	if _, _, err := r.store.LinkMemoryArtifacts(ctx); err != nil {
-		return nil, r.fail(ctx, report, started, err)
+	//
+	// Gated on the pass having changed something. Reconciliation reads
+	// every plan's content and every memory-writing tool call, so running
+	// it unconditionally made each watch-mode debounce fire — most of
+	// which change nothing relevant — pay a full pass over the corpus.
+	if report.FilesChanged > 0 || prunedSources > 0 {
+		if _, _, err := r.store.LinkPlanArtifacts(ctx); err != nil {
+			return nil, r.fail(ctx, report, started, err)
+		}
+		if _, _, err := r.store.LinkMemoryArtifacts(ctx); err != nil {
+			return nil, r.fail(ctx, report, started, err)
+		}
 	}
 	// Workspaces and usage rollups derive from sessions and messages;
 	// sidecar-only passes (artifacts, history) leave both untouched and

@@ -2,8 +2,11 @@ package secrets
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
@@ -413,5 +416,119 @@ func TestWildcardIgnoreCoversRuleOnEntity(t *testing.T) {
 		if f.EntityType == "message" && f.RuleID == "slack-bot-token" && !f.Ignored {
 			t.Errorf("wildcard ignore did not cover %+v", f)
 		}
+	}
+}
+
+// Redaction cuts on rune boundaries: a byte slice through a multi-byte
+// character left invalid UTF-8 in the findings list.
+func TestRedactIsRuneSafe(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "****"},
+		{"short", "****"},
+		{"12345678", "****"},
+		{"123456789", "1234…89"},
+		{"AKIAIOSFODNN7EXAMPLE", "AKIA…LE"},
+		// Multi-byte at both cut points.
+		{"日本語のとても長い秘密です", "日本語の…です"},
+		{"🎉🎊🎈🎁🎂🍰🧁🍭🍬", "🎉🎊🎈🎁…🍭🍬"},
+	}
+	for _, tc := range cases {
+		got := redact(tc.in)
+		if got != tc.want {
+			t.Errorf("redact(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("redact(%q) produced invalid UTF-8", tc.in)
+		}
+	}
+}
+
+// A redaction must never reveal the middle of a secret, whatever its
+// length or encoding.
+func TestRedactNeverLeaksTheWholeSecret(t *testing.T) {
+	for _, secret := range []string{
+		strings.Repeat("a", 9),
+		strings.Repeat("é", 20),
+		"ghp_" + strings.Repeat("x", 36),
+	} {
+		got := redact(secret)
+		if got == secret {
+			t.Errorf("redact(%q) returned the secret unchanged", secret)
+		}
+		if len([]rune(got)) >= len([]rune(secret)) {
+			t.Errorf("redact(%q) = %q is not shorter than the secret", secret, got)
+		}
+	}
+}
+
+// Artifact scanning must not hold the whole changed set in memory: the
+// listing query selects identity only, and each worker fetches its own
+// content. This checks the behaviour that guarantees it — findings still
+// come out right when artifact bodies are large and numerous.
+func TestScanArtifactsLoadsContentPerWorker(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Several large artifacts, one of which hides a token near the end so
+	// the whole body genuinely has to be examined.
+	const n = 12
+	padding := strings.Repeat("harmless log line\n", 20_000)
+	token := "xoxb-9999888877" + "76-1234512345" + "67-QqWwEeRrTtYyUuIiOoPpAaSs"
+	for i := range n {
+		content := padding
+		if i == n-1 {
+			content += "export SLACK_TOKEN=" + token + "\n"
+		}
+		if _, err := w.UpsertArtifact(canon.Artifact{
+			Agent: "claude-code", Kind: canon.ArtifactPaste,
+			Name: fmt.Sprintf("paste-%d.txt", i), Content: content,
+		}, fmt.Sprintf("hash-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	sc, err := New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, report, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.ArtifactsScanned != n {
+		t.Errorf("artifacts scanned = %d, want %d", report.ArtifactsScanned, n)
+	}
+	var hits int
+	for _, f := range findings {
+		if f.EntityType == "artifact" {
+			hits++
+			if !strings.HasSuffix(f.NaturalKey, fmt.Sprintf("paste-%d.txt", n-1)) {
+				t.Errorf("finding on the wrong artifact: %s", f.NaturalKey)
+			}
+		}
+	}
+	if hits != 1 {
+		t.Errorf("artifact findings = %d, want 1", hits)
+	}
+
+	// Second pass: nothing changed, so nothing is re-detected — the
+	// incremental contract still holds with per-worker loading.
+	_, report2, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report2.ArtifactsScanned != 0 {
+		t.Errorf("re-scanned %d unchanged artifacts, want 0", report2.ArtifactsScanned)
 	}
 }

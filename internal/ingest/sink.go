@@ -149,9 +149,37 @@ func (s *dbSink) SessionRelation(rel canon.SessionRelation) error {
 	return err
 }
 
+// searchableArtifactKinds are the kinds worth full-text indexing. The
+// excluded ones are machine-generated (the usage report is a whole HTML
+// document, a shell snapshot is an environment dump) or hold their
+// substance in metadata rather than content (file history) — indexing
+// them cost a second copy of every byte in search_docs plus the FTS5
+// tokens, and returned hits nobody searches for.
+var searchableArtifactKinds = map[canon.ArtifactKind]bool{
+	canon.ArtifactPlan:       true,
+	canon.ArtifactMemory:     true,
+	canon.ArtifactTodoList:   true,
+	canon.ArtifactTaskGroup:  true,
+	canon.ArtifactPaste:      true,
+	canon.ArtifactUsageFacet: true,
+}
+
 func (s *dbSink) Artifact(a canon.Artifact) error {
 	if a.Agent == "" {
 		a.Agent = s.agent
+	}
+	// One bound applied where every adapter's artifacts converge, rather
+	// than in each of them.
+	if content, truncated := canon.TruncateArtifactContent(a.Content); truncated {
+		a.Content = content
+		if err := s.Issue(canon.Issue{
+			Agent: s.agent, Severity: canon.SeverityWarn, Category: "size",
+			SourcePath: a.SourcePath,
+			Detail: fmt.Sprintf("%s %q truncated to %d bytes for indexing (the file on disk is untouched)",
+				a.Kind, a.Name, canon.ArtifactContentLimit),
+		}); err != nil {
+			return err
+		}
 	}
 	id, err := s.writer.UpsertArtifact(a, s.sourceHash)
 	if err != nil {
@@ -160,8 +188,10 @@ func (s *dbSink) Artifact(a canon.Artifact) error {
 	if err := s.writer.ClearArtifactSearchDocs(id); err != nil {
 		return err
 	}
-	if err := s.writer.InsertSearchDoc(0, id, string(a.Kind), 0, a.Name, a.Content); err != nil {
-		return err
+	if searchableArtifactKinds[a.Kind] {
+		if err := s.writer.InsertSearchDoc(0, id, string(a.Kind), 0, a.Name, a.Content); err != nil {
+			return err
+		}
 	}
 	if s.artifactIDs == nil {
 		s.artifactIDs = make(map[artifactKey]int64)

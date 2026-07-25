@@ -12,11 +12,55 @@ package canon
 import (
 	"encoding/json"
 	"time"
+	"unicode/utf8"
 )
 
 // AgentSlug identifies a supported agent adapter, e.g. "claude-code", "pi",
 // "codex", "opencode", "cursor".
 type AgentSlug string
+
+// TruncateBytes cuts s to at most max bytes WITHOUT splitting a UTF-8
+// rune. Slicing a string at a byte offset — which every truncation in the
+// adapters and the scanner used to do — cuts multi-byte characters in
+// half, and Go's JSON encoder then substitutes U+FFFD: a session whose
+// first prompt is in Japanese, or ends with an emoji at the boundary, got
+// a replacement character in its title.
+func TruncateBytes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	// Walk back off any continuation bytes (0b10xxxxxx) to land on a
+	// rune start.
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// ArtifactContentLimit bounds how much of an artifact's bytes are stored.
+// Session JSONL has always had a per-line ceiling; sidecars had none, so a
+// multi-megabyte paste or usage report was held whole in artifacts.content
+// AND again in search_docs, where FTS5 then tokenized it. Content past the
+// limit is truncated with a marker — the file itself is untouched on disk.
+const ArtifactContentLimit = 1 << 20 // 1 MiB
+
+// ArtifactTruncationMarker is appended to content cut at
+// ArtifactContentLimit, so a reader can tell truncation from a short file.
+const ArtifactTruncationMarker = "\n\n[ccpeek: content truncated at 1 MiB]\n"
+
+// TruncateArtifactContent bounds s at ArtifactContentLimit on a UTF-8
+// boundary, appending the marker when it cuts. Returns the content and
+// whether it was truncated.
+func TruncateArtifactContent(s string) (string, bool) {
+	if len(s) <= ArtifactContentLimit {
+		return s, false
+	}
+	return TruncateBytes(s, ArtifactContentLimit) + ArtifactTruncationMarker, true
+}
 
 // Origin records how a session entered the store.
 type Origin string

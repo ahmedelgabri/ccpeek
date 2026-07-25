@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"time"
@@ -27,16 +28,43 @@ const blockSeconds = 5 * 60 * 60
 // Blocks aggregates usage into fixed UTC-aligned 5-hour windows, newest
 // first, priced in auto mode (reported costs preferred, computed
 // otherwise). limit bounds the number of windows returned.
+//
+// The window bound is pushed into SQL rather than applied to the result.
+// "What did my last few quota windows look like" is a recent-data
+// question, but both aggregates used to scan the whole of message_usage —
+// grouping on a computed unixepoch() expression, so no index applied —
+// and then discard everything but the newest `limit` windows in Go. Years
+// of history were read to answer about one day of it.
 func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 24
 	}
-	where := ""
-	args := []any{}
+	agentFilter := ""
+	var agentArgs []any
 	if agent != "" {
-		where = "AND a.slug = ?"
-		args = append(args, agent)
+		agentFilter = "AND a.slug = ?"
+		agentArgs = append(agentArgs, agent)
 	}
+
+	// The cutoff is anchored on the newest usage-bearing message rather
+	// than on wall-clock now: an archive whose last session was a month
+	// ago must still show that month's windows, not an empty view. Finding
+	// the anchor is an index-backed MAX; everything after it is a bounded
+	// range on idx_messages_created.
+	latest, err := s.latestUsageAt(ctx, agentFilter, agentArgs)
+	if err != nil {
+		return nil, err
+	}
+	if latest.IsZero() {
+		return nil, nil
+	}
+	// One extra window of slack: the newest window is partial, so walking
+	// back exactly `limit` windows from inside it can clip the oldest.
+	cutoffWin := latest.Unix()/blockSeconds - int64(limit)
+	cutoff := time.Unix(cutoffWin*blockSeconds, 0).UTC().Format(time.RFC3339)
+
+	where := "AND m.created_at >= ? " + agentFilter
+	args := append([]any{cutoff}, agentArgs...)
 
 	// True distinct sessions per window, computed apart from the
 	// per-model aggregation below: sessions that touch several models in
@@ -131,7 +159,6 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		return nil, err
 	}
 
-	nowWin := time.Now().UTC().Unix() / blockSeconds
 	wins := make([]int64, 0, len(byWin))
 	for w := range byWin {
 		wins = append(wins, w)
@@ -140,6 +167,7 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 	if len(wins) > limit {
 		wins = wins[:limit]
 	}
+	nowWin := time.Now().UTC().Unix() / blockSeconds
 	out := make([]BlockRow, 0, len(wins))
 	for _, w := range wins {
 		b := byWin[w]
@@ -148,4 +176,30 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		out = append(out, *b)
 	}
 	return out, nil
+}
+
+// latestUsageAt returns the newest timestamp carrying usage, which anchors
+// the blocks window. Empty (zero) when nothing is indexed.
+func (s *Service) latestUsageAt(ctx context.Context, agentFilter string, args []any) (time.Time, error) {
+	var raw sql.NullString
+	row := s.store.ReadDB().QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT MAX(m.created_at)
+		FROM message_usage u
+		JOIN messages m ON m.id = u.message_id
+		JOIN sessions se ON se.id = m.session_id
+		JOIN agents a ON a.id = se.agent_id
+		WHERE m.created_at IS NOT NULL %s`, agentFilter), args...)
+	if err := row.Scan(&raw); err != nil {
+		return time.Time{}, fmt.Errorf("finding newest usage: %w", err)
+	}
+	if !raw.Valid || raw.String == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, raw.String)
+	if err != nil {
+		// An unparseable stamp is not worth failing the view over; the
+		// caller falls back to reporting no windows.
+		return time.Time{}, nil
+	}
+	return t.UTC(), nil
 }

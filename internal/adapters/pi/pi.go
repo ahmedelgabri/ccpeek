@@ -453,11 +453,10 @@ func piText(content json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
+// truncate bounds s at n BYTES without splitting a UTF-8 rune — a title
+// ending mid-character renders as U+FFFD once encoded.
 func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
+	return canon.TruncateBytes(s, n)
 }
 
 func mustJSON(v any) json.RawMessage {

@@ -711,3 +711,226 @@ func TestHistoryQueryable(t *testing.T) {
 		t.Errorf("substring filter = %+v", filtered)
 	}
 }
+
+// seedUsage writes one usage-bearing assistant message per entry.
+func seedUsage(t *testing.T, store *db.Store, rows []struct{ session, model, ts string }) {
+	t.Helper()
+	ctx := context.Background()
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq := map[string]int{}
+	for _, r := range rows {
+		id, err := w.UpsertSession(canon.Session{
+			Agent: "claude-code", ExternalID: r.session, CWD: "/home/u/proj",
+		}, "h-"+r.session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ts, err := time.Parse(time.RFC3339, r.ts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.InsertMessage(id, "claude-code", canon.Message{
+			Seq: seq[r.session], Role: canon.RoleAssistant, Kind: canon.KindMessage,
+			CreatedAt: ts, Model: r.model,
+			Usage: &canon.Usage{InputTokens: 100, OutputTokens: 10},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		seq[r.session]++
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newStore(t *testing.T) (*db.Store, *pricing.Table) {
+	t.Helper()
+	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, table
+}
+
+// Session counts must stay true distinct counts per group after the
+// switch to the rollup side table — a session spanning two models on one
+// day is ONE session that day, not two, and one spanning two days is one
+// session per day but one session overall when grouped by model.
+func TestUsageDistinctSessionsPerGrouping(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+	seedUsage(t, store, []struct{ session, model, ts string }{
+		{"s1", "model-a", "2026-07-01T10:00:00Z"},
+		{"s1", "model-b", "2026-07-01T11:00:00Z"}, // same session+day, 2nd model
+		{"s1", "model-a", "2026-07-02T10:00:00Z"}, // same session, next day
+		{"s2", "model-a", "2026-07-01T12:00:00Z"},
+	})
+	if err := store.RegenerateWorkspaces(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	byDay, err := svc.Usage(ctx, UsageFilter{GroupBy: "day"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	days := map[string]int64{}
+	for _, r := range byDay {
+		days[r.Group] = r.Sessions
+	}
+	if days["2026-07-01"] != 2 {
+		t.Errorf("2026-07-01 sessions = %d, want 2 (s1 counted once despite two models)", days["2026-07-01"])
+	}
+	if days["2026-07-02"] != 1 {
+		t.Errorf("2026-07-02 sessions = %d, want 1", days["2026-07-02"])
+	}
+
+	byModel, err := svc.Usage(ctx, UsageFilter{GroupBy: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := map[string]int64{}
+	for _, r := range byModel {
+		models[r.Group] = r.Sessions
+	}
+	if models["model-a"] != 2 {
+		t.Errorf("model-a sessions = %d, want 2 (s1 counted once across two days)", models["model-a"])
+	}
+	if models["model-b"] != 1 {
+		t.Errorf("model-b sessions = %d, want 1", models["model-b"])
+	}
+
+	byProject, err := svc.Usage(ctx, UsageFilter{GroupBy: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byProject) != 1 || byProject[0].Sessions != 2 {
+		t.Errorf("project groups = %+v, want one group with 2 sessions", byProject)
+	}
+}
+
+// The date filters still narrow the distinct counts the same way they
+// narrow the aggregates.
+func TestUsageDistinctSessionsRespectFilters(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+	seedUsage(t, store, []struct{ session, model, ts string }{
+		{"s1", "model-a", "2026-07-01T10:00:00Z"},
+		{"s2", "model-a", "2026-07-05T10:00:00Z"},
+		{"s3", "model-b", "2026-07-09T10:00:00Z"},
+	})
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	rows, err := svc.Usage(ctx, UsageFilter{
+		GroupBy: "agent", Since: "2026-07-04", Until: "2026-07-09",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want one agent group", rows)
+	}
+	if rows[0].Sessions != 1 {
+		t.Errorf("sessions in range = %d, want 1 (only s2)", rows[0].Sessions)
+	}
+
+	rows, err = svc.Usage(ctx, UsageFilter{GroupBy: "agent", Model: "model-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Sessions != 1 {
+		t.Errorf("model-filtered rows = %+v, want one group with 1 session", rows)
+	}
+}
+
+// Blocks anchors its window on the newest indexed usage, not on wall
+// clock: an archive whose last session was weeks ago must still show that
+// week's windows rather than an empty view.
+func TestBlocksAnchorsOnNewestActivity(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+	// Deliberately in the past relative to any plausible "now".
+	seedUsage(t, store, []struct{ session, model, ts string }{
+		{"old-1", "model-a", "2020-03-01T10:05:00Z"},
+		{"old-2", "model-a", "2020-03-01T16:00:00Z"}, // the next window
+	})
+	svc := New(store, table)
+
+	blocks, err := svc.Blocks(ctx, "", 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 windows from a stale archive", len(blocks))
+	}
+	if blocks[0].Start < blocks[1].Start {
+		t.Error("blocks are not newest-first")
+	}
+	for _, b := range blocks {
+		if b.Active {
+			t.Errorf("window %s marked active, but now is not inside it", b.Start)
+		}
+	}
+}
+
+// The limit bounds how far back the aggregate reaches, so old history is
+// not scanned to answer about recent windows.
+func TestBlocksLimitBoundsTheWindowRange(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+	// Five windows, one every 5 hours, plus one far older.
+	seedUsage(t, store, []struct{ session, model, ts string }{
+		{"a", "model-a", "2020-01-01T00:00:00Z"}, // ancient, far outside any limit
+		{"b", "model-a", "2026-07-01T00:05:00Z"},
+		{"c", "model-a", "2026-07-01T05:05:00Z"},
+		{"d", "model-a", "2026-07-01T10:05:00Z"},
+		{"e", "model-a", "2026-07-01T15:05:00Z"},
+	})
+	svc := New(store, table)
+
+	all, err := svc.Blocks(ctx, "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ancient row is ~2400 windows back, well past a 200-window reach.
+	if len(all) != 4 {
+		t.Fatalf("blocks = %d, want the 4 recent windows", len(all))
+	}
+
+	few, err := svc.Blocks(ctx, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(few) > 3 {
+		t.Errorf("blocks with limit 2 = %d, want at most 3 (limit plus slack)", len(few))
+	}
+	if few[0].Start != all[0].Start {
+		t.Errorf("newest window = %s, want %s", few[0].Start, all[0].Start)
+	}
+}
+
+// An empty store answers with no windows rather than failing.
+func TestBlocksEmptyStore(t *testing.T) {
+	store, table := newStore(t)
+	blocks, err := New(store, table).Blocks(context.Background(), "", 24)
+	if err != nil {
+		t.Fatalf("Blocks on an empty store: %v", err)
+	}
+	if len(blocks) != 0 {
+		t.Errorf("blocks = %d, want 0", len(blocks))
+	}
+}

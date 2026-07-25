@@ -282,26 +282,36 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, n
 	}
 }
 
+// scanArtifacts detects over every artifact whose content hash moved.
+//
+// The listing query selects IDENTITY ONLY. Artifact content is unbounded
+// — a Claude usage report is a whole HTML document, a paste-cache entry is
+// whatever the user pasted, and a file-history artifact packs every
+// version of a file into its metadata — so selecting content up front held
+// the entire changed set in memory at once, which on a first scan after a
+// rebuild is the whole corpus. Each worker fetches its own row instead,
+// mirroring how detectSessionMessages already pages.
 func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEntity, report *Report) error {
-	type artifactRow struct {
-		kind, name, content, metadata, hash string
-		key                                 string // agent-qualified: slug/kind/name
+	type artifactRef struct {
+		id   int64
+		hash string
+		key  string // agent-qualified: slug/kind/name
 	}
 	rows, err := sc.store.ReadDB().QueryContext(ctx, `
-		SELECT a.slug, ar.kind, ar.name, ar.content, ar.metadata_json, ar.content_hash
+		SELECT ar.id, a.slug, ar.kind, ar.name, ar.content_hash
 		FROM artifacts ar JOIN agents a ON a.id = ar.agent_id`)
 	if err != nil {
 		return fmt.Errorf("listing artifacts: %w", err)
 	}
-	var changed []artifactRow
+	var changed []artifactRef
 	for rows.Next() {
-		var r artifactRow
-		var slug string
-		if err := rows.Scan(&slug, &r.kind, &r.name, &r.content, &r.metadata, &r.hash); err != nil {
+		var r artifactRef
+		var slug, kind, name string
+		if err := rows.Scan(&r.id, &slug, &kind, &name, &r.hash); err != nil {
 			rows.Close()
 			return err
 		}
-		r.key = slug + "/" + r.kind + "/" + r.name
+		r.key = slug + "/" + kind + "/" + name
 		if markChanged(state, "artifact", r.key, r.hash) {
 			changed = append(changed, r)
 		}
@@ -319,20 +329,9 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEnti
 			if err := gctx.Err(); err != nil {
 				return err
 			}
-			text := r.content
-			if len(r.metadata) > 2 { // structured children (todos, versions) live here
-				text += "\n" + r.metadata
-			}
-			var findings []Finding
-			for _, m := range sc.detector.DetectString(text) {
-				findings = append(findings, Finding{
-					RuleID:        m.RuleID,
-					Description:   m.Description,
-					EntityType:    "artifact",
-					NaturalKey:    "artifact/" + r.key,
-					MatchRedacted: redact(m.Secret),
-					Line:          m.StartLine,
-				})
+			findings, err := sc.detectArtifact(gctx, r.id, "artifact/"+r.key)
+			if err != nil {
+				return err
 			}
 			if err := sc.replaceFindings(gctx,
 				"artifact", "artifact/"+r.key, "artifact", r.key, r.hash,
@@ -348,6 +347,34 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEnti
 	}
 	report.ArtifactsScanned = int(scanned.Load())
 	return nil
+}
+
+// detectArtifact loads one artifact's text and runs the detector over it.
+// The row is released as soon as the scan is done, so peak memory is one
+// artifact per worker rather than the whole changed set.
+func (sc *Scanner) detectArtifact(ctx context.Context, artifactID int64, naturalKey string) ([]Finding, error) {
+	var content, metadata string
+	if err := sc.store.ReadDB().QueryRowContext(ctx,
+		`SELECT content, metadata_json FROM artifacts WHERE id = ?`, artifactID).
+		Scan(&content, &metadata); err != nil {
+		return nil, fmt.Errorf("reading artifact %d: %w", artifactID, err)
+	}
+	text := content
+	if len(metadata) > 2 { // structured children (todos, versions) live here
+		text += "\n" + metadata
+	}
+	var findings []Finding
+	for _, m := range sc.detector.DetectString(text) {
+		findings = append(findings, Finding{
+			RuleID:        m.RuleID,
+			Description:   m.Description,
+			EntityType:    "artifact",
+			NaturalKey:    naturalKey,
+			MatchRedacted: redact(m.Secret),
+			Line:          m.StartLine,
+		})
+	}
+	return findings, nil
 }
 
 // replaceFindings swaps one entity's findings and records its scan state
@@ -482,10 +509,14 @@ func wildcardKey(f Finding) string {
 	return f.NaturalKey + "/" + f.RuleID + "/*"
 }
 
-// redact keeps just enough of a secret to recognize it.
+// redact keeps just enough of a secret to recognize it. Both ends are cut
+// on RUNE boundaries: a byte slice through a multi-byte character left
+// invalid UTF-8 in the findings list, which the JSON encoder then rendered
+// as U+FFFD.
 func redact(secret string) string {
-	if len(secret) <= 8 {
+	runes := []rune(secret)
+	if len(runes) <= 8 {
 		return "****"
 	}
-	return secret[:4] + "…" + secret[len(secret)-2:]
+	return string(runes[:4]) + "…" + string(runes[len(runes)-2:])
 }

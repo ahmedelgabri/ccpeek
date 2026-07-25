@@ -500,11 +500,7 @@ func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Messag
 		sess.GitBranch = raw.GitBranch
 	}
 	if sess.Title == "" && msg.Role == canon.RoleUser && !msg.IsSidechain && msg.Text != "" {
-		title := strings.TrimSpace(msg.Text)
-		if len(title) > titleLimit {
-			title = title[:titleLimit]
-		}
-		sess.Title = title
+		sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), titleLimit)
 	}
 }
 
@@ -578,11 +574,7 @@ func excerpt(content json.RawMessage) string {
 		// Structured tool_result content: keep a bounded raw slice.
 		s = string(content)
 	}
-	s = strings.TrimSpace(s)
-	if len(s) > resultExcerptCap {
-		s = s[:resultExcerptCap]
-	}
-	return s
+	return canon.TruncateBytes(strings.TrimSpace(s), resultExcerptCap)
 }
 
 func normalizeTool(name string) canon.ToolKind {

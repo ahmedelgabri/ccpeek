@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
@@ -164,5 +165,151 @@ func TestSinkCommitsAccumulateAcrossSources(t *testing.T) {
 	}
 	if report.Messages != 2 {
 		t.Errorf("messages = %d, want 2", report.Messages)
+	}
+}
+
+// Artifact content is unbounded on disk — a usage report is a whole HTML
+// document, a paste is whatever the user pasted — and it was stored whole
+// in artifacts.content AND again in search_docs. One bound applies where
+// every adapter's artifacts converge.
+func TestSinkCapsArtifactContent(t *testing.T) {
+	ctx := context.Background()
+	store := newSinkStore(t)
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report := &Report{}
+	sink := newSink(w, "claude-code", "/paste-cache/big.txt", "hash", false)
+	huge := strings.Repeat("secret-ish padding ", canon.ArtifactContentLimit/10)
+	if len(huge) <= canon.ArtifactContentLimit {
+		t.Fatalf("fixture is only %d bytes, expected it over the limit", len(huge))
+	}
+	if err := sink.Artifact(canon.Artifact{
+		Kind: canon.ArtifactPaste, Name: "big.txt", Content: huge,
+		SourcePath: "/paste-cache/big.txt",
+	}); err != nil {
+		t.Fatalf("Artifact: %v", err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	sink.commitTo(report)
+
+	var stored string
+	if err := store.ReadDB().QueryRowContext(ctx,
+		`SELECT content FROM artifacts WHERE name = 'big.txt'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) > canon.ArtifactContentLimit+len(canon.ArtifactTruncationMarker) {
+		t.Errorf("stored %d bytes, over the %d limit", len(stored), canon.ArtifactContentLimit)
+	}
+	if !strings.HasSuffix(stored, canon.ArtifactTruncationMarker) {
+		t.Error("truncated artifact carries no marker")
+	}
+
+	// The truncation is reported, not silent.
+	if len(report.Issues) != 1 {
+		t.Fatalf("issues = %d, want 1 truncation warning", len(report.Issues))
+	}
+	if report.Issues[0].Category != "size" {
+		t.Errorf("issue category = %q, want size", report.Issues[0].Category)
+	}
+	if report.Issues[0].Severity != canon.SeverityWarn {
+		t.Errorf("issue severity = %q, want warn", report.Issues[0].Severity)
+	}
+}
+
+// Content that fits is stored verbatim and reports nothing.
+func TestSinkLeavesSmallArtifactsAlone(t *testing.T) {
+	ctx := context.Background()
+	store := newSinkStore(t)
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := &Report{}
+	sink := newSink(w, "claude-code", "/plans/p.md", "hash", false)
+	body := "# Plan\n\nDo the thing."
+	if err := sink.Artifact(canon.Artifact{
+		Kind: canon.ArtifactPlan, Name: "p.md", Content: body, SourcePath: "/plans/p.md",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	sink.commitTo(report)
+
+	var stored string
+	if err := store.ReadDB().QueryRowContext(ctx,
+		`SELECT content FROM artifacts WHERE name = 'p.md'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != body {
+		t.Errorf("content = %q, want it verbatim", stored)
+	}
+	if len(report.Issues) != 0 {
+		t.Errorf("issues = %+v, want none", report.Issues)
+	}
+}
+
+// Machine-generated kinds are indexed as artifacts but kept out of the
+// full-text index, where they cost a second copy of every byte plus FTS
+// tokens and return hits nobody searches for.
+func TestSinkOnlyFullTextIndexesProseKinds(t *testing.T) {
+	ctx := context.Background()
+	store := newSinkStore(t)
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := newSink(w, "claude-code", "/x", "hash", false)
+
+	kinds := []struct {
+		kind       canon.ArtifactKind
+		searchable bool
+	}{
+		{canon.ArtifactPlan, true},
+		{canon.ArtifactMemory, true},
+		{canon.ArtifactTodoList, true},
+		{canon.ArtifactPaste, true},
+		{canon.ArtifactUsageReport, false},
+		{canon.ArtifactShellSnapshot, false},
+		{canon.ArtifactFileHistory, false},
+	}
+	for _, k := range kinds {
+		if err := sink.Artifact(canon.Artifact{
+			Kind: k.kind, Name: string(k.kind) + "-artifact",
+			Content: "distinctive" + string(k.kind), SourcePath: "/x",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, k := range kinds {
+		var n int
+		if err := store.ReadDB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM search_docs WHERE doc_type = ?`, string(k.kind)).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if k.searchable && n != 1 {
+			t.Errorf("%s search docs = %d, want 1", k.kind, n)
+		}
+		if !k.searchable && n != 0 {
+			t.Errorf("%s search docs = %d, want 0", k.kind, n)
+		}
+		// Either way the artifact itself is indexed and browsable.
+		if err := store.ReadDB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM artifacts WHERE kind = ?`, string(k.kind)).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("%s artifacts = %d, want 1", k.kind, n)
+		}
 	}
 }

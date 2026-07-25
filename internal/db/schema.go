@@ -145,6 +145,15 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_kind ON tool_calls(kind, started_at DE
 CREATE INDEX IF NOT EXISTS idx_tool_calls_external ON tool_calls(session_id, external_id) WHERE external_id <> '';
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(name);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path) WHERE file_path <> '';
+-- The memory resolver's exact predicate. Without it that reconciliation
+-- visits every file_write/file_edit call ever indexed on each pass just
+-- to discard the ones outside a memory directory; with it the scan is
+-- over the handful of rows that can actually produce a link. The index
+-- WHERE clause must match the query's literally for the planner to use it
+-- (see LinkMemoryArtifacts).
+CREATE INDEX IF NOT EXISTS idx_tool_calls_memory_writes
+	ON tool_calls(file_path, session_id)
+	WHERE kind IN ('file_write', 'file_edit') AND file_path LIKE '%/memory/%';
 
 -- Artifacts stand alone; sessions attach via artifact_sessions with
 -- explicit relation + evidence.

@@ -264,11 +264,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}
 				messageCount++
 				if msg.Role == canon.RoleUser && sess.Title == "" && msg.Text != "" {
-					t := strings.TrimSpace(msg.Text)
-					if len(t) > titleLimit {
-						t = t[:titleLimit]
-					}
-					sess.Title = t
+					sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), titleLimit)
 				}
 				if msg.Role == canon.RoleAssistant {
 					pendingAsst = &msg
