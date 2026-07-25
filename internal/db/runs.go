@@ -295,7 +295,6 @@ func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
 		canonical string
 	}
 	var members []membership
-	paths := map[string]bool{}
 	for rows.Next() {
 		var id int64
 		var cwd string
@@ -307,7 +306,6 @@ func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
 		if canonical == "" {
 			continue
 		}
-		paths[canonical] = true
 		members = append(members, membership{id, canonical})
 	}
 	rows.Close()
@@ -326,24 +324,36 @@ func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
 		}
 	}
 
-	ids := make(map[string]int64, len(paths))
-	for canonical := range paths {
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO workspaces (canonical_path, display_name) VALUES (?, ?)`,
-			canonical, WorkspaceDisplayName(canonical))
-		if err != nil {
-			return fmt.Errorf("inserting workspace %s: %w", canonical, err)
-		}
-		id, err := res.LastInsertId()
-		if err != nil {
-			return err
-		}
-		ids[canonical] = id
+	insertWorkspace, err := tx.PrepareContext(ctx,
+		`INSERT INTO workspaces (canonical_path, display_name) VALUES (?, ?)`)
+	if err != nil {
+		return err
 	}
+	defer insertWorkspace.Close()
+	insertMember, err := tx.PrepareContext(ctx,
+		`INSERT INTO session_workspaces (session_id, workspace_id) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insertMember.Close()
+
+	// One pass: a workspace row is created the first time a session names
+	// it, so there is no separate path set to keep in step with the ids.
+	ids := make(map[string]int64)
 	for _, m := range members {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_workspaces (session_id, workspace_id) VALUES (?, ?)
-			 ON CONFLICT DO NOTHING`, m.sessionID, ids[m.canonical]); err != nil {
+		id, ok := ids[m.canonical]
+		if !ok {
+			res, err := insertWorkspace.ExecContext(ctx,
+				m.canonical, WorkspaceDisplayName(m.canonical))
+			if err != nil {
+				return fmt.Errorf("inserting workspace %s: %w", m.canonical, err)
+			}
+			if id, err = res.LastInsertId(); err != nil {
+				return err
+			}
+			ids[m.canonical] = id
+		}
+		if _, err := insertMember.ExecContext(ctx, m.sessionID, id); err != nil {
 			return fmt.Errorf("linking session %d to workspace: %w", m.sessionID, err)
 		}
 	}

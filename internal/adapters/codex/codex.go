@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/jsonl"
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/jsonl"
 )
 
 // Slug identifies this adapter.
@@ -299,10 +299,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				if err := emitSession(); err != nil {
 					return err
 				}
-				out := item.Output
-				if len(out) > excerptCap {
-					out = out[:excerptCap]
-				}
+				out := canon.TruncateBytes(strings.TrimSpace(item.Output), excerptCap)
 				return sink.ToolResult(canon.ToolResult{
 					SessionExternalID: sess.ExternalID,
 					CallExternalID:    item.CallID,
@@ -438,11 +435,4 @@ func normalizeTool(name string) canon.ToolKind {
 	default:
 		return canon.ToolOther
 	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

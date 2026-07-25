@@ -112,11 +112,14 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 		args = append(args, f.Agent)
 	}
 	if f.Project != "" {
+		// The column holds a canonical path, so the caller's must be
+		// canonicalized to match it — otherwise ?project=/home/u/proj/
+		// finds nothing while ?project=/home/u/proj finds everything.
 		where = append(where, `se.id IN (
 			SELECT sw.session_id FROM session_workspaces sw
 			JOIN workspaces w ON w.id = sw.workspace_id
 			WHERE w.canonical_path = ?)`)
-		args = append(args, f.Project)
+		args = append(args, db.CanonicalWorkspace(f.Project))
 	}
 	if f.Model != "" {
 		where = append(where, `se.id IN (

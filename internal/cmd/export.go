@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
@@ -45,17 +44,9 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 }
 
-// exclusiveUpperBound turns an inclusive YYYY-MM-DD into the next day,
-// matching the query layer's `< until` semantics.
-func exclusiveUpperBound(to string) string {
-	if to == "" {
-		return ""
-	}
-	if t, err := time.Parse("2006-01-02", to); err == nil {
-		return t.AddDate(0, 0, 1).Format("2006-01-02")
-	}
-	return to
-}
+// The query layer now owns the inclusive→exclusive conversion for every
+// transport (see query.exclusiveUntil), so --to is passed through as the
+// user wrote it. Converting here as well added a second day to the range.
 
 func runExportCommands(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
@@ -86,7 +77,7 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 			Project: project,
 			Query:   search,
 			Since:   from,
-			Until:   exclusiveUpperBound(to),
+			Until:   to,
 			Limit:   page,
 			Offset:  offset,
 		})

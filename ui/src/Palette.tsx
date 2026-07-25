@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { api } from "./api";
+import { stripMarkers } from "./snippet";
 
 interface Item {
   label: string;
@@ -37,7 +38,7 @@ export function Palette() {
 
   const hits = useQuery({
     queryKey: ["palette-search", q],
-    queryFn: () => api.search(q, "8"),
+    queryFn: () => api.search(q, "", "8"),
     enabled: open && q.trim().length >= 2,
   });
 
@@ -57,7 +58,7 @@ export function Palette() {
   const results: Item[] = (hits.data ?? [])
     .filter((h) => h.sessionId)
     .map((h) => ({
-      label: h.snippet.replaceAll("[", "").replaceAll("]", "").slice(0, 70),
+      label: stripMarkers(h.snippet).slice(0, 70),
       hint: `${h.agent} · ${h.docType}`,
       // Land on the matching message, mirroring the Search page.
       go: () =>

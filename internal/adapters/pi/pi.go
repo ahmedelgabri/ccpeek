@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/adapters/jsonl"
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/jsonl"
 )
 
 // Slug identifies this adapter.
@@ -287,7 +287,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 						SessionExternalID: sess.ExternalID,
 						CallExternalID:    pm.ToolCallID,
 						Status:            status,
-						Excerpt:           truncate(strings.TrimSpace(piText(pm.Content)), resultExcerptCap),
+						Excerpt:           canon.TruncateBytes(strings.TrimSpace(piText(pm.Content)), resultExcerptCap),
 					}); err != nil {
 						return err
 					}
@@ -318,7 +318,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			}
 		}
 		if sess.Title == "" && msg.Role == canon.RoleUser && msg.Text != "" {
-			sess.Title = truncate(strings.TrimSpace(msg.Text), titleLimit)
+			sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), titleLimit)
 		}
 		if err := sink.Message(msg); err != nil {
 			return err
@@ -415,7 +415,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 		return base, true
 
 	case "session_info":
-		sess.Title = truncate(e.Name, titleLimit)
+		sess.Title = canon.TruncateBytes(e.Name, titleLimit)
 		return canon.Message{}, false
 
 	case "custom_message":
@@ -451,12 +451,6 @@ func piText(content json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-// truncate bounds s at n BYTES without splitting a UTF-8 rune — a title
-// ending mid-character renders as U+FFFD once encoded.
-func truncate(s string, n int) string {
-	return canon.TruncateBytes(s, n)
 }
 
 func mustJSON(v any) json.RawMessage {

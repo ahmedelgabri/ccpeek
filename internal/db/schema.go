@@ -297,9 +297,11 @@ CREATE TABLE IF NOT EXISTS rollup_session_days (
 	workspace_id INTEGER NOT NULL DEFAULT 0,
 	model TEXT NOT NULL DEFAULT '',
 	session_id INTEGER NOT NULL,
+	-- No secondary index: the only reader groups/filters on day, which the
+	-- primary key's leading column already covers. A session_id index was
+	-- never seeked and was rebuilt over every row on every regeneration.
 	PRIMARY KEY (day, agent_id, workspace_id, model, session_id)
 );
-CREATE INDEX IF NOT EXISTS idx_rollup_session_days_session ON rollup_session_days(session_id);
 
 -- Secret-scan findings are derived (rescannable); the user's ignore
 -- decisions live in user_annotations keyed by natural key.

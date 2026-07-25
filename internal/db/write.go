@@ -574,19 +574,17 @@ func (s *Store) ResolvePending(ctx context.Context) (resolved, remaining int, er
 
 	// Anything still parked has now failed a pass. Bump its counter and
 	// drop what has failed too many — the endpoint is not late, it is
-	// absent.
-	for _, q := range []string{
-		`UPDATE pending_relations SET attempts = attempts + 1`,
-		`DELETE FROM pending_relations WHERE attempts > ?`,
-		`UPDATE pending_artifact_links SET attempts = attempts + 1`,
-		`DELETE FROM pending_artifact_links WHERE attempts > ?`,
-	} {
-		var args []any
-		if strings.HasPrefix(q, "DELETE") {
-			args = append(args, pendingLinkAttemptLimit)
+	// absent. (Written out per table rather than looped: the loop it
+	// replaced decided whether to bind an argument by testing whether the
+	// statement text started with "DELETE".)
+	for _, table := range []string{"pending_relations", "pending_artifact_links"} {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE `+table+` SET attempts = attempts + 1`); err != nil {
+			return 0, 0, fmt.Errorf("ageing %s: %w", table, err)
 		}
-		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
-			return 0, 0, fmt.Errorf("ageing pending links: %w", err)
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM `+table+` WHERE attempts > ?`, pendingLinkAttemptLimit); err != nil {
+			return 0, 0, fmt.Errorf("pruning %s: %w", table, err)
 		}
 	}
 

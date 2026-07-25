@@ -86,6 +86,9 @@ func seedExportCommandsDB(t *testing.T) string {
 		 VALUES (1, 1, 'sess-1', '/src/proj', '2025-01-01T00:00:00Z', '/src/sess-1.jsonl')`,
 		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, started_at)
 		 VALUES (1, 0, 'Bash', 'shell', '{"command":"ls -la"}', '2025-01-01T00:00:00Z')`,
+		// A second command the NEXT day, so a --to boundary is observable.
+		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, started_at)
+		 VALUES (1, 1, 'Bash', 'shell', '{"command":"whoami"}', '2025-01-02T00:00:00Z')`,
 	}
 	for _, q := range stmts {
 		if _, err := store.DB().ExecContext(ctx, q); err != nil {
@@ -158,4 +161,42 @@ func captureOutputPair(t *testing.T, fn func() error) (string, string) {
 		return string(stdout), string(stderr) + callErr.Error()
 	}
 	return string(stdout), string(stderr)
+}
+
+// --to is an INCLUSIVE date, and the conversion to an exclusive SQL bound
+// belongs to the query layer alone. Converting here as well — which this
+// command used to do — silently stretched every export by one extra day.
+func TestRunExportCommandsToIsInclusiveAndNotDoubleConverted(t *testing.T) {
+	dataFile := seedExportCommandsDB(t)
+
+	exportTo := func(to string) string {
+		t.Helper()
+		cmd := newExportTestCommand(dataFile, "plain")
+		if err := cmd.Flags().Set("to", to); err != nil {
+			t.Fatal(err)
+		}
+		stdout, stderr := captureOutputPair(t, func() error {
+			return runExportCommands(cmd, nil)
+		})
+		if stderr != "" {
+			t.Fatalf("to=%s: unexpected stderr %q", to, stderr)
+		}
+		return stdout
+	}
+
+	// The named day is included…
+	day1 := exportTo("2025-01-01")
+	if !strings.Contains(day1, "ls -la") {
+		t.Errorf("--to 2025-01-01 excluded that day's command: %q", day1)
+	}
+	// …and the day after is not.
+	if strings.Contains(day1, "whoami") {
+		t.Errorf("--to 2025-01-01 reached into the next day: %q", day1)
+	}
+
+	// Extending the bound picks the later command up.
+	day2 := exportTo("2025-01-02")
+	if !strings.Contains(day2, "whoami") {
+		t.Errorf("--to 2025-01-02 excluded that day's command: %q", day2)
+	}
 }

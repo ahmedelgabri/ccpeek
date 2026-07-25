@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net"
 	"net/http"
 	"net/netip"
@@ -24,9 +23,8 @@ func sameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || !isLoopbackHost(u.Hostname()) {
-				w.WriteHeader(http.StatusForbidden)
-				_ = json.NewEncoder(w).Encode(envelope{
-					Schema: payloadSchema, Error: "cross-origin requests are not allowed",
+				writeEnvelope(w, http.StatusForbidden, envelope{
+					Error: "cross-origin requests are not allowed",
 				})
 				return
 			}

@@ -2,6 +2,10 @@
 // size ceiling that SKIPS oversized lines instead of aborting the whole
 // source — one pathological record must never cost the file's valid
 // ones. Memory stays bounded by the ceiling, not the file.
+//
+// It lives outside internal/adapters because the MCP transport reads
+// newline-delimited JSON-RPC with the same policy: one unreadable
+// message must not end the session.
 package jsonl
 
 import (

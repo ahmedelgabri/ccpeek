@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api } from "../api";
 import { agentLabel } from "../ui";
+import { markSnippet } from "../snippet";
 
 const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
 
@@ -67,7 +68,7 @@ export function SearchPage() {
             </div>
             <p
               className="text-sm [&>mark]:rounded [&>mark]:bg-accent/30 [&>mark]:px-0.5 [&>mark]:text-ink"
-              dangerouslySetInnerHTML={{ __html: highlight(h.snippet) }}
+              dangerouslySetInnerHTML={{ __html: markSnippet(h.snippet) }}
             />
             {h.sessionId && (
               <Link
@@ -93,23 +94,4 @@ export function SearchPage() {
       </ul>
     </div>
   );
-}
-
-// Escape everything, then convert the API's match markers to <mark>.
-// FTS5 wraps matched terms in U+0002/U+0003 (see query.SnippetOpen).
-// Brackets were the old delimiters, which made a hit inside a markdown
-// link, a slice expression or a JSON array indistinguishable from a match
-// and produced stray, unbalanced <mark> tags. Control characters cannot
-// occur in indexed text, so the split is unambiguous.
-const MATCH_OPEN = "\u0002";
-const MATCH_CLOSE = "\u0003";
-
-function highlight(snippet: string): string {
-  const escaped = snippet
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  return escaped
-    .replaceAll(MATCH_OPEN, "<mark>")
-    .replaceAll(MATCH_CLOSE, "</mark>");
 }

@@ -33,31 +33,25 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_session_days`); err != nil {
 		return fmt.Errorf("clearing session days: %w", err)
 	}
-	// The session-day membership set, carrying the same dimensions as the
-	// aggregate above so any grouping can COUNT(DISTINCT session_id) over
-	// pre-aggregated rows instead of re-scanning message_usage.
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rollup_session_days (day, agent_id, workspace_id, model, session_id)
-		SELECT DISTINCT
-			substr(COALESCE(m.created_at, s.created_at, ''), 1, 10),
-			s.agent_id,
-			COALESCE(sw.workspace_id, 0),
-			m.model,
-			s.id
-		FROM message_usage u
-		JOIN messages m ON m.id = u.message_id
-		JOIN sessions s ON s.id = m.session_id
-		LEFT JOIN session_workspaces sw ON sw.session_id = s.id`); err != nil {
-		return fmt.Errorf("aggregating session days: %w", err)
-	}
-
+	// ONE scan produces both tables. Grouping by the rollup dimensions
+	// PLUS session_id yields exactly the rollup_session_days rows; the
+	// coarser rollup_usage_daily is that same result re-accumulated below
+	// by dropping session_id from the key, which also makes the distinct
+	// session count free (one group per session).
+	//
+	// The tradeoff is a prepared INSERT per session-day instead of one
+	// set-based INSERT..SELECT, against one fewer scan of this four-way
+	// join. Measured on 100k usage rows / 4k sessions / 30 days / 2 models
+	// (BenchmarkRegenerateRollups): 442ms merged vs 552ms for two scans —
+	// the scan dominates, and the 8k prepared execs inside the open
+	// transaction do not. Re-measure before reshaping this.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
 			substr(COALESCE(m.created_at, s.created_at, ''), 1, 10) AS day,
 			s.agent_id,
 			COALESCE(sw.workspace_id, 0) AS workspace_id,
 			m.model,
-			COUNT(DISTINCT s.id),
+			s.id,
 			COUNT(*),
 			SUM(u.input_tokens),
 			SUM(u.output_tokens),
@@ -73,47 +67,82 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions s ON s.id = m.session_id
 		LEFT JOIN session_workspaces sw ON sw.session_id = s.id
-		GROUP BY day, s.agent_id, workspace_id, m.model`)
+		GROUP BY day, s.agent_id, workspace_id, m.model, s.id`)
 	if err != nil {
 		return fmt.Errorf("aggregating usage: %w", err)
 	}
 	defer rows.Close()
 
-	type rollupRow struct {
+	// key identifies one rollup_usage_daily row; the scan yields one group
+	// per (key, session), so folding on key both aggregates the daily row
+	// and counts its distinct sessions.
+	type key struct {
 		day                  string
 		agentID, workspaceID int64
 		model                string
-		sessions, messages   int64
-		in, out, cr, cw      int64
-		reported, estimated  float64
-		priced               bool
 	}
-	var out []rollupRow
+	type rollupRow struct {
+		key
+		sessions, messages  int64
+		in, out, cr, cw     int64
+		reported, estimated float64
+		unpriced            int64
+	}
+
+	sessionDays, err := tx.PrepareContext(ctx, `
+		INSERT INTO rollup_session_days (day, agent_id, workspace_id, model, session_id)
+		VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer sessionDays.Close()
+
+	daily := map[key]*rollupRow{}
+	var order []key
 	for rows.Next() {
-		var r rollupRow
+		var k key
+		var sessionID int64
+		var messages, in, out, cr, cw int64
+		var reported float64
 		var uin, uout, ucr, ucw, unreported int64
-		if err := rows.Scan(&r.day, &r.agentID, &r.workspaceID, &r.model,
-			&r.sessions, &r.messages, &r.in, &r.out, &r.cr, &r.cw,
-			&r.reported, &uin, &uout, &ucr, &ucw, &unreported); err != nil {
+		if err := rows.Scan(&k.day, &k.agentID, &k.workspaceID, &k.model,
+			&sessionID, &messages, &in, &out, &cr, &cw,
+			&reported, &uin, &uout, &ucr, &ucw, &unreported); err != nil {
 			return err
 		}
-		r.priced = true
+		if _, err := sessionDays.ExecContext(ctx,
+			k.day, k.agentID, k.workspaceID, k.model, sessionID); err != nil {
+			return fmt.Errorf("writing session day: %w", err)
+		}
+
+		r := daily[k]
+		if r == nil {
+			r = &rollupRow{key: k}
+			daily[k] = r
+			order = append(order, k)
+		}
+		r.sessions++ // one group per session, so this IS the distinct count
+		r.messages += messages
+		r.in += in
+		r.out += out
+		r.cr += cr
+		r.cw += cw
+		r.reported += reported
 		if unreported > 0 {
-			rate, ok := pricer.Lookup(r.model)
-			if ok {
-				r.estimated = rate.Cost(canon.Usage{
+			if rate, ok := pricer.Lookup(k.model); ok {
+				r.estimated += rate.Cost(canon.Usage{
 					InputTokens: uin, OutputTokens: uout,
 					CacheReadTokens: ucr, CacheWriteTokens: ucw,
 				})
 			} else {
-				r.priced = false
+				r.unpriced++
 			}
 		}
-		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	rows.Close()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO rollup_usage_daily
@@ -126,11 +155,12 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		return err
 	}
 	defer stmt.Close()
-	for _, r := range out {
+	for _, k := range order {
+		r := daily[k]
 		if _, err := stmt.ExecContext(ctx, r.day, r.agentID, r.workspaceID,
 			r.model, r.sessions, r.messages, r.in, r.out, r.cr, r.cw,
 			r.reported+r.estimated, r.reported, r.estimated,
-			boolInt(r.priced)); err != nil {
+			boolInt(r.unpriced == 0)); err != nil {
 			return fmt.Errorf("writing rollup: %w", err)
 		}
 	}

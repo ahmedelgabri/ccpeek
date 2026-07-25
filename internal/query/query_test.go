@@ -411,6 +411,9 @@ func TestBlocksDistinctSessionsAcrossModels(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
 	blocks, err := New(store, table).Blocks(ctx, "", 200)
 	if err != nil {
 		t.Fatal(err)
@@ -721,8 +724,11 @@ func TestHistoryQueryable(t *testing.T) {
 	}
 }
 
+// usageSeed is one seeded usage-bearing message.
+type usageSeed struct{ session, model, ts string }
+
 // seedUsage writes one usage-bearing assistant message per entry.
-func seedUsage(t *testing.T, store *db.Store, rows []struct{ session, model, ts string }) {
+func seedUsage(t *testing.T, store *db.Store, rows []usageSeed) {
 	t.Helper()
 	ctx := context.Background()
 	w, err := store.BeginWrite(ctx)
@@ -779,7 +785,7 @@ func newStore(t *testing.T) (*db.Store, *pricing.Table) {
 func TestUsageDistinctSessionsPerGrouping(t *testing.T) {
 	ctx := context.Background()
 	store, table := newStore(t)
-	seedUsage(t, store, []struct{ session, model, ts string }{
+	seedUsage(t, store, []usageSeed{
 		{"s1", "model-a", "2026-07-01T10:00:00Z"},
 		{"s1", "model-b", "2026-07-01T11:00:00Z"}, // same session+day, 2nd model
 		{"s1", "model-a", "2026-07-02T10:00:00Z"}, // same session, next day
@@ -837,7 +843,7 @@ func TestUsageDistinctSessionsPerGrouping(t *testing.T) {
 func TestUsageDistinctSessionsRespectFilters(t *testing.T) {
 	ctx := context.Background()
 	store, table := newStore(t)
-	seedUsage(t, store, []struct{ session, model, ts string }{
+	seedUsage(t, store, []usageSeed{
 		{"s1", "model-a", "2026-07-01T10:00:00Z"},
 		{"s2", "model-a", "2026-07-05T10:00:00Z"},
 		{"s3", "model-b", "2026-07-09T10:00:00Z"},
@@ -887,10 +893,14 @@ func TestBlocksAnchorsOnNewestActivity(t *testing.T) {
 	ctx := context.Background()
 	store, table := newStore(t)
 	// Deliberately in the past relative to any plausible "now".
-	seedUsage(t, store, []struct{ session, model, ts string }{
+	seedUsage(t, store, []usageSeed{
 		{"old-1", "model-a", "2020-03-01T10:05:00Z"},
 		{"old-2", "model-a", "2020-03-01T16:00:00Z"}, // the next window
 	})
+	// Blocks anchors on the rollups, which every ingest pass regenerates.
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
 	svc := New(store, table)
 
 	blocks, err := svc.Blocks(ctx, "", 24)
@@ -916,13 +926,16 @@ func TestBlocksLimitBoundsTheWindowRange(t *testing.T) {
 	ctx := context.Background()
 	store, table := newStore(t)
 	// Five windows, one every 5 hours, plus one far older.
-	seedUsage(t, store, []struct{ session, model, ts string }{
+	seedUsage(t, store, []usageSeed{
 		{"a", "model-a", "2020-01-01T00:00:00Z"}, // ancient, far outside any limit
 		{"b", "model-a", "2026-07-01T00:05:00Z"},
 		{"c", "model-a", "2026-07-01T05:05:00Z"},
 		{"d", "model-a", "2026-07-01T10:05:00Z"},
 		{"e", "model-a", "2026-07-01T15:05:00Z"},
 	})
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
 	svc := New(store, table)
 
 	all, err := svc.Blocks(ctx, "", 200)
@@ -1027,7 +1040,7 @@ func TestSearchSnippetDelimitersSurviveBracketyContent(t *testing.T) {
 func TestUntilIsInclusiveEverywhere(t *testing.T) {
 	ctx := context.Background()
 	store, table := newStore(t)
-	seedUsage(t, store, []struct{ session, model, ts string }{
+	seedUsage(t, store, []usageSeed{
 		{"before", "model-a", "2026-07-01T10:00:00Z"},
 		{"onTheDay", "model-a", "2026-07-02T23:59:00Z"},
 		{"after", "model-a", "2026-07-03T00:01:00Z"},
@@ -1123,5 +1136,43 @@ func TestArtifactSizeIsBytes(t *testing.T) {
 	}
 	if detail.Size != len(content) {
 		t.Errorf("detail size = %d, want %d bytes", detail.Size, len(content))
+	}
+}
+
+// workspaces.canonical_path holds a canonical path, so a caller-supplied
+// one has to be canonicalized before it is compared — otherwise the
+// write-side canonicalization silently made `?project=/home/u/proj/`
+// match nothing while `/home/u/proj` matched everything.
+func TestProjectFilterCanonicalizesTheCallerPath(t *testing.T) {
+	ctx := context.Background()
+	store, table := newStore(t)
+	seedUsage(t, store, []usageSeed{
+		{"in-proj", "model-a", "2026-07-01T10:00:00Z"},
+	})
+	if err := store.RegenerateWorkspaces(ctx); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	// Every spelling of the same directory finds the session.
+	for _, project := range []string{
+		"/home/u/proj",
+		"/home/u/proj/",
+		"/home/u/proj//",
+		"/home/u/./proj",
+		"  /home/u/proj  ",
+	} {
+		got, err := svc.Sessions(ctx, SessionsFilter{Project: project})
+		if err != nil {
+			t.Fatalf("project=%q: %v", project, err)
+		}
+		if len(got) != 1 || got[0].ID != "in-proj" {
+			t.Errorf("project=%q matched %d sessions, want 1", project, len(got))
+		}
+	}
+
+	// A genuinely different directory still matches nothing.
+	if got, err := svc.Sessions(ctx, SessionsFilter{Project: "/home/u/other"}); err != nil || len(got) != 0 {
+		t.Errorf("unrelated project matched %d sessions (err %v), want 0", len(got), err)
 	}
 }

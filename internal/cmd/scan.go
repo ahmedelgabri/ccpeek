@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -102,12 +101,7 @@ func runScan(cmd *cobra.Command, _ []string) error {
 	}
 
 	if format == "json" {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(map[string]any{
-			"schema": payloadSchema,
-			"data":   findings,
-		}); err != nil {
+		if err := emit(findings, false); err != nil {
 			return err
 		}
 	} else {

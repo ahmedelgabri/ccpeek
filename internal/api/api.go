@@ -389,10 +389,18 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, orEmpty(hits))
 }
 
-func writeJSON(w http.ResponseWriter, status int, data any) {
+// writeEnvelope is the ONE place a response envelope reaches the wire.
+// It was hand-rolled in four places and the fourth copy (the cross-origin
+// 403) had already lost its Content-Type header.
+func writeEnvelope(w http.ResponseWriter, status int, e envelope) {
+	e.Schema = payloadSchema
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Data: data})
+	_ = json.NewEncoder(w).Encode(e)
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	writeEnvelope(w, status, envelope{Data: data})
 }
 
 // writeError maps domain errors onto statuses: caller mistakes
@@ -419,9 +427,7 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		log.Printf("api error: %v", err)
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Error: detail})
+	writeEnvelope(w, status, envelope{Error: detail})
 }
 
 // maxRequestBody bounds the mutating endpoints' payloads. Both carry a
@@ -441,8 +447,9 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
+// writeBadRequest is distinct from writeError on purpose: some callers
+// (format validation, path-segment parsing) produce bare errors that
+// writeError would classify as a 500.
 func writeBadRequest(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusBadRequest)
-	_ = json.NewEncoder(w).Encode(envelope{Schema: payloadSchema, Error: err.Error()})
+	writeEnvelope(w, http.StatusBadRequest, envelope{Error: err.Error()})
 }

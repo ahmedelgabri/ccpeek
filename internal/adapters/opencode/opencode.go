@@ -179,7 +179,7 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 	sess := canon.Session{
 		Agent:      Slug,
 		ExternalID: doc.ID,
-		Title:      truncate(doc.Title, titleLimit),
+		Title:      canon.TruncateBytes(doc.Title, titleLimit),
 		CreatedAt:  millis(doc.Time.Created),
 		ModifiedAt: millis(doc.Time.Updated),
 		CWD:        doc.Directory,
@@ -379,10 +379,4 @@ func millis(ms int64) time.Time {
 		return time.Time{}
 	}
 	return time.UnixMilli(ms).UTC()
-}
-
-// truncate bounds s at n BYTES without splitting a UTF-8 rune — a title
-// ending mid-character renders as U+FFFD once encoded.
-func truncate(s string, n int) string {
-	return canon.TruncateBytes(s, n)
 }

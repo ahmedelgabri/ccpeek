@@ -36,8 +36,13 @@ const blockSeconds = 5 * 60 * 60
 // and then discard everything but the newest `limit` windows in Go. Years
 // of history were read to answer about one day of it.
 func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockRow, error) {
-	if limit <= 0 || limit > 200 {
+	// Clamp to the CEILING, not down to the default: limit=500 used to
+	// yield 24 windows, so asking for more silently gave you fewer.
+	if limit <= 0 {
 		limit = 24
+	}
+	if limit > 200 {
+		limit = 200
 	}
 	agentFilter := ""
 	var agentArgs []any
@@ -46,12 +51,11 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		agentArgs = append(agentArgs, agent)
 	}
 
-	// The cutoff is anchored on the newest usage-bearing message rather
-	// than on wall-clock now: an archive whose last session was a month
-	// ago must still show that month's windows, not an empty view. Finding
-	// the anchor is an index-backed MAX; everything after it is a bounded
-	// range on idx_messages_created.
-	latest, err := s.latestUsageAt(ctx, agentFilter, agentArgs)
+	// The cutoff is anchored on the newest indexed usage rather than on
+	// wall-clock now: an archive whose last session was a month ago must
+	// still show that month's windows, not an empty view. Everything after
+	// the anchor is a bounded range on idx_messages_created.
+	latest, err := s.latestUsageDay(ctx, agentFilter, agentArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -178,28 +182,34 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 	return out, nil
 }
 
-// latestUsageAt returns the newest timestamp carrying usage, which anchors
-// the blocks window. Empty (zero) when nothing is indexed.
-func (s *Service) latestUsageAt(ctx context.Context, agentFilter string, args []any) (time.Time, error) {
+// latestUsageDay returns the newest day carrying usage, which anchors the
+// blocks window. Empty when nothing is indexed.
+//
+// It reads rollup_session_days, NOT the message_usage join. SQLite's
+// min/max optimisation only applies to a single-table FROM, so taking
+// MAX(m.created_at) across that join walked idx_messages_created
+// backwards probing three tables per row until it found one with usage —
+// hundreds of milliseconds when the newest messages carry none, or when
+// an agent filter matches nothing. Day granularity is enough: the window
+// bound already carries a full window of slack.
+func (s *Service) latestUsageDay(ctx context.Context, agentFilter string, args []any) (time.Time, error) {
 	var raw sql.NullString
 	row := s.store.ReadDB().QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT MAX(m.created_at)
-		FROM message_usage u
-		JOIN messages m ON m.id = u.message_id
-		JOIN sessions se ON se.id = m.session_id
-		JOIN agents a ON a.id = se.agent_id
-		WHERE m.created_at IS NOT NULL %s`, agentFilter), args...)
+		SELECT MAX(r.day) FROM rollup_session_days r
+		JOIN agents a ON a.id = r.agent_id
+		WHERE 1=1 %s`, agentFilter), args...)
 	if err := row.Scan(&raw); err != nil {
 		return time.Time{}, fmt.Errorf("finding newest usage: %w", err)
 	}
 	if !raw.Valid || raw.String == "" {
 		return time.Time{}, nil
 	}
-	t, err := time.Parse(time.RFC3339, raw.String)
+	t, err := time.Parse("2006-01-02", raw.String)
 	if err != nil {
-		// An unparseable stamp is not worth failing the view over; the
-		// caller falls back to reporting no windows.
+		// An unparseable day is not worth failing the view over; the caller
+		// falls back to reporting no windows.
 		return time.Time{}, nil
 	}
-	return t.UTC(), nil
+	// The day's END, so the newest window inside it is inside the bound.
+	return t.UTC().Add(24 * time.Hour), nil
 }

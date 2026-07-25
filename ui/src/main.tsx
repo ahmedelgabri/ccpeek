@@ -26,7 +26,10 @@ const queryClient = new QueryClient({
 // server notifies every two seconds for its whole duration (minutes on a
 // large history), so an unthrottled handler refetched everything on
 // screen that often, against a database already saturated by ingest.
-const REFRESH_COALESCE_MS = 2000;
+// Above the server's own notify floor (one every 2s during indexing, see
+// internal/cmd/root.go) — at exactly that floor each event lands after the
+// previous timer fired and nothing coalesced.
+const REFRESH_COALESCE_MS = 5000;
 let refreshTimer: number | undefined;
 
 const events = new EventSource("/api/v1/events");

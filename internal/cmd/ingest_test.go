@@ -105,13 +105,23 @@ func TestRunIngestLatestJSONShowsDetails(t *testing.T) {
 		t.Fatalf("expected empty stderr, got %q", stderr)
 	}
 
-	var payload struct {
-		Run    *db.IngestRun    `json:"run"`
-		Issues []db.IngestIssue `json:"issues"`
+	// Every JSON surface answers in the versioned envelope — `ccpeek docs`
+	// ships that promise to agents as SKILL.md, and this command used to
+	// be the one that broke it.
+	var env struct {
+		Schema string `json:"schema"`
+		Data   struct {
+			Run    *db.IngestRun    `json:"run"`
+			Issues []db.IngestIssue `json:"issues"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("expected valid json output, got error %v and output %q", err, stdout)
 	}
+	if env.Schema != payloadSchema {
+		t.Errorf("schema = %q, want %q", env.Schema, payloadSchema)
+	}
+	payload := env.Data
 	if payload.Run == nil || payload.Run.Status != "partial" {
 		t.Fatalf("expected partial ingest run in payload, got %+v", payload.Run)
 	}

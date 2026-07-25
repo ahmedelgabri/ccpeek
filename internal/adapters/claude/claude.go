@@ -330,9 +330,9 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		}
 
 		for _, c := range calls {
-			c.call.SessionExternalID = sess.ExternalID
-			c.call.Seq = state.ToolSeq + toolCount
-			if err := sink.ToolCall(c.call); err != nil {
+			c.SessionExternalID = sess.ExternalID
+			c.Seq = state.ToolSeq + toolCount
+			if err := sink.ToolCall(c); err != nil {
 				return state, err
 			}
 			toolCount++
@@ -424,16 +424,9 @@ func drainLine(r *bufio.Reader, w io.Writer) (n int64, terminated bool, err erro
 	}
 }
 
-// emittedCall carries a tool call together with the tool_use block id it
-// must be paired against when the matching tool_result arrives.
-type emittedCall struct {
-	call  canon.ToolCall
-	useID string
-}
-
 // convertLine maps one JSONL entry to a canonical message plus any tool
 // calls it issued.
-func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []emittedCall) {
+func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []canon.ToolCall) {
 	msg := canon.Message{
 		Seq:              seq,
 		ExternalID:       raw.UUID,
@@ -478,22 +471,19 @@ func (a *Adapter) convertLine(raw rawLine, seq int) (canon.Message, []emittedCal
 
 	msg.Text = extractText(payload.Content, raw.Content)
 
-	var calls []emittedCall
+	var calls []canon.ToolCall
 	for _, block := range blocks(payload.Content) {
 		if block.Type != "tool_use" {
 			continue
 		}
-		calls = append(calls, emittedCall{
-			useID: block.ID,
-			call: canon.ToolCall{
-				MessageSeq: seq,
-				ExternalID: block.ID,
-				Name:       block.Name,
-				Kind:       normalizeTool(block.Name),
-				Input:      block.Input,
-				FilePath:   inputFilePath(block.Input),
-				StartedAt:  raw.Timestamp,
-			},
+		calls = append(calls, canon.ToolCall{
+			MessageSeq: seq,
+			ExternalID: block.ID,
+			Name:       block.Name,
+			Kind:       normalizeTool(block.Name),
+			Input:      block.Input,
+			FilePath:   inputFilePath(block.Input),
+			StartedAt:  raw.Timestamp,
 		})
 	}
 	return msg, calls
@@ -520,11 +510,6 @@ func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Messag
 	}
 }
 
-// pairResults attaches tool_result blocks in this line to the pending
-// tool_use they answer. When resuming from a cursor, a result whose
-// tool_use sits in the already-indexed prefix can't be paired in memory —
-// it is collected as a canon.ToolResult for the sink to apply to the
-// stored call instead.
 // resultRecords extracts every tool_result block as a canon.ToolResult;
 // the sink attaches each to its call by external id (tool_use block id),
 // whether the call landed in this pass or a previous one.

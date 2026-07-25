@@ -144,7 +144,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				(meta.Name == "" && meta.WorkspaceRoot == "" && meta.CreatedAt == 0) {
 				continue
 			}
-			sess.Title = truncate(meta.Name, titleLimit)
+			sess.Title = canon.TruncateBytes(meta.Name, titleLimit)
 			sess.CWD = meta.WorkspaceRoot
 			if meta.CreatedAt > 0 {
 				sess.CreatedAt = time.UnixMilli(meta.CreatedAt).UTC()
@@ -220,7 +220,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		for _, b := range msgs {
 			if b.msg.Role == "user" {
 				if t := contentText(b.msg.Content); t != "" {
-					sess.Title = truncate(strings.TrimSpace(t), titleLimit)
+					sess.Title = canon.TruncateBytes(strings.TrimSpace(t), titleLimit)
 					break
 				}
 			}
@@ -292,10 +292,4 @@ func contentText(content json.RawMessage) string {
 
 func isMissingTable(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such table")
-}
-
-// truncate bounds s at n BYTES without splitting a UTF-8 rune — a title
-// ending mid-character renders as U+FFFD once encoded.
-func truncate(s string, n int) string {
-	return canon.TruncateBytes(s, n)
 }

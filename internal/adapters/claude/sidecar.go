@@ -1,12 +1,10 @@
 package claude
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/jsonl"
 )
 
 // sourceKind classifies a discovered path so Parse can dispatch. Session
@@ -139,11 +138,11 @@ func isEffectivelyEmpty(dir string) (bool, error) {
 func (a *Adapter) parseSidecar(ctx context.Context, kind sourceKind, src agent.SourceRef, sink agent.RecordSink) error {
 	switch kind {
 	case srcPlan:
-		return parseSimpleArtifact(src, sink, canon.ArtifactPlan, nil)
+		return parseSimpleArtifact(src, sink, canon.ArtifactPlan)
 	case srcSnapshot:
-		return parseSimpleArtifact(src, sink, canon.ArtifactShellSnapshot, nil)
+		return parseSimpleArtifact(src, sink, canon.ArtifactShellSnapshot)
 	case srcPaste:
-		return parseSimpleArtifact(src, sink, canon.ArtifactPaste, nil)
+		return parseSimpleArtifact(src, sink, canon.ArtifactPaste)
 	case srcMemory:
 		return parseMemory(src, sink)
 	case srcTodo:
@@ -155,7 +154,7 @@ func (a *Adapter) parseSidecar(ctx context.Context, kind sourceKind, src agent.S
 	case srcUsageFacet:
 		return parseUsageFacet(src, sink)
 	case srcUsageReport:
-		return parseSimpleArtifact(src, sink, canon.ArtifactUsageReport, nil)
+		return parseSimpleArtifact(src, sink, canon.ArtifactUsageReport)
 	case srcHistory:
 		return parseHistory(ctx, src, sink)
 	default:
@@ -167,7 +166,7 @@ func (a *Adapter) parseSidecar(ctx context.Context, kind sourceKind, src agent.S
 }
 
 // parseSimpleArtifact emits a content-only artifact named by file name.
-func parseSimpleArtifact(src agent.SourceRef, sink agent.RecordSink, kind canon.ArtifactKind, metadata json.RawMessage) error {
+func parseSimpleArtifact(src agent.SourceRef, sink agent.RecordSink, kind canon.ArtifactKind) error {
 	content, err := os.ReadFile(src.Path)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", src.Path, err)
@@ -177,7 +176,6 @@ func parseSimpleArtifact(src agent.SourceRef, sink agent.RecordSink, kind canon.
 		Kind:       kind,
 		Name:       filepath.Base(src.Path),
 		Content:    string(content),
-		Metadata:   metadata,
 		SourcePath: src.Path,
 	})
 }
@@ -421,90 +419,52 @@ func parseUsageFacet(src agent.SourceRef, sink agent.RecordSink) error {
 
 // parseHistory reads history.jsonl one entry per line.
 //
-// A single pathological line must cost that line and nothing more. A
-// bufio.Scanner cannot deliver that — past its buffer ceiling it stops
-// with ErrTooLong and every remaining entry is lost, and because the sink
-// clears this source's rows on the first History record, the failing
-// transaction rolls back and the file contributes nothing at all. One
-// pasted blob in a prompt would silently empty the command index. The
-// same readLine/drainLine pair the session parser uses skips the line and
-// keeps going instead.
+// A single pathological line must cost that line and nothing more: past
+// a bufio.Scanner's ceiling the scan stops and every remaining entry is
+// lost, and because the sink clears this source's rows on the first
+// History record, the failing transaction rolls back and the file
+// contributes nothing at all — one pasted blob in a prompt would silently
+// empty the command index. jsonl.Scan is the shared reader with exactly
+// that policy, already used by the codex and pi adapters.
 func parseHistory(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
 	f, err := os.Open(src.Path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src.Path, err)
 	}
 	defer f.Close()
-	r := bufio.NewReaderSize(f, 64*1024)
-	lineNo := 0
-	for {
+
+	return jsonl.Scan(f, maxLineBytes, func(lineNo int, line []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		raw, rerr := readLine(r)
-		if rerr == errLineTooLong {
-			lineNo++
-			size := int64(len(raw))
-			if len(raw) == 0 || raw[len(raw)-1] != '\n' {
-				n, _, derr := drainLine(r, io.Discard)
-				if derr != nil && derr != io.EOF {
-					return fmt.Errorf("reading %s: %w", src.Path, derr)
-				}
-				size += n
-			}
-			if serr := sink.Issue(canon.Issue{
-				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
-				SourcePath: src.Path, Line: lineNo,
-				Detail: fmt.Sprintf("skipping oversized history line (%d bytes > %d limit)",
-					size, maxLineBytes),
-			}); serr != nil {
-				return serr
-			}
-			continue
-		}
-		if rerr != nil && rerr != io.EOF {
-			return fmt.Errorf("reading %s: %w", src.Path, rerr)
-		}
-		if len(raw) == 0 {
-			break
-		}
-		lineNo++
-		line := bytes.TrimSpace(raw)
-		if len(line) == 0 {
-			if rerr == io.EOF {
-				break
-			}
-			continue
+		if len(bytes.TrimSpace(line)) == 0 {
+			return nil
 		}
 		var entry struct {
 			Display   string `json:"display"`
 			Timestamp int64  `json:"timestamp"`
 		}
 		if err := json.Unmarshal(line, &entry); err != nil {
-			if serr := sink.Issue(canon.Issue{
+			return sink.Issue(canon.Issue{
 				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
 				SourcePath: src.Path, Line: lineNo,
 				Detail: fmt.Sprintf("skipping history line: %v", err),
-			}); serr != nil {
-				return serr
-			}
-			if rerr == io.EOF {
-				break
-			}
-			continue
+			})
 		}
-		if entry.Display != "" {
-			if err := sink.History(canon.HistoryEntry{
-				Agent:     Slug,
-				Display:   entry.Display,
-				Timestamp: time.UnixMilli(entry.Timestamp).UTC(),
-			}); err != nil {
-				return err
-			}
+		if entry.Display == "" {
+			return nil
 		}
-		if rerr == io.EOF {
-			break
-		}
-	}
-	return nil
+		return sink.History(canon.HistoryEntry{
+			Agent:     Slug,
+			Display:   entry.Display,
+			Timestamp: time.UnixMilli(entry.Timestamp).UTC(),
+		})
+	}, func(lineNo int, size int64) error {
+		return sink.Issue(canon.Issue{
+			Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
+			SourcePath: src.Path, Line: lineNo,
+			Detail: fmt.Sprintf("skipping oversized history line (%d bytes > %d limit)",
+				size, maxLineBytes),
+		})
+	})
 }

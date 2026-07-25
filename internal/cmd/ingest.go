@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -77,9 +76,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 				Run    *db.IngestRun    `json:"run"`
 				Issues []db.IngestIssue `json:"issues"`
 			}{Run: run, Issues: issues}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(payload)
+			return emit(payload, false)
 		}
 		printIngestRunDetails(run, issues)
 		return nil
@@ -90,9 +87,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if format == "json" {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(runs)
+		return emit(runs, false)
 	}
 	printIngestRunList(runs)
 	return nil
