@@ -40,12 +40,25 @@ test.describe("SPA", () => {
     ).toBeVisible();
   });
 
-  test("the palette searches and opens a hit", async ({ page }) => {
+  // The palette opens in JUMP mode — pages only, no query — and search is
+  // an action you step into, carrying whatever has been typed.
+  test("the palette jumps to a page", async ({ page }) => {
     await page.goto("/");
     await page.keyboard.press("ControlOrMeta+k");
     const palette = page.getByRole("dialog", { name: /palette/i });
     await expect(palette).toBeVisible();
-    await palette.getByLabel("Search query").fill("hello");
+    await palette.getByLabel("Jump to a page").fill("usage");
+    await palette.getByRole("button", { name: "Usage", exact: true }).click();
+    await expect(page).toHaveURL(/\/usage$/);
+  });
+
+  test("the palette searches once search is chosen", async ({ page }) => {
+    await page.goto("/");
+    await page.keyboard.press("ControlOrMeta+k");
+    const palette = page.getByRole("dialog", { name: /palette/i });
+    await palette.getByLabel("Jump to a page").fill("hello");
+    // The typed text carries into search rather than being discarded.
+    await palette.getByRole("button", { name: /^Search history for/ }).click();
     await expect(palette.getByText("Matches")).toBeVisible({ timeout: 10_000 });
   });
 
@@ -135,7 +148,8 @@ test.describe("resilience", () => {
     await page.goto("/");
     await page.keyboard.press("ControlOrMeta+k");
     const palette = page.getByRole("dialog", { name: /palette/i });
-    await palette.getByLabel("Search query").fill("rate");
+    await palette.getByLabel("Jump to a page").fill("rate");
+    await palette.getByRole("button", { name: /^Search history for/ }).click();
     const marked = palette.locator("mark").first();
     await expect(marked).toBeVisible({ timeout: 10_000 });
     const text = await palette.innerText();

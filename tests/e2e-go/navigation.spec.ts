@@ -44,7 +44,10 @@ test.describe("navigation", () => {
     // /search has no page: it is a doorway that opens the palette and
     // steps aside, so a v1 bookmark still lands on its results.
     await page.goto("/search?q=rate");
-    await expect(page.getByRole("dialog", { name: /palette/i })).toBeVisible();
+    const palette = page.getByRole("dialog", { name: /palette/i });
+    await expect(palette).toBeVisible();
+    // An explicit ?q is unambiguous, so it opens straight into search.
+    await expect(palette.getByLabel("Search query")).toHaveValue("rate");
     await expect(page).toHaveURL(/\/$/);
   });
 });
