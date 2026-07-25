@@ -27,7 +27,7 @@ func TestOpenFreshCreatesLatestSchema(t *testing.T) {
 	s, _ := openTemp(t)
 	ctx := context.Background()
 
-	v, err := s.SchemaVersion(ctx)
+	v, err := s.readVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}

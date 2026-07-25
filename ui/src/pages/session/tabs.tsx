@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useHighlight } from "../../highlight";
 import { shortPath, type ToolCallRow } from "../../api";
@@ -52,13 +52,14 @@ export function ToolsTab({
   tools: ToolCallRow[];
   onJump: (seq: number) => void;
 }) {
+  const kinds = useMemo(() => {
+    const byKind = new Map<string, number>();
+    for (const t of tools) byKind.set(t.kind, (byKind.get(t.kind) ?? 0) + 1);
+    return Array.from(byKind, ([label, count]) => ({ label, count })).toSorted(
+      (a, b) => b.count - a.count,
+    );
+  }, [tools]);
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
-  const byKind = new Map<string, number>();
-  for (const t of tools) byKind.set(t.kind, (byKind.get(t.kind) ?? 0) + 1);
-  const kinds = Array.from(byKind, ([label, count]) => ({
-    label,
-    count,
-  })).toSorted((a, b) => b.count - a.count);
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-edge bg-surface-1">

@@ -162,17 +162,16 @@ func run(cmd *cobra.Command, args []string) error {
 	// stays visible in the UI instead of dissolving into a startup log
 	// line (the bootstrap retries it on every start until it succeeds).
 	readV1Import := func() api.V1ImportStatus {
-		var st api.V1ImportStatus
-		if v, ok, err := eng.store.GetMeta(ctx, "v1_import_state"); err == nil && ok {
-			st.State = v
+		meta, err := eng.store.GetMetaMulti(ctx,
+			"v1_import_state", "v1_import_error", "v1_imported_at")
+		if err != nil {
+			return api.V1ImportStatus{}
 		}
-		if v, ok, err := eng.store.GetMeta(ctx, "v1_import_error"); err == nil && ok && v != "" {
-			st.Error = v
+		return api.V1ImportStatus{
+			State:      meta["v1_import_state"],
+			Error:      meta["v1_import_error"],
+			ImportedAt: meta["v1_imported_at"],
 		}
-		if v, ok, err := eng.store.GetMeta(ctx, "v1_imported_at"); err == nil && ok {
-			st.ImportedAt = v
-		}
-		return st
 	}
 
 	// runScan reports rather than fails: on the serving path a scan

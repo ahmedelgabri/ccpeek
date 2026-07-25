@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -95,11 +96,6 @@ func (s *Store) DB() *sql.DB { return s.db }
 // never wait behind write transactions.
 func (s *Store) ReadDB() *sql.DB { return s.readDB }
 
-// SchemaVersion reports the stored schema version.
-func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
-	return s.readVersion(ctx)
-}
-
 // GetMeta reads a meta value; ok=false when the key is absent.
 func (s *Store) GetMeta(ctx context.Context, key string) (string, bool, error) {
 	var v string
@@ -112,6 +108,41 @@ func (s *Store) GetMeta(ctx context.Context, key string) (string, bool, error) {
 		return "", false, err
 	}
 	return v, true, nil
+}
+
+// GetMetaMulti reads several meta values in ONE round trip, off the read
+// pool. Absent keys are simply missing from the result.
+//
+// GetMeta goes through s.db — the single writer connection. The health and
+// readiness endpoints must not: the SPA polls health every 1.5s for the
+// whole duration of the first index pass, which is exactly when that one
+// connection is saturated by per-source ingest transactions. Three
+// separate GetMeta calls per poll therefore queued behind ingest writes
+// and fed their own contention back into the pass.
+func (s *Store) GetMetaMulti(ctx context.Context, keys ...string) (map[string]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		args[i] = k
+	}
+	rows, err := s.ReadDB().QueryContext(ctx,
+		`SELECT key, value FROM meta WHERE key IN (?`+
+			strings.Repeat(",?", len(keys)-1)+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string, len(keys))
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
 }
 
 // SetMeta writes a meta value.
@@ -273,11 +304,7 @@ func (s *Store) readVersion(ctx context.Context) (int, error) {
 }
 
 func (s *Store) writeVersion(ctx context.Context, v int) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO meta (key, value) VALUES ('schema_version', ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-		strconv.Itoa(v))
-	return err
+	return s.SetMeta(ctx, "schema_version", strconv.Itoa(v))
 }
 
 // ensureFilePermissions tightens the database files to owner-only, matching

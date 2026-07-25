@@ -30,21 +30,56 @@ type UsageFilter struct {
 	Limit   int
 }
 
-// Usage aggregates the daily rollups by the requested dimension.
-func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) {
-	var groupExpr, orderExpr string
+// group resolves a UsageFilter's dimension to its SQL group and order
+// expressions. Usage and distinctUsageSessions MUST group identically:
+// the second exists only to recompute each of the first's groups' session
+// counts, and it keys the result by the group STRING. Two independently
+// written switches that drifted would not error — they would attach
+// session counts to the wrong rows.
+func (f UsageFilter) group() (groupExpr, orderExpr string, err error) {
 	switch f.GroupBy {
 	case "", "day":
-		groupExpr, orderExpr = "r.day", "r.day DESC"
+		return "r.day", "r.day DESC", nil
 	case "model":
-		groupExpr, orderExpr = "r.model", "SUM(r.cost_usd) DESC"
+		return "r.model", "SUM(r.cost_usd) DESC", nil
 	case "agent":
-		groupExpr, orderExpr = "a.slug", "SUM(r.cost_usd) DESC"
+		return "a.slug", "SUM(r.cost_usd) DESC", nil
 	case "project":
-		groupExpr, orderExpr = "COALESCE(w.canonical_path, '')", "SUM(r.cost_usd) DESC"
-	default:
-		return nil, fmt.Errorf("%w: unknown group %q (want day|model|project|agent)",
-			ErrBadRequest, f.GroupBy)
+		return "COALESCE(w.canonical_path, '')", "SUM(r.cost_usd) DESC", nil
+	}
+	return "", "", fmt.Errorf("%w: unknown group %q (want day|model|project|agent)",
+		ErrBadRequest, f.GroupBy)
+}
+
+// where builds the filter clause both queries run. Same reason as group():
+// a filter applied to one and not the other misattributes session counts
+// rather than failing.
+func (f UsageFilter) where() (clause string, args []any) {
+	clause = "WHERE 1=1"
+	if f.Agent != "" {
+		clause += " AND a.slug = ?"
+		args = append(args, f.Agent)
+	}
+	if f.Model != "" {
+		clause += " AND r.model = ?"
+		args = append(args, f.Model)
+	}
+	if f.Since != "" {
+		clause += " AND r.day >= ?"
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		clause += " AND r.day < ?"
+		args = append(args, exclusiveUntil(f.Until))
+	}
+	return clause, args
+}
+
+// Usage aggregates the daily rollups by the requested dimension.
+func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) {
+	groupExpr, orderExpr, err := f.group()
+	if err != nil {
+		return nil, err
 	}
 	// Usage is an aggregate surface: its group cardinality is naturally
 	// bounded (days, models, agents, workspaces), so the default is ALL
@@ -54,24 +89,7 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		f.Limit = 0
 	}
 
-	where := "WHERE 1=1"
-	var args []any
-	if f.Agent != "" {
-		where += " AND a.slug = ?"
-		args = append(args, f.Agent)
-	}
-	if f.Model != "" {
-		where += " AND r.model = ?"
-		args = append(args, f.Model)
-	}
-	if f.Since != "" {
-		where += " AND r.day >= ?"
-		args = append(args, f.Since)
-	}
-	if f.Until != "" {
-		where += " AND r.day < ?"
-		args = append(args, exclusiveUntil(f.Until))
-	}
+	where, args := f.where()
 	limitClause := ""
 	if f.Limit > 0 {
 		limitClause = "LIMIT ?"
@@ -140,36 +158,10 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 // /api/v1/budget read the Overview page issues on mount — paid a full scan
 // of the corpus the rollups exist to avoid.
 func (s *Service) distinctUsageSessions(ctx context.Context, f UsageFilter) (map[string]int64, error) {
-	var groupExpr string
-	switch f.GroupBy {
-	case "", "day":
-		groupExpr = "r.day"
-	case "model":
-		groupExpr = "r.model"
-	case "agent":
-		groupExpr = "a.slug"
-	case "project":
-		groupExpr = "COALESCE(w.canonical_path, '')"
-	}
+	// The caller already validated GroupBy through Usage.
+	groupExpr, _, _ := f.group()
 
-	where := "WHERE 1=1"
-	var args []any
-	if f.Agent != "" {
-		where += " AND a.slug = ?"
-		args = append(args, f.Agent)
-	}
-	if f.Model != "" {
-		where += " AND r.model = ?"
-		args = append(args, f.Model)
-	}
-	if f.Since != "" {
-		where += " AND r.day >= ?"
-		args = append(args, f.Since)
-	}
-	if f.Until != "" {
-		where += " AND r.day < ?"
-		args = append(args, exclusiveUntil(f.Until))
-	}
+	where, args := f.where()
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s AS grp, COUNT(DISTINCT r.session_id)

@@ -111,10 +111,7 @@ func (s *dbSink) Message(msg canon.Message) error {
 	if !ok {
 		return fmt.Errorf("adapter emitted message before session %q", msg.SessionExternalID)
 	}
-	if err := s.writer.InsertMessage(id, s.agent, msg); err != nil {
-		return err
-	}
-	if err := s.writer.InsertSearchDoc(id, 0, "message", msg.Seq, "", msg.Text); err != nil {
+	if err := s.writer.WriteMessage(id, s.agent, msg); err != nil {
 		return err
 	}
 	s.report.Messages++

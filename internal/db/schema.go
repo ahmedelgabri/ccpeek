@@ -243,7 +243,6 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 	files_seen INTEGER NOT NULL DEFAULT 0,
 	files_changed INTEGER NOT NULL DEFAULT 0,
 	records_indexed INTEGER NOT NULL DEFAULT 0,
-	skipped_rows INTEGER NOT NULL DEFAULT 0,
 	parse_failures INTEGER NOT NULL DEFAULT 0,
 	unresolved_links INTEGER NOT NULL DEFAULT 0,
 	warning_count INTEGER NOT NULL DEFAULT 0,

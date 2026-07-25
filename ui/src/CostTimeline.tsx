@@ -59,9 +59,7 @@ interface TimelineFilters {
   model?: string;
 }
 
-async function fetchDailyCostByAgent(
-  f: TimelineFilters,
-): Promise<DaySeries[]> {
+async function fetchDailyCostByAgent(f: TimelineFilters): Promise<DaySeries[]> {
   const agents = f.agent ? [f.agent] : AGENTS;
   const results = await Promise.all(
     agents.map(async (agent) => {
@@ -165,82 +163,79 @@ export function GroupBars({
   const el = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme();
   const pal = chartPalette();
-  const top = rows
-    .filter((r) => r.costUSD > 0)
-    .toReversed(); // echarts y-axis draws bottom-up
+  const top = rows.filter((r) => r.costUSD > 0).toReversed(); // echarts y-axis draws bottom-up
 
   const option =
     top.length === 0
       ? null
       : {
-      backgroundColor: "transparent",
-      grid: { left: 170, right: 48, top: 8, bottom: 24 },
-      tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "shadow" },
-        backgroundColor: pal.surface2,
-        borderColor: pal.edge,
-        textStyle: { color: pal.ink, fontSize: 12 },
-        valueFormatter: (v: unknown) =>
-          typeof v === "number" ? `$${v.toFixed(2)}` : "",
-      },
-      xAxis: {
-        type: "value",
-        axisLabel: {
-          color: pal.inkDim,
-          fontSize: 11,
-          formatter: (v: number) => `$${v}`,
-        },
-        splitLine: { lineStyle: { color: pal.edge } },
-      },
-      yAxis: {
-        type: "category",
-        data: top.map((r) => r.group || "(none)"),
-        axisLine: { lineStyle: { color: pal.edge } },
-        axisTick: { show: false },
-        axisLabel: {
-          color: pal.inkDim,
-          fontSize: 11,
-          // Paths differentiate at the tail: shorten the home prefix and
-          // truncate from the left, never into "/Users/ahmed/code/…".
-          formatter: (v: string) => {
-            const label = group === "project" ? shortPath(v) : v;
-            return label.length > 26 ? "…" + label.slice(-25) : label;
+          backgroundColor: "transparent",
+          grid: { left: 170, right: 48, top: 8, bottom: 24 },
+          tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "shadow" },
+            backgroundColor: pal.surface2,
+            borderColor: pal.edge,
+            textStyle: { color: pal.ink, fontSize: 12 },
+            valueFormatter: (v: unknown) =>
+              typeof v === "number" ? `$${v.toFixed(2)}` : "",
           },
-        },
-      },
-      series: [
-        {
-          type: "bar",
-          data: top.map((r) => ({
-            value: r.costUSD,
-            itemStyle: {
-              color:
-                group === "agent"
-                  ? (pal.agents[r.group] ?? pal.inkFaint)
-                  : pal.accent,
+          xAxis: {
+            type: "value",
+            axisLabel: {
+              color: pal.inkDim,
+              fontSize: 11,
+              formatter: (v: number) => `$${v}`,
             },
-          })),
-          barMaxWidth: 18,
-          itemStyle: { borderRadius: [0, 4, 4, 0] },
-          label: {
-            show: true,
-            position: "right",
-            color: pal.inkDim,
-            fontSize: 10,
-            formatter: ({ value }: { value: number }) => `$${value.toFixed(2)}`,
+            splitLine: { lineStyle: { color: pal.edge } },
           },
-        },
-      ],
-    };
+          yAxis: {
+            type: "category",
+            data: top.map((r) => r.group || "(none)"),
+            axisLine: { lineStyle: { color: pal.edge } },
+            axisTick: { show: false },
+            axisLabel: {
+              color: pal.inkDim,
+              fontSize: 11,
+              // Paths differentiate at the tail: shorten the home prefix and
+              // truncate from the left, never into "/Users/ahmed/code/…".
+              formatter: (v: string) => {
+                const label = group === "project" ? shortPath(v) : v;
+                return label.length > 26 ? "…" + label.slice(-25) : label;
+              },
+            },
+          },
+          series: [
+            {
+              type: "bar",
+              data: top.map((r) => ({
+                value: r.costUSD,
+                itemStyle: {
+                  color:
+                    group === "agent"
+                      ? (pal.agents[r.group] ?? pal.inkFaint)
+                      : pal.accent,
+                },
+              })),
+              barMaxWidth: 18,
+              itemStyle: { borderRadius: [0, 4, 4, 0] },
+              label: {
+                show: true,
+                position: "right",
+                color: pal.inkDim,
+                fontSize: 10,
+                formatter: ({ value }: { value: number }) =>
+                  `$${value.toFixed(2)}`,
+              },
+            },
+          ],
+        };
   useEChart(el, option, [rows, group, theme]);
 
   if (top.length === 0) return null;
   return (
     <div className="mb-4 rounded-md border border-edge bg-surface-1 p-4">
-      <h2 className="mb-1 text-sm font-medium text-ink-dim">
-        Cost by {group}
-      </h2>
+      <h2 className="mb-1 text-sm font-medium text-ink-dim">Cost by {group}</h2>
       <div
         ref={el}
         className="overflow-hidden"
@@ -327,10 +322,11 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
 
   const el = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme();
-  useEChart(el, series.length > 0 ? buildOption(series, chartPalette()) : null, [
-    series,
-    theme,
-  ]);
+  useEChart(
+    el,
+    series.length > 0 ? buildOption(series, chartPalette()) : null,
+    [series, theme],
+  );
 
   if (series.length === 0 && !isLoading) return null;
 
@@ -347,7 +343,12 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
           Export CSV
         </button>
       </div>
-      <div ref={el} className="h-72 w-full" role="img" aria-label="Daily cost stacked by agent; the table below holds the same data" />
+      <div
+        ref={el}
+        className="h-72 w-full"
+        role="img"
+        aria-label="Daily cost stacked by agent; the table below holds the same data"
+      />
     </div>
   );
 }

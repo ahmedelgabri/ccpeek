@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 // Line diff for file changes: an LCS over the old/new excerpts, rendered
 // as classic removed/added rows. Payloads are already capped server-side
 // (16 KB each), so the quadratic DP stays cheap.
@@ -63,7 +64,11 @@ function diffLines(oldText: string, newText: string): Op[] | null {
 }
 
 export function DiffView({ old, new: neu }: { old: string; new: string }) {
-  const ops = diffLines(old, neu);
+  // diffLines is an O(n²) LCS over up to MAX_LINES × MAX_LINES cells. The
+  // parent is the transcript, which re-renders on every virtualizer range
+  // change — i.e. continuously while scrolling — so an unmemoized call
+  // rebuilt the whole DP table on every frame an expanded diff was open.
+  const ops = useMemo(() => diffLines(old, neu), [old, neu]);
   if (!ops)
     return (
       <p className="px-3 py-2 font-mono text-[11px] text-ink-faint">

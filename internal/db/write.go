@@ -346,6 +346,20 @@ var searchableArtifactKinds = map[canon.ArtifactKind]bool{
 	canon.ArtifactUsageFacet: true,
 }
 
+// WriteMessage stores one message and its search document together.
+//
+// The transcript reads its text back out of search_docs — messages has no
+// text column — so a message written without its doc renders blank. Both
+// writer paths, live ingest and the v1 import, used to spell the pair out
+// for themselves, which is exactly the arrangement the artifact path had
+// before WriteArtifact (and there the two copies had already drifted).
+func (w *Writer) WriteMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
+	if err := w.InsertMessage(sessionID, agent, msg); err != nil {
+		return err
+	}
+	return w.InsertSearchDoc(sessionID, 0, "message", msg.Seq, "", msg.Text)
+}
+
 // WriteArtifact stores one artifact and brings its search index in line
 // with it: content is bounded at canon.ArtifactContentLimit, stale docs are
 // cleared, and only the kinds worth searching get a document. It reports

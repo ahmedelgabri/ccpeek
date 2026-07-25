@@ -148,11 +148,12 @@ func (h *handlers) isReady() bool {
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
+	indexing := !h.isReady()
 	payload := map[string]any{
 		"status":   "ok",
-		"indexing": !h.isReady(),
+		"indexing": indexing,
 	}
-	if !h.isReady() && h.progress != nil {
+	if indexing && h.progress != nil {
 		payload["progress"] = h.progress()
 	}
 	if h.v1Import != nil {

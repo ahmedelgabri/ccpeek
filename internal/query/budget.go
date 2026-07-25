@@ -40,16 +40,14 @@ func (s *Service) GetBudget(ctx context.Context) (*Budget, error) {
 		}
 	}
 
-	rows, err := s.Usage(ctx, UsageFilter{
-		GroupBy: "day",
-		Since:   b.Month + "-01",
-		Limit:   1000,
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		b.SpentUSD += r.CostUSD
+	// One aggregate, not a grouped Usage query summed in Go: Usage always
+	// also runs distinctUsageSessions to fill each row's session count,
+	// and every one of those counts was discarded here.
+	if err := s.store.ReadDB().QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(cost_usd), 0)
+		FROM rollup_usage_daily
+		WHERE day >= ?`, b.Month+"-01").Scan(&b.SpentUSD); err != nil {
+		return nil, fmt.Errorf("month spend: %w", err)
 	}
 	return b, nil
 }

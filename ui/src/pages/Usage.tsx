@@ -1,13 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  api,
-  fmtCost,
-  fmtTokens,
-  parityApi,
-  totalTokens,
-} from "../api";
+import { api, fmtCost, fmtTokens, parityApi, totalTokens } from "../api";
 import { FilterBar, SkeletonRows, useTooltip } from "../ui";
 
 // Lazy so echarts ships as its own chunk, loaded only on this page.
@@ -50,6 +44,40 @@ function pivotSearch(
   }
   return search;
 }
+
+// useSorted is the sortable-table state machine: click a column to sort
+// by it, click again to reverse. `values` maps each sort key to the field
+// it reads, so one comparator (numeric where both sides are numbers,
+// locale-aware otherwise) serves every table. SortableTH is already
+// generic over the key type, so the two tables here share both halves.
+function useSorted<T, K extends string>(
+  rows: T[],
+  values: Record<K, (row: T) => number | string>,
+) {
+  const [sort, setSort] = useState<{ key: K; desc: boolean } | null>(null);
+  const toggleSort = (key: K) =>
+    setSort((prev) =>
+      prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true },
+    );
+  const sorted = useMemo(() => {
+    if (!sort) return rows;
+    const value = values[sort.key];
+    return rows.toSorted((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+      return sort.desc ? -cmp : cmp;
+    });
+  }, [rows, sort, values]);
+  return { sorted, sort, toggleSort };
+}
+
+// A stable identity for "no rows yet": `data ?? []` would hand useSorted a
+// fresh array on every render and defeat its memo.
+const EMPTY_USAGE: import("../api").UsageRow[] = [];
 
 type SortKey = "group" | "sessions" | "tokens" | "cacheRead" | "cost";
 
@@ -108,28 +136,11 @@ export function UsagePage() {
 
   // Sorting: null keeps the server order (day desc / cost desc); a click
   // cycles asc↔desc per column.
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean } | null>(
-    null,
-  );
-  const toggleSort = (key: SortKey) =>
-    setSort((prev) =>
-      prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true },
-    );
-
-  const unsorted = data ?? [];
-  const rows = useMemo(() => {
-    if (!sort) return unsorted;
-    const value = SORT_VALUE[sort.key];
-    return unsorted.toSorted((a, b) => {
-      const av = value(a);
-      const bv = value(b);
-      const cmp =
-        typeof av === "number" && typeof bv === "number"
-          ? av - bv
-          : String(av).localeCompare(String(bv));
-      return sort.desc ? -cmp : cmp;
-    });
-  }, [unsorted, sort]);
+  const {
+    sorted: rows,
+    sort,
+    toggleSort,
+  } = useSorted(data ?? EMPTY_USAGE, SORT_VALUE);
   const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
   const total = rows.reduce((acc, r) => acc + r.costUSD, 0);
   const anyUnpriced = rows.some((r) => r.hasUnpriced);
@@ -526,27 +537,7 @@ function BlocksTable({
   blocks: import("../api").BlockRow[];
   loading: boolean;
 }) {
-  const [sort, setSort] = useState<{
-    key: BlockSortKey;
-    desc: boolean;
-  } | null>(null);
-  const toggleSort = (key: BlockSortKey) =>
-    setSort((prev) =>
-      prev?.key === key ? { key, desc: !prev.desc } : { key, desc: true },
-    );
-  const sorted = useMemo(() => {
-    if (!sort) return blocks;
-    const value = BLOCK_SORT_VALUE[sort.key];
-    return blocks.toSorted((a, b) => {
-      const av = value(a);
-      const bv = value(b);
-      const cmp =
-        typeof av === "number" && typeof bv === "number"
-          ? av - bv
-          : String(av).localeCompare(String(bv));
-      return sort.desc ? -cmp : cmp;
-    });
-  }, [blocks, sort]);
+  const { sorted, sort, toggleSort } = useSorted(blocks, BLOCK_SORT_VALUE);
 
   if (loading) return <p className="text-ink-dim">Loading…</p>;
   if (blocks.length === 0)

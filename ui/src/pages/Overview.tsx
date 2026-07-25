@@ -105,7 +105,9 @@ export function OverviewPage() {
                   <div className="flex items-baseline gap-2">
                     <AgentDot agent={s.agent} />
                     <span className="truncate text-sm">
-                      {s.title || <span className="text-ink-faint">(untitled)</span>}
+                      {s.title || (
+                        <span className="text-ink-faint">(untitled)</span>
+                      )}
                     </span>
                     <span className="ml-auto shrink-0 font-mono text-xs text-ok tabular-nums">
                       {fmtCost(s.costUSD, s.unpricedTokens)}

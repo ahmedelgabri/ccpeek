@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { LoadMore, usePagedList } from "../paged";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
@@ -43,25 +43,28 @@ export function SessionsPage() {
 
   // Offset pages of a fixed size: a growing single limit would silently
   // stop at the server's cap and hide everything past it.
-  const { data, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
-    useInfiniteQuery({
-      queryKey: ["sessions", agent, q, project, model, since, until],
-      queryFn: ({ pageParam }) =>
-        api.sessions({
-          agent,
-          q,
-          project,
-          model,
-          since,
-          until: until,
-          limit: String(PAGE),
-          offset: String(pageParam),
-        }),
-      initialPageParam: 0,
-      getNextPageParam: (last, _all, lastParam) =>
-        last && last.length === PAGE ? lastParam + PAGE : undefined,
-      placeholderData: (prev) => prev,
-    });
+  const {
+    rows: sessions,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = usePagedList(
+    ["sessions", agent, q, project, model, since, until],
+    (offset) =>
+      api.sessions({
+        agent,
+        q,
+        project,
+        model,
+        since,
+        until: until,
+        limit: String(PAGE),
+        offset: String(offset),
+      }),
+    PAGE,
+  );
   // Model options come from the model rollup, same source as Usage.
   const modelRows = useQuery({
     queryKey: ["usage", "model-options"],
@@ -71,10 +74,6 @@ export function SessionsPage() {
     .map((r) => r.group)
     .filter((m) => m !== "");
 
-  const sessions = useMemo(
-    () => (data?.pages ?? []).flatMap((p) => p ?? []),
-    [data],
-  );
   const groups = groupByDay(sessions);
 
   return (
@@ -132,15 +131,11 @@ export function SessionsPage() {
         ))}
       </div>
 
-      {hasNextPage && (
-        <button
-          onClick={() => void fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
-        >
-          {isFetchingNextPage ? "loading…" : "load more"}
-        </button>
-      )}
+      <LoadMore
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
+      />
     </div>
   );
 }

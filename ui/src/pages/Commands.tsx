@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { LoadMore, usePagedList } from "../paged";
+import { useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { api, fmtWhen, shortPath } from "../api";
 import { useHighlight } from "../highlight";
@@ -25,26 +25,25 @@ export function CommandsPage() {
 
   // Offset pages of a fixed size: a growing single limit would silently
   // stop at the server's cap and hide everything past it.
-  const { data, isLoading, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
-    useInfiniteQuery({
-      queryKey: ["commands", q, agent, since, until],
-      queryFn: ({ pageParam }) =>
-        api.commands({
-          q,
-          agent,
-          since,
-          until: until,
-          limit: String(PAGE),
-          offset: String(pageParam),
-        }),
-      initialPageParam: 0,
-      getNextPageParam: (last, _all, lastParam) =>
-        last && last.length === PAGE ? lastParam + PAGE : undefined,
-      placeholderData: (prev) => prev,
-    });
-  const rows = useMemo(
-    () => (data?.pages ?? []).flatMap((p) => p ?? []),
-    [data],
+  const {
+    rows,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = usePagedList(
+    ["commands", q, agent, since, until],
+    (offset) =>
+      api.commands({
+        q,
+        agent,
+        since,
+        until: until,
+        limit: String(PAGE),
+        offset: String(offset),
+      }),
+    PAGE,
   );
   const listRef = useRef<HTMLUListElement>(null);
   useHighlight(listRef, [rows]);
@@ -127,7 +126,9 @@ export function CommandsPage() {
               >
                 session {c.sessionId.slice(0, 8)}
               </Link>
-              <span className="ml-auto tabular-nums">{fmtWhen(c.at ?? "")}</span>
+              <span className="ml-auto tabular-nums">
+                {fmtWhen(c.at ?? "")}
+              </span>
               <CopyButton text={c.command} />
             </div>
             <pre className="overflow-x-auto text-xs leading-relaxed">
@@ -139,15 +140,11 @@ export function CommandsPage() {
         ))}
       </ul>
 
-      {hasNextPage && (
-        <button
-          onClick={() => void fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
-        >
-          {isFetchingNextPage ? "loading…" : "load more"}
-        </button>
-      )}
+      <LoadMore
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
+      />
     </div>
   );
 }

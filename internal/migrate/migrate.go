@@ -478,10 +478,7 @@ func importMessages(ctx context.Context, v1 *sql.DB, w *db.Writer, v1SessionID, 
 			Content:    json.RawMessage(content),
 			Text:       textFromV1Content(content),
 		}
-		if err := w.InsertMessage(sessionID, claudeSlug, msg); err != nil {
-			return n, err
-		}
-		if err := w.InsertSearchDoc(sessionID, 0, "message", seq, "", msg.Text); err != nil {
+		if err := w.WriteMessage(sessionID, claudeSlug, msg); err != nil {
 			return n, err
 		}
 		n++

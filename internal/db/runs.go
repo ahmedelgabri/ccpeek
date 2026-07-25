@@ -19,7 +19,6 @@ type RunCounts struct {
 	FilesSeen       int
 	FilesChanged    int
 	RecordsIndexed  int
-	SkippedRows     int
 	ParseFailures   int
 	UnresolvedLinks int
 	WarningCount    int
@@ -43,13 +42,13 @@ func (s *Store) FinishRun(ctx context.Context, runID int64, status string, start
 		UPDATE ingest_runs SET
 			status = ?, finished_at = ?, duration_ms = ?,
 			files_seen = ?, files_changed = ?, records_indexed = ?,
-			skipped_rows = ?, parse_failures = ?, unresolved_links = ?,
+			parse_failures = ?, unresolved_links = ?,
 			warning_count = ?, error_message = ?
 		WHERE id = ?`,
 		status, time.Now().UTC().Format(time.RFC3339),
 		time.Since(started).Milliseconds(),
 		counts.FilesSeen, counts.FilesChanged, counts.RecordsIndexed,
-		counts.SkippedRows, counts.ParseFailures, counts.UnresolvedLinks,
+		counts.ParseFailures, counts.UnresolvedLinks,
 		counts.WarningCount, errMsg, runID)
 	if err != nil {
 		return fmt.Errorf("finishing ingest run %d: %w", runID, err)
@@ -99,7 +98,6 @@ type IngestRun struct {
 	FilesSeen       int             `json:"filesSeen"`
 	FilesChanged    int             `json:"filesChanged"`
 	RecordsIndexed  int             `json:"recordsIndexed"`
-	SkippedRows     int             `json:"skippedRows"`
 	ParseFailures   int             `json:"parseFailures"`
 	UnresolvedLinks int             `json:"unresolvedLinks"`
 	WarningCount    int             `json:"warningCount"`
@@ -122,7 +120,7 @@ type IngestIssue struct {
 const ingestRunColumns = `
 	id, mode, status, roots_json, started_at, COALESCE(finished_at, ''),
 	duration_ms, files_seen, files_changed, records_indexed,
-	skipped_rows, parse_failures, unresolved_links, warning_count,
+	parse_failures, unresolved_links, warning_count,
 	error_message`
 
 func scanIngestRun(row interface{ Scan(...any) error }) (*IngestRun, error) {
@@ -130,7 +128,7 @@ func scanIngestRun(row interface{ Scan(...any) error }) (*IngestRun, error) {
 	var roots string
 	err := row.Scan(&r.ID, &r.Mode, &r.Status, &roots, &r.StartedAt,
 		&r.FinishedAt, &r.DurationMS, &r.FilesSeen, &r.FilesChanged,
-		&r.RecordsIndexed, &r.SkippedRows, &r.ParseFailures,
+		&r.RecordsIndexed, &r.ParseFailures,
 		&r.UnresolvedLinks, &r.WarningCount, &r.ErrorMessage)
 	if err != nil {
 		return nil, err

@@ -3,7 +3,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { useHighlight } from "../../highlight";
 import { shortPath, type ToolCallRow, type TranscriptMessage } from "../../api";
 import type { TranscriptWindow } from "./useSessionData";
-import { EmptyNote, SkeletonRows, toolColor } from "../../ui";
+import { EmptyNote, SkeletonRows, toolColor, useToggleSet } from "../../ui";
 import { ToolExpansion } from "./ToolExpansion";
 
 export function Transcript({
@@ -36,14 +36,7 @@ export function Transcript({
   const [copiedSeq, setCopiedSeq] = useState<number | null>(null);
   // Meta entries (toolResult, system, …) render as one-line excerpts;
   // clicking reveals the full stored text.
-  const [openMeta, setOpenMeta] = useState<ReadonlySet<number>>(new Set());
-  const toggleMeta = (seq: number) =>
-    setOpenMeta((prev) => {
-      const next = new Set(prev);
-      if (next.has(seq)) next.delete(seq);
-      else next.add(seq);
-      return next;
-    });
+  const [openMeta, toggleMeta] = useToggleSet<number>();
   const container = useRef<HTMLDivElement>(null);
   const depths = useMemo(() => computeDepths(msgs), [msgs]);
   const toolsByMsg = useMemo(() => {
@@ -58,11 +51,19 @@ export function Transcript({
 
   // Tool-only messages carry no prose: fold them into their tool chips
   // and drop rows that have neither text nor tools (unless deep-linked).
-  const visible = msgs.filter(
-    (m) =>
-      m.text.trim() !== "" ||
-      (toolsByMsg.get(m.seq)?.length ?? 0) > 0 ||
-      m.seq === focusSeq,
+  // Memoized like its two neighbours above: it runs over the whole loaded
+  // transcript, it feeds the virtualizer's count and key function, and its
+  // identity is a dependency of two effects — so an unmemoized rebuild
+  // costs a pass over every loaded message on every scroll frame.
+  const visible = useMemo(
+    () =>
+      msgs.filter(
+        (m) =>
+          m.text.trim() !== "" ||
+          (toolsByMsg.get(m.seq)?.length ?? 0) > 0 ||
+          m.seq === focusSeq,
+      ),
+    [msgs, toolsByMsg, focusSeq],
   );
   const hidden = msgs.length - visible.length;
 
@@ -99,20 +100,20 @@ export function Transcript({
   // loads don't yank the reader back to the anchor. focusDone also unlocks
   // the older-direction observer, so the anchored page settles before we
   // start auto-filling context above it.
-  const focused = useRef(false);
+  // focusDone is both halves of the gate: "the deep link has been
+  // scrolled to" and "the older-direction auto-fill may start". With no
+  // deep link there is nothing to wait for, so it begins true.
   const [focusDone, setFocusDone] = useState(focusSeq === undefined);
   useEffect(() => {
-    focused.current = false;
     setFocusDone(focusSeq === undefined);
   }, [focusSeq]);
   useEffect(() => {
-    if (focusSeq === undefined || focused.current) return;
+    if (focusSeq === undefined || focusDone) return;
     const idx = visible.findIndex((m) => m.seq === focusSeq);
     if (idx < 0) return;
     virtualizer.scrollToIndex(idx, { align: "center" });
-    focused.current = true;
     setFocusDone(true);
-  }, [focusSeq, visible, virtualizer]);
+  }, [focusSeq, focusDone, visible, virtualizer]);
 
   // Prepending older messages grows the document above the viewport, which
   // would jump the reader downward. Capture the height just before an older
@@ -383,14 +384,7 @@ function MessageTools({
   tools: ToolCallRow[];
   className?: string;
 }) {
-  const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
-  const toggle = (seq: number) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(seq)) next.delete(seq);
-      else next.add(seq);
-      return next;
-    });
+  const [open, toggle] = useToggleSet<number>();
 
   return (
     <div className={className}>

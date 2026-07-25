@@ -126,8 +126,8 @@ func printIngestRunDetails(run *db.IngestRun, issues []db.IngestIssue) {
 	fmt.Printf("  Roots:     %s\n", string(run.Roots))
 	fmt.Printf("  Files:     %d seen, %d changed\n", run.FilesSeen, run.FilesChanged)
 	fmt.Printf("  Indexed:   %d\n", run.RecordsIndexed)
-	fmt.Printf("  Warnings:  %d total (%d skipped rows, %d parse failures, %d unresolved links)\n",
-		run.WarningCount, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks)
+	fmt.Printf("  Warnings:  %d total (%d parse failures, %d unresolved links)\n",
+		run.WarningCount, run.ParseFailures, run.UnresolvedLinks)
 	if run.ErrorMessage != "" {
 		fmt.Printf("  Error:     %s\n", run.ErrorMessage)
 	}

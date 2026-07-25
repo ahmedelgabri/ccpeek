@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { AGENT_COLOR } from "./api";
 
@@ -26,12 +26,10 @@ export function AgentChip({ agent }: { agent: string }) {
 // Panel is the instrument card: hairline border, micro-label header.
 export function Panel({
   label,
-  action,
   children,
   className = "",
 }: {
   label: string;
-  action?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
@@ -41,7 +39,6 @@ export function Panel({
     >
       <header className="flex items-center border-b border-edge px-3 py-2">
         <h2 className="microlabel">{label}</h2>
-        {action && <div className="ml-auto">{action}</div>}
       </header>
       {children}
     </section>
@@ -442,4 +439,20 @@ export function FilterBar({
       {children}
     </div>
   );
+}
+
+// useToggleSet tracks which of a list's items are expanded — the shape
+// every "click a row to reveal more" surface needs. Returns the set and a
+// toggle; membership is read with .has().
+export function useToggleSet<T>(): [ReadonlySet<T>, (item: T) => void] {
+  const [open, setOpen] = useState<ReadonlySet<T>>(new Set<T>());
+  const toggle = useCallback((item: T) => {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(item)) next.delete(item);
+      else next.add(item);
+      return next;
+    });
+  }, []);
+  return [open, toggle];
 }

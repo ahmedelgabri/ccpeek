@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
@@ -50,6 +51,15 @@ export function SessionDetailPage() {
     sessionId,
     tab === "commands" || tab === "tools" || tab === "files",
   );
+  // Derived above the early returns so they can be memoized. useSessionTools
+  // latches once any tool tab has been opened, so without this both ran over
+  // the session's entire tool set on every render of this page — including
+  // the renders scroll-spy triggers while the transcript tab is active.
+  const commands = useMemo(
+    () => toolRows.filter((t) => t.kind === "shell" && t.detail),
+    [toolRows],
+  );
+  const files = useMemo(() => groupFiles(toolRows), [toolRows]);
 
   if (detail.isLoading)
     return (
@@ -60,8 +70,14 @@ export function SessionDetailPage() {
     );
   if (detail.error) return <p className="text-warn">{String(detail.error)}</p>;
   const s = detail.data!;
-  const commands = toolRows.filter((t) => t.kind === "shell" && t.detail);
-  const files = groupFiles(toolRows);
+  // Badge counts for the tab bar; transcript carries none.
+  const counts: Record<string, number | null> = {
+    transcript: null,
+    commands: commands.length,
+    tools: toolRows.length,
+    files: files.length,
+    artifacts: s.artifacts?.length ?? 0,
+  };
 
   return (
     <div>
@@ -141,16 +157,7 @@ export function SessionDetailPage() {
 
       <div className="mb-3 flex rounded-md border border-edge font-mono text-xs">
         {TABS.map((t) => {
-          const count =
-            t === "commands"
-              ? commands.length
-              : t === "tools"
-                ? toolRows.length
-                : t === "files"
-                  ? files.length
-                  : t === "artifacts"
-                    ? (s.artifacts?.length ?? 0)
-                    : null;
+          const count = counts[t];
           return (
             <button
               key={t}

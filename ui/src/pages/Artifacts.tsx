@@ -1,5 +1,4 @@
-import { useMemo } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { LoadMore, usePagedList } from "../paged";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { fmtBytes, parityApi } from "../api";
 import { AgentChip, EmptyNote, FilterBar, SkeletonRows } from "../ui";
@@ -39,24 +38,16 @@ export function ArtifactsPage() {
     });
 
   const {
-    data,
+    rows: artifacts,
     isLoading,
     error,
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useInfiniteQuery({
-    queryKey: ["artifacts", kind, agent],
-    queryFn: ({ pageParam }) =>
-      parityApi.artifacts(kind, agent, PAGE, pageParam),
-    initialPageParam: 0,
-    getNextPageParam: (last, _all, lastParam) =>
-      last && last.length === PAGE ? lastParam + PAGE : undefined,
-    placeholderData: (prev) => prev,
-  });
-  const artifacts = useMemo(
-    () => (data?.pages ?? []).flatMap((p) => p ?? []),
-    [data],
+  } = usePagedList(
+    ["artifacts", kind, agent],
+    (offset) => parityApi.artifacts(kind, agent, PAGE, offset),
+    PAGE,
   );
 
   return (
@@ -124,15 +115,11 @@ export function ArtifactsPage() {
           ))}
         </ul>
       )}
-      {hasNextPage && (
-        <button
-          onClick={() => void fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mt-4 w-full rounded-md border border-edge bg-surface-1 py-2 font-mono text-xs text-ink-dim hover:text-ink disabled:opacity-50"
-        >
-          {isFetchingNextPage ? "loading…" : "load more"}
-        </button>
-      )}
+      <LoadMore
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
+      />
     </div>
   );
 }

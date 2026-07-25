@@ -33,7 +33,6 @@ func seedIngestDB(t *testing.T) string {
 		FilesSeen:       10,
 		FilesChanged:    2,
 		RecordsIndexed:  4,
-		SkippedRows:     1,
 		ParseFailures:   1,
 		UnresolvedLinks: 1,
 		WarningCount:    2,
