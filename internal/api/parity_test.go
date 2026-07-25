@@ -258,10 +258,14 @@ func TestCallerFacingErrorsKeepTheirMessage(t *testing.T) {
 		status int
 		want   string
 	}{
-		{fmt.Errorf("%w: parameter limit=%q (want a non-negative integer)", query.ErrBadRequest, "abc"),
-			http.StatusBadRequest, "limit"},
-		{fmt.Errorf("%w: session claude-code/nope", query.ErrNotFound),
-			http.StatusNotFound, "claude-code/nope"},
+		{
+			fmt.Errorf("%w: parameter limit=%q (want a non-negative integer)", query.ErrBadRequest, "abc"),
+			http.StatusBadRequest, "limit",
+		},
+		{
+			fmt.Errorf("%w: session claude-code/nope", query.ErrNotFound),
+			http.StatusNotFound, "claude-code/nope",
+		},
 	} {
 		rec := httptest.NewRecorder()
 		writeError(rec, tc.err)

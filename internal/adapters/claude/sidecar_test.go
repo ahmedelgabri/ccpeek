@@ -159,7 +159,8 @@ func historyLine(display string) string {
 // source's rows before inserting, the whole file).
 func TestHistorySkipsOversizedLineAndKeepsGoing(t *testing.T) {
 	huge := historyLine(strings.Repeat("x", maxLineBytes+1024))
-	src, path := writeHistory(t,
+	src, path := writeHistory(
+		t,
 		historyLine("first"),
 		huge,
 		historyLine("after the blob"),
