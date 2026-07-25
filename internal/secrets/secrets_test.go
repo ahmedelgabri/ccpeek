@@ -462,10 +462,11 @@ func TestRedactNeverLeaksTheWholeSecret(t *testing.T) {
 }
 
 // Artifact scanning must not hold the whole changed set in memory: the
-// listing query selects identity only, and each worker fetches its own
-// content. This checks the behaviour that guarantees it — findings still
-// come out right when artifact bodies are large and numerous.
-func TestScanArtifactsLoadsContentPerWorker(t *testing.T) {
+// listing query selects identity only, and content comes back a page at a
+// time with the cursor back-pressured by the worker limit. This checks the
+// behaviour that guarantees it — findings still come out right when
+// artifact bodies are large and numerous.
+func TestScanArtifactsLoadsContentIncrementally(t *testing.T) {
 	ctx := context.Background()
 	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
 	if err != nil {
@@ -530,5 +531,77 @@ func TestScanArtifactsLoadsContentPerWorker(t *testing.T) {
 	}
 	if report2.ArtifactsScanned != 0 {
 		t.Errorf("re-scanned %d unchanged artifacts, want 0", report2.ArtifactsScanned)
+	}
+}
+
+// Content is fetched in pages of artifactFetchPage ids. Every artifact
+// must be scanned and attributed correctly across the page boundary,
+// including the partial page at the end — an off-by-one in the slicing
+// would silently leave the tail unscanned while still reporting success.
+func TestScanArtifactsCrossesFetchPages(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	// Two full pages plus a partial one, with a token planted in the first
+	// artifact of each page and in the very last artifact overall.
+	n := artifactFetchPage*2 + 7
+	leaky := map[int]bool{
+		0:                     true,
+		artifactFetchPage:     true,
+		artifactFetchPage * 2: true,
+		n - 1:                 true,
+	}
+	token := "xoxb-5150515051" + "50-8675308867" + "53-ZxCvBnMaSdFgHjKlQwEr"
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range n {
+		content := fmt.Sprintf("# paste %d\nnothing to see here\n", i)
+		if leaky[i] {
+			content += "export SLACK_TOKEN=" + token + "\n"
+		}
+		if _, err := w.UpsertArtifact(canon.Artifact{
+			Agent: "claude-code", Kind: canon.ArtifactPaste,
+			Name: fmt.Sprintf("paste-%04d.txt", i), Content: content,
+		}, fmt.Sprintf("hash-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	sc, err := New(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, report, err := sc.Run(ctx)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.ArtifactsScanned != n {
+		t.Errorf("artifacts scanned = %d, want %d", report.ArtifactsScanned, n)
+	}
+
+	got := map[string]bool{}
+	for _, f := range findings {
+		if f.EntityType == "artifact" {
+			got[f.NaturalKey] = true
+		}
+	}
+	if len(got) != len(leaky) {
+		t.Errorf("artifacts with findings = %d, want %d", len(got), len(leaky))
+	}
+	for i := range leaky {
+		key := fmt.Sprintf("artifact/claude-code/paste/paste-%04d.txt", i)
+		if !got[key] {
+			t.Errorf("no finding for %s", key)
+		}
 	}
 }

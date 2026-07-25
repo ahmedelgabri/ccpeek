@@ -282,6 +282,22 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, n
 	}
 }
 
+// artifactRef is one changed artifact's identity — everything the scan
+// needs about it except the content, which is fetched a page at a time.
+type artifactRef struct {
+	id   int64
+	hash string
+	key  string // agent-qualified: slug/kind/name
+}
+
+// artifactFetchPage bounds how many artifacts one content query covers.
+// The listing pass deliberately selects identity only (see scanArtifacts),
+// but fetching each row back with its own SELECT cost a query per changed
+// artifact, and on a first scan every artifact is changed. Paging by id
+// amortizes that over ~200 rows while keeping the parameter list far
+// inside SQLite's bind limit.
+const artifactFetchPage = 200
+
 // scanArtifacts detects over every artifact whose content hash moved.
 //
 // The listing query selects IDENTITY ONLY. Artifact content is unbounded
@@ -289,14 +305,8 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, n
 // whatever the user pasted, and a file-history artifact packs every
 // version of a file into its metadata — so selecting content up front held
 // the entire changed set in memory at once, which on a first scan after a
-// rebuild is the whole corpus. Each worker fetches its own row instead,
-// mirroring how detectSessionMessages already pages.
+// rebuild is the whole corpus.
 func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEntity, report *Report) error {
-	type artifactRef struct {
-		id   int64
-		hash string
-		key  string // agent-qualified: slug/kind/name
-	}
 	rows, err := sc.store.ReadDB().QueryContext(ctx, `
 		SELECT ar.id, a.slug, ar.kind, ar.name, ar.content_hash
 		FROM artifacts ar JOIN agents a ON a.id = ar.agent_id`)
@@ -321,20 +331,67 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEnti
 		return err
 	}
 
+	var scanned atomic.Int64
+	for page := 0; page < len(changed); page += artifactFetchPage {
+		end := min(page+artifactFetchPage, len(changed))
+		if err := sc.scanArtifactPage(ctx, changed[page:end], &scanned); err != nil {
+			return err
+		}
+	}
+	report.ArtifactsScanned = int(scanned.Load())
+	return nil
+}
+
+// scanArtifactPage fetches one page of artifact content in a single query
+// and detects over the rows as they stream off the cursor.
+//
+// Detection is regex CPU work and dominates the pass; a full sweep is
+// single-threaded minutes vs parallel tens of seconds. The gitleaks
+// detector is safe to share across goroutines (gitleaks itself fans file
+// scans out over one detector); writes serialize on the store's single
+// writer connection.
+func (sc *Scanner) scanArtifactPage(ctx context.Context, page []artifactRef, scanned *atomic.Int64) error {
+	byID := make(map[int64]artifactRef, len(page))
+	ids := make([]any, 0, len(page))
+	for _, r := range page {
+		byID[r.id] = r
+		ids = append(ids, r.id)
+	}
+	rows, err := sc.store.ReadDB().QueryContext(ctx,
+		`SELECT id, content, metadata_json FROM artifacts WHERE id IN (?`+
+			strings.Repeat(",?", len(ids)-1)+`)`, ids...)
+	if err != nil {
+		return fmt.Errorf("reading artifacts: %w", err)
+	}
+	defer rows.Close()
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
-	var scanned atomic.Int64
-	for _, r := range changed {
+	for rows.Next() {
+		if err := gctx.Err(); err != nil {
+			break
+		}
+		var id int64
+		var content, metadata string
+		if err := rows.Scan(&id, &content, &metadata); err != nil {
+			_ = g.Wait()
+			return err
+		}
+		ref, ok := byID[id]
+		if !ok { // deleted between listing and fetch
+			continue
+		}
+		text := content
+		if len(metadata) > 2 { // structured children (todos, versions) live here
+			text += "\n" + metadata
+		}
+		// g.Go blocks once every worker slot is busy, which back-pressures
+		// this cursor: at most one artifact's text per worker is live at a
+		// time, the same memory bound the per-row fetch gave.
 		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
-				return err
-			}
-			findings, err := sc.detectArtifact(gctx, r.id, "artifact/"+r.key)
-			if err != nil {
-				return err
-			}
+			findings := sc.detectArtifact(text, "artifact/"+ref.key)
 			if err := sc.replaceFindings(gctx,
-				"artifact", "artifact/"+r.key, "artifact", r.key, r.hash,
+				"artifact", "artifact/"+ref.key, "artifact", ref.key, ref.hash,
 				findings); err != nil {
 				return err
 			}
@@ -342,27 +399,15 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEnti
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
+	if err := rows.Err(); err != nil {
+		_ = g.Wait()
 		return err
 	}
-	report.ArtifactsScanned = int(scanned.Load())
-	return nil
+	return g.Wait()
 }
 
-// detectArtifact loads one artifact's text and runs the detector over it.
-// The row is released as soon as the scan is done, so peak memory is one
-// artifact per worker rather than the whole changed set.
-func (sc *Scanner) detectArtifact(ctx context.Context, artifactID int64, naturalKey string) ([]Finding, error) {
-	var content, metadata string
-	if err := sc.store.ReadDB().QueryRowContext(ctx,
-		`SELECT content, metadata_json FROM artifacts WHERE id = ?`, artifactID).
-		Scan(&content, &metadata); err != nil {
-		return nil, fmt.Errorf("reading artifact %d: %w", artifactID, err)
-	}
-	text := content
-	if len(metadata) > 2 { // structured children (todos, versions) live here
-		text += "\n" + metadata
-	}
+// detectArtifact runs the detector over one artifact's text.
+func (sc *Scanner) detectArtifact(text, naturalKey string) []Finding {
 	var findings []Finding
 	for _, m := range sc.detector.DetectString(text) {
 		findings = append(findings, Finding{
@@ -374,7 +419,7 @@ func (sc *Scanner) detectArtifact(ctx context.Context, artifactID int64, natural
 			Line:          m.StartLine,
 		})
 	}
-	return findings, nil
+	return findings
 }
 
 // replaceFindings swaps one entity's findings and records its scan state
