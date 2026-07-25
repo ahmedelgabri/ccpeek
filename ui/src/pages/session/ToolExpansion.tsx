@@ -20,14 +20,14 @@ export function ToolExpansion({
     queryFn: () => api.sessionToolDetail(agent, sessionId, seq),
   });
   if (q.isLoading)
-    return <p className="font-mono text-[11px] text-ink-dim">Loading…</p>;
+    return <p className="font-mono text-meta text-ink-dim">Loading…</p>;
   const d = q.data;
   if (!d) return <LoadError error={q.error ?? "not found"} compact />;
   if ((d.kind === "file_edit" || d.kind === "file_write") && (d.old || d.new)) {
     return <DiffView old={d.old ?? ""} new={d.new ?? ""} />;
   }
   return (
-    <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-[11px] leading-relaxed">
+    <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-meta leading-relaxed">
       <code
         className={
           d.kind === "shell"
@@ -57,7 +57,7 @@ export function JumpButton({
         onJump(seq);
       }}
       title={`Jump to message #${seq} in the transcript`}
-      className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums hover:text-accent"
+      className="shrink-0 font-mono text-micro text-ink-faint tabular-nums hover:text-accent"
     >
       ↗ #{seq}
     </button>

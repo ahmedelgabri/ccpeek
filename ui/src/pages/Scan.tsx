@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { fmtWhen, parityApi, type ScanFinding } from "../api";
-import { EmptyNote, LoadError, SkeletonRows } from "../ui";
+import { fmtCount, fmtWhen, parityApi, plural, type ScanFinding } from "../api";
+import { EmptyNote, LoadError, PageHeader, SkeletonRows } from "../ui";
 
 // Secret-scan findings across EVERY agent's history, with ignore toggles
 // persisted as user state (survives rescans and rebuilds).
@@ -31,13 +31,20 @@ export function ScanPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-xl font-semibold">Secret scan</h1>
-        {active > 0 && (
-          <span className="rounded-full bg-warn/20 px-2 py-0.5 text-xs text-warn">
-            {active} active
-          </span>
-        )}
+      <PageHeader
+        title="Secret scan"
+        lede={
+          active > 0 ? (
+            <span className="rounded-full bg-warn/20 px-2 py-0.5 text-xs text-warn">
+              {plural(active, "active finding")}
+            </span>
+          ) : (
+            <span className="font-mono text-meta text-ink-faint">
+              nothing active{ignored > 0 ? ` · ${fmtCount(ignored)} ignored` : ""}
+            </span>
+          )
+        }
+      >
         <button
           type="button"
           aria-pressed={showIgnored}
@@ -53,7 +60,7 @@ export function ScanPage() {
         >
           show ignored
         </button>
-      </div>
+      </PageHeader>
 
       {error && <LoadError error={error} />}
       {isLoading && (
@@ -79,7 +86,7 @@ export function ScanPage() {
       )}
 
       {findings.length > 0 && (
-        <ul className="divide-y divide-edge overflow-hidden rounded-lg border border-edge">
+        <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
           {findings.map((f) => (
             <li
               key={f.id}
@@ -91,17 +98,17 @@ export function ScanPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     title={f.description}
-                    className="rounded bg-warn/20 px-1.5 py-0.5 font-mono text-xs text-warn"
+                    className="shrink-0 rounded bg-warn/20 px-1.5 py-0.5 font-mono text-xs text-warn"
                   >
                     {f.ruleId}
                   </span>
-                  <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-dim">
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-meta text-ink-dim">
                     {f.entityType}
                   </span>
                   <span className="min-w-0 truncate text-sm">
                     {f.description}
                   </span>
-                  <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-faint">
+                  <span className="ml-auto shrink-0 font-mono text-meta text-ink-faint">
                     {fmtWhen(f.scannedAt)}
                   </span>
                 </div>

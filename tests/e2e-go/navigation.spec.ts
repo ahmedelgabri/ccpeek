@@ -93,8 +93,6 @@ test.describe("legacy v1 redirects", () => {
     await expect(page).toHaveURL(
       "/sessions/claude-code/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     );
-    await expect(
-      page.getByRole("button", { name: /transcript/ }),
-    ).toBeVisible();
+    await expect(page.getByRole("tab", { name: /transcript/ })).toBeVisible();
   });
 });

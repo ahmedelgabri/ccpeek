@@ -1,10 +1,12 @@
-import { LoadMore, usePagedList } from "../paged";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { LoadMore, usePagedList } from "../paged";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
-  fmtCost,
+  fmtCount,
   fmtTokens,
+  plural,
   shortPath,
   totalTokens,
   type SessionSummary,
@@ -14,7 +16,11 @@ import {
   EmptyNote,
   FilterBar,
   LoadError,
+  Money,
+  PageHeader,
   SkeletonRows,
+  inputCls,
+  useDebounced,
 } from "../ui";
 
 const PAGE = 100;
@@ -26,11 +32,17 @@ export function SessionsPage() {
   const search = useSearch({ from: "/sessions" });
   const navigate = useNavigate({ from: "/sessions" });
   const agent = search.agent ?? "";
-  const q = search.q ?? "";
   const project = search.project ?? "";
   const model = search.model ?? "";
   const since = search.since ?? "";
   const until = search.until ?? "";
+
+  // The title box is local state so typing stays responsive, and only the
+  // settled value reaches the URL and the query — it used to issue one
+  // request and one history entry per keystroke.
+  const [titleInput, setTitleInput] = useState(search.q ?? "");
+  const q = useDebounced(titleInput, 250);
+  const [dense, setDense] = useState(false);
 
   const setFilter = (patch: Record<string, string>) =>
     void navigate({
@@ -65,7 +77,7 @@ export function SessionsPage() {
         project,
         model,
         since,
-        until: until,
+        until,
         limit: String(PAGE),
         offset: String(offset),
       }),
@@ -81,20 +93,23 @@ export function SessionsPage() {
     .filter((m) => m !== "");
 
   const groups = groupByDay(sessions);
+  const activeFilters = [agent, project, model, since, until, q].filter(
+    Boolean,
+  ).length;
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Sessions</h1>
-        {project && (
-          <button
-            onClick={() => setFilter({ project: "" })}
-            className="rounded border border-edge bg-surface-2/60 px-2 py-0.5 font-mono text-xs text-ink-dim hover:text-ink"
-            title="Clear workspace filter"
-          >
-            {shortPath(project)} ✕
-          </button>
-        )}
+      <PageHeader
+        title="Sessions"
+        lede={
+          sessions.length > 0 && (
+            <span className="font-mono text-meta text-ink-faint tabular-nums">
+              {fmtCount(sessions.length)}
+              {hasNextPage ? "+" : ""} shown
+            </span>
+          )
+        }
+      >
         <FilterBar
           since={since}
           until={until}
@@ -106,31 +121,113 @@ export function SessionsPage() {
           onModel={(v) => setFilter({ model: v })}
         >
           <input
-            value={q}
-            onChange={(e) => setFilter({ q: e.target.value })}
+            value={titleInput}
+            onChange={(e) => {
+              setTitleInput(e.target.value);
+              setFilter({ q: e.target.value });
+            }}
             placeholder="Filter by title…"
-            className="w-56 rounded-md border border-edge bg-surface-1 px-3 py-1.5 text-sm placeholder:text-ink-faint"
+            aria-label="Filter by title"
+            className={`w-56 ${inputCls}`}
           />
+          <button
+            type="button"
+            onClick={() => setDense((v) => !v)}
+            aria-pressed={dense}
+            title="Toggle compact rows"
+            className={`rounded-md border border-edge px-2 py-1.5 font-mono text-xs transition-colors hover:border-edge-strong ${
+              dense ? "bg-surface-2 text-ink" : "text-ink-dim"
+            }`}
+          >
+            compact
+          </button>
         </FilterBar>
-      </div>
+      </PageHeader>
+
+      {/* Active filters are visible and individually removable. The
+          workspace pill was the only one that showed at all, so a date
+          range or model narrowed the list with nothing on screen saying
+          so. */}
+      {activeFilters > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {project && (
+            <FilterPill
+              label={shortPath(project)}
+              onClear={() => setFilter({ project: "" })}
+            />
+          )}
+          {agent && (
+            <FilterPill label={agent} onClear={() => setFilter({ agent: "" })} />
+          )}
+          {model && (
+            <FilterPill label={model} onClear={() => setFilter({ model: "" })} />
+          )}
+          {(since || until) && (
+            <FilterPill
+              label={`${since || "…"} → ${until || "…"}`}
+              onClear={() => setFilter({ since: "", until: "" })}
+            />
+          )}
+          {q && (
+            <FilterPill
+              label={`“${q}”`}
+              onClear={() => {
+                setTitleInput("");
+                setFilter({ q: "" });
+              }}
+            />
+          )}
+          {activeFilters > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setTitleInput("");
+                setFilter({
+                  project: "",
+                  agent: "",
+                  model: "",
+                  since: "",
+                  until: "",
+                  q: "",
+                });
+              }}
+              className="font-mono text-meta text-ink-faint hover:text-ink"
+            >
+              clear all
+            </button>
+          )}
+        </div>
+      )}
 
       {error && <LoadError error={error} />}
       {isLoading && <SkeletonRows rows={8} />}
       {!isLoading && !error && sessions.length === 0 && (
-        <EmptyNote>No sessions match.</EmptyNote>
+        <EmptyNote
+          hint={
+            activeFilters > 0
+              ? "Try widening the date range or clearing a filter."
+              : undefined
+          }
+        >
+          No sessions match.
+        </EmptyNote>
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {groups.map((g) => (
           <section key={g.day}>
-            <h2 className="microlabel mb-1.5 flex items-center gap-2">
+            {/* The day rule carries a labelled count. A bare "1" floating
+                at the right edge was a number with no noun. */}
+            <h2 className="microlabel mb-1 flex items-center gap-2">
               {g.day}
               <span className="h-px flex-1 bg-edge" />
-              <span className="tabular-nums">{g.sessions.length}</span>
+              <span className="tabular-nums">
+                {plural(g.sessions.length, "session")}
+              </span>
             </h2>
             <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
               {g.sessions.map((s) => (
-                <SessionRow key={`${s.agent}/${s.id}`} s={s} />
+                <SessionRow key={`${s.agent}/${s.id}`} s={s} dense={dense} />
               ))}
             </ul>
           </section>
@@ -146,32 +243,69 @@ export function SessionsPage() {
   );
 }
 
-function SessionRow({ s }: { s: SessionSummary }) {
+function FilterPill({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      title="Remove this filter"
+      className="inline-flex max-w-64 items-center gap-1.5 rounded border border-edge bg-surface-2/60 px-2 py-0.5 font-mono text-meta text-ink-dim transition-colors hover:border-edge-strong hover:text-ink"
+    >
+      <span className="truncate">{label}</span>
+      <span aria-hidden>✕</span>
+      <span className="sr-only">Remove filter</span>
+    </button>
+  );
+}
+
+function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
+  const tokens = totalTokens(s.tokens);
   return (
     <li>
       <Link
         to="/sessions/$agent/$sessionId"
         params={{ agent: s.agent, sessionId: s.id }}
-        className="block border-l-2 border-transparent bg-surface-1 px-4 py-2.5 transition-colors hover:border-accent hover:bg-surface-2/40"
+        className={`block border-l-2 border-transparent bg-surface-1 px-4 transition-colors hover:border-accent hover:bg-surface-2/40 ${
+          dense ? "py-1.5" : "py-2.5"
+        }`}
       >
-        <div className="flex items-baseline gap-3">
+        <div className="flex min-w-0 items-baseline gap-3">
+          <span className="shrink-0 font-mono text-meta text-ink-faint tabular-nums">
+            {s.modifiedAt.slice(11, 16)}
+          </span>
           <AgentChip agent={s.agent} />
-          <span className="truncate text-sm font-medium">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {s.title || <span className="text-ink-faint">(untitled)</span>}
           </span>
-          <span className="ml-auto shrink-0 font-mono text-sm text-ok tabular-nums">
-            {fmtCost(s.costUSD, s.unpricedTokens)}
-          </span>
+          {dense && (
+            <span className="hidden shrink-0 font-mono text-meta text-ink-faint tabular-nums sm:inline">
+              {fmtCount(s.messages)} msgs · {fmtTokens(tokens)} tok
+            </span>
+          )}
+          <Money
+            usd={s.costUSD}
+            unpriced={s.unpricedTokens}
+            className="shrink-0 text-sm"
+          />
         </div>
-        <div className="mt-1 flex gap-4 font-mono text-[11px] text-ink-faint">
-          <span className="tabular-nums">{s.modifiedAt.slice(11, 16)}</span>
-          <span className="truncate">{shortPath(s.cwd)}</span>
-          {s.gitBranch && <span>⎇ {s.gitBranch}</span>}
-          <span className="ml-auto shrink-0 tabular-nums">
-            {s.messages} msgs · {s.toolCalls} tools ·{" "}
-            {fmtTokens(totalTokens(s.tokens))} tok
-          </span>
-        </div>
+        {!dense && (
+          <div className="mt-1 flex min-w-0 items-baseline gap-3 font-mono text-meta text-ink-faint">
+            <span className="min-w-0 truncate">{shortPath(s.cwd)}</span>
+            {s.gitBranch && (
+              <span className="shrink-0 truncate">⎇ {s.gitBranch}</span>
+            )}
+            <span className="ml-auto shrink-0 tabular-nums">
+              {fmtCount(s.messages)} msgs · {fmtCount(s.toolCalls)} tools ·{" "}
+              {fmtTokens(tokens)} tok
+            </span>
+          </div>
+        )}
       </Link>
     </li>
   );

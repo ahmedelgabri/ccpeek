@@ -72,9 +72,7 @@ test.describe("browse sessions", () => {
     const chip = page.locator("a[href*='/sessions/']").first();
     await chip.click();
     await expect(page).toHaveURL(/\/sessions\//);
-    await expect(
-      page.getByRole("button", { name: /transcript/ }),
-    ).toBeVisible();
+    await expect(page.getByRole("tab", { name: /transcript/ })).toBeVisible();
   });
 });
 
@@ -174,7 +172,7 @@ test.describe("lazy tool payloads", () => {
 
     // Opening the Tools tab is what starts the full (excerpt-free) list.
     const before = toolRequests.length;
-    await page.getByRole("button", { name: "tools", exact: true }).click();
+    await page.getByRole("tab", { name: /^tools/ }).click();
     await expect
       .poll(() =>
         toolRequests
@@ -219,10 +217,11 @@ test.describe("session tool tabs", () => {
     page,
   }) => {
     await page.goto(`/sessions/claude-code/${editSession}?tab=files`);
-    // Rows show an edit/write tally; opening one reveals its changes.
+    // Rows show an edit/write tally; opening one reveals its changes. The
+    // tally is pluralised, so a single change reads "1 edit".
     const row = page
       .locator("li")
-      .filter({ hasText: /edits|writes/ })
+      .filter({ hasText: /\d+ (edit|write)s?/ })
       .first();
     await expect(row).toBeVisible();
     await row.click();

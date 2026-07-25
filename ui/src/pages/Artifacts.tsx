@@ -6,7 +6,9 @@ import {
   EmptyNote,
   FilterBar,
   LoadError,
+  PageHeader,
   SkeletonRows,
+  selectCls,
 } from "../ui";
 
 const KINDS = [
@@ -58,13 +60,12 @@ export function ArtifactsPage() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Artifacts</h1>
+      <PageHeader title="Artifacts">
         <FilterBar agent={agent} onAgent={(v) => setFilter({ agent: v })}>
           <select
             value={kind}
             onChange={(e) => setFilter({ kind: e.target.value })}
-            className="rounded-md border border-edge bg-surface-1 px-2 py-1.5 font-mono text-xs"
+            className={selectCls}
             aria-label="Filter by kind"
           >
             {KINDS.map((k) => (
@@ -74,7 +75,7 @@ export function ArtifactsPage() {
             ))}
           </select>
         </FilterBar>
-      </div>
+      </PageHeader>
 
       {error && <LoadError error={error} />}
       {isLoading && (
@@ -90,7 +91,7 @@ export function ArtifactsPage() {
       )}
 
       {artifacts.length > 0 && (
-        <ul className="divide-y divide-edge overflow-hidden rounded-lg border border-edge">
+        <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
           {artifacts.map((a) => (
             <li key={`${a.agent}/${a.kind}/${a.name}`}>
               <Link
@@ -99,10 +100,10 @@ export function ArtifactsPage() {
                 className="flex items-center gap-3 bg-surface-1 px-4 py-3 transition-colors hover:bg-surface-2"
               >
                 <AgentChip agent={a.agent} />
-                <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-accent">
+                <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-accent">
                   {a.kind.replaceAll("_", " ")}
                 </span>
-                <span className="truncate font-medium">{a.name}</span>
+                <span className="min-w-0 flex-1 truncate font-medium">{a.name}</span>
                 <span className="ml-auto shrink-0 text-xs text-ink-dim tabular-nums">
                   {a.sessions > 0 && (
                     <>

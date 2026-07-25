@@ -301,15 +301,68 @@ export function shortPath(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
 }
 
+/** clipPath shortens a path for a fixed-width cell by dropping LEADING
+ *  segments, never trailing ones. Paths differentiate at the tail, so CSS
+ *  `truncate` — which cuts the end — turns three sibling files into three
+ *  identical "internal/handle…" rows. Left-clipping keeps the part that
+ *  tells them apart. */
+export function clipPath(p: string, max = 40): string {
+  const short = shortPath(p);
+  if (short.length <= max) return short;
+  return "…" + short.slice(-(max - 1));
+}
+
+/** clipCommand keeps a shell command to one line for a list cell,
+ *  shortening the home prefix so `cd /Users/me/…` reads like everywhere
+ *  else in the UI. */
+export function clipCommand(cmd: string, max = 60): string {
+  const line = shortPath(cmd.split("\n")[0].trim());
+  return line.length <= max ? line : line.slice(0, max - 1) + "…";
+}
+
+/** fmtCost renders money at a precision the figure can actually support.
+ *  Every cost below $1 used to print four decimals, so the overwhelmingly
+ *  common zero-cost row rendered as "$0.0000" — a column of false
+ *  precision. Zero now reads as an em dash (there is no cost, not a very
+ *  small one) and sub-cent amounts say so rather than pretending to
+ *  hundredths-of-a-cent accuracy. */
 export function fmtCost(usd: number, unpriced?: number): string {
-  const cost = usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`;
+  if (!(usd > 0)) return unpriced ? "—+" : "—";
+  const cost =
+    usd >= 1
+      ? `$${usd.toFixed(2)}`
+      : usd >= 0.01
+        ? `$${usd.toFixed(3)}`
+        : "<$0.01";
   return unpriced ? `${cost}+` : cost;
 }
 
+/** fmtCostExact is the full-precision figure for tooltips and titles,
+ *  where the abbreviation in fmtCost would hide a real difference. */
+export function fmtCostExact(usd: number): string {
+  return `$${usd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".00")}`;
+}
+
+/** fmtTokens abbreviates TOKEN magnitudes, where a thousands suffix is
+ *  the conventional and useful reading. */
 export function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+/** fmtCount formats a COUNT of entities — messages, commands, tool calls,
+ *  sessions. These were going through fmtTokens, which rendered 1,413
+ *  messages as "1.4k": an abbreviation built for six-figure token totals,
+ *  applied to numbers a reader wants exactly. */
+export function fmtCount(n: number): string {
+  return n.toLocaleString();
+}
+
+/** plural picks the noun form for a count, so rows stop reading
+ *  "1 edits". */
+export function plural(n: number, one: string, many = one + "s"): string {
+  return `${fmtCount(n)} ${n === 1 ? one : many}`;
 }
 
 export function fmtBytes(n: number): string {

@@ -22,23 +22,21 @@ test.describe("SPA", () => {
     await page.goto("/sessions");
     await page.locator("ul li a").first().click();
     await expect(page).toHaveURL(/\/sessions\//);
-    await expect(
-      page.getByRole("button", { name: /transcript/ }),
-    ).toBeVisible();
+    await expect(page.getByRole("tab", { name: /transcript/ })).toBeVisible();
     // Stat tiles include cost.
     await expect(page.getByText("Cost", { exact: true })).toBeVisible();
   });
 
   test("usage explorer groups by model", async ({ page }) => {
     await page.goto("/usage");
-    await page.getByRole("button", { name: "model" }).click();
+    await page.getByRole("radio", { name: "model" }).click();
     // The v1 e2e corpus predates usage capture, so either rollup rows or
     // the explicit empty state must render — never a broken page.
     await expect(
       page
         .locator("table tbody tr")
         .first()
-        .or(page.getByText("No usage recorded yet.")),
+        .or(page.getByText(/No usage (recorded yet|in this range)\./)),
     ).toBeVisible();
   });
 

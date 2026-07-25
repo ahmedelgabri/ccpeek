@@ -4,12 +4,23 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
   fmtCost,
+  fmtCount,
   fmtTokens,
   fmtWhen,
   shortPath,
   type SessionDetail,
 } from "../api";
-import { AgentChip, EmptyNote, LoadError, SkeletonRows } from "../ui";
+import {
+  AgentChip,
+  AgentDot,
+  EmptyNote,
+  LoadError,
+  Money,
+  PageHeader,
+  SkeletonRows,
+  inputCls,
+  useDebounced,
+} from "../ui";
 
 const PICKER_PAGE = 100;
 
@@ -30,8 +41,23 @@ export function ComparePage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">Compare sessions</h1>
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+      <PageHeader title="Compare sessions">
+        <button
+          type="button"
+          onClick={() =>
+            void navigate({
+              search: { a: b || undefined, b: a || undefined },
+              replace: true,
+            })
+          }
+          disabled={!a && !b}
+          className="ml-auto rounded-md border border-edge px-2 py-1.5 font-mono text-xs text-ink-dim transition-colors hover:border-edge-strong hover:text-ink disabled:opacity-40"
+          aria-label="Swap compared sessions"
+        >
+          ⇄ swap
+        </button>
+      </PageHeader>
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <SessionPicker
           value={a}
           onChange={(value) =>
@@ -45,21 +71,6 @@ export function ComparePage() {
           }
           label="Session A"
         />
-        <button
-          type="button"
-          onClick={() =>
-            void navigate({
-              search: { a: b || undefined, b: a || undefined },
-              replace: true,
-            })
-          }
-          disabled={!a && !b}
-          className="self-center justify-self-center rounded-md border border-edge px-2 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-edge-strong hover:text-ink disabled:opacity-40 sm:self-end sm:mb-1"
-          aria-label="Swap compared sessions"
-          title="Swap sessions"
-        >
-          ⇄
-        </button>
         <SessionPicker
           value={b}
           onChange={(value) =>
@@ -77,10 +88,12 @@ export function ComparePage() {
 
       {(!a || !b) && (
         <div role="status">
-          <EmptyNote>
+          <EmptyNote
+            hint="Pick one on each side — any two sessions, from any two agents."
+          >
             {a || b
               ? "Pick one more session to compare."
-              : "Pick two sessions to compare."}
+              : "Nothing selected yet."}
           </EmptyNote>
         </div>
       )}
@@ -114,14 +127,14 @@ function ComparisonTable({
   const leftDuration = durationMs(left);
   const rightDuration = durationMs(right);
   return (
-    <div className="overflow-x-auto rounded-lg border border-edge">
+    <div className="overflow-x-auto rounded-md border border-edge">
       <table className="w-full min-w-[720px] text-sm">
         <thead className="bg-surface-2 text-left text-xs text-ink-dim">
           <tr>
             <th className="px-4 py-2 uppercase tracking-wide">Metric</th>
             <SessionHeading session={left} />
             <SessionHeading session={right} />
-            <th className="px-4 py-2 text-right font-mono text-[11px] uppercase tracking-wide">
+            <th className="px-4 py-2 text-right font-mono text-meta uppercase tracking-wide">
               Δ B−A
             </th>
           </tr>
@@ -213,9 +226,13 @@ function SessionHeading({ session }: { session: SessionDetail }) {
   );
 }
 
-// SessionPicker is a title-filtered server-side select: the filter query
-// narrows on the server, and a full page is flagged so users know to
-// refine instead of assuming the list is complete.
+// SessionPicker is a title-filtered list, not a native <select>. A
+// session is identified by four things at once — when, which agent, what
+// it was called, what it cost — and an <option> can only be one line of
+// unstyled text, so the four were crammed into one string that told the
+// reader almost nothing at a glance. The filter still narrows on the
+// server, and a full page is flagged so nobody assumes the list is
+// complete.
 function SessionPicker({
   value,
   onChange,
@@ -225,7 +242,8 @@ function SessionPicker({
   onChange: (v: string) => void;
   label: string;
 }) {
-  const [q, setQ] = useState("");
+  const [qInput, setQInput] = useState("");
+  const q = useDebounced(qInput, 250);
   const sessions = useQuery({
     queryKey: ["compare-sessions", q],
     queryFn: () => api.sessions({ q, limit: String(PICKER_PAGE) }),
@@ -233,38 +251,66 @@ function SessionPicker({
   });
   const list = sessions.data ?? [];
   const truncated = list.length === PICKER_PAGE;
-  const selectedVisible = list.some((s) => `${s.agent}|${s.id}` === value);
+  const selected = list.find((s) => `${s.agent}|${s.id}` === value);
+
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="microlabel">{label}</div>
       <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder={`Filter ${label} by title…`}
+        value={qInput}
+        onChange={(e) => setQInput(e.target.value)}
+        placeholder="Filter by title…"
         aria-label={`Filter ${label} by title`}
-        className="rounded-md border border-edge bg-surface-1 px-3 py-1.5 text-sm placeholder:text-ink-faint"
+        className={inputCls}
       />
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="min-w-0 rounded-md border border-edge bg-surface-1 px-2 py-2 text-sm"
+      {value && !selected && (
+        <div className="rounded-md border border-accent/40 px-2 py-1 font-mono text-meta text-ink-dim">
+          {value.replace("|", " · ")} (selected, outside the current filter)
+        </div>
+      )}
+      <ul
+        role="listbox"
         aria-label={label}
+        className="h-56 divide-y divide-edge overflow-y-auto rounded-md border border-edge bg-surface-1"
       >
-        <option value="">{label}…</option>
-        {value && !selectedVisible && (
-          <option value={value}>{value.replace("|", " · ")} (selected)</option>
+        {list.length === 0 && (
+          <li className="px-3 py-4 text-center text-sm text-ink-dim">
+            {sessions.isLoading ? "Loading…" : "No sessions match."}
+          </li>
         )}
-        {list.map((s) => (
-          <option key={`${s.agent}|${s.id}`} value={`${s.agent}|${s.id}`}>
-            {fmtWhen(s.modifiedAt)} · [{s.agent}] {s.title || s.id} (
-            {fmtCost(s.costUSD)})
-          </option>
-        ))}
+        {list.map((s) => {
+          const id = `${s.agent}|${s.id}`;
+          const on = id === value;
+          return (
+            <li key={id} role="option" aria-selected={on}>
+              <button
+                type="button"
+                onClick={() => onChange(on ? "" : id)}
+                className={`flex w-full min-w-0 flex-col gap-0.5 px-3 py-1.5 text-left transition-colors ${
+                  on ? "bg-surface-2" : "hover:bg-surface-2/40"
+                }`}
+              >
+                <span className="flex min-w-0 items-baseline gap-2">
+                  <AgentDot agent={s.agent} />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {s.title || s.id}
+                  </span>
+                  <Money usd={s.costUSD} className="shrink-0 text-meta" />
+                </span>
+                <span className="font-mono text-meta text-ink-faint">
+                  {fmtWhen(s.modifiedAt)} · {shortPath(s.cwd)}
+                </span>
+              </button>
+            </li>
+          );
+        })}
         {truncated && (
-          <option disabled value="__truncated">
-            …showing newest {PICKER_PAGE} — refine the filter for older sessions
-          </option>
+          <li className="px-3 py-1.5 font-mono text-micro text-ink-faint">
+            showing the newest {PICKER_PAGE} — refine the filter for older
+            sessions
+          </li>
         )}
-      </select>
+      </ul>
     </div>
   );
 }
@@ -273,7 +319,7 @@ function NumericRow({
   label,
   a,
   b,
-  format = String,
+  format = fmtCount,
   formatA = format,
   formatB = format,
   deltaFormat = format,
@@ -293,7 +339,7 @@ function NumericRow({
   const delta = b - a;
   const valueClass = (value: number, other: number) =>
     cost
-      ? "font-mono text-ok"
+      ? "font-mono text-ink"
       : value > other
         ? "font-medium text-ink"
         : value < other

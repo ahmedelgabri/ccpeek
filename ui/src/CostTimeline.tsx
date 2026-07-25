@@ -9,8 +9,9 @@ import {
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { api, shortPath, type UsageRow } from "./api";
+import { api } from "./api";
 import { cssColor, useResolvedTheme } from "./theme";
+import { EmptyNote, Panel } from "./ui";
 
 echarts.use([
   BarChart,
@@ -59,7 +60,9 @@ interface TimelineFilters {
   model?: string;
 }
 
-async function fetchDailyCostByAgent(f: TimelineFilters): Promise<DaySeries[]> {
+async function fetchDailyCostByAgent(
+  f: TimelineFilters,
+): Promise<DaySeries[]> {
   const agents = f.agent ? [f.agent] : AGENTS;
   const results = await Promise.all(
     agents.map(async (agent) => {
@@ -80,14 +83,26 @@ async function fetchDailyCostByAgent(f: TimelineFilters): Promise<DaySeries[]> {
   return results.filter((s) => s.byDay.size > 0);
 }
 
+function dayMs(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`);
+}
+
 function buildOption(series: DaySeries[], pal: ChartPalette) {
   const days = Array.from(
     new Set(series.flatMap((s) => Array.from(s.byDay.keys()))),
   ).toSorted();
 
+  // A little air at both ends so the first and last day's bar is drawn
+  // whole rather than half-clipped by the grid edge — on a time axis the
+  // extreme values land exactly ON the boundary.
+  const stamps = days.map(dayMs);
+  const lo = Math.min(...stamps);
+  const hi = Math.max(...stamps);
+  const pad = Math.max((hi - lo) * 0.02, 12 * 60 * 60 * 1000);
+
   return {
     backgroundColor: "transparent",
-    grid: { left: 56, right: 16, top: 36, bottom: 56 },
+    grid: { left: 60, right: 16, top: 36, bottom: 52 },
     legend: {
       top: 0,
       left: 0,
@@ -103,14 +118,20 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       borderColor: pal.edge,
       textStyle: { color: pal.ink, fontSize: 12 },
       valueFormatter: (v: unknown) =>
-        typeof v === "number" && v > 0 ? `$${v.toFixed(2)}` : "—",
+        typeof v === "number" && v > 0 ? `$${v.toFixed(4)}` : "—",
     },
+    // A TIME axis, not a category axis. As categories, every day the data
+    // happened to contain sat one bar-width from the next, so a gap of a
+    // year between two active days rendered exactly like a gap of one day
+    // — the timeline was not to scale, and the shape of spending over
+    // time is the entire reason this chart exists.
     xAxis: {
-      type: "category",
-      data: days,
+      type: "time",
+      min: lo - pad,
+      max: hi + pad,
       axisLine: { lineStyle: { color: pal.edge } },
       axisTick: { show: false },
-      axisLabel: { color: pal.inkDim, fontSize: 11 },
+      axisLabel: { color: pal.inkDim, fontSize: 11, hideOverlap: true },
     },
     yAxis: {
       type: "value",
@@ -125,12 +146,16 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       { type: "inside" },
       {
         type: "slider",
-        height: 20,
+        height: 18,
         bottom: 8,
         borderColor: pal.edge,
         backgroundColor: pal.surface,
         fillerColor: withAlpha(pal.accent, 0.15),
         handleStyle: { color: pal.inkDim },
+        // The data shadow drew a filled silhouette of the series inside
+        // the slider; at a handful of points it read as a stray triangle
+        // rather than a preview of anything.
+        showDataShadow: false,
         textStyle: { color: pal.inkDim, fontSize: 10 },
       },
     ],
@@ -138,113 +163,18 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       name: s.agent,
       type: "bar",
       stack: "cost",
-      data: days.map((d) => s.byDay.get(d) ?? 0),
+      data: days.map((d) => [dayMs(d), s.byDay.get(d) ?? 0]),
       color: pal.agents[s.agent],
-      // 2px surface gap between stacked segments so adjacency never
+      // 1px surface gap between stacked segments so adjacency never
       // rides on hue alone.
       itemStyle: { borderColor: pal.surface, borderWidth: 1 },
       barMaxWidth: 28,
+      // Over a year-wide axis a single day is a sliver; this keeps it on
+      // screen without inflating it into a claim about its duration.
+      barMinWidth: 3,
       emphasis: { focus: "series" },
     })),
   };
-}
-
-// GroupBars is the graph for the non-day groupings (model, agent,
-// project): horizontal cost bars, top rows first. Bars wear the fixed
-// agent colors when the category IS an agent (identity); otherwise a
-// single accent hue (magnitude across categories).
-export function GroupBars({
-  rows,
-  group,
-}: {
-  rows: UsageRow[];
-  group: string;
-}) {
-  const el = useRef<HTMLDivElement>(null);
-  const theme = useResolvedTheme();
-  const pal = chartPalette();
-  const top = rows.filter((r) => r.costUSD > 0).toReversed(); // echarts y-axis draws bottom-up
-
-  const option =
-    top.length === 0
-      ? null
-      : {
-          backgroundColor: "transparent",
-          grid: { left: 170, right: 48, top: 8, bottom: 24 },
-          tooltip: {
-            trigger: "axis",
-            axisPointer: { type: "shadow" },
-            backgroundColor: pal.surface2,
-            borderColor: pal.edge,
-            textStyle: { color: pal.ink, fontSize: 12 },
-            valueFormatter: (v: unknown) =>
-              typeof v === "number" ? `$${v.toFixed(2)}` : "",
-          },
-          xAxis: {
-            type: "value",
-            axisLabel: {
-              color: pal.inkDim,
-              fontSize: 11,
-              formatter: (v: number) => `$${v}`,
-            },
-            splitLine: { lineStyle: { color: pal.edge } },
-          },
-          yAxis: {
-            type: "category",
-            data: top.map((r) => r.group || "(none)"),
-            axisLine: { lineStyle: { color: pal.edge } },
-            axisTick: { show: false },
-            axisLabel: {
-              color: pal.inkDim,
-              fontSize: 11,
-              // Paths differentiate at the tail: shorten the home prefix and
-              // truncate from the left, never into "/Users/ahmed/code/…".
-              formatter: (v: string) => {
-                const label = group === "project" ? shortPath(v) : v;
-                return label.length > 26 ? "…" + label.slice(-25) : label;
-              },
-            },
-          },
-          series: [
-            {
-              type: "bar",
-              data: top.map((r) => ({
-                value: r.costUSD,
-                itemStyle: {
-                  color:
-                    group === "agent"
-                      ? (pal.agents[r.group] ?? pal.inkFaint)
-                      : pal.accent,
-                },
-              })),
-              barMaxWidth: 18,
-              itemStyle: { borderRadius: [0, 4, 4, 0] },
-              label: {
-                show: true,
-                position: "right",
-                color: pal.inkDim,
-                fontSize: 10,
-                formatter: ({ value }: { value: number }) =>
-                  `$${value.toFixed(2)}`,
-              },
-            },
-          ],
-        };
-  useEChart(el, option, [rows, group, theme]);
-
-  if (top.length === 0) return null;
-  return (
-    <div className="mb-4 rounded-md border border-edge bg-surface-1 p-4">
-      <h2 className="mb-1 text-sm font-medium text-ink-dim">Cost by {group}</h2>
-      <div
-        ref={el}
-        className="overflow-hidden"
-        style={{ height: Math.max(top.length * 26 + 60, 140) }}
-        role="img"
-        aria-label={`Cost by ${group}; the table below holds the same data`}
-      />
-    </div>
-  );
 }
 
 function downloadCSV(series: DaySeries[]) {
@@ -308,10 +238,10 @@ function useEChart(
   );
 }
 
-// CostTimeline is the cost explorer: daily spend stacked by agent, with
-// wheel + slider zoom (docs/v2-plan.md §7 P2), following the page's
-// date/agent/model filters. The rollup table below it stays the
-// accessible/table view of the same data.
+// CostTimeline is the cost explorer's one persistent graph: daily spend
+// stacked by agent, on a real time axis, with wheel + slider zoom,
+// following the page's date/agent/model filters. The rollup table below
+// it stays the accessible/table view of the same data.
 export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
   const { data, isLoading } = useQuery({
     queryKey: ["usage", "daily-by-agent", since, until, agent, model],
@@ -322,33 +252,41 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
 
   const el = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme();
-  useEChart(
-    el,
-    series.length > 0 ? buildOption(series, chartPalette()) : null,
-    [series, theme],
-  );
-
-  if (series.length === 0 && !isLoading) return null;
+  useEChart(el, series.length > 0 ? buildOption(series, chartPalette()) : null, [
+    series,
+    theme,
+  ]);
 
   return (
-    <div className="mb-4 rounded-lg border border-edge bg-surface-1 p-4">
-      <div className="mb-1 flex items-baseline">
-        <h2 className="text-sm font-medium text-ink-dim">
-          Daily cost by agent
-        </h2>
-        <button
-          onClick={() => downloadCSV(series)}
-          className="ml-auto text-xs text-ink-dim hover:text-ink"
-        >
-          Export CSV
-        </button>
-      </div>
+    <Panel
+      label="Daily cost by agent"
+      className="mb-4"
+      action={
+        series.length > 0 && (
+          <button
+            type="button"
+            onClick={() => downloadCSV(series)}
+            className="font-mono text-meta text-ink-faint hover:text-ink"
+          >
+            export CSV
+          </button>
+        )
+      }
+    >
+      {/* The container always mounts: unmounting it on an empty result
+          made the whole page jump by the chart's height every time a
+          filter emptied the range. */}
       <div
         ref={el}
-        className="h-72 w-full"
+        className={`h-64 w-full ${series.length === 0 ? "hidden" : ""}`}
         role="img"
         aria-label="Daily cost stacked by agent; the table below holds the same data"
       />
-    </div>
+      {series.length === 0 && (
+        <EmptyNote>
+          {isLoading ? "Loading…" : "No cost recorded in this range."}
+        </EmptyNote>
+      )}
+    </Panel>
   );
 }

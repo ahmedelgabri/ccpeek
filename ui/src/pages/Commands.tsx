@@ -1,5 +1,5 @@
-import { LoadMore, usePagedList } from "../paged";
 import { useRef, useState } from "react";
+import { LoadMore, usePagedList } from "../paged";
 import { Link } from "@tanstack/react-router";
 import { api, fmtWhen, shortPath } from "../api";
 import { useHighlight } from "../highlight";
@@ -9,7 +9,9 @@ import {
   EmptyNote,
   FilterBar,
   LoadError,
+  PageHeader,
   SkeletonRows,
+  inputCls,
   useDebounced,
 } from "../ui";
 
@@ -20,10 +22,10 @@ const PAGE = 100;
 // first, each row linking back to its session — plus one-click export
 // into real shell history files (same formats as `ccpeek export`).
 export function CommandsPage() {
-  const [q, setQ] = useState("");
-  // The commands query scans and orders across the whole corpus, so it is
-  // not something to run per keystroke.
-  const debouncedQ = useDebounced(q);
+  const [qInput, setQInput] = useState("");
+  // Settled before it reaches the query: the filter used to fire one
+  // full-text request per keystroke.
+  const q = useDebounced(qInput, 250);
   const [agent, setAgent] = useState("");
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
@@ -38,13 +40,13 @@ export function CommandsPage() {
     isFetchingNextPage,
     fetchNextPage,
   } = usePagedList(
-    ["commands", debouncedQ, agent, since, until],
+    ["commands", q, agent, since, until],
     (offset) =>
       api.commands({
-        q: debouncedQ,
+        q,
         agent,
         since,
-        until: until,
+        until,
         limit: String(PAGE),
         offset: String(offset),
       }),
@@ -64,8 +66,7 @@ export function CommandsPage() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">Commands</h1>
+      <PageHeader title="Commands">
         <FilterBar
           since={since}
           until={until}
@@ -77,10 +78,11 @@ export function CommandsPage() {
           onAgent={setAgent}
         >
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
             placeholder="Filter commands…"
-            className="w-64 rounded-md border border-edge bg-surface-1 px-3 py-1.5 text-sm placeholder:text-ink-faint"
+            aria-label="Filter commands"
+            className={`w-64 ${inputCls}`}
           />
           <details className="relative">
             <summary className="cursor-pointer list-none rounded-md border border-edge px-3 py-1.5 font-mono text-xs text-ink-dim hover:text-ink">
@@ -97,13 +99,13 @@ export function CommandsPage() {
                   {f} history
                 </a>
               ))}
-              <div className="border-t border-edge px-3 py-1.5 text-[10px] text-ink-faint">
+              <div className="border-t border-edge px-3 py-1.5 text-micro text-ink-faint">
                 current filters, ≤1000
               </div>
             </div>
           </details>
         </FilterBar>
-      </div>
+      </PageHeader>
 
       {error && <LoadError error={error} />}
       {isLoading && <SkeletonRows rows={8} />}
@@ -120,18 +122,20 @@ export function CommandsPage() {
             key={`${c.sessionId}-${c.at}-${i}`}
             className="group bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
           >
-            <div className="mb-1 flex items-center gap-2 font-mono text-[11px] text-ink-faint">
+            <div className="mb-1 flex min-w-0 items-center gap-2 font-mono text-meta text-ink-faint">
               <AgentDot agent={c.agent} />
-              {c.cwd && <span className="truncate">{shortPath(c.cwd)}</span>}
+              {c.cwd && (
+                <span className="min-w-0 truncate">{shortPath(c.cwd)}</span>
+              )}
               <Link
                 to="/sessions/$agent/$sessionId"
                 params={{ agent: c.agent, sessionId: c.sessionId }}
                 search={{ tab: "commands" }}
-                className="hover:text-accent"
+                className="shrink-0 hover:text-accent"
               >
                 session {c.sessionId.slice(0, 8)}
               </Link>
-              <span className="ml-auto tabular-nums">
+              <span className="ml-auto shrink-0 tabular-nums">
                 {fmtWhen(c.at ?? "")}
               </span>
               <CopyButton text={c.command} />

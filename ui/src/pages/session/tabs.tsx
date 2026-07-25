@@ -2,8 +2,22 @@ import { useMemo, useRef, useState } from "react";
 import { WindowedList } from "../../windowed";
 import { Link } from "@tanstack/react-router";
 import { useHighlight } from "../../highlight";
-import { shortPath, type ToolCallRow } from "../../api";
-import { CopyButton, EmptyNote, KindBars, toolColor } from "../../ui";
+import {
+  clipCommand,
+  clipPath,
+  fmtCount,
+  plural,
+  shortPath,
+  type ToolCallRow,
+} from "../../api";
+import {
+  CopyButton,
+  EmptyNote,
+  KindBars,
+  Panel,
+  kindLabel,
+  toolColor,
+} from "../../ui";
 import { JumpButton, ToolExpansion } from "./ToolExpansion";
 
 export function CommandsTab({
@@ -36,7 +50,7 @@ export function CommandsTab({
               </code>
             </pre>
             <JumpButton seq={c.messageSeq} onJump={onJump} />
-            <span className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums">
+            <span className="shrink-0 font-mono text-micro text-ink-faint tabular-nums">
               {c.at?.slice(11, 19)}
             </span>
             <CopyButton text={c.detail ?? ""} />
@@ -68,12 +82,9 @@ export function ToolsTab({
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-edge bg-surface-1">
-        <div className="microlabel border-b border-edge px-3 py-2">
-          Calls by kind
-        </div>
-        <KindBars items={kinds} />
-      </div>
+      <Panel label="Calls by kind">
+        <KindBars items={kinds} fmt={fmtCount} />
+      </Panel>
       {/* A grid rather than a <table>: windowed rows have to be
           absolutely positioned, which a table layout cannot express.
           ARIA roles keep the semantics a table gave for free. */}
@@ -85,10 +96,10 @@ export function ToolsTab({
       >
         <div
           role="row"
-          className={`${TOOL_COLUMNS} bg-surface-2 font-mono text-[10px] tracking-wider text-ink-faint uppercase`}
+          className={`${TOOL_COLUMNS} bg-surface-2 font-mono text-micro tracking-wider text-ink-faint uppercase`}
         >
           <span role="columnheader" className="px-3 py-1.5">
-            #
+            call
           </span>
           <span role="columnheader" className="px-3 py-1.5">
             tool
@@ -161,30 +172,39 @@ function ToolRow({
           {t.name}
         </span>
         <span role="cell" className="px-3 py-1.5">
-          <span className="inline-flex items-center gap-1.5 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-dim">
+          <span className="inline-flex items-center gap-1.5 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-micro text-ink-dim">
             <span
               aria-hidden
               className="inline-block h-1.5 w-1.5 rounded-full"
               style={{ background: toolColor(t.kind) }}
             />
-            {t.kind}
+            {kindLabel(t.kind)}
           </span>
         </span>
+        {/* Clipped from the LEFT. CSS truncate cut the END of every path,
+            so three edits to three different files in one package all
+            rendered as the identical "internal/handle…". Shell details are
+            shortened the way the rest of the UI shortens a home
+            directory. */}
         <span
           role="cell"
           className="truncate px-3 py-1.5 font-mono text-xs text-ink-dim"
+          title={t.detail}
         >
           {hasDiff && (
             <span className="mr-1.5 text-accent">{open ? "▾" : "▸"} diff</span>
           )}
-          {t.detail && shortPath(t.detail)}
+          {t.detail &&
+            (t.kind === "shell"
+              ? clipCommand(t.detail, 72)
+              : clipPath(t.detail, 56))}
         </span>
         <span role="cell" className="px-3 py-1.5 text-right">
           <JumpButton seq={t.messageSeq} onJump={onJump} />
         </span>
         <span
           role="cell"
-          className="px-3 py-1.5 text-right font-mono text-[11px] text-ink-faint tabular-nums"
+          className="px-3 py-1.5 text-right font-mono text-meta text-ink-faint tabular-nums"
         >
           {t.at?.slice(11, 19)}
         </span>
@@ -278,15 +298,24 @@ function FileRow({
         }`}
       >
         {diffs.length > 0 && (
-          <span className="shrink-0 font-mono text-[11px] text-accent">
+          <span className="shrink-0 font-mono text-meta text-accent">
             {open ? "▾" : "▸"}
           </span>
         )}
-        <span className="truncate font-mono text-xs">{shortPath(f.path)}</span>
-        <span className="ml-auto flex shrink-0 gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
-          {edits > 0 && <span className="text-warn">{edits} edits</span>}
-          {writes > 0 && <span className="text-ok">{writes} writes</span>}
-          {f.reads > 0 && <span>{f.reads} reads</span>}
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-xs"
+          title={f.path}
+        >
+          {shortPath(f.path)}
+        </span>
+        <span className="ml-auto flex shrink-0 gap-2 font-mono text-micro text-ink-faint tabular-nums">
+          {edits > 0 && (
+            <span className="text-warn">{plural(edits, "edit")}</span>
+          )}
+          {writes > 0 && (
+            <span className="text-ok">{plural(writes, "write")}</span>
+          )}
+          {f.reads > 0 && <span>{plural(f.reads, "read")}</span>}
         </span>
         <CopyButton text={f.path} />
       </div>
@@ -294,7 +323,7 @@ function FileRow({
         <div className="space-y-2 border-t border-edge px-3 py-2">
           {diffs.map((e) => (
             <div key={e.seq}>
-              <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-ink-faint tabular-nums">
+              <div className="mb-1 flex items-center gap-2 font-mono text-micro text-ink-faint tabular-nums">
                 <span>
                   {e.kind === "file_write" ? "write" : "edit"} #{e.seq} ·{" "}
                   {e.at?.slice(11, 19)}
@@ -333,11 +362,11 @@ export function ArtifactsTab({
             params={{ agent, kind: a.kind, name: a.name }}
             className="flex items-baseline gap-3 bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
           >
-            <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-micro text-accent">
               {a.kind.replaceAll("_", " ")}
             </span>
             <span className="truncate font-mono text-xs">{a.name}</span>
-            <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-faint">
+            <span className="ml-auto shrink-0 font-mono text-micro text-ink-faint">
               {a.relation} · {a.evidence}
             </span>
           </Link>

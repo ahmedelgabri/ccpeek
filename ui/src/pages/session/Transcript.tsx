@@ -1,10 +1,30 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useHighlight } from "../../highlight";
 import { useRowWindow } from "../../windowed";
-import { shortPath, type ToolCallRow, type TranscriptMessage } from "../../api";
+import { Link } from "@tanstack/react-router";
+import {
+  fmtCount,
+  plural,
+  shortPath,
+  type ToolCallRow,
+  type TranscriptMessage,
+} from "../../api";
 import type { TranscriptWindow } from "./useSessionData";
-import { EmptyNote, SkeletonRows, toolColor, useToggleSet } from "../../ui";
+import {
+  EmptyNote,
+  Segmented,
+  SkeletonRows,
+  toolColor,
+  useToggleSet,
+} from "../../ui";
 import { ToolExpansion } from "./ToolExpansion";
+
+// Transcript lenses: the reader's filter over a session that can run to
+// thousands of entries.
+type Lens = "all" | "talk" | "prompts" | "tools";
+
+// Scrubber bucket count — see the component below.
+const SCRUB_BUCKETS = 160;
 
 export function Transcript({
   agent,
@@ -33,6 +53,8 @@ export function Transcript({
     copyPermalink: onPermalink,
   } = transcript;
   const [treeView, setTreeView] = useState(false);
+  const [lens, setLens] = useState<Lens>("all");
+  const [find, setFind] = useState("");
   const [copiedSeq, setCopiedSeq] = useState<number | null>(null);
   // Meta entries (toolResult, system, …) render as one-line excerpts;
   // clicking reveals the full stored text.
@@ -55,7 +77,7 @@ export function Transcript({
   // transcript, it feeds the virtualizer's count and key function, and its
   // identity is a dependency of two effects — so an unmemoized rebuild
   // costs a pass over every loaded message on every scroll frame.
-  const visible = useMemo(
+  const withContent = useMemo(
     () =>
       msgs.filter(
         (m) =>
@@ -65,7 +87,27 @@ export function Transcript({
       ),
     [msgs, toolsByMsg, focusSeq],
   );
-  const hidden = msgs.length - visible.length;
+  // On top of that the reader picks a lens. A thousand-message session is
+  // a document, and "show me only what I asked for" or "only what it ran"
+  // is how you navigate one — scrolling was previously the only tool.
+  const needle = find.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      withContent.filter((m) => {
+        if (m.seq === focusSeq) return true;
+        const isUser = m.role === "user" && m.kind === "message";
+        const isAssistant = m.role === "assistant";
+        const hasTools = (toolsByMsg.get(m.seq)?.length ?? 0) > 0;
+        if (lens === "prompts" && !isUser) return false;
+        if (lens === "tools" && !hasTools) return false;
+        if (lens === "talk" && !isUser && !isAssistant) return false;
+        if (needle && !m.text.toLowerCase().includes(needle)) return false;
+        return true;
+      }),
+    [withContent, toolsByMsg, focusSeq, lens, needle],
+  );
+  const hidden = msgs.length - withContent.length;
+  const filteredOut = withContent.length - visible.length;
 
   // Rows are keyed by seq so measured heights survive page prepends. The
   // transcript uses the hook rather than WindowedList because it needs the
@@ -176,22 +218,56 @@ export function Transcript({
 
   return (
     <div ref={container}>
-      <div className="mb-2 flex items-center gap-3">
-        <span className="font-mono text-[11px] text-ink-faint">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="font-mono text-meta text-ink-faint">
           {total > msgs.length
-            ? `${msgs.length} of ${total} messages`
-            : `${total} messages`}
-          {hidden > 0 && ` · ${hidden} empty folded`}
+            ? `${fmtCount(msgs.length)} of ${fmtCount(total)} messages`
+            : plural(total, "message")}
+          {hidden > 0 && ` · ${fmtCount(hidden)} empty folded`}
+          {filteredOut > 0 && ` · ${fmtCount(filteredOut)} filtered out`}
         </span>
-        <button
-          onClick={() => setTreeView((v) => !v)}
-          className={`ml-auto rounded-md border border-edge px-2 py-1 font-mono text-xs ${
-            treeView ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
-          }`}
-        >
-          tree view
-        </button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <input
+            value={find}
+            onChange={(e) => setFind(e.target.value)}
+            placeholder="Find in transcript…"
+            aria-label="Find in loaded transcript"
+            className="w-44 rounded-md border border-edge bg-surface-1 px-2 py-1 font-mono text-xs placeholder:text-ink-faint"
+          />
+          <Segmented
+            label="Transcript lens"
+            value={lens}
+            onChange={setLens}
+            options={[
+              { value: "all", label: "all" },
+              { value: "talk", label: "talk" },
+              { value: "prompts", label: "prompts" },
+              { value: "tools", label: "tools" },
+            ]}
+          />
+          <button
+            type="button"
+            onClick={() => setTreeView((v) => !v)}
+            aria-pressed={treeView}
+            className={`rounded-md border border-edge px-2 py-1.5 font-mono text-xs transition-colors hover:border-edge-strong ${
+              treeView ? "bg-surface-2 text-ink" : "text-ink-dim hover:text-ink"
+            }`}
+          >
+            tree
+          </button>
+        </div>
       </div>
+      {/* The find box searches the LOADED window, not the whole session —
+          saying so is the difference between a filter and a lie. */}
+      {needle && (
+        <p className="mb-2 font-mono text-micro text-ink-faint">
+          Searching the {fmtCount(msgs.length)} loaded messages. Use{" "}
+          <Link to="/search" className="text-accent hover:underline">
+            Search
+          </Link>{" "}
+          to cover every session.
+        </p>
+      )}
       {hasOlder && (
         <div className="mb-3 flex justify-center">
           <button
@@ -203,11 +279,14 @@ export function Transcript({
           </button>
         </div>
       )}
-      <ol
-        ref={listRef}
-        className="relative"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
+      {/* The rail is a sibling in a flex row, not an overlay: it reserves
+          its own column so it can never sit on top of the transcript. */}
+      <div className="flex gap-3">
+        <ol
+          ref={listRef}
+          className="relative min-w-0 flex-1"
+          style={{ height: virtualizer.getTotalSize() }}
+        >
         {virtualItems.map((vi) => {
           const m = visible[vi.index];
           const msgTools = toolsByMsg.get(m.seq) ?? [];
@@ -262,56 +341,66 @@ export function Transcript({
                       ? () => toggleMeta(m.seq)
                       : undefined
                   }
-                  className={`flex gap-2 font-mono text-[11px] text-ink-faint ${isMeta ? "" : "mb-1"} ${
+                  className={`flex min-w-0 gap-2 font-mono text-meta text-ink-faint ${isMeta ? "" : "mb-1"} ${
                     isMeta && m.text.trim() !== ""
                       ? "cursor-pointer hover:text-ink-dim"
                       : ""
                   }`}
                 >
+                  {/* Identity and coordinates sit TOGETHER at the head of
+                      the message. The seq and timestamp used to be flung
+                      to the far right edge — 1200px from the role they
+                      belong to, so reading "who said this, and when" meant
+                      crossing the full width of the screen and back. */}
                   <span
-                    className={
+                    className={`shrink-0 ${
                       isAssistant
                         ? "text-assistant"
                         : isUser
                           ? "font-medium text-accent"
                           : ""
-                    }
+                    }`}
                   >
                     {m.isSidechain ? "↳ " : ""}
                     {glyph} {m.role}
                     {m.kind !== "message" ? ` · ${m.kind}` : ""}
                   </span>
-                  {m.model && <span>{m.model}</span>}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyPermalink(m.seq);
+                    }}
+                    title="Copy link to this message"
+                    className={`shrink-0 tabular-nums ${
+                      copiedSeq === m.seq ? "text-ok" : "hover:text-accent"
+                    }`}
+                  >
+                    {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
+                  </button>
+                  {m.createdAt && (
+                    <span className="shrink-0 tabular-nums">
+                      {m.createdAt.slice(11, 19)}
+                    </span>
+                  )}
                   {isMeta && m.text.trim() !== "" && (
                     <>
-                      <span className="text-accent">
+                      <span className="shrink-0 text-accent">
                         {openMeta.has(m.seq) ? "▾" : "▸"}
                       </span>
                       {!openMeta.has(m.seq) && (
-                        <span className="truncate text-ink-faint italic">
+                        <span className="min-w-0 truncate text-ink-faint italic">
                           {m.text.slice(0, 120)}
                         </span>
                       )}
                     </>
                   )}
-                  <span className="ml-auto flex items-center gap-1 tabular-nums">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyPermalink(m.seq);
-                      }}
-                      title="Copy link to this message"
-                      className={
-                        copiedSeq === m.seq ? "text-ok" : "hover:text-accent"
-                      }
-                    >
-                      {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
-                    </button>
-                    {m.createdAt && <span>· {m.createdAt.slice(11, 19)}</span>}
-                  </span>
+                  {m.model && (
+                    <span className="ml-auto shrink-0 truncate">{m.model}</span>
+                  )}
                 </div>
                 {isMeta && openMeta.has(m.seq) && (
-                  <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+                  <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-meta leading-relaxed whitespace-pre-wrap">
                     {m.text}
                   </pre>
                 )}
@@ -319,11 +408,11 @@ export function Transcript({
                   m.text.trim() !== "" &&
                   (m.html ? (
                     <div
-                      className="prose-msg"
+                      className="prose-msg measure"
                       dangerouslySetInnerHTML={{ __html: m.html }}
                     />
                   ) : (
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                    <div className="measure text-sm leading-relaxed whitespace-pre-wrap">
                       {m.text}
                     </div>
                   ))}
@@ -339,7 +428,15 @@ export function Transcript({
             </li>
           );
         })}
-      </ol>
+        </ol>
+        <Scrubber
+          msgs={visible}
+          toolsByMsg={toolsByMsg}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
+          onJump={(i) => virtualizer.scrollToIndex(i, { align: "center" })}
+        />
+      </div>
       {hasMore && (
         <div className="mt-3 flex justify-center">
           <button
@@ -394,7 +491,7 @@ function MessageTools({
               key={t.seq}
               onClick={expandable ? () => toggle(t.seq) : undefined}
               title={t.detail}
-              className={`inline-flex max-w-full items-baseline gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px] ${
+              className={`inline-flex max-w-full items-baseline gap-1.5 rounded border px-1.5 py-0.5 font-mono text-meta ${
                 isOpen
                   ? "border-edge-strong bg-surface-2"
                   : "border-edge bg-surface-2/60"
@@ -424,7 +521,7 @@ function MessageTools({
         .filter((t) => open.has(t.seq))
         .map((t) => (
           <div key={t.seq} className="mt-2">
-            <div className="mb-1 font-mono text-[10px] text-ink-faint">
+            <div className="mb-1 font-mono text-micro text-ink-faint">
               <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
               {t.detail && t.kind !== "shell" && <> · {shortPath(t.detail)}</>}
             </div>
@@ -434,6 +531,81 @@ function MessageTools({
     </div>
   );
 }
+// Scrubber is the session minimap: one tick per bucket of messages,
+// colored by who is speaking and whether the turn ran tools, with the
+// on-screen slice marked. A long session is a document, and a document
+// needs a sense of where you are in it and a way to reach the far end
+// without dragging a scrollbar past a thousand cards.
+//
+// Ticks are bucketed rather than drawn one-per-message: a 10k-message
+// session would otherwise put 10k nodes on screen to save the reader
+// scrolling past 10k nodes.
+function Scrubber({
+  msgs,
+  toolsByMsg,
+  rangeStart,
+  rangeEnd,
+  onJump,
+}: {
+  msgs: TranscriptMessage[];
+  toolsByMsg: Map<number, ToolCallRow[]>;
+  rangeStart?: number;
+  rangeEnd?: number;
+  onJump: (index: number) => void;
+}) {
+  const buckets = useMemo(() => {
+    if (msgs.length === 0) return [];
+    const n = Math.min(SCRUB_BUCKETS, msgs.length);
+    const size = msgs.length / n;
+    return Array.from({ length: n }, (_, b) => {
+      const from = Math.floor(b * size);
+      const to = Math.max(from + 1, Math.floor((b + 1) * size));
+      let user = 0;
+      let tools = 0;
+      for (let i = from; i < to && i < msgs.length; i++) {
+        const m = msgs[i];
+        if (m.role === "user" && m.kind === "message") user++;
+        if ((toolsByMsg.get(m.seq)?.length ?? 0) > 0) tools++;
+      }
+      return { from, to, user, tools };
+    });
+  }, [msgs, toolsByMsg]);
+
+  // Below a couple of screens' worth of messages there is nothing to
+  // navigate and the rail would be decoration.
+  if (buckets.length < 24) return null;
+
+  return (
+    <div className="hidden w-2.5 shrink-0 xl:block" aria-hidden>
+      <div className="sticky top-6 flex h-[70vh] flex-col overflow-hidden rounded border border-edge bg-surface-1">
+        {buckets.map((b, i) => {
+          const inView =
+            rangeStart !== undefined &&
+            rangeEnd !== undefined &&
+            b.to > rangeStart &&
+            b.from <= rangeEnd;
+          const color = b.user
+            ? "var(--color-accent)"
+            : b.tools
+              ? "var(--color-tool-shell)"
+              : "var(--color-assistant)";
+          return (
+            <button
+              key={i}
+              type="button"
+              tabIndex={-1}
+              title={`messages ${b.from + 1}–${b.to}`}
+              onClick={() => onJump(b.from)}
+              style={{ background: color, opacity: inView ? 1 : 0.22 }}
+              className="w-full flex-1 transition-opacity hover:opacity-90"
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // computeDepths walks the agent-native entry tree (Claude parentUuid, Pi
 // id/parentId): an entry's depth is parent depth + 1 when the parent is
 // NOT the immediately preceding entry (a real branch), else parent depth —

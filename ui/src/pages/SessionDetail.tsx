@@ -6,9 +6,13 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { api, fmtCost, fmtTokens, shortPath } from "../api";
+import { api, fmtCount, fmtTokens, shortPath } from "../api";
+import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
+  Money,
+  Panel,
+  Segmented,
   SkeletonRows,
   SkeletonTiles,
   StatTile,
@@ -25,6 +29,7 @@ import {
 import { useSessionTools, useTranscriptWindow } from "./session/useSessionData";
 
 const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
+type Tab = (typeof TABS)[number];
 
 // The gathering point of the session-centric model: one session with its
 // transcript, commands, tool calls, files touched, usage, relations, and
@@ -36,9 +41,9 @@ export function SessionDetailPage() {
   });
   const search = useSearch({ from: "/sessions/$agent/$sessionId" });
   const navigate = useNavigate({ from: "/sessions/$agent/$sessionId" });
-  const tab =
+  const tab: Tab =
     search.tab && (TABS as readonly string[]).includes(search.tab)
-      ? search.tab
+      ? (search.tab as Tab)
       : "transcript";
 
   const detail = useQuery({
@@ -46,7 +51,11 @@ export function SessionDetailPage() {
     queryFn: () => api.session(agent, sessionId),
   });
   const win = useTranscriptWindow(agent, sessionId, search.seq);
-  const { rows: toolRows, loading: toolsLoading } = useSessionTools(
+  const {
+    rows: toolRows,
+    loading: toolsLoading,
+    requested: toolsRequested,
+  } = useSessionTools(
     agent,
     sessionId,
     tab === "commands" || tab === "tools" || tab === "files",
@@ -68,14 +77,33 @@ export function SessionDetailPage() {
         <SkeletonRows rows={6} />
       </div>
     );
-  if (detail.error) return <p className="text-warn">{String(detail.error)}</p>;
+  // A failed session load used to render one bare orange line at the top
+  // of an otherwise blank page — no styling, no way back — while the
+  // shared ErrorPanel sat unused. A 404 here is ordinary (a stale
+  // permalink, a re-indexed session), so it says so and offers the way out.
+  if (detail.error)
+    return (
+      <div className="space-y-3">
+        <ErrorPanel error={detail.error} scope="this session" />
+        <Link
+          to="/sessions"
+          className="inline-block font-mono text-xs text-accent hover:underline"
+        >
+          ← back to all sessions
+        </Link>
+      </div>
+    );
   const s = detail.data!;
-  // Badge counts for the tab bar; transcript carries none.
-  const counts: Record<string, number | null> = {
+  // Badge counts for the tab bar; transcript carries none. The
+  // tool-derived counts are withheld until the rows have actually loaded —
+  // they load lazily, so rendering the not-yet-known value would label a
+  // session with eight tool calls "tools 0".
+  const toolCountsKnown = toolsRequested && !toolsLoading;
+  const counts: Record<Tab, number | null> = {
     transcript: null,
-    commands: commands.length,
-    tools: toolRows.length,
-    files: files.length,
+    commands: toolCountsKnown ? commands.length : null,
+    tools: toolCountsKnown ? toolRows.length : null,
+    files: toolCountsKnown ? files.length : null,
     artifacts: s.artifacts?.length ?? 0,
   };
 
@@ -100,17 +128,26 @@ export function SessionDetailPage() {
         {s.gitBranch && <> · ⎇ {s.gitBranch}</>} · {s.id}
       </p>
 
+      {/* Token facets that are zero are dropped rather than tiled. Most
+          sessions report no cache or no output, and six tiles of which
+          four read "0" is a row of chrome saying nothing — the figures
+          that DO exist get the space instead. */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-6">
         <StatTile
           label="Cost"
-          value={fmtCost(s.costUSD, s.unpricedTokens)}
-          tone="ok"
+          value={<Money usd={s.costUSD} unpriced={s.unpricedTokens} />}
         />
-        <StatTile label="Input" value={fmtTokens(s.tokens.input)} />
-        <StatTile label="Output" value={fmtTokens(s.tokens.output)} />
-        <StatTile label="Cache read" value={fmtTokens(s.tokens.cacheRead)} />
-        <StatTile label="Messages" value={String(s.messages)} />
-        <StatTile label="Tool calls" value={String(s.toolCalls)} />
+        {s.tokens.input > 0 && (
+          <StatTile label="Input" value={fmtTokens(s.tokens.input)} />
+        )}
+        {s.tokens.output > 0 && (
+          <StatTile label="Output" value={fmtTokens(s.tokens.output)} />
+        )}
+        {s.tokens.cacheRead > 0 && (
+          <StatTile label="Cache read" value={fmtTokens(s.tokens.cacheRead)} />
+        )}
+        <StatTile label="Messages" value={fmtCount(s.messages)} />
+        <StatTile label="Tool calls" value={fmtCount(s.toolCalls)} />
       </div>
 
       {s.tokens.input +
@@ -118,10 +155,11 @@ export function SessionDetailPage() {
         s.tokens.cacheRead +
         s.tokens.cacheWrite >
         0 && (
-        <div className="mb-4 rounded-md border border-edge bg-surface-1 px-3 py-2.5">
-          <div className="microlabel mb-2">Token mix</div>
-          <TokenMixBar tokens={s.tokens} fmt={fmtTokens} />
-        </div>
+        <Panel label="Token mix" className="mb-4">
+          <div className="px-3 py-2.5">
+            <TokenMixBar tokens={s.tokens} fmt={fmtTokens} />
+          </div>
+        </Panel>
       )}
 
       {s.unpricedTokens ? (
@@ -155,33 +193,23 @@ export function SessionDetailPage() {
         </div>
       )}
 
-      <div className="mb-3 flex rounded-md border border-edge font-mono text-xs">
-        {TABS.map((t) => {
-          const count = counts[t];
-          return (
-            <button
-              key={t}
-              onClick={() =>
-                void navigate({
-                  search: t === "transcript" ? {} : { tab: t },
-                  replace: true,
-                })
-              }
-              className={`px-3 py-1.5 first:rounded-l-md last:rounded-r-md ${
-                t === tab
-                  ? "bg-surface-2 text-ink"
-                  : "text-ink-dim hover:text-ink"
-              }`}
-            >
-              {t}
-              {count !== null && count > 0 && (
-                <span className="ml-1.5 text-ink-faint tabular-nums">
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <div className="mb-3">
+        <Segmented
+          label="Session facet"
+          variant="tab"
+          value={tab}
+          onChange={(t) =>
+            void navigate({
+              search: t === "transcript" ? {} : { tab: t },
+              replace: true,
+            })
+          }
+          options={TABS.map((t) => ({
+            value: t,
+            label: t,
+            badge: counts[t] === null ? undefined : fmtCount(counts[t]!),
+          }))}
+        />
       </div>
 
       {tab === "transcript" && (

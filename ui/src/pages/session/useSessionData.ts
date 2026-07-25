@@ -208,7 +208,7 @@ export function useSessionTools(
   agent: string,
   sessionId: string,
   wanted: boolean,
-): { rows: ToolCallRow[]; loading: boolean } {
+): { rows: ToolCallRow[]; loading: boolean; requested: boolean } {
   const [requested, setRequested] = useState(wanted);
   useEffect(() => {
     if (wanted) setRequested(true);
@@ -232,5 +232,9 @@ export function useSessionTools(
   return {
     rows: tools.rows,
     loading: requested && (tools.isLoading || hasNextPage),
+    // Whether the rows exist YET is a fact the tab bar needs: a count of
+    // zero before the fetch has been asked for is not a count, it is a
+    // wrong answer.
+    requested,
   };
 }

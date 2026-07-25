@@ -127,7 +127,62 @@ function ThemeToggle() {
   );
 }
 
+// The palette's shortcut is Cmd on Apple platforms and Ctrl everywhere
+// else. The handler always accepted both; the hint claimed ⌘ on every
+// platform, which is simply wrong on the Linux and Windows machines this
+// runs on just as happily.
+export const isApple =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+export const PALETTE_KEY = isApple ? "⌘K" : "Ctrl K";
+
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <>
+      {NAV.map((n) => (
+        <Link
+          key={n.to}
+          to={n.to}
+          onClick={onNavigate}
+          activeProps={{
+            className: "border-l-2 border-accent bg-surface-2/70 text-ink",
+          }}
+          inactiveProps={{
+            className:
+              "border-l-2 border-transparent text-ink-dim hover:bg-surface-2/40 hover:text-ink",
+          }}
+          activeOptions={{ exact: n.exact ?? false }}
+          className="rounded-r px-3 py-1.5 font-mono text-data transition-colors"
+        >
+          {n.label}
+        </Link>
+      ))}
+    </>
+  );
+}
+
+function SidebarFooter() {
+  return (
+    <div className="mt-auto space-y-2 px-4 pb-4">
+      <ThemeToggle />
+      <div className="microlabel flex items-center gap-2">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-ok" />
+        local · 127.0.0.1
+      </div>
+      {/* A real button: the hint used to be an inert <kbd> that looked
+          exactly like a control, so clicking it did nothing. */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new Event("ccpeek-palette"))}
+        className="microlabel rounded border border-edge px-1.5 py-0.5 transition-colors hover:border-edge-strong hover:text-ink"
+      >
+        {PALETTE_KEY} search
+      </button>
+    </div>
+  );
+}
+
 function Layout() {
+  const [menu, setMenu] = useState(false);
   return (
     <div className="flex min-h-screen">
       <aside className="fixed inset-y-0 left-0 hidden w-52 flex-col border-r border-edge bg-surface-1/60 md:flex">
@@ -139,50 +194,54 @@ function Layout() {
             peek
           </span>
         </Link>
-        <nav className="flex flex-col gap-0.5 px-2">
-          {NAV.map((n) => (
-            <Link
-              key={n.to}
-              to={n.to}
-              activeProps={{
-                className: "border-l-2 border-accent bg-surface-2/70 text-ink",
-              }}
-              inactiveProps={{
-                className:
-                  "border-l-2 border-transparent text-ink-dim hover:bg-surface-2/40 hover:text-ink",
-              }}
-              activeOptions={{ exact: n.exact ?? false }}
-              className="rounded-r px-3 py-1.5 font-mono text-[13px] transition-colors"
-            >
-              {n.label}
-            </Link>
-          ))}
+        <nav aria-label="Main" className="flex flex-col gap-0.5 px-2">
+          <NavLinks />
         </nav>
-        <div className="mt-auto space-y-2 px-4 pb-4">
-          <ThemeToggle />
-          <div className="microlabel flex items-center gap-2">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
-            local · 127.0.0.1
-          </div>
-          <kbd className="microlabel rounded border border-edge px-1.5 py-0.5">
-            ⌘K search
-          </kbd>
-        </div>
+        <SidebarFooter />
       </aside>
 
       <div className="min-w-0 flex-1 md:pl-52">
         <div className="mx-auto max-w-[1500px] px-5 py-5">
-          <div className="mb-4 flex items-center gap-4 md:hidden">
-            <Link to="/" className="font-mono text-lg font-semibold">
-              <span className="text-accent">cc</span>peek
-            </Link>
-            <nav className="flex flex-wrap gap-3 font-mono text-xs text-ink-dim">
-              {NAV.map((n) => (
-                <Link key={n.to} to={n.to} className="hover:text-ink">
-                  {n.label}
-                </Link>
-              ))}
-            </nav>
+          {/* Below md the rail becomes a real disclosure menu. The old
+              fallback wrapped every link inline around the logo, which
+              reflowed into three ragged rows and marked nothing active. */}
+          <div className="mb-4 md:hidden">
+            <div className="flex items-center gap-3">
+              <Link to="/" className="font-mono text-lg font-semibold">
+                <span className="text-accent">cc</span>peek
+              </Link>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new Event("ccpeek-palette"))}
+                aria-label="Search"
+                className="ml-auto rounded-md border border-edge px-2 py-1.5 font-mono text-xs text-ink-dim"
+              >
+                search
+              </button>
+              <button
+                type="button"
+                onClick={() => setMenu((v) => !v)}
+                aria-expanded={menu}
+                aria-controls="mobile-nav"
+                className="rounded-md border border-edge px-2 py-1.5 font-mono text-xs text-ink-dim"
+              >
+                {menu ? "close" : "menu"}
+              </button>
+            </div>
+            {menu && (
+              <nav
+                id="mobile-nav"
+                aria-label="Main"
+                className="mt-2 flex flex-col gap-0.5 rounded-md border border-edge bg-surface-1 py-1"
+              >
+                <NavLinks onNavigate={() => setMenu(false)} />
+                <div className="mt-1 border-t border-edge pt-2">
+                  <div className="px-4">
+                    <ThemeToggle />
+                  </div>
+                </div>
+              </nav>
+            )}
           </div>
           <IndexingBanner />
           {/* Inside the layout, so a failing route keeps the nav rail
@@ -298,7 +357,7 @@ export const router = createRouter({
   // rendering nothing.
   defaultErrorComponent: ({ error }) => <ErrorPanel error={error} />,
   defaultNotFoundComponent: () => (
-    <div className="rounded-lg border border-edge bg-surface-1 p-5 text-sm">
+    <div className="rounded-md border border-edge bg-surface-1 p-5 text-sm">
       <h2 className="mb-1 font-semibold">Nothing here.</h2>
       <p className="text-ink-dim">
         That URL does not match any ccpeek view.{" "}

@@ -26,7 +26,7 @@ export function ErrorPanel({
   return (
     <div
       role="alert"
-      className="rounded-lg border border-warn/40 bg-surface-1 p-5 text-sm"
+      className="rounded-md border border-warn/40 bg-surface-1 p-5 text-sm"
     >
       <h2 className="mb-1 font-semibold text-ink">
         Something went wrong rendering {scope}.

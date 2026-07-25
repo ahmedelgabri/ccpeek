@@ -105,18 +105,18 @@ export function ArtifactDetailPage() {
           src={rawURL}
           sandbox="allow-scripts"
           title={`${a.name} (usage report)`}
-          className="h-[75vh] w-full rounded-lg border border-edge bg-white"
+          className="h-[75vh] w-full rounded-md border border-edge bg-white"
         />
       ) : a.contentHTML ? (
         <div
           ref={body}
           onClick={onContentClick}
-          className="prose-msg max-w-none rounded-lg border border-edge bg-surface-1 p-4"
+          className="prose-msg prose-measure rounded-md border border-edge bg-surface-1 p-4"
           dangerouslySetInnerHTML={{ __html: a.contentHTML }}
         />
       ) : a.content ? (
         <div ref={body}>
-          <pre className="overflow-x-auto rounded-lg border border-edge bg-surface-1 p-4 text-xs leading-relaxed">
+          <pre className="overflow-x-auto rounded-md border border-edge bg-surface-1 p-4 text-xs leading-relaxed">
             <code
               className={a.kind === "shell_snapshot" ? "language-bash" : ""}
             >
@@ -133,7 +133,7 @@ export function ArtifactDetailPage() {
           <summary className="cursor-pointer text-sm text-ink-dim">
             Structured metadata
           </summary>
-          <pre className="mt-2 overflow-x-auto rounded-lg border border-edge bg-surface-1 p-4 text-xs">
+          <pre className="mt-2 overflow-x-auto rounded-md border border-edge bg-surface-1 p-4 text-xs">
             {prettyJSON(a.metadata)}
           </pre>
         </details>
