@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
@@ -762,5 +764,125 @@ func TestFailedParseIssuesDoNotAccumulateWithinARun(t *testing.T) {
 	// The good line still landed — a bad line is not a bad file.
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM messages`); n != 1 {
 		t.Errorf("messages = %d, want 1", n)
+	}
+}
+
+// countingResolver is a Store wrapper stand-in: it records how often the
+// artifact resolvers were reached by inspecting the work they do. The
+// resolvers reconcile the COMPLETE pair set every call — reading every
+// plan's content and every memory-writing tool call — so running them on
+// passes that changed nothing made each watch-mode debounce fire pay a
+// full sweep of the corpus.
+func TestResolversSkipUnchangedPasses(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	first, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.FilesChanged == 0 {
+		t.Fatal("precondition: the first pass changed nothing")
+	}
+	linksAfterFirst := queryInt(t, store,
+		`SELECT COUNT(*) FROM artifact_sessions WHERE evidence = 'content_ref'`)
+
+	// Prove the resolvers ran on the first pass by removing what they
+	// produced. A second pass that changes nothing must NOT put it back —
+	// that is the observable signal that reconciliation was skipped.
+	if _, err := store.DB().ExecContext(ctx,
+		`DELETE FROM artifact_sessions WHERE evidence = 'content_ref'`); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FilesChanged != 0 {
+		t.Fatalf("precondition: the second pass changed %d files, want 0", second.FilesChanged)
+	}
+	if n := queryInt(t, store,
+		`SELECT COUNT(*) FROM artifact_sessions WHERE evidence = 'content_ref'`); n != 0 {
+		t.Errorf("resolvers ran on an unchanged pass (%d links reinstated)", n)
+	}
+
+	// A pass that DOES change something reconciles again, so the links
+	// come back — skipping must not mean losing them.
+	target := filepath.Join(tmp, "claude-code", "plans", "rate-limit-plan.md")
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := queryInt(t, store,
+		`SELECT COUNT(*) FROM artifact_sessions WHERE evidence = 'content_ref'`); n != linksAfterFirst {
+		t.Errorf("links after a changed pass = %d, want %d restored", n, linksAfterFirst)
+	}
+}
+
+// addRecursive reports registration failures instead of dropping them —
+// on Linux the per-user inotify limit is reachable by a large projects
+// tree, and silently losing those watches left the user with "watch mode
+// enabled" and no live updates. It also drops directories that have
+// disappeared, so the watched set tracks reality rather than only growing.
+func TestAddRecursiveCountsFailuresAndPrunesDeletedDirs(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Skipf("fsnotify unavailable: %v", err)
+	}
+	defer watcher.Close()
+
+	root := t.TempDir()
+	for _, sub := range []string{"a", "b", "b/nested"} {
+		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	watched := map[string]bool{}
+	if failed := addRecursive(watcher, root, watched); failed != 0 {
+		t.Errorf("failures = %d, want 0 on a healthy tree", failed)
+	}
+	// root + a + b + b/nested
+	if len(watched) != 4 {
+		t.Errorf("watched = %d dirs, want 4: %v", len(watched), watched)
+	}
+
+	// Re-running is idempotent.
+	if failed := addRecursive(watcher, root, watched); failed != 0 {
+		t.Errorf("failures on a repeat pass = %d, want 0", failed)
+	}
+	if len(watched) != 4 {
+		t.Errorf("watched grew to %d on a repeat pass", len(watched))
+	}
+
+	// A deleted directory leaves the set.
+	if err := os.RemoveAll(filepath.Join(root, "b")); err != nil {
+		t.Fatal(err)
+	}
+	addRecursive(watcher, root, watched)
+	if len(watched) != 2 {
+		t.Errorf("watched = %d after deleting b/, want 2: %v", len(watched), watched)
+	}
+	for path := range watched {
+		if strings.Contains(path, string(filepath.Separator)+"b") {
+			t.Errorf("deleted directory %q still watched", path)
+		}
+	}
+
+	// A root that does not exist contributes nothing and fails nothing.
+	if failed := addRecursive(watcher, filepath.Join(root, "gone"), watched); failed != 0 {
+		t.Errorf("failures for a missing root = %d, want 0", failed)
 	}
 }

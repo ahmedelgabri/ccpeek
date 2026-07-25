@@ -476,3 +476,66 @@ func TestTrimRunsKeepsTheNewestAndCascadesIssues(t *testing.T) {
 		t.Errorf("TrimRuns(100) = %d, %v; want 0, nil", removed, err)
 	}
 }
+
+// ResetDerived must leave a COMPLETE schema behind, search index
+// included. Dropping search_docs/search_fts outside the transaction that
+// recreated them meant a failure between the phases left every derived
+// table intact with no search index — a state Open never repairs, since
+// these tables are only ever created here.
+func TestResetDerivedRebuildsTheSearchIndex(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+
+	seed := func(text string) {
+		t.Helper()
+		w, err := s.BeginWrite(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := w.UpsertSession(canon.Session{
+			Agent: "claude-code", ExternalID: "s1", SourcePath: "/x.jsonl",
+		}, "h")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.InsertSearchDoc(id, 0, "message", 0, "", text); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seed("findable before the reset")
+	if n := count(t, s, `SELECT COUNT(*) FROM search_fts WHERE search_fts MATCH 'findable'`); n != 1 {
+		t.Fatalf("precondition: %d hits before reset, want 1", n)
+	}
+
+	if err := s.ResetDerived(ctx); err != nil {
+		t.Fatalf("ResetDerived: %v", err)
+	}
+
+	// Both halves of the pair exist and are empty…
+	for _, table := range []string{"search_docs", "search_fts"} {
+		if n := count(t, s, `SELECT COUNT(*) FROM `+table); n != 0 {
+			t.Errorf("%s has %d rows after reset, want 0", table, n)
+		}
+	}
+	// …and the triggers that keep them in sync were recreated with them,
+	// so newly indexed content is searchable again.
+	seed("findable after the reset")
+	if n := count(t, s, `SELECT COUNT(*) FROM search_fts WHERE search_fts MATCH 'findable'`); n != 1 {
+		t.Errorf("post-reset hits = %d, want 1 — the FTS triggers did not survive", n)
+	}
+
+	// Every derived table is back, and a second reset is a no-op rather
+	// than an error.
+	if err := s.ResetDerived(ctx); err != nil {
+		t.Fatalf("second ResetDerived: %v", err)
+	}
+	for _, table := range derivedTables {
+		if _, err := s.db.ExecContext(ctx, `SELECT COUNT(*) FROM `+table); err != nil {
+			t.Errorf("derived table %s missing after reset: %v", table, err)
+		}
+	}
+}
