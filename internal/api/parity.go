@@ -108,6 +108,23 @@ func (h *handlers) artifacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, orEmpty(list))
 }
 
+// artifactKinds is the browser's kind facet, agent-filtered to match the
+// list beside it.
+func (h *handlers) artifactKinds(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	agent := p.Str("agent")
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	out, err := h.svc.ArtifactKinds(r.Context(), agent)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, orEmpty(out))
+}
+
 func (h *handlers) artifact(w http.ResponseWriter, r *http.Request) {
 	detail, err := h.svc.Artifact(r.Context(),
 		r.PathValue("agent"), r.PathValue("kind"), r.PathValue("name"),
@@ -148,6 +165,17 @@ func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	_, _ = w.Write([]byte(detail.Content))
+}
+
+// scanRules is the rule-first reading of the scan: which rules fired, how
+// many occurrences are still active, and in how many entities.
+func (h *handlers) scanRules(w http.ResponseWriter, r *http.Request) {
+	out, err := h.svc.ScanRules(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, orEmpty(out))
 }
 
 func (h *handlers) scanFindings(w http.ResponseWriter, r *http.Request) {

@@ -1,15 +1,25 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { fmtCount, fmtWhen, parityApi, plural, type ScanFinding } from "../api";
+import {
+  fmtCount,
+  fmtWhen,
+  parityApi,
+  plural,
+  type ScanFinding,
+  type ScanRule,
+} from "../api";
 import {
   AgentDot,
-  EmptyNote,
+  Code,
+  GhostButton,
+  kindLabel,
   LoadError,
+  Loading,
   PageHeader,
   Panel,
-  SkeletonRows,
   Segmented,
+  SkeletonRows,
   SkeletonTiles,
 } from "../ui";
 
@@ -32,13 +42,34 @@ export function ScanPage() {
     queryKey: ["scan"],
     queryFn: () => parityApi.scan(true),
   });
+  // The rule grouping, its counts and its ranking come from the server —
+  // this is the reading the product presents, so `ccpeek query scan-rules`
+  // and the MCP tool answer with it too rather than the page owning a
+  // shape no agent can fetch.
+  const rulesQuery = useQuery({
+    queryKey: ["scan", "rules"],
+    queryFn: () => parityApi.scanRules(),
+  });
 
+  // Takes a SET of ids, not one: "ignore all" on a rule is the page's
+  // headline affordance, and a leaked-pattern rule realistically has
+  // dozens to hundreds of occurrences. One mutation per finding meant that
+  // many concurrent POSTs, each invalidating the complete unpaged findings
+  // list as it resolved. One await-all, one invalidation.
   const toggle = useMutation({
-    mutationFn: ({ id, ignored }: { id: number; ignored: boolean }) =>
-      parityApi.scanIgnore(id, ignored),
+    mutationFn: async ({
+      ids,
+      ignored,
+    }: {
+      ids: number[];
+      ignored: boolean;
+    }) => {
+      await Promise.all(ids.map((id) => parityApi.scanIgnore(id, ignored)));
+    },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["scan"] }),
   });
 
+  const loadError = error ?? rulesQuery.error;
   const allFindings = useMemo(() => data ?? [], [data]);
   const active = allFindings.filter((f) => !f.ignored).length;
   const ignored = allFindings.length - active;
@@ -47,8 +78,9 @@ export function ScanPage() {
     [allFindings, showIgnored],
   );
 
-  // Grouped by rule, most occurrences first — the order in which they are
-  // worth looking at.
+  // The server ranks the rules; the page only hangs each rule's visible
+  // occurrences off it.
+  const rules = rulesQuery.data;
   const groups = useMemo(() => {
     const byRule = new Map<string, ScanFinding[]>();
     for (const f of findings) {
@@ -56,25 +88,19 @@ export function ScanPage() {
       list.push(f);
       byRule.set(f.ruleId, list);
     }
-    return [...byRule.entries()]
-      .map(([ruleId, items]) => ({
-        ruleId,
-        items,
-        description: items[0].description,
-        activeCount: items.filter((f) => !f.ignored).length,
-      }))
-      .toSorted((a, b) => b.activeCount - a.activeCount || b.items.length - a.items.length);
-  }, [findings]);
+    return (rules ?? [])
+      .map((rule) => ({ ...rule, items: byRule.get(rule.ruleId) ?? [] }))
+      .filter((g) => g.items.length > 0);
+  }, [findings, rules]);
 
-  if (isLoading)
+  if (isLoading || rulesQuery.isLoading)
     return (
       <div>
         <PageHeader title="Secret scan" />
-        <div role="status" className="space-y-4">
-          <span className="sr-only">Loading scan findings…</span>
+        <Loading label="Loading scan findings…">
           <SkeletonTiles n={3} />
           <SkeletonRows rows={6} />
-        </div>
+        </Loading>
       </div>
     );
 
@@ -86,7 +112,7 @@ export function ScanPage() {
           <span className="font-mono text-meta text-ink-faint">
             {allFindings.length === 0
               ? "nothing detected"
-              : `${plural(groups.length, "rule")} · ${plural(allFindings.length, "occurrence")}`}
+              : `${plural(rules?.length ?? 0, "rule")} · ${plural(allFindings.length, "occurrence")}`}
           </span>
         }
       >
@@ -106,12 +132,13 @@ export function ScanPage() {
         />
       </PageHeader>
 
-      {error && <LoadError error={error} />}
+      {loadError && <LoadError error={loadError} />}
 
       {/* The verdict, stated once and plainly. A page of rows never said
           whether the answer was "you are fine" or "you have a problem". */}
-      {!error && (
+      {!loadError && (
         <div
+          role="status"
           className={`mb-4 rounded-md border px-4 py-3 text-sm ${
             active > 0
               ? "border-warn/50 bg-warn/10"
@@ -123,27 +150,22 @@ export function ScanPage() {
               <strong className="font-semibold">
                 {plural(active, "active finding")}
               </strong>{" "}
-              across {plural(groups.filter((g) => g.activeCount > 0).length, "rule")}.
-              Anything already reviewed can be ignored — the decision
-              survives rescans.
+              across{" "}
+              {plural((rules ?? []).filter((r) => r.active > 0).length, "rule")}
+              . Anything already reviewed can be ignored — the decision survives
+              rescans.
             </p>
           ) : (
             <p className="text-ink-dim">
               <span className="text-ok">No active findings.</span>{" "}
-              {ignored > 0
-                ? `${fmtCount(ignored)} ignored.`
-                : "Nothing in your agent history matched a secret pattern."}{" "}
-              Run <Root>ccpeek scan</Root> to rescan.
+              {ignored === 0
+                ? "Nothing in your agent history matched a secret pattern."
+                : showIgnored
+                  ? `${fmtCount(ignored)} ignored.`
+                  : `${fmtCount(ignored)} ignored — switch to “all” to review what was dismissed.`}{" "}
+              Run <Code>ccpeek scan</Code> to rescan.
             </p>
           )}
-        </div>
-      )}
-
-      {!error && findings.length === 0 && allFindings.length > 0 && (
-        <div role="status">
-          <EmptyNote hint="Switch to “all” to review what was dismissed.">
-            No active findings · {fmtCount(ignored)} ignored.
-          </EmptyNote>
         </div>
       )}
 
@@ -152,7 +174,7 @@ export function ScanPage() {
           <RuleGroup
             key={g.ruleId}
             group={g}
-            onToggle={(id, ignore) => toggle.mutate({ id, ignored: ignore })}
+            onToggle={(ids, ignore) => toggle.mutate({ ids, ignored: ignore })}
           />
         ))}
       </div>
@@ -160,32 +182,22 @@ export function ScanPage() {
   );
 }
 
-function Root({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">
-      {children}
-    </code>
-  );
-}
-
-interface Group {
-  ruleId: string;
-  items: ScanFinding[];
-  description: string;
-  activeCount: number;
-}
+// A server-ranked rule plus the occurrences currently in view — which is
+// fewer than `findings` whenever ignored ones are hidden, so the counts in
+// the header come from the rule, not from the list.
+type Group = ScanRule & { items: ScanFinding[] };
 
 function RuleGroup({
   group,
   onToggle,
 }: {
   group: Group;
-  onToggle: (id: number, ignored: boolean) => void;
+  onToggle: (ids: number[], ignored: boolean) => void;
 }) {
   // Big groups start closed: the point of grouping is that you decide per
   // RULE first and only open the one you care about.
   const [open, setOpen] = useState(group.items.length <= 5);
-  const allIgnored = group.activeCount === 0;
+  const allIgnored = group.active === 0;
   return (
     <Panel className={allIgnored ? "opacity-60" : ""}>
       <div className="flex items-baseline gap-3 border-b border-edge px-3 py-2">
@@ -200,9 +212,7 @@ function RuleGroup({
           </span>
           <span
             className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-xs ${
-              allIgnored
-                ? "bg-surface-2 text-ink-dim"
-                : "bg-warn/20 text-warn"
+              allIgnored ? "bg-surface-2 text-ink-dim" : "bg-warn/20 text-warn"
             }`}
           >
             {group.ruleId}
@@ -212,26 +222,27 @@ function RuleGroup({
           </span>
         </button>
         <span className="shrink-0 font-mono text-meta text-ink-faint tabular-nums">
-          {group.activeCount > 0
-            ? `${fmtCount(group.activeCount)} active`
+          {group.active > 0
+            ? `${fmtCount(group.active)} active`
             : "all ignored"}
-          {group.items.length !== group.activeCount &&
-            ` · ${fmtCount(group.items.length)} total`}
+          {group.findings !== group.active &&
+            ` · ${fmtCount(group.findings)} total`}
         </span>
         {/* One decision for the whole rule. Dismissing the same pattern
             forty times, one row at a time, was the actual cost of a flat
             list. */}
-        <button
-          type="button"
+        <GhostButton
           onClick={() =>
-            group.items
-              .filter((f) => f.ignored === allIgnored)
-              .forEach((f) => onToggle(f.id, !allIgnored))
+            onToggle(
+              group.items
+                .filter((f) => f.ignored === allIgnored)
+                .map((f) => f.id),
+              !allIgnored,
+            )
           }
-          className="shrink-0 rounded-md border border-edge px-2 py-0.5 font-mono text-meta text-ink-dim transition-colors hover:border-edge-strong hover:text-ink"
         >
           {allIgnored ? "restore all" : "ignore all"}
-        </button>
+        </GhostButton>
       </div>
 
       {open && (
@@ -255,20 +266,42 @@ function RuleGroup({
               <span className="shrink-0 font-mono text-micro text-ink-faint">
                 {fmtWhen(f.scannedAt)}
               </span>
-              <button
-                type="button"
-                onClick={() => onToggle(f.id, !f.ignored)}
+              <GhostButton
+                onClick={() => onToggle([f.id], !f.ignored)}
                 aria-label={`${f.ignored ? "Unignore" : "Ignore"} ${f.ruleId} finding in ${f.naturalKey}`}
                 aria-pressed={f.ignored}
-                className="shrink-0 rounded-md border border-edge px-2 py-0.5 font-mono text-meta text-ink-dim transition-colors hover:border-edge-strong hover:text-ink"
               >
                 {f.ignored ? "unignore" : "ignore"}
-              </button>
+              </GhostButton>
             </li>
           ))}
         </ul>
       )}
     </Panel>
+  );
+}
+
+const LOCATION_CLS =
+  "mt-0.5 flex min-w-0 items-baseline gap-1.5 font-mono text-meta text-ink-faint hover:text-accent";
+
+// Both destinations read the same way — agent mark, what it is, where in
+// it, and the jump arrow — so only the words differ between them.
+function LocationBody({
+  agent,
+  label,
+  detail,
+}: {
+  agent: string;
+  label: string;
+  detail?: string;
+}) {
+  return (
+    <>
+      <AgentDot agent={agent} />
+      <span className="truncate">{label}</span>
+      {detail && <span>{detail}</span>}
+      <span className="text-accent">↗</span>
+    </>
   );
 }
 
@@ -289,12 +322,13 @@ function FindingLocation({ finding: f }: { finding: ScanFinding }) {
         to="/sessions/$agent/$sessionId"
         params={{ agent, sessionId }}
         search={f.line > 0 ? { seq: f.line } : {}}
-        className="mt-0.5 flex min-w-0 items-baseline gap-1.5 font-mono text-meta text-ink-faint hover:text-accent"
+        className={LOCATION_CLS}
       >
-        <AgentDot agent={agent} />
-        <span className="truncate">session {sessionId.slice(0, 8)}</span>
-        {f.line > 0 && <span>· message #{f.line}</span>}
-        <span className="text-accent">↗</span>
+        <LocationBody
+          agent={agent}
+          label={`session ${sessionId.slice(0, 8)}`}
+          detail={f.line > 0 ? `· message #${f.line}` : undefined}
+        />
       </Link>
     );
   }
@@ -310,14 +344,13 @@ function FindingLocation({ finding: f }: { finding: ScanFinding }) {
       <Link
         to="/artifacts/$agent/$kind/$name"
         params={{ agent, kind, name }}
-        className="mt-0.5 flex min-w-0 items-baseline gap-1.5 font-mono text-meta text-ink-faint hover:text-accent"
+        className={LOCATION_CLS}
       >
-        <AgentDot agent={agent} />
-        <span className="truncate">
-          {kind.replaceAll("_", " ")} · {name}
-        </span>
-        {f.line > 0 && <span>· line {f.line}</span>}
-        <span className="text-accent">↗</span>
+        <LocationBody
+          agent={agent}
+          label={`${kindLabel(kind)} · ${name}`}
+          detail={f.line > 0 ? `· line ${f.line}` : undefined}
+        />
       </Link>
     );
   }

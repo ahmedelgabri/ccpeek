@@ -19,24 +19,11 @@ import { ArtifactDetailPage } from "./pages/ArtifactDetail";
 import { ScanPage } from "./pages/Scan";
 import { ComparePage } from "./pages/Compare";
 import { Palette } from "./Palette";
+import { NAV } from "./nav";
 import { ErrorBoundary, ErrorPanel } from "./ErrorState";
 import { getThemePref, setThemePref, type ThemePref } from "./theme";
 import { PALETTE_KEY, openPalette } from "./ui";
 import { useEffect } from "react";
-
-// The sidebar mirrors the entity map: activity first, then the session
-// hub, then what hangs off it. Search is deliberately absent: it is the
-// palette (⌘/Ctrl K), reachable from every view, rather than a page you
-// must navigate to before you can start looking.
-const NAV: { to: string; label: string; exact?: boolean }[] = [
-  { to: "/", label: "Overview", exact: true },
-  { to: "/sessions", label: "Sessions" },
-  { to: "/usage", label: "Usage" },
-  { to: "/commands", label: "Commands" },
-  { to: "/artifacts", label: "Artifacts" },
-  { to: "/scan", label: "Scan" },
-  { to: "/compare", label: "Compare" },
-];
 
 // IndexingBanner shows while the server's initial index pass runs — the
 // UI is up immediately (serve-first startup), pages fill in live as data

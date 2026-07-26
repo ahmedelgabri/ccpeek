@@ -60,9 +60,7 @@ interface TimelineFilters {
   model?: string;
 }
 
-async function fetchDailyCostByAgent(
-  f: TimelineFilters,
-): Promise<DaySeries[]> {
+async function fetchDailyCostByAgent(f: TimelineFilters): Promise<DaySeries[]> {
   const agents = f.agent ? [f.agent] : AGENTS;
   const results = await Promise.all(
     agents.map(async (agent) => {
@@ -252,10 +250,17 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
 
   const el = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme();
-  useEChart(el, series.length > 0 ? buildOption(series, chartPalette()) : null, [
-    series,
-    theme,
-  ]);
+  // Memoized on the same inputs useEChart applies it for. Built in the
+  // render body it was rebuilt on EVERY parent render — and the Usage
+  // page's tooltip state lives at the page root, so a pointer crossing the
+  // table re-rendered this. chartPalette() resolves 12 CSS variables by
+  // appending a probe span and reading getComputedStyle, i.e. 12 forced
+  // style recalculations per hover, on top of a full series rebuild.
+  const option = useMemo(
+    () => (series.length > 0 ? buildOption(series, chartPalette()) : null),
+    [series, theme],
+  );
+  useEChart(el, option, [series, theme]);
 
   return (
     <Panel

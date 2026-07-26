@@ -14,8 +14,8 @@ import {
   CopyButton,
   EmptyNote,
   KindBars,
-  Panel,
   kindLabel,
+  Panel,
   toolColor,
 } from "../../ui";
 import { JumpButton, ToolExpansion } from "./ToolExpansion";
@@ -363,7 +363,7 @@ export function ArtifactsTab({
             className="flex items-baseline gap-3 bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
           >
             <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-micro text-accent">
-              {a.kind.replaceAll("_", " ")}
+              {kindLabel(a.kind)}
             </span>
             <span className="truncate font-mono text-xs">{a.name}</span>
             <span className="ml-auto shrink-0 font-mono text-micro text-ink-faint">

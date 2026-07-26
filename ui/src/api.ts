@@ -104,7 +104,6 @@ export interface Stats {
   workspaces?: WorkspaceStat[];
   recentFiles?: FileTouch[];
   toolKinds?: KindCount[];
-  artifactKinds?: KindCount[];
 }
 
 export interface CommandRow {
@@ -406,6 +405,16 @@ export interface ScanFinding {
   ignored: boolean;
 }
 
+/** One rule's findings summarized — the scan's rule-first reading. */
+export interface ScanRule {
+  ruleId: string;
+  description: string;
+  findings: number;
+  active: number;
+  entities: number;
+  lastSeen: string;
+}
+
 export interface BlockRow {
   start: string;
   end: string;
@@ -421,6 +430,11 @@ export interface Budget {
   monthlyUSD: number;
   spentUSD: number;
   month: string;
+  dayOfMonth: number;
+  daysInMonth: number;
+  projectedUSD: number;
+  /** "over" | "fast" | "on-track", absent when no budget is set. */
+  pace?: string;
 }
 
 async function send<T>(
@@ -445,12 +459,15 @@ export const parityApi = {
       limit: String(limit),
       offset: String(offset),
     }),
+  artifactKinds: (agent?: string) =>
+    get<KindCount[]>("/artifacts/kinds", { agent: agent ?? "" }),
   artifact: (agent: string, kind: string, name: string) =>
     get<ArtifactDetail>(
       `/artifacts/${agent}/${kind}/${encodeURIComponent(name)}`,
     ),
   scan: (includeIgnored: boolean) =>
     get<ScanFinding[]>("/scan", { ignored: includeIgnored ? "1" : "" }),
+  scanRules: () => get<ScanRule[]>("/scan/rules"),
   scanIgnore: (id: number, ignored: boolean) =>
     send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
   blocks: (limit = 24, agent = "") =>

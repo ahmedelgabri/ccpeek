@@ -10,11 +10,16 @@ import {
   parityApi,
   shortPath,
   totalTokens,
+  type Budget,
+  type UsageRow,
 } from "../api";
 import {
+  BudgetMeter,
+  budgetVerdict,
   EmptyNote,
   FilterBar,
   LoadError,
+  Loading,
   Money,
   PageHeader,
   Panel,
@@ -153,14 +158,7 @@ export function UsagePage() {
     queryFn: () => parityApi.budget(),
   });
 
-  // Sorting: null keeps the server order (day desc / cost desc); a click
-  // cycles asc↔desc per column.
-  const unsorted = useMemo(
-    () => (isBlocks ? [] : (data ?? [])),
-    [data, isBlocks],
-  );
-  const { sorted: rows, sort, toggleSort } = useSorted(unsorted, SORT_VALUE);
-  const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
+  const rows = useMemo(() => data ?? [], [data]);
 
   // The headline total is the sum of WHAT IS ON SCREEN. It used to come
   // from the rollup query alone, which is disabled on the blocks view but
@@ -174,7 +172,6 @@ export function UsagePage() {
     ? blockRows.some((b) => (b.unpricedTokens ?? 0) > 0)
     : rows.some((r) => r.hasUnpriced);
 
-  const tooltip = useTooltip();
   const models = (modelRows.data ?? [])
     .map((r) => r.group)
     .filter((m) => m !== "");
@@ -215,22 +212,22 @@ export function UsagePage() {
         />
       </PageHeader>
 
-      {budget.data && (
-        <BudgetBanner
-          spent={budget.data.spentUSD}
-          monthly={budget.data.monthlyUSD}
-          month={budget.data.month}
-        />
-      )}
+      {budget.data && <BudgetBanner budget={budget.data} />}
 
-      <Suspense fallback={null}>
-        <CostTimeline
-          since={isBlocks ? "" : since}
-          until={isBlocks ? "" : until}
-          agent={agent}
-          model={isBlocks ? "" : model}
-        />
-      </Suspense>
+      {/* Blocks are rolling 5-hour windows; a daily timeline says nothing
+          about them, and the date filters are hidden there for the same
+          reason. Rendering it anyway cost five whole-history day rollups
+          (one request per agent) for a chart nobody reads. */}
+      {!isBlocks && (
+        <Suspense fallback={null}>
+          <CostTimeline
+            since={since}
+            until={until}
+            agent={agent}
+            model={model}
+          />
+        </Suspense>
+      )}
 
       <Panel
         label={isBlocks ? "Rolling 5-hour windows" : `Grouped by ${group}`}
@@ -255,154 +252,186 @@ export function UsagePage() {
                 <LoadError error={error} />
               </div>
             )}
-            {isLoading && <SkeletonRows rows={6} />}
+            {isLoading && (
+              <Loading label="Loading usage…">
+                <SkeletonRows rows={6} />
+              </Loading>
+            )}
             {!isLoading && !error && rows.length === 0 && (
               <EmptyNote>No usage in this range.</EmptyNote>
             )}
             {rows.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-edge bg-surface-2 text-left">
-                    <tr>
-                      <SortableTH
-                        label={group}
-                        k="group"
-                        sort={sort}
-                        onSort={toggleSort}
-                      />
-                      <SortableTH
-                        label="sessions"
-                        k="sessions"
-                        sort={sort}
-                        onSort={toggleSort}
-                        right
-                      />
-                      <SortableTH
-                        label="tokens"
-                        k="tokens"
-                        sort={sort}
-                        onSort={toggleSort}
-                        right
-                      />
-                      <SortableTH
-                        label="cache read"
-                        k="cacheRead"
-                        sort={sort}
-                        onSort={toggleSort}
-                        right
-                      />
-                      <SortableTH
-                        label="cost"
-                        k="cost"
-                        sort={sort}
-                        onSort={toggleSort}
-                        right
-                      />
-                      {/* The reported/estimated split is a legend, and a
-                          legend is not a column heading — it lives in the
-                          panel header now. */}
-                      <th className="w-1/3 px-4 py-2 microlabel">
-                        cost split
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-edge bg-surface-1">
-                    {rows.map((r) => (
-                      <tr key={r.group || "(none)"}>
-                        <td className="px-4 py-2 font-mono text-xs">
-                          {!r.group ? (
-                            <span className="text-ink-dim">(no {group})</span>
-                          ) : (
-                            <Link
-                              to="/sessions"
-                              search={pivotSearch(group, r.group, {
-                                agent,
-                                model,
-                                since,
-                                until,
-                              })}
-                              title={`Sessions matching this row (and the active filters)\n${r.group}`}
-                              className="hover:text-accent"
-                            >
-                              {groupLabel(group, r.group)}
-                            </Link>
-                          )}
-                          {r.hasUnpriced && (
-                            <span
-                              className="ml-2 text-warn"
-                              title="Contains unpriced tokens"
-                            >
-                              ●
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
-                          {fmtCount(r.sessions)}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
-                          {fmtTokens(totalTokens(r.tokens))}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-xs text-ink-dim tabular-nums">
-                          {fmtTokens(r.tokens.cacheRead)}
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          <Money
-                            usd={r.costUSD}
-                            unpriced={r.hasUnpriced ? 1 : undefined}
-                            className="text-xs"
-                            title={`reported ${fmtCostExact(r.costReportedUSD)} · estimated ${fmtCostExact(r.costEstimatedUSD)}`}
-                          />
-                        </td>
-                        <td
-                          className="px-4 py-2"
-                          tabIndex={0}
-                          {...tooltip.bind(
-                            <>
-                              <span className="text-ink">
-                                {groupLabel(group, r.group) || group}
-                              </span>
-                              <br />
-                              reported {fmtCostExact(r.costReportedUSD)}
-                              <br />
-                              estimated {fmtCostExact(r.costEstimatedUSD)}
-                            </>,
-                          )}
-                        >
-                          <div
-                            className="flex h-2 gap-[1px] overflow-hidden rounded"
-                            style={{
-                              width: `${Math.max((r.costUSD / maxCost) * 100, 1)}%`,
-                            }}
-                          >
-                            {r.costReportedUSD > 0 && (
-                              <div
-                                className="bg-accent/70"
-                                style={{
-                                  width: `${(r.costReportedUSD / (r.costUSD || 1)) * 100}%`,
-                                }}
-                              />
-                            )}
-                            {r.costEstimatedUSD > 0 && (
-                              <div
-                                className="bg-accent/30"
-                                style={{
-                                  width: `${(r.costEstimatedUSD / (r.costUSD || 1)) * 100}%`,
-                                }}
-                              />
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <UsageTable
+                rows={rows}
+                group={group}
+                filters={{ agent, model, since, until }}
+              />
             )}
           </>
         )}
       </Panel>
-      {tooltip.node}
     </div>
+  );
+}
+
+// UsageTable owns the sort and the hover tooltip. Both used to live on
+// the page, so pointing at a cost bar re-rendered the whole surface —
+// the filter bar, the budget banner and the lazily-loaded ECharts
+// timeline — on every mouse move across the table.
+function UsageTable({
+  rows: unsorted,
+  group,
+  filters,
+}: {
+  rows: UsageRow[];
+  group: Group;
+  filters: { agent: string; model: string; since: string; until: string };
+}) {
+  // Sorting: null keeps the server order (day desc / cost desc); a click
+  // cycles asc↔desc per column.
+  const { sorted: rows, sort, toggleSort } = useSorted(unsorted, SORT_VALUE);
+  const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
+  const tooltip = useTooltip();
+  const { agent, model, since, until } = filters;
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-edge bg-surface-2 text-left">
+            <tr>
+              <SortableTH
+                label={group}
+                k="group"
+                sort={sort}
+                onSort={toggleSort}
+              />
+              <SortableTH
+                label="sessions"
+                k="sessions"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              <SortableTH
+                label="tokens"
+                k="tokens"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              <SortableTH
+                label="cache read"
+                k="cacheRead"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              <SortableTH
+                label="cost"
+                k="cost"
+                sort={sort}
+                onSort={toggleSort}
+                right
+              />
+              {/* The reported/estimated split is a legend, and a
+                  legend is not a column heading — it lives in the
+                  panel header now. */}
+              <th className="w-1/3 px-4 py-2 microlabel">cost split</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-edge bg-surface-1">
+            {rows.map((r) => (
+              <tr key={r.group || "(none)"}>
+                <td className="px-4 py-2 font-mono text-xs">
+                  {!r.group ? (
+                    <span className="text-ink-dim">(no {group})</span>
+                  ) : (
+                    <Link
+                      to="/sessions"
+                      search={pivotSearch(group, r.group, {
+                        agent,
+                        model,
+                        since,
+                        until,
+                      })}
+                      title={`Sessions matching this row (and the active filters)\n${r.group}`}
+                      className="hover:text-accent"
+                    >
+                      {groupLabel(group, r.group)}
+                    </Link>
+                  )}
+                  {r.hasUnpriced && (
+                    <span
+                      className="ml-2 text-warn"
+                      title="Contains unpriced tokens"
+                    >
+                      ●
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
+                  {fmtCount(r.sessions)}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
+                  {fmtTokens(totalTokens(r.tokens))}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-xs text-ink-dim tabular-nums">
+                  {fmtTokens(r.tokens.cacheRead)}
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <Money
+                    usd={r.costUSD}
+                    unpriced={r.hasUnpriced ? 1 : undefined}
+                    className="text-xs"
+                    title={`reported ${fmtCostExact(r.costReportedUSD)} · estimated ${fmtCostExact(r.costEstimatedUSD)}`}
+                  />
+                </td>
+                <td
+                  className="px-4 py-2"
+                  tabIndex={0}
+                  {...tooltip.bind(
+                    <>
+                      <span className="text-ink">
+                        {groupLabel(group, r.group) || group}
+                      </span>
+                      <br />
+                      reported {fmtCostExact(r.costReportedUSD)}
+                      <br />
+                      estimated {fmtCostExact(r.costEstimatedUSD)}
+                    </>,
+                  )}
+                >
+                  <div
+                    className="flex h-2 gap-[1px] overflow-hidden rounded"
+                    style={{
+                      width: `${Math.max((r.costUSD / maxCost) * 100, 1)}%`,
+                    }}
+                  >
+                    {r.costReportedUSD > 0 && (
+                      <div
+                        className="bg-accent/70"
+                        style={{
+                          width: `${(r.costReportedUSD / (r.costUSD || 1)) * 100}%`,
+                        }}
+                      />
+                    )}
+                    {r.costEstimatedUSD > 0 && (
+                      <div
+                        className="bg-accent/30"
+                        style={{
+                          width: `${(r.costEstimatedUSD / (r.costUSD || 1)) * 100}%`,
+                        }}
+                      />
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {tooltip.node}
+    </>
   );
 }
 
@@ -515,17 +544,9 @@ function BudgetEditor({ monthly }: { monthly: number }) {
   );
 }
 
-function BudgetBanner({
-  spent,
-  monthly,
-  month,
-}: {
-  spent: number;
-  monthly: number;
-  month: string;
-}) {
+function BudgetBanner({ budget }: { budget: Budget }) {
   // No budget configured: a quiet affordance to set one, nothing else.
-  if (monthly <= 0) {
+  if (budget.monthlyUSD <= 0) {
     return (
       <div className="mb-4 flex items-baseline rounded-md border border-edge bg-surface-1 px-4 py-2 text-sm text-ink-dim">
         <span>No monthly budget set.</span>
@@ -533,34 +554,31 @@ function BudgetBanner({
       </div>
     );
   }
-  const pct = Math.min((spent / monthly) * 100, 100);
-  const over = spent > monthly;
-  const near = !over && pct >= 80;
+  const over = budget.pace === "over";
+  const warn = over || budget.pace === "fast";
   return (
     <div
-      className={`mb-4 rounded-md border px-4 py-3 text-sm ${
+      className={`mb-4 space-y-1 rounded-md border px-4 py-3 text-sm ${
         over
           ? "border-warn bg-warn/10 text-warn"
-          : near
+          : warn
             ? "border-warn/40 bg-warn/5"
             : "border-edge bg-surface-1"
       }`}
     >
-      <div className="mb-1 flex items-baseline gap-2">
-        <span>
-          {month} budget: {fmtCost(spent)} of {fmtCost(monthly)}
-        </span>
-        <span className="ml-auto font-mono tabular-nums">
-          {pct.toFixed(0)}%
-        </span>
-        <BudgetEditor monthly={monthly} />
-      </div>
-      <div className="h-2 overflow-hidden rounded bg-surface-2">
-        <div
-          className={`h-full ${over || near ? "bg-warn" : "bg-ok"}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <BudgetMeter
+        budget={budget}
+        label={
+          <span>
+            {budget.month} budget: {fmtCost(budget.spentUSD)} of{" "}
+            {fmtCost(budget.monthlyUSD)}
+          </span>
+        }
+        action={<BudgetEditor monthly={budget.monthlyUSD} />}
+      />
+      <p className={`text-meta ${warn ? "" : "text-ink-faint"}`}>
+        {budgetVerdict(budget)}
+      </p>
     </div>
   );
 }
@@ -587,8 +605,7 @@ function BlocksTable({
   const { sorted, sort, toggleSort } = useSorted(blocks, BLOCK_SORT_VALUE);
 
   if (loading) return <SkeletonRows rows={5} />;
-  if (blocks.length === 0)
-    return <EmptyNote>No usage recorded yet.</EmptyNote>;
+  if (blocks.length === 0) return <EmptyNote>No usage recorded yet.</EmptyNote>;
   const maxTokens = Math.max(...blocks.map((b) => totalTokens(b.tokens)), 1);
   return (
     <div className="overflow-x-auto">

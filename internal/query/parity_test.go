@@ -152,3 +152,55 @@ func TestBudgetLifecycle(t *testing.T) {
 		t.Error("negative budget accepted")
 	}
 }
+
+// "Am I on track this month" is the most useful thing to ask of a budget,
+// and it lived only in the web UI — so `ccpeek query budget` and the MCP
+// tool returned two raw numbers and left every agent to redo the month
+// arithmetic. The projection and its verdict come from here now.
+func TestBudgetReportsPace(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+
+	b, err := s.GetBudget(ctx)
+	if err != nil {
+		t.Fatalf("GetBudget: %v", err)
+	}
+	if b.DaysInMonth < 28 || b.DaysInMonth > 31 {
+		t.Errorf("daysInMonth = %d, want a real month length", b.DaysInMonth)
+	}
+	if b.DayOfMonth < 1 || b.DayOfMonth > b.DaysInMonth {
+		t.Errorf("dayOfMonth = %d, outside 1..%d", b.DayOfMonth, b.DaysInMonth)
+	}
+	// No target set: nothing to be on pace for.
+	if b.Pace != "" {
+		t.Errorf("pace without a budget = %q, want empty", b.Pace)
+	}
+
+	// The projection extrapolates the month-to-date spend over the whole
+	// month, so it is never below what has already been spent.
+	if b.ProjectedUSD < b.SpentUSD {
+		t.Errorf("projected %v < spent %v", b.ProjectedUSD, b.SpentUSD)
+	}
+
+	// A target far below what is already spent reads as "over"; one far
+	// above the projection reads as on-track.
+	for _, tt := range []struct {
+		monthly float64
+		want    string
+	}{
+		{0.0000001, "over"},
+		{1e9, "on-track"},
+	} {
+		if err := s.SetBudget(ctx, tt.monthly); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetBudget(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Pace != tt.want {
+			t.Errorf("budget %v: pace = %q, want %q (spent %v, projected %v)",
+				tt.monthly, got.Pace, tt.want, got.SpentUSD, got.ProjectedUSD)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LoadMore, usePagedList } from "../paged";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
@@ -15,11 +15,14 @@ import {
   AgentChip,
   EmptyNote,
   FilterBar,
+  groupRuns,
+  inputCls,
   LoadError,
+  Loading,
   Money,
   PageHeader,
+  SectionHeading,
   SkeletonRows,
-  inputCls,
   useDebounced,
 } from "../ui";
 
@@ -39,9 +42,19 @@ export function SessionsPage() {
 
   // The title box is local state so typing stays responsive, and only the
   // settled value reaches the URL and the query — it used to issue one
-  // request and one history entry per keystroke.
+  // request and one history entry per keystroke. The URL write has to be
+  // debounced too: writing it on every keystroke re-rendered the whole
+  // loaded list (hundreds of rows, regrouped by day) and wrote a history
+  // entry per character, which is exactly what the comment promised it
+  // did not do.
   const [titleInput, setTitleInput] = useState(search.q ?? "");
   const q = useDebounced(titleInput, 250);
+  useEffect(() => {
+    if ((search.q ?? "") !== q) setFilter({ q });
+    // setFilter is derived from navigate and stable enough; re-running on
+    // every render would fight the user's typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
   const [dense, setDense] = useState(false);
 
   const setFilter = (patch: Record<string, string>) =>
@@ -92,7 +105,10 @@ export function SessionsPage() {
     .map((r) => r.group)
     .filter((m) => m !== "");
 
-  const groups = groupByDay(sessions);
+  const groups = groupRuns(
+    sessions,
+    (s) => s.modifiedAt.slice(0, 10) || "(no date)",
+  );
   const activeFilters = [agent, project, model, since, until, q].filter(
     Boolean,
   ).length;
@@ -122,10 +138,7 @@ export function SessionsPage() {
         >
           <input
             value={titleInput}
-            onChange={(e) => {
-              setTitleInput(e.target.value);
-              setFilter({ q: e.target.value });
-            }}
+            onChange={(e) => setTitleInput(e.target.value)}
             placeholder="Filter by title…"
             aria-label="Filter by title"
             className={`w-56 ${inputCls}`}
@@ -157,10 +170,16 @@ export function SessionsPage() {
             />
           )}
           {agent && (
-            <FilterPill label={agent} onClear={() => setFilter({ agent: "" })} />
+            <FilterPill
+              label={agent}
+              onClear={() => setFilter({ agent: "" })}
+            />
           )}
           {model && (
-            <FilterPill label={model} onClear={() => setFilter({ model: "" })} />
+            <FilterPill
+              label={model}
+              onClear={() => setFilter({ model: "" })}
+            />
           )}
           {(since || until) && (
             <FilterPill
@@ -200,7 +219,11 @@ export function SessionsPage() {
       )}
 
       {error && <LoadError error={error} />}
-      {isLoading && <SkeletonRows rows={8} />}
+      {isLoading && (
+        <Loading label="Loading sessions…">
+          <SkeletonRows rows={8} />
+        </Loading>
+      )}
       {!isLoading && !error && sessions.length === 0 && (
         <EmptyNote
           hint={
@@ -215,18 +238,12 @@ export function SessionsPage() {
 
       <div className="space-y-3">
         {groups.map((g) => (
-          <section key={g.day}>
-            {/* The day rule carries a labelled count. A bare "1" floating
-                at the right edge was a number with no noun. */}
-            <h2 className="microlabel mb-1 flex items-center gap-2">
-              {g.day}
-              <span className="h-px flex-1 bg-edge" />
-              <span className="tabular-nums">
-                {plural(g.sessions.length, "session")}
-              </span>
-            </h2>
+          <section key={g.key}>
+            <SectionHeading count={plural(g.items.length, "session")}>
+              {g.key}
+            </SectionHeading>
             <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
-              {g.sessions.map((s) => (
+              {g.items.map((s) => (
                 <SessionRow key={`${s.agent}/${s.id}`} s={s} dense={dense} />
               ))}
             </ul>
@@ -309,15 +326,4 @@ function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
       </Link>
     </li>
   );
-}
-
-function groupByDay(sessions: SessionSummary[]) {
-  const out: { day: string; sessions: SessionSummary[] }[] = [];
-  for (const s of sessions) {
-    const day = s.modifiedAt.slice(0, 10) || "(no date)";
-    const last = out[out.length - 1];
-    if (last && last.day === day) last.sessions.push(s);
-    else out.push({ day, sessions: [s] });
-  }
-  return out;
 }

@@ -10,6 +10,7 @@ import { api, fmtCount, fmtTokens, shortPath } from "../api";
 import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
+  Loading,
   Money,
   Panel,
   Segmented,
@@ -31,6 +32,9 @@ import { useSessionTools, useTranscriptWindow } from "./session/useSessionData";
 const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
 type Tab = (typeof TABS)[number];
 
+// A ?tab= from the URL is any string until proven otherwise.
+const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
+
 // The gathering point of the session-centric model: one session with its
 // transcript, commands, tool calls, files touched, usage, relations, and
 // linked artifacts — each facet a deep-linkable tab (?tab=). The paging
@@ -41,10 +45,7 @@ export function SessionDetailPage() {
   });
   const search = useSearch({ from: "/sessions/$agent/$sessionId" });
   const navigate = useNavigate({ from: "/sessions/$agent/$sessionId" });
-  const tab: Tab =
-    search.tab && (TABS as readonly string[]).includes(search.tab)
-      ? (search.tab as Tab)
-      : "transcript";
+  const tab: Tab = isTab(search.tab) ? search.tab : "transcript";
 
   const detail = useQuery({
     queryKey: ["session", agent, sessionId],
@@ -72,10 +73,10 @@ export function SessionDetailPage() {
 
   if (detail.isLoading)
     return (
-      <div className="space-y-4">
+      <Loading label="Loading session…">
         <SkeletonTiles />
         <SkeletonRows rows={6} />
-      </div>
+      </Loading>
     );
   // A failed session load used to render one bare orange line at the top
   // of an otherwise blank page — no styling, no way back — while the
@@ -207,7 +208,7 @@ export function SessionDetailPage() {
           options={TABS.map((t) => ({
             value: t,
             label: t,
-            badge: counts[t] === null ? undefined : fmtCount(counts[t]!),
+            badge: counts[t] === null ? undefined : fmtCount(counts[t]),
           }))}
         />
       </div>

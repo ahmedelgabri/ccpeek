@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { api, type SearchHit } from "./api";
 import { markSnippet, stripMarkers } from "./snippet";
-import { agentLabel, useDebounced } from "./ui";
+import { agentLabel, FILTER_AGENTS, kindLabel, useDebounced } from "./ui";
+import { NAV } from "./nav";
 
 interface Item {
   key: string;
@@ -22,18 +23,6 @@ interface Group {
 // Mirrors the sidebar's order (see NAV in router.tsx): the jump list and
 // the rail are two views of the same map, and disagreeing about the order
 // makes the reader re-scan one of them.
-const PAGES: { label: string; to: string }[] = [
-  { label: "Overview", to: "/" },
-  { label: "Sessions", to: "/sessions" },
-  { label: "Usage", to: "/usage" },
-  { label: "Commands", to: "/commands" },
-  { label: "Artifacts", to: "/artifacts" },
-  { label: "Secret scan", to: "/scan" },
-  { label: "Compare", to: "/compare" },
-];
-
-const AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
-
 // The palette has two modes, and jumping is the default one.
 //
 // "Jump" is what a palette is for: type two letters, hit enter, you are on
@@ -74,10 +63,10 @@ export function Palette() {
   useEffect(() => {
     // An explicit query (the /search doorway, a v1 bookmark) opens straight
     // into search — that request is unambiguous.
-    const openPalette = (e: Event) => {
-      const q = (e as CustomEvent<{ q?: string }>).detail?.q;
-      if (q) {
-        setQ(q);
+    const openPalette = (e: WindowEventMap["ccpeek-palette"]) => {
+      const initial = e.detail?.q;
+      if (initial) {
+        setQ(initial);
         setMode("search");
       }
       setOpen(true);
@@ -133,7 +122,7 @@ export function Palette() {
   const groups: Group[] = [];
 
   if (mode === "jump") {
-    const pages: Item[] = PAGES.filter((p) =>
+    const pages: Item[] = NAV.filter((p) =>
       p.label.toLowerCase().includes(q.toLowerCase()),
     ).map((p) => ({
       key: `page:${p.to}`,
@@ -186,6 +175,11 @@ export function Palette() {
   }
 
   const items = groups.flatMap((g) => g.items);
+  // Where each group starts in the flattened list, so a row can state its
+  // position without a counter mutated as the list renders.
+  const offsets = groups.map((_, gi) =>
+    groups.slice(0, gi).reduce((n, g) => n + g.items.length, 0),
+  );
   const clamped = Math.min(cursor, Math.max(items.length - 1, 0));
 
   const move = (delta: number) => {
@@ -200,10 +194,7 @@ export function Palette() {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/50 p-4 pt-20"
-      onClick={close}
-    >
+    <div className="fixed inset-0 z-50 bg-black/50 p-4 pt-20" onClick={close}>
       <div
         role="dialog"
         aria-modal="true"
@@ -265,7 +256,7 @@ export function Palette() {
               aria-label="Filter by agent"
               className="shrink-0 rounded border border-edge bg-surface-1 px-1.5 py-1 font-mono text-xs text-ink-dim"
             >
-              {AGENTS.map((a) => (
+              {FILTER_AGENTS.map((a) => (
                 <option key={a} value={a}>
                   {a === "" ? "all agents" : agentLabel(a)}
                 </option>
@@ -275,48 +266,44 @@ export function Palette() {
         </div>
 
         <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
-          {(() => {
-            let index = -1;
-            return groups.map((g) => (
-              <li key={g.heading}>
-                <div className="microlabel px-4 pt-2 pb-1">{g.heading}</div>
-                <ul>
-                  {g.items.map((item) => {
-                    index += 1;
-                    const i = index;
-                    return (
-                      <li key={item.key}>
-                        <button
-                          type="button"
-                          data-idx={i}
-                          onClick={item.run}
-                          onMouseEnter={() => setCursor(i)}
-                          className={`flex w-full items-baseline gap-2 px-4 py-2 text-left ${
-                            i === clamped ? "bg-surface-2" : ""
-                          }`}
-                        >
-                          {item.hit ? (
-                            <HitRow hit={item.hit} />
-                          ) : (
-                            <>
-                              <span className="min-w-0 flex-1 truncate text-sm">
-                                {item.label}
+          {groups.map((g, gi) => (
+            <li key={g.heading}>
+              <div className="microlabel px-4 pt-2 pb-1">{g.heading}</div>
+              <ul>
+                {g.items.map((item, gIdx) => {
+                  const i = offsets[gi] + gIdx;
+                  return (
+                    <li key={item.key}>
+                      <button
+                        type="button"
+                        data-idx={i}
+                        onClick={item.run}
+                        onMouseEnter={() => setCursor(i)}
+                        className={`flex w-full items-baseline gap-2 px-4 py-2 text-left ${
+                          i === clamped ? "bg-surface-2" : ""
+                        }`}
+                      >
+                        {item.hit ? (
+                          <HitRow hit={item.hit} />
+                        ) : (
+                          <>
+                            <span className="min-w-0 flex-1 truncate text-sm">
+                              {item.label}
+                            </span>
+                            {item.hint && (
+                              <span className="shrink-0 font-mono text-meta text-ink-faint">
+                                {item.hint}
                               </span>
-                              {item.hint && (
-                                <span className="shrink-0 font-mono text-meta text-ink-faint">
-                                  {item.hint}
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </li>
-            ));
-          })()}
+                            )}
+                          </>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          ))}
           {mode === "search" && items.length === 0 && (
             <li className="px-4 py-3 text-sm text-ink-dim">
               {q.trim().length < 2
@@ -332,7 +319,7 @@ export function Palette() {
           <span>↑↓ move</span>
           <span>↵ {mode === "search" ? "open" : "go"}</span>
           <span>esc {mode === "search" ? "back" : "close"}</span>
-          {mode === "search" && searching && (
+          {searching && (
             <span className="ml-auto tabular-nums">
               {hits.isFetching
                 ? "searching…"
@@ -353,7 +340,7 @@ function HitRow({ hit }: { hit: SearchHit }) {
     <div className="min-w-0 flex-1">
       <div className="mb-0.5 flex min-w-0 items-baseline gap-2 font-mono text-micro text-ink-faint">
         <span className="shrink-0 text-accent">{hit.agent}</span>
-        <span className="shrink-0">{hit.docType.replaceAll("_", " ")}</span>
+        <span className="shrink-0">{kindLabel(hit.docType)}</span>
         {hit.title && <span className="min-w-0 truncate">{hit.title}</span>}
         <span className="ml-auto shrink-0">
           {hit.sessionId ? "session" : "artifact"}

@@ -1,16 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { LoadMore, usePagedList } from "../paged";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { api, fmtBytes, fmtCount, parityApi, plural } from "../api";
+import { fmtBytes, fmtCount, parityApi, plural } from "../api";
 import {
   AgentDot,
   EmptyNote,
   FilterBar,
+  groupRuns,
+  kindLabel,
   LoadError,
+  Loading,
   PageHeader,
   Panel,
+  SectionHeading,
   SkeletonRows,
-  kindLabel,
 } from "../ui";
 
 const PAGE = 100;
@@ -68,10 +71,14 @@ export function ArtifactsPage() {
       replace: true,
     });
 
-  const stats = useQuery({ queryKey: ["stats"], queryFn: api.stats });
-  const counts = new Map(
-    (stats.data?.artifactKinds ?? []).map((k) => [k.kind, k.count]),
-  );
+  // Counted under the SAME agent filter as the list. These used to come
+  // from corpus-wide /stats, so narrowing to one agent left the rail
+  // promising rows the list could not show.
+  const facets = useQuery({
+    queryKey: ["artifact-kinds", agent],
+    queryFn: () => parityApi.artifactKinds(agent),
+  });
+  const counts = new Map((facets.data ?? []).map((k) => [k.kind, k.count]));
   const kinds = KIND_ORDER.filter((k) => counts.has(k)).concat(
     // Any kind the server knows that this list does not — a new adapter
     // should never silently vanish from the browser.
@@ -94,12 +101,7 @@ export function ArtifactsPage() {
 
   // Grouped under kind headings when no kind is chosen: the flat list gave
   // every row a kind badge and let the reader do the grouping by eye.
-  const groups: { kind: string; items: typeof artifacts }[] = [];
-  for (const a of artifacts) {
-    const last = groups[groups.length - 1];
-    if (last && last.kind === a.kind) last.items.push(a);
-    else groups.push({ kind: a.kind, items: [a] });
-  }
+  //
   // Presented in the rail's order, not the server's alphabetical one — two
   // orderings of the same nine kinds, side by side, is a reading tax for
   // no benefit. Safe to reorder after grouping: the server sorts by kind,
@@ -108,7 +110,9 @@ export function ArtifactsPage() {
     const i = KIND_ORDER.indexOf(k);
     return i === -1 ? KIND_ORDER.length : i;
   };
-  groups.sort((a, b) => rank(a.kind) - rank(b.kind));
+  const groups = groupRuns(artifacts, (a) => a.kind).toSorted(
+    (a, b) => rank(a.key) - rank(b.key),
+  );
 
   return (
     <div>
@@ -126,7 +130,10 @@ export function ArtifactsPage() {
       </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">
-        <nav aria-label="Artifact kinds" className="lg:sticky lg:top-5 lg:self-start">
+        <nav
+          aria-label="Artifact kinds"
+          className="lg:sticky lg:top-5 lg:self-start"
+        >
           <Panel label="Kinds">
             <ul className="divide-y divide-edge">
               <KindRow
@@ -145,7 +152,7 @@ export function ArtifactsPage() {
                   onSelect={() => setFilter({ kind: kind === k ? "" : k })}
                 />
               ))}
-              {kinds.length === 0 && !stats.isLoading && (
+              {kinds.length === 0 && !facets.isLoading && (
                 <li className="px-3 py-4 text-center text-meta text-ink-faint">
                   none indexed
                 </li>
@@ -157,10 +164,9 @@ export function ArtifactsPage() {
         <div className="min-w-0">
           {error && <LoadError error={error} />}
           {isLoading && (
-            <div role="status">
-              <span className="sr-only">Loading artifacts…</span>
+            <Loading label="Loading artifacts…">
               <SkeletonRows rows={8} />
-            </div>
+            </Loading>
           )}
           {!isLoading && !error && artifacts.length === 0 && (
             <div role="status">
@@ -179,17 +185,16 @@ export function ArtifactsPage() {
           {groups.length > 0 && (
             <div className="space-y-4">
               {groups.map((g) => (
-                <section key={g.kind}>
-                  <h2 className="microlabel mb-1 flex items-baseline gap-2">
-                    {kindLabel(g.kind)}
-                    <span className="h-px flex-1 bg-edge" />
-                    <span className="tabular-nums">
-                      {fmtCount(g.items.length)}
-                      {counts.has(g.kind) && counts.get(g.kind) !== g.items.length
-                        ? ` of ${fmtCount(counts.get(g.kind)!)}`
-                        : ""}
-                    </span>
-                  </h2>
+                <section key={g.key}>
+                  <SectionHeading
+                    count={
+                      counts.has(g.key) && counts.get(g.key) !== g.items.length
+                        ? `${fmtCount(g.items.length)} of ${fmtCount(counts.get(g.key) ?? 0)}`
+                        : fmtCount(g.items.length)
+                    }
+                  >
+                    {kindLabel(g.key)}
+                  </SectionHeading>
                   <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
                     {g.items.map((a) => (
                       <li key={`${a.agent}/${a.kind}/${a.name}`}>

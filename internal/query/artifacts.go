@@ -76,6 +76,41 @@ func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactS
 	return out, rows.Err()
 }
 
+// ArtifactKinds counts artifacts per kind, most numerous first, under the
+// SAME agent filter the listing uses.
+//
+// The browser's kind facets used to read their counts from /stats, which
+// is corpus-wide: filtering to one agent left the rail claiming counts
+// for every agent, so a kind could show "12" and then list nothing. The
+// counts belong beside the list they describe.
+func (s *Service) ArtifactKinds(ctx context.Context, agent string) ([]KindCount, error) {
+	clause, args := "", []any(nil)
+	if agent != "" {
+		clause = "WHERE a.slug = ?"
+		args = append(args, agent)
+	}
+	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+		SELECT ar.kind, COUNT(*)
+		FROM artifacts ar
+		JOIN agents a ON a.id = ar.agent_id
+		%s
+		GROUP BY ar.kind
+		ORDER BY 2 DESC, 1`, clause), args...)
+	if err != nil {
+		return nil, fmt.Errorf("artifact kinds: %w", err)
+	}
+	defer rows.Close()
+	var out []KindCount
+	for rows.Next() {
+		var k KindCount
+		if err := rows.Scan(&k.Kind, &k.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 // ArtifactDetail is the `artifact` op result.
 type ArtifactDetail struct {
 	ArtifactSummary

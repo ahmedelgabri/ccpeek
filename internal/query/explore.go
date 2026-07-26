@@ -73,11 +73,6 @@ type Stats struct {
 	Workspaces  []WorkspaceStat `json:"workspaces,omitempty"`
 	RecentFiles []FileTouch     `json:"recentFiles,omitempty"`
 	ToolKinds   []KindCount     `json:"toolKinds,omitempty"`
-	// ArtifactKinds lets the artifact browser show WHICH kinds exist and
-	// how many of each before the reader picks one. Without it the kind
-	// filter is a list of guesses — most corpora carry only a few of the
-	// ten kinds, and nothing on screen said which.
-	ArtifactKinds []KindCount `json:"artifactKinds,omitempty"`
 }
 
 // Stats builds the overview in a handful of aggregate queries.
@@ -198,24 +193,6 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 			return nil, err
 		}
 		st.ToolKinds = append(st.ToolKinds, k)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
-
-	rows, err = rdb.QueryContext(ctx, `
-		SELECT kind, COUNT(*) FROM artifacts GROUP BY kind ORDER BY 2 DESC`)
-	if err != nil {
-		return nil, fmt.Errorf("artifact kinds: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var k KindCount
-		if err := rows.Scan(&k.Kind, &k.Count); err != nil {
-			return nil, err
-		}
-		st.ArtifactKinds = append(st.ArtifactKinds, k)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

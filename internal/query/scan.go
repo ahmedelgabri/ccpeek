@@ -22,6 +22,56 @@ type ScanFinding struct {
 	Ignored       bool   `json:"ignored"`
 }
 
+// ScanRule is one rule's findings summarized. The scan is read RULE FIRST
+// — you decide "do I care about Slack tokens at all" before looking at
+// occurrences, and a leaked pattern can appear dozens of times — so the
+// grouping, the active/ignored split, and the ranking are the shape of the
+// data, not a presentation detail.
+//
+// They were computed only in the web UI, which left `ccpeek query scan`
+// and the MCP tool returning flat rows and every agent re-deriving the
+// reading the product actually presents.
+type ScanRule struct {
+	RuleID      string `json:"ruleId"`
+	Description string `json:"description"`
+	// Findings counts every stored finding of this rule; Active excludes
+	// the ones the user dismissed.
+	Findings int `json:"findings"`
+	Active   int `json:"active"`
+	// Entities is how many distinct sessions/artifacts it was found in.
+	Entities int    `json:"entities"`
+	LastSeen string `json:"lastSeen"`
+}
+
+// ScanRules summarizes findings by rule, most active occurrences first —
+// the order they are worth looking at in.
+func (s *Service) ScanRules(ctx context.Context) ([]ScanRule, error) {
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
+		SELECT f.rule_id,
+		       MAX(f.description),
+		       COUNT(*),
+		       SUM(CASE WHEN `+db.ScanIgnoredSQL("f")+` THEN 0 ELSE 1 END),
+		       COUNT(DISTINCT f.natural_key),
+		       MAX(f.scanned_at)
+		FROM scan_findings f
+		GROUP BY f.rule_id
+		ORDER BY 4 DESC, 3 DESC, f.rule_id`)
+	if err != nil {
+		return nil, fmt.Errorf("summarizing scan findings: %w", err)
+	}
+	defer rows.Close()
+	var out []ScanRule
+	for rows.Next() {
+		var r ScanRule
+		if err := rows.Scan(&r.RuleID, &r.Description, &r.Findings,
+			&r.Active, &r.Entities, &r.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ScanFindings lists stored findings; includeIgnored controls whether
 // user-dismissed rows appear.
 func (s *Service) ScanFindings(ctx context.Context, includeIgnored bool) ([]ScanFinding, error) {

@@ -16,8 +16,12 @@ import {
 import {
   AgentChip,
   AgentDot,
+  BudgetMeter,
+  budgetVerdict,
+  Code,
   EmptyNote,
   KindBars,
+  Loading,
   Money,
   PageHeader,
   Panel,
@@ -42,19 +46,23 @@ export function OverviewPage() {
   // money go" is the question this panel is on the page to answer, and a
   // count answers a different one. /stats has no cost per workspace, so
   // the project rollup — the same source Usage uses — supplies it.
+  // Limited: the panel shows eight, and the server already orders project
+  // groups by cost desc. Unlimited, this fetched every workspace ever
+  // indexed to display eight of them. Nine because at most one group is
+  // the blank "no workspace" bucket the panel filters out.
   const byProject = useQuery({
     queryKey: ["usage", "project"],
-    queryFn: () => api.usage({ group: "project" }),
+    queryFn: () => api.usage({ group: "project", limit: "9" }),
   });
   const budget = useQuery({ queryKey: ["budget"], queryFn: parityApi.budget });
 
   const st = stats.data;
   if (stats.isLoading)
     return (
-      <div className="space-y-4">
+      <Loading label="Loading overview…">
         <SkeletonTiles />
         <SkeletonRows rows={8} />
-      </div>
+      </Loading>
     );
   if (!st) return <EmptyNote>No data indexed yet.</EmptyNote>;
 
@@ -104,7 +112,11 @@ export function OverviewPage() {
           detail={`${fmtCount(st.toolCalls)} tool calls`}
           to="/commands"
         />
-        <StatTile label="Artifacts" value={fmtCount(st.artifacts)} to="/artifacts" />
+        <StatTile
+          label="Artifacts"
+          value={fmtCount(st.artifacts)}
+          to="/artifacts"
+        />
         <StatTile
           label="Scan findings"
           value={fmtCount(st.scanFindings)}
@@ -120,12 +132,7 @@ export function OverviewPage() {
         >
           <Heatmap days={st.activity ?? []} />
         </Panel>
-        <BudgetPace
-          className="xl:col-span-2"
-          spentMonth={st.costMonthUSD}
-          monthly={budget.data?.monthlyUSD ?? 0}
-          month={budget.data?.month ?? ""}
-        />
+        <BudgetPace className="xl:col-span-2" budget={budget.data} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
@@ -282,17 +289,17 @@ function FirstRun() {
             ccpeek did not find any coding-agent history to index.
           </p>
           <p>
-            It looks for Claude Code in <Root>~/.claude</Root>, Pi in{" "}
-            <Root>~/.pi/agent</Root>, Codex CLI in <Root>~/.codex</Root>,
-            OpenCode in <Root>~/.local/share/opencode</Root>, and Cursor in{" "}
-            <Root>~/.cursor</Root>.
+            It looks for Claude Code in <Code>~/.claude</Code>, Pi in{" "}
+            <Code>~/.pi/agent</Code>, Codex CLI in <Code>~/.codex</Code>,
+            OpenCode in <Code>~/.local/share/opencode</Code>, and Cursor in{" "}
+            <Code>~/.cursor</Code>.
           </p>
           <p>
             If your history lives elsewhere, point ccpeek at it with{" "}
-            <Root>--claude-dir</Root> or the matching environment variable
-            (<Root>PI_CODING_AGENT_DIR</Root>, <Root>CODEX_HOME</Root>,{" "}
-            <Root>OPENCODE_DATA_DIR</Root>, <Root>CCPEEK_CURSOR_DIR</Root>),
-            then restart with <Root>--rebuild</Root>.
+            <Code>--claude-dir</Code> or the matching environment variable (
+            <Code>PI_CODING_AGENT_DIR</Code>, <Code>CODEX_HOME</Code>,{" "}
+            <Code>OPENCODE_DATA_DIR</Code>, <Code>CCPEEK_CURSOR_DIR</Code>),
+            then restart with <Code>--rebuild</Code>.
           </p>
           <p className="text-ink-faint">
             Indexing runs in the background — if it is still working, this page
@@ -304,36 +311,28 @@ function FirstRun() {
   );
 }
 
-function Root({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">
-      {children}
-    </code>
-  );
-}
-
 // BudgetPace answers "am I on track", which a bare month-to-date figure
 // cannot: it compares spend against the share of the month elapsed.
 function BudgetPace({
-  spentMonth,
-  monthly,
-  month,
+  budget,
   className = "",
 }: {
-  spentMonth: number;
-  monthly: number;
-  month: string;
+  budget: import("../api").Budget | undefined;
   className?: string;
 }) {
-  const now = new Date();
-  const daysInMonth = new Date(
-    now.getUTCFullYear(),
-    now.getUTCMonth() + 1,
-    0,
-  ).getUTCDate();
-  const dayOfMonth = now.getUTCDate();
-  const elapsed = dayOfMonth / daysInMonth;
-  const projected = elapsed > 0 ? spentMonth / elapsed : 0;
+  if (!budget) return null;
+  // The projection and its verdict come from the query layer, so `ccpeek
+  // query budget` and the MCP tool answer "am I on track" too — this used
+  // to be month arithmetic living in a React component.
+  const {
+    spentUSD: spentMonth,
+    monthlyUSD: monthly,
+    month,
+    dayOfMonth,
+    daysInMonth,
+    projectedUSD: projected,
+    pace,
+  } = budget;
 
   if (monthly <= 0) {
     return (
@@ -359,42 +358,23 @@ function BudgetPace({
     );
   }
 
-  const pct = Math.min((spentMonth / monthly) * 100, 100);
-  const over = spentMonth > monthly;
-  const offPace = !over && projected > monthly;
+  const warn = pace === "over" || pace === "fast";
   return (
     <Panel label={`Budget — ${month || "this month"}`} className={className}>
       <div className="space-y-2 px-3 py-3">
-        <div className="flex items-baseline gap-2">
-          <Money usd={spentMonth} className="text-xl" />
-          <span className="font-mono text-meta text-ink-faint">
-            of {fmtCost(monthly)}
-          </span>
-          <span className="ml-auto font-mono text-meta text-ink-dim tabular-nums">
-            {pct.toFixed(0)}%
-          </span>
-        </div>
-        <div className="relative h-2 overflow-hidden rounded bg-surface-2">
-          <div
-            className={`h-full ${over || offPace ? "bg-warn" : "bg-ok"}`}
-            style={{ width: `${pct}%` }}
-          />
-          {/* Where the month itself has got to — spend ahead of this mark
-              is spend running fast. */}
-          <div
-            aria-hidden
-            className="absolute inset-y-0 w-px bg-ink-dim"
-            style={{ left: `${elapsed * 100}%` }}
-          />
-        </div>
-        <p
-          className={`text-meta ${over || offPace ? "text-warn" : "text-ink-faint"}`}
-        >
-          {over
-            ? `Over budget by ${fmtCost(spentMonth - monthly)}.`
-            : offPace
-              ? `Running fast — ${fmtCost(projected)} projected by month end.`
-              : `On pace for ${fmtCost(projected)} by month end.`}
+        <BudgetMeter
+          budget={budget}
+          label={
+            <>
+              <Money usd={spentMonth} className="text-xl" />
+              <span className="font-mono text-meta text-ink-faint">
+                of {fmtCost(monthly)}
+              </span>
+            </>
+          }
+        />
+        <p className={`text-meta ${warn ? "text-warn" : "text-ink-faint"}`}>
+          {budgetVerdict(budget)}
         </p>
       </div>
     </Panel>
@@ -410,10 +390,8 @@ function WorkspacesByCost({
 }) {
   if (loading)
     return <p className="px-3 py-3 text-meta text-ink-faint">Loading…</p>;
-  const top = rows
-    .filter((r) => r.group)
-    .toSorted((a, b) => b.costUSD - a.costUSD)
-    .slice(0, 8);
+  // Server order is already cost desc; only the blank bucket is dropped.
+  const top = rows.filter((r) => r.group).slice(0, 8);
   if (top.length === 0) return <EmptyNote>No workspaces recorded.</EmptyNote>;
   const max = Math.max(...top.map((r) => r.costUSD), Number.EPSILON);
   return (
@@ -617,8 +595,11 @@ function Heatmap({ days }: { days: DayActivity[] }) {
       </div>
       <div className="mt-2 flex items-center gap-1.5 font-mono text-micro text-ink-faint">
         <span className="mr-auto">
-          {plural(days.reduce((a, d) => a + d.sessions, 0), "session")} in the
-          last year
+          {plural(
+            days.reduce((a, d) => a + d.sessions, 0),
+            "session",
+          )}{" "}
+          in the last year
         </span>
         <span>less</span>
         {FILL.map((f, i) => (

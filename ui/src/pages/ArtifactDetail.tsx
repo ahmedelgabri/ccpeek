@@ -3,7 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { fmtBytes, parityApi } from "../api";
 import { useHighlight } from "../highlight";
-import { AgentChip, CopyButton, LoadError, SkeletonRows } from "../ui";
+import {
+  AgentChip,
+  CopyButton,
+  kindLabel,
+  LoadError,
+  Loading,
+  SkeletonRows,
+} from "../ui";
 
 export function ArtifactDetailPage() {
   const { agent, kind, name } = useParams({
@@ -41,10 +48,9 @@ export function ArtifactDetailPage() {
 
   if (isLoading)
     return (
-      <div role="status">
-        <span className="sr-only">Loading artifact…</span>
+      <Loading label="Loading artifact…">
         <SkeletonRows rows={5} />
-      </div>
+      </Loading>
     );
   if (error) return <LoadError error={error} />;
   const a = data!;
@@ -59,7 +65,7 @@ export function ArtifactDetailPage() {
           search={{ kind: a.kind }}
           className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-accent hover:bg-surface-2/70"
         >
-          {a.kind.replaceAll("_", " ")}
+          {kindLabel(a.kind)}
         </Link>
         <h1 className="truncate text-xl font-semibold">{a.name}</h1>
       </div>

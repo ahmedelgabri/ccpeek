@@ -14,11 +14,12 @@ import {
   AgentChip,
   AgentDot,
   EmptyNote,
+  inputCls,
   LoadError,
+  Loading,
   Money,
   PageHeader,
   SkeletonRows,
-  inputCls,
   useDebounced,
 } from "../ui";
 
@@ -88,9 +89,7 @@ export function ComparePage() {
 
       {(!a || !b) && (
         <div role="status">
-          <EmptyNote
-            hint="Pick one on each side — any two sessions, from any two agents."
-          >
+          <EmptyNote hint="Pick one on each side — any two sessions, from any two agents.">
             {a || b
               ? "Pick one more session to compare."
               : "Nothing selected yet."}
@@ -105,10 +104,9 @@ export function ComparePage() {
         !left.error &&
         !right.error &&
         (left.isLoading || right.isLoading) && (
-          <div role="status">
-            <span className="sr-only">Loading session comparison…</span>
+          <Loading label="Loading session comparison…">
             <SkeletonRows rows={8} />
-          </div>
+          </Loading>
         )}
       {!left.error && !right.error && left.data && right.data && (
         <ComparisonTable left={left.data} right={right.data} />

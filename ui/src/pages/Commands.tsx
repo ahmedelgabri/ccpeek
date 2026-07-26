@@ -1,17 +1,19 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { LoadMore, usePagedList } from "../paged";
 import { Link } from "@tanstack/react-router";
-import { api, fmtWhen, shortPath } from "../api";
+import { api, fmtWhen, shortPath, type CommandRow } from "../api";
 import { useHighlight } from "../highlight";
+import { useRowWindow } from "../windowed";
 import {
   AgentDot,
   CopyButton,
   EmptyNote,
   FilterBar,
+  inputCls,
   LoadError,
+  Loading,
   PageHeader,
   SkeletonRows,
-  inputCls,
   useDebounced,
 } from "../ui";
 
@@ -52,8 +54,15 @@ export function CommandsPage() {
       }),
     PAGE,
   );
-  const listRef = useRef<HTMLUListElement>(null);
-  useHighlight(listRef, [rows]);
+  // Windowed: each row carries a highlighted <pre>, so a browser scrolled
+  // through five pages was 500 syntax-highlighted blocks in the DOM at
+  // once. Only the on-screen slice is mounted, and highlighting re-runs
+  // for each new slice rather than once over everything.
+  const { listRef, virtualizer, virtualItems } = useRowWindow<
+    CommandRow,
+    HTMLUListElement
+  >(rows, (c, i) => `${c.sessionId}-${c.at}-${i}`, 76);
+  useHighlight(listRef, [virtualItems]);
 
   const exportURL = (format: string) => {
     const p = new URLSearchParams({ format, limit: "1000" });
@@ -108,45 +117,58 @@ export function CommandsPage() {
       </PageHeader>
 
       {error && <LoadError error={error} />}
-      {isLoading && <SkeletonRows rows={8} />}
+      {isLoading && (
+        <Loading label="Loading commands…">
+          <SkeletonRows rows={8} />
+        </Loading>
+      )}
       {!isLoading && !error && rows.length === 0 && (
         <EmptyNote>No commands match.</EmptyNote>
       )}
 
       <ul
         ref={listRef}
-        className="divide-y divide-edge overflow-hidden rounded-md border border-edge"
+        className="relative overflow-hidden rounded-md border border-edge"
+        style={{ height: virtualizer.getTotalSize() }}
       >
-        {rows.map((c, i) => (
-          <li
-            key={`${c.sessionId}-${c.at}-${i}`}
-            className="group bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
-          >
-            <div className="mb-1 flex min-w-0 items-center gap-2 font-mono text-meta text-ink-faint">
-              <AgentDot agent={c.agent} />
-              {c.cwd && (
-                <span className="min-w-0 truncate">{shortPath(c.cwd)}</span>
-              )}
-              <Link
-                to="/sessions/$agent/$sessionId"
-                params={{ agent: c.agent, sessionId: c.sessionId }}
-                search={{ tab: "commands" }}
-                className="shrink-0 hover:text-accent"
-              >
-                session {c.sessionId.slice(0, 8)}
-              </Link>
-              <span className="ml-auto shrink-0 tabular-nums">
-                {fmtWhen(c.at ?? "")}
-              </span>
-              <CopyButton text={c.command} />
-            </div>
-            <pre className="overflow-x-auto text-xs leading-relaxed">
-              <code className="language-bash block break-words whitespace-pre-wrap">
-                {c.command}
-              </code>
-            </pre>
-          </li>
-        ))}
+        {virtualItems.map((vi) => {
+          const c = rows[vi.index];
+          return (
+            <li
+              key={vi.key}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              className="group absolute top-0 left-0 w-full border-b border-edge bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
+              style={{
+                transform: `translateY(${vi.start - virtualizer.options.scrollMargin}px)`,
+              }}
+            >
+              <div className="mb-1 flex min-w-0 items-center gap-2 font-mono text-meta text-ink-faint">
+                <AgentDot agent={c.agent} />
+                {c.cwd && (
+                  <span className="min-w-0 truncate">{shortPath(c.cwd)}</span>
+                )}
+                <Link
+                  to="/sessions/$agent/$sessionId"
+                  params={{ agent: c.agent, sessionId: c.sessionId }}
+                  search={{ tab: "commands" }}
+                  className="shrink-0 hover:text-accent"
+                >
+                  session {c.sessionId.slice(0, 8)}
+                </Link>
+                <span className="ml-auto shrink-0 tabular-nums">
+                  {fmtWhen(c.at ?? "")}
+                </span>
+                <CopyButton text={c.command} />
+              </div>
+              <pre className="overflow-x-auto text-xs leading-relaxed">
+                <code className="language-bash block break-words whitespace-pre-wrap">
+                  {c.command}
+                </code>
+              </pre>
+            </li>
+          );
+        })}
       </ul>
 
       <LoadMore

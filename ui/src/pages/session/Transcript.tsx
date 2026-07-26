@@ -16,6 +16,7 @@ import {
   SkeletonRows,
   openPalette,
   toolColor,
+  useDebounced,
   useToggleSet,
 } from "../../ui";
 import { ToolExpansion } from "./ToolExpansion";
@@ -91,7 +92,16 @@ export function Transcript({
   // On top of that the reader picks a lens. A thousand-message session is
   // a document, and "show me only what I asked for" or "only what it ran"
   // is how you navigate one — scrolling was previously the only tool.
-  const needle = find.trim().toLowerCase();
+  // Debounced like every sibling filter (Commands, Sessions, Compare, the
+  // palette): a thousand-message session is megabytes of text, and an
+  // undebounced needle re-scanned all of it — and re-rendered the windowed
+  // list — on every keystroke.
+  const needle = useDebounced(find.trim().toLowerCase(), 200);
+  // Lowercased ONCE per loaded page rather than once per keystroke.
+  const haystack = useMemo(
+    () => new Map(withContent.map((m) => [m.seq, m.text.toLowerCase()])),
+    [withContent],
+  );
   const visible = useMemo(
     () =>
       withContent.filter((m) => {
@@ -102,10 +112,10 @@ export function Transcript({
         if (lens === "prompts" && !isUser) return false;
         if (lens === "tools" && !hasTools) return false;
         if (lens === "talk" && !isUser && !isAssistant) return false;
-        if (needle && !m.text.toLowerCase().includes(needle)) return false;
+        if (needle && !haystack.get(m.seq)?.includes(needle)) return false;
         return true;
       }),
-    [withContent, toolsByMsg, focusSeq, lens, needle],
+    [withContent, haystack, toolsByMsg, focusSeq, lens, needle],
   );
   const hidden = msgs.length - withContent.length;
   const filteredOut = withContent.length - visible.length;
@@ -292,147 +302,149 @@ export function Transcript({
           className="relative min-w-0 flex-1"
           style={{ height: virtualizer.getTotalSize() }}
         >
-        {virtualItems.map((vi) => {
-          const m = visible[vi.index];
-          const msgTools = toolsByMsg.get(m.seq) ?? [];
-          // Three visual registers: the user's prompts (accent rule,
-          // raised surface), the assistant's replies (quiet card), and
-          // meta entries — system events, summaries, tool-only rows —
-          // (compact, dimmed, dashed).
-          const isUser = m.role === "user" && m.kind === "message";
-          const isAssistant = m.role === "assistant";
-          const isMeta = !isUser && !isAssistant;
-          const glyph = isUser ? "❯" : isAssistant ? "✦" : "·";
-          return (
-            <li
-              key={vi.key}
-              id={`seq-${m.seq}`}
-              data-index={vi.index}
-              ref={virtualizer.measureElement}
-              className="absolute top-0 left-0 w-full pb-2"
-              style={{
-                transform: `translateY(${vi.start - virtualizer.options.scrollMargin}px)`,
-              }}
-            >
-              <div
-                style={
-                  treeView
-                    ? {
-                        marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px`,
-                      }
-                    : undefined
-                }
-                className={`rounded-md border border-l-2 ${
-                  m.seq === focusSeq
-                    ? "border-accent"
-                    : isUser
-                      ? "border-edge border-l-accent"
-                      : isMeta
-                        ? "border-edge border-dashed"
-                        : "border-edge border-l-assistant/60"
-                } ${
-                  isUser
-                    ? "bg-[color-mix(in_oklab,var(--color-accent)_7%,var(--color-surface-1))] p-3"
-                    : isMeta
-                      ? "bg-transparent px-3 py-1.5"
-                      : "bg-surface-1 p-3"
-                } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
-                  m.isSidechain && treeView ? "border-dashed" : ""
-                }`}
+          {virtualItems.map((vi) => {
+            const m = visible[vi.index];
+            const msgTools = toolsByMsg.get(m.seq) ?? [];
+            // Three visual registers: the user's prompts (accent rule,
+            // raised surface), the assistant's replies (quiet card), and
+            // meta entries — system events, summaries, tool-only rows —
+            // (compact, dimmed, dashed).
+            const isUser = m.role === "user" && m.kind === "message";
+            const isAssistant = m.role === "assistant";
+            const isMeta = !isUser && !isAssistant;
+            const glyph = isUser ? "❯" : isAssistant ? "✦" : "·";
+            return (
+              <li
+                key={vi.key}
+                id={`seq-${m.seq}`}
+                data-index={vi.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 w-full pb-2"
+                style={{
+                  transform: `translateY(${vi.start - virtualizer.options.scrollMargin}px)`,
+                }}
               >
                 <div
-                  onClick={
-                    isMeta && m.text.trim() !== ""
-                      ? () => toggleMeta(m.seq)
+                  style={
+                    treeView
+                      ? {
+                          marginLeft: `${Math.min(depths.get(m.seq) ?? 0, 12) * 16}px`,
+                        }
                       : undefined
                   }
-                  className={`flex min-w-0 gap-2 font-mono text-meta text-ink-faint ${isMeta ? "" : "mb-1"} ${
-                    isMeta && m.text.trim() !== ""
-                      ? "cursor-pointer hover:text-ink-dim"
-                      : ""
+                  className={`rounded-md border border-l-2 ${
+                    m.seq === focusSeq
+                      ? "border-accent"
+                      : isUser
+                        ? "border-edge border-l-accent"
+                        : isMeta
+                          ? "border-edge border-dashed"
+                          : "border-edge border-l-assistant/60"
+                  } ${
+                    isUser
+                      ? "bg-[color-mix(in_oklab,var(--color-accent)_7%,var(--color-surface-1))] p-3"
+                      : isMeta
+                        ? "bg-transparent px-3 py-1.5"
+                        : "bg-surface-1 p-3"
+                  } ${m.isSidechain && !treeView ? "ml-8 border-dashed" : ""} ${
+                    m.isSidechain && treeView ? "border-dashed" : ""
                   }`}
                 >
-                  {/* Identity and coordinates sit TOGETHER at the head of
+                  <div
+                    onClick={
+                      isMeta && m.text.trim() !== ""
+                        ? () => toggleMeta(m.seq)
+                        : undefined
+                    }
+                    className={`flex min-w-0 gap-2 font-mono text-meta text-ink-faint ${isMeta ? "" : "mb-1"} ${
+                      isMeta && m.text.trim() !== ""
+                        ? "cursor-pointer hover:text-ink-dim"
+                        : ""
+                    }`}
+                  >
+                    {/* Identity and coordinates sit TOGETHER at the head of
                       the message. The seq and timestamp used to be flung
                       to the far right edge — 1200px from the role they
                       belong to, so reading "who said this, and when" meant
                       crossing the full width of the screen and back. */}
-                  <span
-                    className={`shrink-0 ${
-                      isAssistant
-                        ? "text-assistant"
-                        : isUser
-                          ? "font-medium text-accent"
-                          : ""
-                    }`}
-                  >
-                    {m.isSidechain ? "↳ " : ""}
-                    {glyph} {m.role}
-                    {m.kind !== "message" ? ` · ${m.kind}` : ""}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyPermalink(m.seq);
-                    }}
-                    title="Copy link to this message"
-                    className={`shrink-0 tabular-nums ${
-                      copiedSeq === m.seq ? "text-ok" : "hover:text-accent"
-                    }`}
-                  >
-                    {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
-                  </button>
-                  {m.createdAt && (
-                    <span className="shrink-0 tabular-nums">
-                      {m.createdAt.slice(11, 19)}
+                    <span
+                      className={`shrink-0 ${
+                        isAssistant
+                          ? "text-assistant"
+                          : isUser
+                            ? "font-medium text-accent"
+                            : ""
+                      }`}
+                    >
+                      {m.isSidechain ? "↳ " : ""}
+                      {glyph} {m.role}
+                      {m.kind !== "message" ? ` · ${m.kind}` : ""}
                     </span>
-                  )}
-                  {isMeta && m.text.trim() !== "" && (
-                    <>
-                      <span className="shrink-0 text-accent">
-                        {openMeta.has(m.seq) ? "▾" : "▸"}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyPermalink(m.seq);
+                      }}
+                      title="Copy link to this message"
+                      className={`shrink-0 tabular-nums ${
+                        copiedSeq === m.seq ? "text-ok" : "hover:text-accent"
+                      }`}
+                    >
+                      {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
+                    </button>
+                    {m.createdAt && (
+                      <span className="shrink-0 tabular-nums">
+                        {m.createdAt.slice(11, 19)}
                       </span>
-                      {!openMeta.has(m.seq) && (
-                        <span className="min-w-0 truncate text-ink-faint italic">
-                          {m.text.slice(0, 120)}
+                    )}
+                    {isMeta && m.text.trim() !== "" && (
+                      <>
+                        <span className="shrink-0 text-accent">
+                          {openMeta.has(m.seq) ? "▾" : "▸"}
                         </span>
-                      )}
-                    </>
+                        {!openMeta.has(m.seq) && (
+                          <span className="min-w-0 truncate text-ink-faint italic">
+                            {m.text.slice(0, 120)}
+                          </span>
+                        )}
+                      </>
+                    )}
+                    {m.model && (
+                      <span className="ml-auto shrink-0 truncate">
+                        {m.model}
+                      </span>
+                    )}
+                  </div>
+                  {isMeta && openMeta.has(m.seq) && (
+                    <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-meta leading-relaxed whitespace-pre-wrap">
+                      {m.text}
+                    </pre>
                   )}
-                  {m.model && (
-                    <span className="ml-auto shrink-0 truncate">{m.model}</span>
+                  {!isMeta &&
+                    m.text.trim() !== "" &&
+                    (m.html ? (
+                      <div
+                        className="prose-msg measure"
+                        dangerouslySetInnerHTML={{ __html: m.html }}
+                      />
+                    ) : (
+                      <div className="measure text-sm leading-relaxed whitespace-pre-wrap">
+                        {m.text}
+                      </div>
+                    ))}
+                  {msgTools.length > 0 && (
+                    <MessageTools
+                      agent={agent}
+                      sessionId={sessionId}
+                      tools={msgTools}
+                      className={m.text.trim() !== "" ? "mt-2" : ""}
+                    />
                   )}
                 </div>
-                {isMeta && openMeta.has(m.seq) && (
-                  <pre className="mt-1.5 max-h-96 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 font-mono text-meta leading-relaxed whitespace-pre-wrap">
-                    {m.text}
-                  </pre>
-                )}
-                {!isMeta &&
-                  m.text.trim() !== "" &&
-                  (m.html ? (
-                    <div
-                      className="prose-msg measure"
-                      dangerouslySetInnerHTML={{ __html: m.html }}
-                    />
-                  ) : (
-                    <div className="measure text-sm leading-relaxed whitespace-pre-wrap">
-                      {m.text}
-                    </div>
-                  ))}
-                {msgTools.length > 0 && (
-                  <MessageTools
-                    agent={agent}
-                    sessionId={sessionId}
-                    tools={msgTools}
-                    className={m.text.trim() !== "" ? "mt-2" : ""}
-                  />
-                )}
-              </div>
-            </li>
-          );
-        })}
+              </li>
+            );
+          })}
         </ol>
         <Scrubber
           msgs={visible}

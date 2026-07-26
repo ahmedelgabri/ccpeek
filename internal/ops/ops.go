@@ -225,6 +225,14 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "scan-rules",
+			Desc: "Secret-scan findings summarized by rule — occurrences, how many are still active, how many distinct entities they appear in — ranked by active count. The rule-first reading the scan browser presents.",
+			Run: func(ctx context.Context, svc *query.Service, _ Args) (any, bool, error) {
+				out, err := svc.ScanRules(ctx)
+				return out, len(out) == 0, err
+			},
+		},
+		{
 			Name: "artifacts",
 			Desc: "List sidecar artifacts (plans, todos, tasks, snapshots, pastes, memories, file history, usage data) across agents, filterable by agent and kind.",
 			Params: []Param{
@@ -238,6 +246,15 @@ func Registry() []Op {
 					Agent: a.Str["agent"], Kind: a.Str["kind"],
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
 				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
+			Name:   "artifact-kinds",
+			Desc:   "Count artifacts by kind — which kinds a corpus actually holds, and how many of each. Honors the same agent filter as `artifacts`.",
+			Params: []Param{agentParam},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.ArtifactKinds(ctx, a.Str["agent"])
 				return out, len(out) == 0, err
 			},
 		},

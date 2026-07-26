@@ -2,12 +2,13 @@ import {
   useCallback,
   useEffect,
   useState,
+  type ButtonHTMLAttributes,
   type ReactNode,
   type FocusEvent,
   type MouseEvent,
 } from "react";
 import { Link } from "@tanstack/react-router";
-import { AGENT_COLOR, fmtCost } from "./api";
+import { AGENT_COLOR, fmtCost, type Budget } from "./api";
 
 // The palette's shortcut is Cmd on Apple platforms and Ctrl everywhere
 // else. The handler always accepted both; the hint claimed ⌘ on every
@@ -22,9 +23,19 @@ export const isApple =
   /Mac|iPhone|iPad/.test(navigator.platform);
 export const PALETTE_KEY = isApple ? "⌘K" : "Ctrl K";
 
+declare global {
+  interface WindowEventMap {
+    "ccpeek-palette": CustomEvent<{ q?: string }>;
+  }
+}
+
 /** openPalette raises the ⌘K palette from anywhere, including the places
  *  that used to link to the /search page. An initial query prefills it, so
- *  a v1 `/search?q=…` bookmark still lands on its results. */
+ *  a v1 `/search?q=…` bookmark still lands on its results.
+ *
+ *  The event is declared on WindowEventMap above so the listener side gets
+ *  the detail type for free, instead of casting an Event back to what this
+ *  function already knows it dispatched. */
 export function openPalette(q?: string) {
   window.dispatchEvent(new CustomEvent("ccpeek-palette", { detail: { q } }));
 }
@@ -59,13 +70,11 @@ export function Panel({
   action,
   children,
   className = "",
-  bodyClassName,
 }: {
   label?: string;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
-  bodyClassName?: string;
 }) {
   return (
     <section
@@ -77,7 +86,7 @@ export function Panel({
           {action && <div className="ml-auto">{action}</div>}
         </header>
       )}
-      <div className={bodyClassName}>{children}</div>
+      {children}
     </section>
   );
 }
@@ -150,7 +159,8 @@ export function StatTile({
   value: ReactNode;
   detail?: string;
   to?: string;
-  tone?: "ok" | "warn";
+  /** Amber value, for a number that is itself the bad news. */
+  tone?: "warn";
   spark?: ReactNode;
 }) {
   const body = (
@@ -159,11 +169,7 @@ export function StatTile({
       <div className="flex items-end gap-2">
         <div
           className={`mt-1 shrink-0 font-mono text-xl leading-none font-medium tabular-nums ${
-            tone === "ok"
-              ? "text-ok"
-              : tone === "warn"
-                ? "text-warn"
-                : "text-ink"
+            tone === "warn" ? "text-warn" : "text-ink"
           }`}
         >
           {value}
@@ -183,6 +189,82 @@ export function StatTile({
     </Link>
   ) : (
     <div className={cls}>{body}</div>
+  );
+}
+
+// BudgetMeter is the spend bar both budget surfaces draw: the share of
+// the target spent, with a tick at the share of the month elapsed —
+// spend past the tick is spend running fast. Overview and Usage each had
+// their own copy, and they disagreed about when to turn amber (one used
+// the server's pace, the other a local 80% rule), so the same month could
+// read as fine on one page and worrying on the other.
+//
+// `label` is the sentence to the left of the percentage; `action` is
+// whatever trails it.
+export function BudgetMeter({
+  budget,
+  label,
+  action,
+}: {
+  budget: Budget;
+  label: ReactNode;
+  action?: ReactNode;
+}) {
+  const pct = Math.min((budget.spentUSD / budget.monthlyUSD) * 100, 100);
+  const elapsed = budget.dayOfMonth / budget.daysInMonth;
+  const warn = budget.pace === "over" || budget.pace === "fast";
+  return (
+    <>
+      <div className="flex items-baseline gap-2">
+        {label}
+        <span className="ml-auto font-mono text-meta text-ink-dim tabular-nums">
+          {pct.toFixed(0)}%
+        </span>
+        {action}
+      </div>
+      <div className="relative h-2 overflow-hidden rounded bg-surface-2">
+        <div
+          className={`h-full ${warn ? "bg-warn" : "bg-ok"}`}
+          style={{ width: `${pct}%` }}
+        />
+        <div
+          aria-hidden
+          className="absolute inset-y-0 w-px bg-ink-dim"
+          style={{ left: `${elapsed * 100}%` }}
+        />
+      </div>
+    </>
+  );
+}
+
+// budgetVerdict states the pace in words, so the bar is never the only
+// thing carrying the meaning.
+export function budgetVerdict(budget: Budget): string {
+  switch (budget.pace) {
+    case "over":
+      return `Over budget by ${fmtCost(budget.spentUSD - budget.monthlyUSD)}.`;
+    case "fast":
+      return `Running fast — ${fmtCost(budget.projectedUSD)} projected by month end.`;
+    default:
+      return `On pace for ${fmtCost(budget.projectedUSD)} by month end.`;
+  }
+}
+
+// GhostButton is the quiet inline action — an outlined chip that only
+// gains contrast on hover, for the choices that sit beside content
+// rather than in front of it (ignore/restore, and the like).
+export function GhostButton({
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className="shrink-0 rounded-md border border-edge px-2 py-0.5 font-mono text-meta text-ink-dim transition-colors hover:border-edge-strong hover:text-ink"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -223,6 +305,63 @@ export function EmptyNote({
 }
 
 // Skeleton rows: loading states shaped like the content they replace.
+// groupRuns splits an already-ordered list into contiguous runs sharing a
+// key — the browse pages' day and kind headings. It groups what the
+// server ordered rather than re-sorting, so a page never quietly
+// disagrees with the order it was given.
+export function groupRuns<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string,
+): { key: string; items: T[] }[] {
+  const out: { key: string; items: T[] }[] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    const last = out[out.length - 1];
+    if (last && last.key === key) last.items.push(item);
+    else out.push({ key, items: [item] });
+  }
+  return out;
+}
+
+// SectionHeading is the labelled rule between those runs: the group's
+// name, a hairline, and a count with a noun on it — a bare number
+// floating at the right edge says nothing.
+export function SectionHeading({
+  children,
+  count,
+}: {
+  children: ReactNode;
+  count: ReactNode;
+}) {
+  return (
+    <h2 className="microlabel mb-1 flex items-center gap-2">
+      {children}
+      <span className="h-px flex-1 bg-edge" />
+      <span className="tabular-nums">{count}</span>
+    </h2>
+  );
+}
+
+// Loading wraps a skeleton in the announcement a screen reader needs:
+// the placeholders themselves are aria-hidden, so without this a page in
+// flight is silence. Four pages hand-rolled this region and the rest
+// simply went without — it belongs with the skeletons, not copied beside
+// each one.
+export function Loading({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div role="status" className="space-y-4">
+      <span className="sr-only">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 export function SkeletonRows({
   rows = 6,
   className = "",
@@ -338,7 +477,7 @@ export function useTooltip() {
   const bind = (content: ReactNode) => ({
     onMouseEnter: (e: MouseEvent) => show(e, content),
     onMouseLeave: hide,
-    onFocus: (e: FocusEvent<Element>) => showAtElement(e.currentTarget, content),
+    onFocus: (e: FocusEvent) => showAtElement(e.currentTarget, content),
     onBlur: hide,
   });
   const node = tip ? (
@@ -484,6 +623,16 @@ export function toolColor(kind: string): string {
 /** kindLabel renders a tool kind for reading: the stored slug is
  *  snake_case, and half the UI un-slugged it while the other half showed
  *  it raw. */
+// Code is the inline monospace chip for a path, a root, or any literal
+// the prose refers to. Two pages defined it privately in the same commit.
+export function Code({ children }: { children: ReactNode }) {
+  return (
+    <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">
+      {children}
+    </code>
+  );
+}
+
 export function kindLabel(kind: string): string {
   return kind.replaceAll("_", " ");
 }
@@ -609,7 +758,17 @@ export function Segmented<T extends string>({
 
 // FilterBar: the shared date-range + agent (+ model) row every data view
 // carries. Values are controlled by the page (URL or state).
-const FILTER_AGENTS = ["", "claude-code", "pi", "codex", "opencode", "cursor"];
+// FILTER_AGENTS is the roster every agent picker offers — the leading ""
+// is "all agents". Exported so the palette's picker cannot drift from the
+// FilterBar's.
+export const FILTER_AGENTS = [
+  "",
+  "claude-code",
+  "pi",
+  "codex",
+  "opencode",
+  "cursor",
+];
 
 // agentLabel marks experimental adapters wherever agents are offered as
 // options: Cursor's schema is fixture-derived and not yet validated
@@ -776,11 +935,7 @@ export function FilterBar({
   return (
     <div className="ml-auto flex flex-wrap items-center gap-2">
       {onRange && (
-        <DateRange
-          since={since ?? ""}
-          until={until ?? ""}
-          onRange={onRange}
-        />
+        <DateRange since={since ?? ""} until={until ?? ""} onRange={onRange} />
       )}
       {onAgent && (
         <select
