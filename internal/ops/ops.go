@@ -234,7 +234,7 @@ func Registry() []Op {
 		},
 		{
 			Name: "blocks",
-			Desc: "Rolling 5-hour usage windows (how subscription quota limits are experienced), newest first.",
+			Desc: "Usage aggregated into fixed UTC-aligned 5-hour windows (00:00, 05:00, 10:00 …), newest first. An approximation of provider quota windows, which anchor to first activity rather than the clock — the newest window is partial.",
 			Params: []Param{
 				agentParam,
 				limitParam("Maximum windows", query.BlocksLimit),

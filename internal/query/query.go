@@ -397,8 +397,18 @@ type TranscriptOptions struct {
 
 // Transcript returns a session's entries in seq order.
 func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, opts TranscriptOptions) ([]TranscriptMessage, error) {
-	// The page size is checked before the session is looked up: an
-	// over-cap limit is a caller mistake whether or not the session exists.
+	// The bounds are checked before the session is looked up: a malformed
+	// one is a caller mistake whether or not the session exists. The
+	// transcript pages by seq rather than by offset, so checkPaging sees
+	// only the limit — a negative from_seq is its own check, and used to
+	// pass through to `m.seq >= -5`, returning the WHOLE transcript with a
+	// success status on the CLI and MCP while HTTP answered 400.
+	if err := checkPaging(opts.Limit, 0); err != nil {
+		return nil, err
+	}
+	if err := checkSeq("from_seq", opts.FromSeq); err != nil {
+		return nil, err
+	}
 	limit, err := TranscriptLimit.resolve(opts.Limit)
 	if err != nil {
 		return nil, err

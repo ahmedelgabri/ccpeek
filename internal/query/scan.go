@@ -2,6 +2,8 @@ package query
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -105,14 +107,22 @@ func (s *Service) ScanFindings(ctx context.Context, includeIgnored bool) ([]Scan
 // SetScanIgnore records or clears the user's ignore decision for a finding.
 // The flag lives in user_annotations (natural key), so it survives rescans
 // and rebuilds.
+//
+// Only a genuine no-rows lookup is ErrNotFound. Mapping EVERY failure of
+// that lookup to "not found" told the caller its finding id was wrong when
+// the truth was a locked database or a canceled request — a 404 for what is
+// a 500, the same class SetBudget documents just below.
 func (s *Service) SetScanIgnore(ctx context.Context, findingID int64, ignored bool) error {
 	var naturalKey, ruleID string
 	var line int
 	err := s.store.DB().QueryRowContext(ctx, `
 		SELECT natural_key, rule_id, line_number FROM scan_findings WHERE id = ?`,
 		findingID).Scan(&naturalKey, &ruleID, &line)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: scan finding %d", ErrNotFound, findingID)
+	}
+	if err != nil {
+		return fmt.Errorf("looking up scan finding %d: %w", findingID, err)
 	}
 	key := db.ScanIgnoreKey(naturalKey, ruleID, line)
 	if ignored {

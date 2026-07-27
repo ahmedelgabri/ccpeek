@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -85,6 +86,55 @@ func TestScanFindingsToggle(t *testing.T) {
 	visible, _ = s.ScanFindings(ctx, false)
 	if len(visible) != 1 {
 		t.Fatalf("visible after unignore = %d, want 1", len(visible))
+	}
+}
+
+// A missing finding and a broken store are different answers. The ignore
+// setter wrapped EVERY error from its lookup as ErrNotFound, so a locked
+// database or a canceled request came back as "scan finding 12" — a 404
+// blaming the caller's id for the server's problem (the class SetBudget
+// documents).
+func TestSetScanIgnoreSeparatesMissFromFailure(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+
+	res, err := s.store.DB().ExecContext(ctx, `
+		INSERT INTO scan_findings (rule_id, description, entity_type, natural_key, match_redacted, line_number, scanned_at)
+		VALUES ('slack-bot-token', 'Slack token', 'message', 'message/`+claudeSession1+`', 'xoxb…al', 3, '2026-07-10T00:00:00Z')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A genuine no-rows lookup stays ErrNotFound.
+	if err := s.SetScanIgnore(ctx, id+10_000, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown finding = %v, want ErrNotFound", err)
+	}
+
+	// Anything else passes through as itself. A canceled context fails the
+	// lookup without saying anything about whether the row exists.
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	err = s.SetScanIgnore(canceled, id, true)
+	switch {
+	case err == nil:
+		t.Error("canceled ignore succeeded")
+	case errors.Is(err, ErrNotFound):
+		t.Errorf("store failure reported as a missing finding: %v", err)
+	case !errors.Is(err, context.Canceled):
+		t.Errorf("err = %v, want the cancellation to survive wrapping", err)
+	}
+
+	// The real id still works, so the miss check did not swallow the write.
+	if err := s.SetScanIgnore(ctx, id, true); err != nil {
+		t.Fatalf("SetScanIgnore: %v", err)
+	}
+	all, err := s.ScanFindings(ctx, true)
+	if err != nil || len(all) != 1 || !all[0].Ignored {
+		t.Fatalf("findings after ignore = %+v (err %v)", all, err)
 	}
 }
 

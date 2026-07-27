@@ -48,6 +48,17 @@ func checkPaging(limit, offset int) error {
 	return nil
 }
 
+// checkSeq rejects a negative entry-sequence bound. Zero is "unset" here
+// too: from_seq 0 starts at the first entry and to_seq 0 is unbounded, so
+// only a negative value is a mistake — and a silent one, because
+// `seq >= -5` matches every row and reads as a successful full answer.
+func checkSeq(name string, seq int) error {
+	if seq < 0 {
+		return fmt.Errorf("%w: %s=%d (want a non-negative integer)", ErrBadRequest, name, seq)
+	}
+	return nil
+}
+
 // Limit is one op's page-size policy: the size applied when the caller
 // omits limit, and the largest limit accepted. Both numbers are declared
 // HERE and read by the ops registry that documents them to every

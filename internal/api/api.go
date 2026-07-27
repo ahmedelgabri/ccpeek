@@ -395,32 +395,80 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, err)
 		return
 	}
+
+	// ?format=zsh|bash|fish|plain writes a shell history file instead of
+	// JSON — the UI's "export to shell" button.
+	if format != "" {
+		h.exportCommands(w, r, f, format)
+		return
+	}
+
 	rows, err := h.svc.Commands(r.Context(), f)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, rows)
+}
 
-	// ?format=zsh|bash|fish|plain streams a shell history file instead of
-	// JSON — the UI's "export to shell" button.
-	if format != "" {
-		if err := model.ValidateCommandFormat(format); err != nil {
-			writeBadRequest(w, err)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition",
-			fmt.Sprintf("attachment; filename=%q", "ccpeek-commands."+format))
-		// History files read oldest-first; the list endpoint is newest-first.
-		for i := len(rows) - 1; i >= 0; i-- {
-			entry := model.CommandEntry{Command: rows[i].Command, Timestamp: rows[i].At}
-			if err := model.WriteCommand(w, entry, format); err != nil {
-				return
-			}
-		}
+// exportCommands writes the shell-history download.
+//
+// It pages the op to COMPLETION, the way `ccpeek export commands` does.
+// Serving a single page here meant the commands ceiling (1000) was also the
+// export's: a larger corpus produced a file missing everything older, with
+// no truncation marker anywhere in it — the browser tab's own history
+// silently rewritten to end a year ago. An export is a download of a
+// selection, not a page of a list view.
+//
+// An explicitly supplied limit stays the export's bound, including an
+// over-cap one: the query layer refuses that rather than truncating, and
+// this must not turn the refusal into a quietly clipped file.
+func (h *handlers) exportCommands(w http.ResponseWriter, r *http.Request, f query.CommandsFilter, format string) {
+	if err := model.ValidateCommandFormat(format); err != nil {
+		writeBadRequest(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+
+	bounded := f.Limit > 0
+	if !bounded {
+		// Page at the op's own ceiling — the largest page it will answer.
+		// A ceiling of 0 would mean "no maximum"; page at a fixed size then,
+		// so the loop below always has a page length to compare against.
+		f.Limit = query.CommandsLimit.Max
+		if f.Limit <= 0 {
+			f.Limit = 1000
+		}
+	}
+	var rows []query.CommandRow
+	for {
+		page, err := h.svc.Commands(r.Context(), f)
+		if err != nil {
+			// Nothing has been written yet, so a failure mid-export is still
+			// a clean status rather than a truncated attachment.
+			writeError(w, err)
+			return
+		}
+		rows = append(rows, page...)
+		if bounded || len(page) < f.Limit {
+			break
+		}
+		f.Offset += len(page)
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", "ccpeek-commands."+format))
+	// History files read oldest-first while the op answers newest-first, so
+	// the WHOLE result is reversed ONCE, here. Reversing each page as it
+	// arrived would order commands correctly inside a page and backwards
+	// across them — the second page's oldest command landing after the
+	// first page's newest.
+	for i := len(rows) - 1; i >= 0; i-- {
+		entry := model.CommandEntry{Command: rows[i].Command, Timestamp: rows[i].At}
+		if err := model.WriteCommand(w, entry, format); err != nil {
+			return
+		}
+	}
 }
 
 func (h *handlers) history(w http.ResponseWriter, r *http.Request) {

@@ -10,8 +10,16 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
-// BlockRow is one 5-hour quota window — how Claude subscription limits are
-// actually experienced (docs/v2-plan.md §7 P0 "blocks view").
+// BlockRow is one FIXED, UTC-aligned 5-hour window of usage
+// (docs/v2-plan.md §7 P0 "blocks view").
+//
+// It is an APPROXIMATION of a provider quota window, not the thing itself.
+// Real subscription windows anchor to the first activity after an idle
+// gap, so a session that starts at 12:30 UTC gets a 12:30–17:30 window
+// while this view splits it across the 10:00–15:00 and 15:00–20:00
+// buckets. Read a row as "usage in this wall-clock bucket"; in particular
+// the Active row is what has been spent since the last bucket boundary,
+// which can be well under what the live quota window is actually counting.
 type BlockRow struct {
 	Start          string      `json:"start"` // RFC3339 UTC window start
 	End            string      `json:"end"`
@@ -20,7 +28,9 @@ type BlockRow struct {
 	Tokens         TokenTotals `json:"tokens"`
 	CostUSD        float64     `json:"costUSD"`
 	UnpricedTokens int64       `json:"unpricedTokens,omitempty"`
-	Active         bool        `json:"active"` // the window containing now
+	// Active marks the bucket containing now — a partial bucket, not a
+	// quota window's remaining allowance.
+	Active bool `json:"active"`
 }
 
 const blockSeconds = 5 * 60 * 60
@@ -28,6 +38,12 @@ const blockSeconds = 5 * 60 * 60
 // Blocks aggregates usage into fixed UTC-aligned 5-hour windows, newest
 // first, priced in auto mode (reported costs preferred, computed
 // otherwise). limit bounds the number of windows returned.
+//
+// The buckets are epoch-aligned (00:00, 05:00, 10:00 … UTC) and nothing
+// here anchors them to a session's first activity, which is how provider
+// quota windows actually start — see BlockRow. The op documents itself the
+// same way, so a caller reading "5-hour window" is not led to believe it is
+// reading its live quota meter.
 //
 // The window bound is pushed into SQL rather than applied to the result.
 // "What did my last few quota windows look like" is a recent-data

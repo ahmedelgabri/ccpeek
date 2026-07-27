@@ -2,9 +2,11 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/codex"
@@ -124,6 +126,78 @@ func TestCommandsFilterMatchesDisplayedText(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Errorf("query '%%' matched %d commands, want 0", len(none))
+	}
+}
+
+// The overview's commands tile counts what the commands list can SHOW.
+// The list requires a non-empty command (a shell call whose text never
+// normalized is not browsable); the tile counted every shell call, so a
+// corpus holding any of them advertised rows the browser could never
+// produce — the same mismatch the artifact-kind counts had.
+func TestStatsCommandsCountMatchesTheBrowsableList(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "cmd-tile",
+	}, "h-cmd-tile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	// Three runnable shell calls…
+	for i := 0; i < 3; i++ {
+		if err := w.InsertToolCall(sessionID, canon.ToolCall{
+			Seq: i, Name: "Bash", Kind: canon.ToolShell,
+			Command:   fmt.Sprintf("echo %d", i),
+			StartedAt: base.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// …and two shell calls that carry no command text at all.
+	for i := 3; i < 5; i++ {
+		if err := w.InsertToolCall(sessionID, canon.ToolCall{
+			Seq: i, Name: "Bash", Kind: canon.ToolShell,
+			StartedAt: base.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(store, table)
+	st, err := svc.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	list, err := svc.Commands(ctx, CommandsFilter{})
+	if err != nil {
+		t.Fatalf("Commands: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("browsable commands = %d, want 3", len(list))
+	}
+	if st.Commands != len(list) {
+		t.Errorf("stats commands tile = %d, list shows %d", st.Commands, len(list))
+	}
+	// The tool-call total is a different question and still counts them all.
+	if st.ToolCalls != 5 {
+		t.Errorf("stats toolCalls = %d, want 5", st.ToolCalls)
 	}
 }
 

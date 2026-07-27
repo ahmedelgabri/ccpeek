@@ -83,11 +83,17 @@ func (s *Service) Stats(ctx context.Context) (*Stats, error) {
 	// Scan findings count only ACTIVE ones: a finding the user ignored must
 	// not keep the overview tile in its warning state. The ignore-match
 	// rule lives in db so every surface reading it agrees.
+	//
+	// The commands count carries the SAME `command <> ''` predicate the
+	// Commands list applies: a shell call whose command text never
+	// normalized is not browsable, so counting it made the tile promise
+	// rows the browser can never show — the ArtifactKinds mismatch again,
+	// a count answering a different question than the list beneath it.
 	err := rdb.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM sessions),
 		       (SELECT COUNT(*) FROM messages),
 		       (SELECT COUNT(*) FROM tool_calls),
-		       (SELECT COUNT(*) FROM tool_calls WHERE kind = 'shell'),
+		       (SELECT COUNT(*) FROM tool_calls WHERE kind = 'shell' AND command <> ''),
 		       (SELECT COUNT(*) FROM artifacts),
 		       (SELECT COUNT(*) FROM scan_findings f WHERE NOT `+db.ScanIgnoredSQL("f")+`)`).
 		Scan(&st.Sessions, &st.Messages, &st.ToolCalls, &st.Commands,
@@ -382,6 +388,22 @@ type ToolsFilter struct {
 
 // SessionTools returns one session's tool calls in order, paged by f.
 func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string, f ToolsFilter) ([]ToolCallRow, error) {
+	// Bounds are checked HERE, not in a transport: HTTP parsed and rejected
+	// a negative limit/offset/seq while `ccpeek query tools --offset -5` and
+	// the MCP tool passed it straight through, where a negative offset is
+	// dropped and a negative seq bound matches everything — the full list
+	// returned with a success status for a request that made no sense.
+	// Checked before the session lookup, like Transcript's page size: a
+	// malformed bound is a caller mistake whether or not the session exists.
+	if err := checkPaging(f.Limit, f.Offset); err != nil {
+		return nil, err
+	}
+	if err := checkSeq("from_seq", f.FromSeq); err != nil {
+		return nil, err
+	}
+	if err := checkSeq("to_seq", f.ToSeq); err != nil {
+		return nil, err
+	}
 	limit, err := ToolsLimit.resolve(f.Limit)
 	if err != nil {
 		return nil, err
