@@ -55,7 +55,7 @@ func runMCP(cmd *cobra.Command, stdin io.Reader, stdout, logw io.Writer, debounc
 	// visibly WARMING archive — per-source transactions commit
 	// incrementally and rollups regenerate at the end of the pass — and
 	// the `status` tool tells clients they are reading that state.
-	eng, bootstrap, err := openEngineDeferred(ctx, cmd, false, logw)
+	eng, bootstrap, err := openEngineDeferred(ctx, cmd, indexNow(), logw)
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,10 @@ func runMCP(cmd *cobra.Command, stdin io.Reader, stdout, logw io.Writer, debounc
 // the bootstrap snapshot instead of taking the server down.
 func liveIndex(ctx context.Context, eng *engine, bootstrap func(context.Context) error, opts ingest.Options, debounce time.Duration, index *indexState, logf func(string, ...any)) {
 	if bootstrap != nil {
-		if err := index.during(func() error { return bootstrap(ctx) }); err != nil {
+		// Through runBootstrap, so the pass's outcome is recorded in meta
+		// here too: whichever entry point ran last, the state a serving
+		// ccpeek reads describes the index it is actually serving.
+		if err := index.during(func() error { return runBootstrap(ctx, eng, bootstrap) }); err != nil {
 			if ctx.Err() == nil {
 				logf("WARNING: indexing failed (serving whatever is indexed so far): %v\n", err)
 			}

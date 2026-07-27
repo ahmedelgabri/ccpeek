@@ -41,7 +41,13 @@ var doctorCmd = &cobra.Command{
 			}
 		}
 
-		dataFile, _ := cmd.Flags().GetString("data-file")
+		// Through resolveDataFile: when the default location cannot be
+		// derived at all, saying so is the diagnosis — printing paths built
+		// from an empty base is not.
+		dataFile, err := resolveDataFile(cmd)
+		if err != nil {
+			return err
+		}
 		storePath := storeDBPath(dataFile)
 		fmt.Println("\nDatabases:")
 		exists := func(p string) string {

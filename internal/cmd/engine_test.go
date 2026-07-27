@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/db"
@@ -91,7 +93,7 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +137,7 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 
 	// A second open of the same data-file must not re-import (idempotent
 	// upgrade: migrated_at gates the first-run path).
-	eng2, err := openEngine(ctx, cmd, false, io.Discard)
+	eng2, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +178,7 @@ func TestV1ImportFailureRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatalf("a failing v1 import must not fail the engine: %v", err)
 	}
@@ -212,7 +214,7 @@ func TestV1ImportFailureRetries(t *testing.T) {
 	}
 	seedV1DB(t, dataFile, live)
 
-	eng2, err := openEngine(ctx, cmd, false, io.Discard)
+	eng2, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +238,7 @@ func TestV1ImportFailureRetries(t *testing.T) {
 	}
 
 	// A third start must not import again.
-	eng3, err := openEngine(ctx, cmd, false, io.Discard)
+	eng3, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +381,7 @@ func TestDataFileIsolation(t *testing.T) {
 		if err := cmd.Flags().Set("claude-dir", emptyRoot); err != nil {
 			t.Fatal(err)
 		}
-		eng, err := openEngine(ctx, cmd, false, io.Discard)
+		eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -394,6 +396,347 @@ func TestDataFileIsolation(t *testing.T) {
 	defer engB.Close()
 	if v, ok, _ := engB.store.GetMeta(ctx, "profile"); ok {
 		t.Errorf("profile B sees profile A's data (%q): stores alias", v)
+	}
+}
+
+// A --root spec is validated on EVERY path, not only the ones that
+// index. `ccpeek query sessions --root gemini=/tmp/x --no-index` used to
+// exit 0 with the typo silently dropped — the same command without
+// --no-index failed with "unknown agent" — so the answer came from
+// whatever the default roots hold, looking exactly like a successful
+// override.
+func TestRootSpecsAreValidatedOnEveryPath(t *testing.T) {
+	ctx := context.Background()
+	for _, skip := range []indexSkip{indexNow(), {skip: true, flag: "--no-index"}} {
+		name := "indexing"
+		if skip.skip {
+			name = skip.flag
+		}
+		t.Run(name, func(t *testing.T) {
+			dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
+			// An initialized store, so the skipping path takes its early
+			// return rather than falling through to the first-run bootstrap.
+			store, err := db.Open(ctx, storeDBPath(dataFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			markInitialized(t, store)
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := pinRoots(t, dataFile, t.TempDir())
+			cmd.Flags().StringArray("root", nil, "")
+			if err := cmd.Flags().Set("root", "gemini=/tmp/x"); err != nil {
+				t.Fatal(err)
+			}
+			eng, err := openEngine(ctx, cmd, skip, io.Discard)
+			if err == nil {
+				eng.Close()
+				t.Fatal("--root with an unknown agent was accepted")
+			}
+			if !strings.Contains(err.Error(), "unknown agent") {
+				t.Errorf("error = %v, want it to name the unknown agent", err)
+			}
+		})
+	}
+}
+
+// An explicitly-passed root that does not exist is a typo, and it has to
+// fail the same way everywhere. The root command checked --claude-dir
+// (and only when it was indexing); every subcommand accepted the missing
+// path silently and answered from the default roots instead.
+func TestExplicitRootsMustExist(t *testing.T) {
+	ctx := context.Background()
+	gone := filepath.Join(t.TempDir(), "not-there")
+
+	newCmd := func(t *testing.T) *cobra.Command {
+		t.Helper()
+		dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
+		store, err := db.Open(ctx, storeDBPath(dataFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		markInitialized(t, store)
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		cmd := pinRoots(t, dataFile, t.TempDir())
+		cmd.Flags().StringArray("root", nil, "")
+		return cmd
+	}
+
+	t.Run("claude-dir on a skipping path", func(t *testing.T) {
+		cmd := newCmd(t)
+		if err := cmd.Flags().Set("claude-dir", gone); err != nil {
+			t.Fatal(err)
+		}
+		eng, err := openEngine(ctx, cmd, indexSkip{skip: true, flag: "--no-index"}, io.Discard)
+		if err == nil {
+			eng.Close()
+			t.Fatal("a missing --claude-dir was accepted")
+		}
+		if !strings.Contains(err.Error(), "claude data directory not found") {
+			t.Errorf("error = %v, want the missing-directory message", err)
+		}
+	})
+
+	t.Run("root spec", func(t *testing.T) {
+		cmd := newCmd(t)
+		if err := cmd.Flags().Set("root", "codex="+gone); err != nil {
+			t.Fatal(err)
+		}
+		eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
+		if err == nil {
+			eng.Close()
+			t.Fatal("a missing --root path was accepted")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("error = %v, want the missing-directory message", err)
+		}
+	})
+
+	// A root nobody named stays silent: a missing DEFAULT only means the
+	// agent is not installed, which is the normal case on every machine.
+	t.Run("defaults stay silent", func(t *testing.T) {
+		cmd := newCmd(t)
+		eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
+		if err != nil {
+			t.Fatalf("missing default roots failed the command: %v", err)
+		}
+		eng.Close()
+	})
+}
+
+// The first-run notice has to name the flag the user passed. It was
+// hardcoded to --skip-index, so `ccpeek query sessions --no-index` on a
+// fresh machine reported a flag that command does not have, and told the
+// user there was "nothing to serve" when nothing was being served.
+func TestFirstRunSkipNoticeNamesThePassedFlag(t *testing.T) {
+	ctx := context.Background()
+	notice := func(skip indexSkip) string {
+		t.Helper()
+		cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), t.TempDir())
+		var log strings.Builder
+		eng, err := openEngine(ctx, cmd, skip, &log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eng.Close()
+		return log.String()
+	}
+
+	if got := notice(indexSkip{skip: true, flag: "--no-index"}); !strings.Contains(got, "--no-index ignored") {
+		t.Errorf("notice = %q, want it to name --no-index", got)
+	}
+	if got := notice(indexSkip{skip: true, flag: "--skip-index"}); !strings.Contains(got, "--skip-index ignored") {
+		t.Errorf("notice = %q, want it to name --skip-index", got)
+	}
+	// A command that skips on its own contract has no flag to blame, so
+	// the notice must not invent one.
+	got := notice(neverIndex())
+	if strings.Contains(got, "--") {
+		t.Errorf("notice = %q, want no flag named for a command that has none", got)
+	}
+	if !strings.Contains(got, "does not exist yet") {
+		t.Errorf("notice = %q, want it to explain the first run", got)
+	}
+}
+
+// --data-file names the LEGACY v1 database. Pointed at a v2 index it
+// derives a SECOND v2 store beside the real one and hands the v2
+// database to the v1 importer, which recognises v1's table names in it
+// and then fails on their columns — and "failed" is the retrying state,
+// so every start repeated a doomed import. It is a misconfiguration, not
+// a transient failure: the state recorded is terminal.
+func TestDataFileAtV2StoreStopsRetrying(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// A real v2 store, in the place a confused user points --data-file at.
+	v2Path := filepath.Join(dir, "ccpeek2.db")
+	v2, err := db.Open(ctx, v2Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !isV2Store(ctx, v2Path) {
+		t.Fatal("a v2 store is not recognised as one")
+	}
+
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var log strings.Builder
+	if rep := maybeImportV1(ctx, store, v2Path, &log); rep != nil {
+		t.Fatalf("the v2 store was imported as v1: %+v", rep)
+	}
+	if state, _, _ := store.GetMeta(ctx, "v1_import_state"); state != v1ImportNoLegacyDB {
+		t.Errorf("v1_import_state = %q, want %q (a retrying state repeats a doomed import forever)",
+			state, v1ImportNoLegacyDB)
+	}
+	if !strings.Contains(log.String(), "v2 index") {
+		t.Errorf("nothing explained the misconfiguration: %q", log.String())
+	}
+
+	// Terminal means terminal: a second start does not probe again.
+	var log2 strings.Builder
+	maybeImportV1(ctx, store, v2Path, &log2)
+	if log2.String() != "" {
+		t.Errorf("the next start retried the doomed import: %q", log2.String())
+	}
+
+	// `ccpeek migrate` still says so loudly, with a non-zero exit.
+	if _, err := checkV1Source(ctx, store, v2Path); !errors.Is(err, errDataFileIsV2) {
+		t.Errorf("checkV1Source error = %v, want errDataFileIsV2", err)
+	}
+
+	// A genuine v1 database is still imported, so the detector is not
+	// simply refusing every file.
+	v1Path := filepath.Join(dir, "ccpeek.db")
+	seedV1DB(t, v1Path, filepath.Join(dir, "live.jsonl"))
+	if isV2Store(ctx, v1Path) {
+		t.Error("a v1 database was mistaken for a v2 store")
+	}
+}
+
+// A failed bootstrap pass is durable state, not a log line: the serving
+// path reads it to hold /api/v1/ready at 503, the same policy a failed
+// v1 import gets ("partial history must not read as ready").
+func TestBootstrapOutcomeIsRecorded(t *testing.T) {
+	ctx := context.Background()
+	cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), t.TempDir())
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	// openEngine ran a real bootstrap over the (empty) pinned roots.
+	if state, _, _ := eng.store.GetMeta(ctx, metaBootstrapState); state != bootstrapSuccess {
+		t.Errorf("%s after a good pass = %q, want %q", metaBootstrapState, state, bootstrapSuccess)
+	}
+
+	// A pass that cannot complete records the reason and returns it, so
+	// the serving path knows not to flip readiness.
+	failure := errors.New("indexing: disk on fire")
+	if err := runBootstrap(ctx, eng, func(context.Context) error { return failure }); !errors.Is(err, failure) {
+		t.Fatalf("runBootstrap error = %v, want the pass's own error", err)
+	}
+	if state, _, _ := eng.store.GetMeta(ctx, metaBootstrapState); state != bootstrapFailed {
+		t.Errorf("%s after a failed pass = %q, want %q", metaBootstrapState, state, bootstrapFailed)
+	}
+	if msg, _, _ := eng.store.GetMeta(ctx, metaBootstrapError); !strings.Contains(msg, "disk on fire") {
+		t.Errorf("%s = %q, want the failure detail", metaBootstrapError, msg)
+	}
+
+	// A later good pass clears it — readiness must not stay held once the
+	// index is whole again.
+	if err := runBootstrap(ctx, eng, func(context.Context) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, _ := eng.store.GetMeta(ctx, metaBootstrapState); state != bootstrapSuccess {
+		t.Errorf("%s after recovery = %q, want %q", metaBootstrapState, state, bootstrapSuccess)
+	}
+	if msg, _, _ := eng.store.GetMeta(ctx, metaBootstrapError); msg != "" {
+		t.Errorf("%s not cleared after recovery: %q", metaBootstrapError, msg)
+	}
+}
+
+// Per-source warnings inside a pass that COMPLETED are not a failure:
+// one unparseable transcript must not hold readiness for the whole
+// archive. The pass returns nil, the outcome is success, and the
+// diagnostics live in the run's issue list where `ccpeek ingest` shows
+// them.
+func TestBootstrapWarningsDoNotCountAsFailure(t *testing.T) {
+	ctx := context.Background()
+	claudeRoot := t.TempDir()
+	writeClaudeSession(t, claudeRoot, "55555555-5555-5555-5555-555555555555", "fine")
+	// A transcript with a line no parser can read.
+	broken := filepath.Join(claudeRoot, "projects", "-home-u-proj", "broken.jsonl")
+	if err := os.WriteFile(broken, []byte("{not json at all\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), claudeRoot)
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
+	if err != nil {
+		t.Fatalf("a pass with warnings failed the engine: %v", err)
+	}
+	defer eng.Close()
+
+	if state, _, _ := eng.store.GetMeta(ctx, metaBootstrapState); state != bootstrapSuccess {
+		t.Errorf("%s = %q, want %q — warnings are not a failed pass", metaBootstrapState, state, bootstrapSuccess)
+	}
+	runs, err := eng.store.ListRuns(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("recorded %d runs, want 1", len(runs))
+	}
+	if runs[0].WarningCount == 0 {
+		t.Error("the broken source produced no warning, so this test proves nothing")
+	}
+}
+
+// The index is an archive. When the home directory cannot be resolved,
+// the default location used to fall back to the OS temp directory —
+// where the next reboot may erase an index that took minutes to build,
+// with nothing in the run saying so. Refusing to start names the remedy.
+func TestDataDirRefusesToGuess(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HOME", "")
+	// os.UserHomeDir reads these on the platforms the binary ships for.
+	t.Setenv("USERPROFILE", "")
+
+	dir, err := dataDir()
+	if err == nil {
+		t.Fatalf("dataDir() = %q with no home, want an error instead of a guess", dir)
+	}
+	if strings.Contains(dir, os.TempDir()) {
+		t.Errorf("dataDir() still points into the temp directory: %q", dir)
+	}
+	if !strings.Contains(err.Error(), "XDG_DATA_HOME") {
+		t.Errorf("error = %v, want it to name XDG_DATA_HOME as the remedy", err)
+	}
+
+	// With XDG_DATA_HOME set there is nothing to guess.
+	t.Setenv("XDG_DATA_HOME", "/data")
+	if dir, err := dataDir(); err != nil || dir != filepath.Join("/data", "ccpeek") {
+		t.Errorf("dataDir() = %q, %v; want /data/ccpeek", dir, err)
+	}
+}
+
+// Commands reach that failure through resolveDataFile, which is what
+// turns an unusable default into an error at the point of use — the flag
+// default is computed in init(), where there is nobody to return one to.
+func TestResolveDataFileReportsTheReason(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("data-file", "", "")
+	if _, err := resolveDataFile(cmd); err == nil {
+		t.Fatal("an empty --data-file was accepted")
+	} else if !strings.Contains(err.Error(), "XDG_DATA_HOME") {
+		t.Errorf("error = %v, want it to name XDG_DATA_HOME", err)
+	}
+
+	saved := dataDirErr
+	t.Cleanup(func() { dataDirErr = saved })
+	dataDirErr = errors.New("no home directory here")
+	if _, err := resolveDataFile(cmd); !strings.Contains(err.Error(), "no home directory here") {
+		t.Errorf("error = %v, want the recorded reason the default is unusable", err)
+	}
+
+	// An explicit path always wins, so the user can work around it.
+	cmd2 := &cobra.Command{}
+	cmd2.Flags().String("data-file", "/tmp/explicit.db", "")
+	if got, err := resolveDataFile(cmd2); err != nil || got != "/tmp/explicit.db" {
+		t.Errorf("resolveDataFile = %q, %v; want the explicit path", got, err)
 	}
 }
 
@@ -541,7 +884,7 @@ func TestV1RetainedHistorySurvivesLiveIngest(t *testing.T) {
 		return n
 	}
 
-	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +907,7 @@ func TestV1RetainedHistorySurvivesLiveIngest(t *testing.T) {
 	appended := v1HistoryRow{"typed after the upgrade", 1751450400000}
 	writeHistoryFile(t, claudeRoot, live, appended)
 
-	eng2, err := openEngine(ctx, cmd, false, io.Discard)
+	eng2, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +963,7 @@ func TestFirstRunIndexesBeforeImportingV1(t *testing.T) {
 	v1.Close()
 
 	cmd := pinRoots(t, dataFile, claudeRoot)
-	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +1023,7 @@ func TestV1ImportRetriesUnderSkipIndex(t *testing.T) {
 	if err := os.WriteFile(dataFile, []byte("this is not a sqlite database"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	eng, err := openEngine(ctx, cmd, indexNow(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +1043,7 @@ func TestV1ImportRetriesUnderSkipIndex(t *testing.T) {
 	}
 	seedV1DB(t, dataFile, liveSource)
 
-	eng, err = openEngine(ctx, cmd, true /* skipIndex */, io.Discard)
+	eng, err = openEngine(ctx, cmd, indexSkip{skip: true, flag: "--skip-index"}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

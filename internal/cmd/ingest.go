@@ -52,7 +52,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 
 	// Diagnostics inspect past runs; kicking off a new ingest here would
 	// bury the run being investigated.
-	eng, err := openEngine(ctx, cmd, true, os.Stderr)
+	eng, err := openEngine(ctx, cmd, neverIndex(), os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -151,9 +151,16 @@ func printIngestRunDetails(run *db.IngestRun, issues []db.IngestIssue) {
 	}
 }
 
+// trimTimestamp renders an RFC3339 timestamp for the fixed-width run
+// table: seconds precision, and the date-time separator as a space so
+// the column reads as a date and a time.
+//
+// It used to TrimSuffix the "T" off ts[:19] — position 19 lands after
+// the seconds, never on the separator at position 10, so the suffix
+// never matched and every row printed the raw 2026-07-27T10:00:00.
 func trimTimestamp(ts string) string {
-	if len(ts) <= 19 {
-		return ts
+	if len(ts) > 19 {
+		ts = ts[:19]
 	}
-	return strings.TrimSuffix(ts[:19], "T")
+	return strings.Replace(ts, "T", " ", 1)
 }

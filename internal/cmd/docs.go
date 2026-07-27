@@ -65,8 +65,9 @@ const cheatsheetCLIHeader = `
 `
 
 const cheatsheetCLIFooter = `
-ccpeek scan [--format text|json] [--full]
-  Scan the index for leaked secrets; exit 2 when active findings exist.
+ccpeek scan [--format text|json] [--full] [--no-index]
+  Scan for leaked secrets, re-indexing incrementally first (--no-index
+  to scan the index as it stands); exit 2 when active findings exist.
 
 ccpeek migrate
   Rebuild the index and re-run the v1 import (also automatic on

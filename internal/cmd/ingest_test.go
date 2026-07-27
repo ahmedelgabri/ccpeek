@@ -131,6 +131,28 @@ func TestRunIngestLatestJSONShowsDetails(t *testing.T) {
 	}
 }
 
+// The run table's FINISHED column is meant to read as a date and a time,
+// not as a machine timestamp. The old implementation trimmed a "T"
+// suffix off ts[:19] — a position past the seconds, so the separator at
+// index 10 was never touched and the substitution never happened once.
+func TestTrimTimestampSeparatesDateAndTime(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"2026-07-27T10:11:12Z", "2026-07-27 10:11:12"},
+		{"2026-07-27T10:11:12.456789Z", "2026-07-27 10:11:12"},
+		{"2026-07-27T10:11:12", "2026-07-27 10:11:12"},
+		{"", ""},
+		{"not a timestamp", "not a timestamp"},
+	} {
+		if got := trimTimestamp(tt.in); got != tt.want {
+			t.Errorf("trimTimestamp(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	// It has to stay inside the column width the table reserves.
+	if got := trimTimestamp("2026-07-27T10:11:12.456789Z"); len(got) > 20 {
+		t.Errorf("trimTimestamp produced %d chars, wider than the %%-20s column: %q", len(got), got)
+	}
+}
+
 func TestRunIngestRejectsInvalidFormat(t *testing.T) {
 	cmd := newIngestTestCommand(filepath.Join(t.TempDir(), "ccpeek.db"))
 	if err := cmd.Flags().Set("format", "wat"); err != nil {

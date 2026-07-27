@@ -40,12 +40,17 @@ func isTerminal(f *os.File) bool {
 var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Scan indexed data for leaked secrets and sensitive values",
-	Long: `Scan all indexed data for leaked secrets, API keys, tokens,
+	Long: `Scan your agent history for leaked secrets, API keys, tokens,
 passwords, and other sensitive values.
 
 Uses gitleaks detection rules (150+ patterns) to identify potential leaks
 in conversation messages, bash commands, plans, shell snapshots, paste
 cache, and memories.
+
+Sessions written since the last index pass are indexed first (--no-index
+to scan the index as it stands), so a CI check reports on what is on disk
+now rather than on whatever a previous run happened to index. Exit code 2
+means non-ignored findings exist.
 
 Results are stored in the database and viewable in the web UI at /scan/.`,
 	RunE: runScan,
@@ -54,6 +59,7 @@ Results are stored in the database and viewable in the web UI at /scan/.`,
 func init() {
 	scanCmd.Flags().StringP("format", "f", "text", "Output format: text, json")
 	scanCmd.Flags().Bool("full", false, "Re-scan everything, discarding incremental scan state")
+	scanCmd.Flags().Bool("no-index", false, "Skip the incremental re-index before scanning")
 	rootCmd.AddCommand(scanCmd)
 }
 
@@ -69,9 +75,14 @@ func runScan(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("unsupported format %q: use text or json", format)
 	}
 
-	// Scan the index as-is (first run still bootstraps it); `ccpeek` is the
-	// indexing entry point.
-	eng, err := openEngine(ctx, cmd, true, os.Stderr)
+	// Index first, like every other read command (`ccpeek query`), unless
+	// --no-index says otherwise. Scanning the index as-is meant this
+	// command answered about a snapshot of unknown age: a session written
+	// since the last index pass — the one holding the key someone just
+	// pasted — was invisible, so the exit-2 contract a CI job depends on
+	// green-lit it. The pass is incremental; on an up-to-date index it
+	// costs a stat per source.
+	eng, err := openEngine(ctx, cmd, skipFlag(cmd, "no-index"), os.Stderr)
 	if err != nil {
 		return err
 	}

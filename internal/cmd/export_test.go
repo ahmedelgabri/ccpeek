@@ -91,6 +91,12 @@ func seedExportCommandsDB(t *testing.T) string {
 		// A second command the NEXT day, so a --to boundary is observable.
 		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, command, started_at)
 		 VALUES (1, 1, 'Bash', 'shell', '{"command":"whoami"}', 'whoami', '2025-01-02T00:00:00Z')`,
+		// A second agent, so --agent has something to select between.
+		`INSERT INTO agents (id, slug, display_name) VALUES (2, 'codex', 'Codex CLI')`,
+		`INSERT INTO sessions (id, agent_id, external_id, cwd, created_at, source_path)
+		 VALUES (2, 2, 'sess-2', '/src/proj', '2025-01-01T00:00:00Z', '/src/sess-2.jsonl')`,
+		`INSERT INTO tool_calls (session_id, seq, name, kind, input_json, command, started_at)
+		 VALUES (2, 0, 'shell', 'shell', '{"command":"cargo build"}', 'cargo build', '2025-01-03T00:00:00Z')`,
 	}
 	for _, q := range stmts {
 		if _, err := store.DB().ExecContext(ctx, q); err != nil {
@@ -117,6 +123,7 @@ func newExportTestCommand(dataFile, format string) *cobra.Command {
 	cmd.Flags().String("data-file", dataFile, "")
 	cmd.Flags().String("claude-dir", "", "")
 	cmd.Flags().String("format", format, "")
+	cmd.Flags().String("agent", "", "")
 	cmd.Flags().String("project", "", "")
 	cmd.Flags().String("search", "", "")
 	cmd.Flags().String("from", "", "")
@@ -163,6 +170,80 @@ func captureOutputPair(t *testing.T, fn func() error) (string, string) {
 		return string(stdout), string(stderr) + callErr.Error()
 	}
 	return string(stdout), string(stderr)
+}
+
+// A shell history file is read oldest-first. The query layer answers
+// newest-first (the order the UI lists in) and this command used to
+// stream that straight out, so `ccpeek export commands >> ~/.zsh_history`
+// appended a reversed block: the shell then treats the OLDEST exported
+// command as the most recent one. The HTTP download has always reversed
+// for exactly this reason.
+func TestRunExportCommandsWritesOldestFirst(t *testing.T) {
+	dataFile := seedExportCommandsDB(t)
+	cmd := newExportTestCommand(dataFile, "plain")
+
+	stdout, stderr := captureOutputPair(t, func() error {
+		return runExportCommands(cmd, nil)
+	})
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	// Seeded 2025-01-01 "ls -la", 2025-01-02 "whoami", 2025-01-03 "cargo build".
+	want := []string{"ls -la", "whoami", "cargo build"}
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		got = append(got, line)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("exported %d lines, want %d:\n%s", len(got), len(want), stdout)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d = %q, want %q (export is not oldest-first):\n%s", i, got[i], want[i], stdout)
+		}
+	}
+}
+
+// query.CommandsFilter.Agent has always existed, and both `ccpeek query
+// commands` and the HTTP endpoint expose it — only the export could not
+// narrow to one agent's history, which is the case that matters when the
+// destination is one shell's history file.
+func TestRunExportCommandsFiltersByAgent(t *testing.T) {
+	dataFile := seedExportCommandsDB(t)
+
+	exportAgent := func(agent string) string {
+		t.Helper()
+		cmd := newExportTestCommand(dataFile, "plain")
+		if err := cmd.Flags().Set("agent", agent); err != nil {
+			t.Fatal(err)
+		}
+		stdout, _ := captureOutputPair(t, func() error {
+			return runExportCommands(cmd, nil)
+		})
+		return stdout
+	}
+
+	claude := exportAgent("claude-code")
+	if !strings.Contains(claude, "ls -la") || !strings.Contains(claude, "whoami") {
+		t.Errorf("--agent claude-code dropped that agent's commands: %q", claude)
+	}
+	if strings.Contains(claude, "cargo build") {
+		t.Errorf("--agent claude-code returned another agent's command: %q", claude)
+	}
+
+	codex := exportAgent("codex")
+	if !strings.Contains(codex, "cargo build") {
+		t.Errorf("--agent codex dropped that agent's command: %q", codex)
+	}
+	if strings.Contains(codex, "ls -la") {
+		t.Errorf("--agent codex returned another agent's command: %q", codex)
+	}
+
+	// The flag is on the shared export parent, so it reaches any future
+	// `ccpeek export <thing>` too.
+	if exportCmd.PersistentFlags().Lookup("agent") == nil {
+		t.Error("--agent is not registered on `ccpeek export`")
+	}
 }
 
 // --to is an INCLUSIVE date, and the conversion to an exclusive SQL bound

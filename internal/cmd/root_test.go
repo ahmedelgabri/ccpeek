@@ -14,9 +14,20 @@ import (
 func newRootTestCommand(t *testing.T) *cobra.Command {
 	t.Helper()
 
+	// run() indexes, so every agent root is pinned inside the test's temp
+	// directories — Claude by the flag below, the rest by their env
+	// overrides. Without this the root command's tests ingest (and secret
+	// scan) the developer's real ~/.codex, ~/.cursor and friends.
+	emptyRoot := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", emptyRoot)
+	t.Setenv("CODEX_HOME", emptyRoot)
+	t.Setenv("OPENCODE_DATA_DIR", emptyRoot)
+	t.Setenv("CCPEEK_CURSOR_DIR", emptyRoot)
+
 	cmd := &cobra.Command{}
 	cmd.Flags().Int("port", 3000, "")
 	cmd.Flags().String("claude-dir", t.TempDir(), "")
+	cmd.Flags().StringArray("root", nil, "")
 	cmd.Flags().String("data-file", filepath.Join(t.TempDir(), "ccpeek.db"), "")
 	cmd.Flags().Bool("skip-index", false, "")
 	cmd.Flags().Bool("index-only", true, "")
@@ -118,6 +129,114 @@ func TestRunRejectsSkipIndexAndRebuild(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("expected mutually exclusive error, got %v", err)
+	}
+}
+
+// A flag that contradicts another is rejected, not ignored. Two pairs
+// were already rejected; these were silently dropped, so `ccpeek
+// --index-only --watch --open --port 8080` printed nothing about the
+// three flags it was about to disregard, and --skip-index --prune looked
+// like it had pruned.
+func TestRunRejectsContradictoryFlags(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		set  map[string]string
+		want string
+	}{
+		{
+			name: "index-only and watch",
+			set:  map[string]string{"watch": "true"},
+			want: "--index-only and --watch",
+		},
+		{
+			name: "index-only and open",
+			set:  map[string]string{"open": "true"},
+			want: "--index-only and --open",
+		},
+		{
+			name: "index-only and port",
+			set:  map[string]string{"port": "4321"},
+			want: "--index-only and --port",
+		},
+		{
+			name: "skip-index and prune",
+			set:  map[string]string{"index-only": "false", "skip-index": "true", "prune": "true"},
+			want: "--skip-index and --prune",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newRootTestCommand(t)
+			for flag, value := range tt.set {
+				if err := cmd.Flags().Set(flag, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := run(cmd, nil)
+			if err == nil {
+				t.Fatal("the contradiction was accepted")
+			}
+			if !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "mutually exclusive") {
+				t.Fatalf("error = %v, want it to name %s as mutually exclusive", err, tt.want)
+			}
+		})
+	}
+
+	// A serving flag left at its default is not a contradiction: only a
+	// flag the user actually passed is.
+	t.Run("defaults are not contradictions", func(t *testing.T) {
+		cmd := newRootTestCommand(t)
+		if err := run(cmd, nil); err != nil {
+			t.Fatalf("plain --index-only failed: %v", err)
+		}
+	})
+}
+
+// `ccpeek --help` is where someone learns what the bare command does.
+// The Short line (which is also the man page's NAME entry) named one of
+// the five agents ccpeek indexes, and nothing anywhere said that running
+// it with no arguments indexes the history and starts a web server.
+func TestRootHelpDescribesTheProduct(t *testing.T) {
+	short := strings.ToLower(rootCmd.Short)
+	if strings.Contains(short, "claude code") {
+		t.Errorf("Short still names one agent of five: %q", rootCmd.Short)
+	}
+	if !strings.Contains(short, "index") {
+		t.Errorf("Short does not say ccpeek indexes anything: %q", rootCmd.Short)
+	}
+
+	long := strings.ToLower(rootCmd.Long)
+	if long == "" {
+		t.Fatal("the root command has no Long help")
+	}
+	for _, want := range []string{"3000", "server", "index"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("Long help does not mention %q:\n%s", want, rootCmd.Long)
+		}
+	}
+	// All five agents, so nobody has to guess whether theirs is covered.
+	for _, agent := range []string{"claude code", "pi", "codex", "opencode", "cursor"} {
+		if !strings.Contains(long, agent) {
+			t.Errorf("Long help does not mention %q", agent)
+		}
+	}
+}
+
+// --data-file is the sharpest edge in the CLI: aimed at the v2 index it
+// derives a second store and starts a v1 import that cannot ever
+// succeed. The help has to say which database it names.
+func TestDataFileHelpNamesTheLegacyDatabase(t *testing.T) {
+	f := rootCmd.PersistentFlags().Lookup("data-file")
+	if f == nil {
+		t.Fatal("--data-file is missing")
+	}
+	usage := strings.ToLower(f.Usage)
+	for _, want := range []string{"legacy", "v1", "sibling"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("--data-file help does not mention %q: %q", want, f.Usage)
+		}
+	}
+	if !strings.Contains(usage, "not point it at a v2") && !strings.Contains(usage, "do not point") {
+		t.Errorf("--data-file help does not warn against pointing it at a v2 index: %q", f.Usage)
 	}
 }
 

@@ -40,7 +40,7 @@ func WriteCommand(w io.Writer, cmd CommandEntry, format string) error {
 		return err
 	case "fish":
 		ts := parseTimestampUnix(cmd.Timestamp)
-		_, err := fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", cmd.Command, strconv.FormatInt(ts, 10))
+		_, err := fmt.Fprintf(w, "- cmd: %s\n  when: %s\n", escapeFishCommand(cmd.Command), strconv.FormatInt(ts, 10))
 		return err
 	default: // "plain" or "bash"
 		_, err := fmt.Fprintf(w, "%s\n", cmd.Command)
@@ -60,6 +60,26 @@ func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
 		}
 	}
 	return nil
+}
+
+// escapeFishCommand renders a command the way fish's own history writer
+// does: fish stores one entry as a two-line YAML-ish record, so a raw
+// newline inside `- cmd: ` ends the entry and turns the rest of the
+// command into a syntactically broken record — every later entry in the
+// file is then dropped by fish's reader too, so one multiline command
+// could cost a whole appended export.
+//
+// Fish escapes exactly two characters (history.cpp's YAML escaping):
+// backslash doubles, and a newline becomes the two characters \n. The
+// order matters — doubling backslashes first keeps a literal `\n` in the
+// command (backslash + n) distinct from the escape a real newline
+// produces.
+func escapeFishCommand(s string) string {
+	if !strings.ContainsAny(s, "\\\n") {
+		return s
+	}
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, "\n", `\n`)
 }
 
 func escapeZshMultiline(s string) string {

@@ -85,6 +85,55 @@ func TestFormatCommands(t *testing.T) {
 		}
 	})
 
+	// A fish entry is a two-line record: a raw newline inside `- cmd: `
+	// ends the entry early and corrupts the file from that point on (fish
+	// drops everything after the broken record). zsh got an escaper for
+	// exactly this; fish got none, so every multiline command exported
+	// straight through.
+	t.Run("fish_multiline", func(t *testing.T) {
+		multiCmds := []CommandEntry{
+			{Command: "git log --shortstat |\nawk '/^ [0-9]/ { f += $1 }'", Timestamp: "2025-01-15T10:30:00Z"},
+		}
+		var buf bytes.Buffer
+		if err := FormatCommands(&buf, multiCmds, "fish"); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		want := "- cmd: git log --shortstat |\\nawk '/^ [0-9]/ { f += $1 }'\n  when: 1736937000\n"
+		if out != want {
+			t.Errorf("got %q, want %q", out, want)
+		}
+		// Exactly two lines: the entry and its `when:`.
+		if n := strings.Count(out, "\n"); n != 2 {
+			t.Errorf("multiline command produced %d lines, want a 2-line record: %q", n, out)
+		}
+	})
+
+	// Backslashes double, so a command that literally contains \n stays
+	// distinguishable from one that contains a newline — fish's reader
+	// unescapes both back to what was typed.
+	t.Run("fish_backslashes", func(t *testing.T) {
+		cmds := []CommandEntry{
+			{Command: `printf 'a\nb'`, Timestamp: "2025-01-15T10:30:00Z"},
+			{Command: "printf 'a'\n", Timestamp: "2025-01-15T10:30:00Z"},
+		}
+		var buf bytes.Buffer
+		if err := FormatCommands(&buf, cmds, "fish"); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `- cmd: printf 'a\\nb'`) {
+			t.Errorf("literal backslash not doubled: %q", out)
+		}
+		if !strings.Contains(out, `- cmd: printf 'a'\n`+"\n") {
+			t.Errorf("trailing newline not escaped: %q", out)
+		}
+		// Four records' worth of lines for two commands, no more.
+		if n := strings.Count(out, "\n"); n != 4 {
+			t.Errorf("got %d lines for 2 entries, want 4: %q", n, out)
+		}
+	})
+
 	t.Run("invalid_format", func(t *testing.T) {
 		var buf bytes.Buffer
 		if err := FormatCommands(&buf, cmds, "wat"); err == nil {

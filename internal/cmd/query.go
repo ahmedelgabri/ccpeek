@@ -157,7 +157,7 @@ func intDefault(v any) int {
 // the deferred close always runs.
 func runOp(cmd *cobra.Command, op ops.Op, positional, flags []ops.Param, args []string) (any, bool, error) {
 	ctx := cmd.Context()
-	eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+	eng, err := openEngine(ctx, cmd, skipFlag(cmd, "no-index"), os.Stderr)
 	if err != nil {
 		return nil, false, err
 	}
@@ -214,13 +214,13 @@ v2 start; the command exists to re-run or troubleshoot it. The v1
 database is opened read-only and never modified.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		eng, err := openEngine(ctx, cmd, false, os.Stderr)
+		eng, err := openEngine(ctx, cmd, indexNow(), os.Stderr)
 		if err != nil {
 			return err
 		}
 		defer eng.Close()
 
-		dataFile, _ := cmd.Flags().GetString("data-file")
+		dataFile, _ := resolveDataFile(cmd)
 		// Same state machine the bootstrap runs; only the tail differs —
 		// unreachable is not absent, so it exits non-zero here to be
 		// retried rather than written off.
@@ -240,11 +240,6 @@ database is opened read-only and never modified.`,
 		}
 		return emit(report, false)
 	},
-}
-
-func querySkipIndex(cmd *cobra.Command) bool {
-	skip, _ := cmd.Flags().GetBool("no-index")
-	return skip
 }
 
 func init() {
