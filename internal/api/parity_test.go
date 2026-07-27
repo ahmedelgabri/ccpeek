@@ -3,8 +3,14 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -155,6 +161,272 @@ func TestRouteRegistryParity(t *testing.T) {
 	}
 }
 
+// TestRouteParamParity is the parameter-level half of route parity, and
+// the blind spot the name-level test above left open: the route table
+// mapped /sessions to the `sessions` op while the handler underneath read
+// "q" for the parameter the registry calls "query", and /transcript read
+// "from" for "from_seq". An agent using the canonical names got an
+// UNFILTERED answer with a 200.
+//
+// So each op route's handler must read EXACTLY the parameters the route
+// accepts — the registry op's (minus those the pattern binds as path
+// segments) plus the route's declared transport-only extras. A registry
+// parameter HTTP never reads fails here, and so does a handler reading a
+// name nothing declares.
+func TestRouteParamParity(t *testing.T) {
+	files := parsePackageFiles(t)
+	handlerFor := routeHandlerNames(t, files)
+	byOp := map[string]ops.Op{}
+	for _, op := range ops.Registry() {
+		byOp[op.Name] = op
+	}
+
+	for _, r := range Routes() {
+		if r.Kind != "op" {
+			continue
+		}
+		op, ok := byOp[r.Op]
+		if !ok {
+			continue // TestRouteRegistryParity reports the missing op
+		}
+		method, ok := handlerFor[r.Pattern]
+		if !ok {
+			t.Errorf("route %s is not in Handler's byPattern table", r.Pattern)
+			continue
+		}
+		accepted := acceptedParams(r, op)
+		read := paramsReadBy(t, files, method)
+		for _, name := range accepted {
+			if !slices.Contains(read, name) {
+				t.Errorf("%s: handler %s never reads %q — op %q declares it, so HTTP must answer to it",
+					r.Pattern, method, name, op.Name)
+			}
+		}
+		for _, name := range read {
+			if !slices.Contains(accepted, name) {
+				t.Errorf("%s: handler %s reads %q, which op %q does not declare and the route does not list in Extra",
+					r.Pattern, method, name, op.Name)
+			}
+		}
+	}
+}
+
+// parsePackageFiles parses the package's own sources — this test reads
+// the handlers rather than only calling them, because "the handler reads
+// this parameter" is not observable from a response.
+func parsePackageFiles(t *testing.T) []*ast.File {
+	t.Helper()
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", path, err)
+		}
+		files = append(files, f)
+	}
+	if len(files) == 0 {
+		t.Fatal("no package sources found")
+	}
+	return files
+}
+
+// routeHandlerNames reads Handler's byPattern table: route pattern → the
+// handler method serving it.
+func routeHandlerNames(t *testing.T, files []*ast.File) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			assign, ok := n.(*ast.AssignStmt)
+			if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+				return true
+			}
+			if id, ok := assign.Lhs[0].(*ast.Ident); !ok || id.Name != "byPattern" {
+				return true
+			}
+			lit, ok := assign.Rhs[0].(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := kv.Key.(*ast.BasicLit)
+				if !ok {
+					continue
+				}
+				pattern, err := strconv.Unquote(key.Value)
+				if err != nil {
+					continue
+				}
+				if name := handlerMethodName(kv.Value); name != "" {
+					out[pattern] = name
+				}
+			}
+			return true
+		})
+	}
+	if len(out) == 0 {
+		t.Fatal("Handler's byPattern table not found — this test reads it to know which handler serves a route")
+	}
+	return out
+}
+
+// handlerMethodName pulls the method out of a table entry, including the
+// wrapped form sameOriginOnly(h.setBudget).
+func handlerMethodName(v ast.Expr) string {
+	switch e := v.(type) {
+	case *ast.SelectorExpr:
+		return e.Sel.Name
+	case *ast.CallExpr:
+		if len(e.Args) == 1 {
+			return handlerMethodName(e.Args[0])
+		}
+	}
+	return ""
+}
+
+// paramsReadBy lists the query parameters one handler reads: the literals
+// it passes to the typed params helper. Reaching past that helper into
+// r.URL.Query() would hide a parameter from this check, so it fails.
+func paramsReadBy(t *testing.T, files []*ast.File, method string) []string {
+	t.Helper()
+	var read []string
+	found := false
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || fn.Name.Name != method {
+				continue
+			}
+			found = true
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "Str", "Int", "Bool":
+					if _, ok := sel.X.(*ast.Ident); !ok || len(call.Args) != 1 {
+						return true
+					}
+					lit, ok := call.Args[0].(*ast.BasicLit)
+					if !ok {
+						return true
+					}
+					if name, err := strconv.Unquote(lit.Value); err == nil {
+						read = append(read, name)
+					}
+				case "Query":
+					if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "URL" {
+						t.Errorf("handler %s reads r.URL.Query() directly; read query parameters through params so the route's allowlist stays checkable", method)
+					}
+				}
+				return true
+			})
+		}
+	}
+	if !found {
+		t.Fatalf("no handler method %q in the package", method)
+	}
+	slices.Sort(read)
+	return slices.Compact(read)
+}
+
+// TestOpRoutesRejectUnknownParams: every declared parameter answers, and
+// every other name is a 400 that says which one. A parameter the server
+// drops on the floor turns a narrow question into an archive-wide answer
+// with no way for the caller to tell.
+func TestOpRoutesRejectUnknownParams(t *testing.T) {
+	h := newHandler(t)
+	byOp := map[string]ops.Op{}
+	for _, op := range ops.Registry() {
+		byOp[op.Name] = op
+	}
+
+	for _, r := range Routes() {
+		if r.Kind != "op" {
+			continue
+		}
+		op, ok := byOp[r.Op]
+		if !ok {
+			continue
+		}
+		path := concretePath(r.Pattern)
+
+		// Declared names are accepted. The value may still be rejected on
+		// its own merits (a malformed date, an unknown group), so only the
+		// unknown-parameter refusal is a failure here.
+		for _, name := range acceptedParams(r, op) {
+			code, env := get(t, h, path+"?"+name+"=1")
+			if code == http.StatusBadRequest && strings.Contains(env.Error, "unknown parameter") {
+				t.Errorf("GET %s?%s=1 rejects a declared parameter: %s", path, name, env.Error)
+			}
+		}
+
+		code, env := get(t, h, path+"?nonesuch=1")
+		if code != http.StatusBadRequest {
+			t.Errorf("GET %s?nonesuch=1 = %d, want 400", path, code)
+		} else if !strings.Contains(env.Error, "nonesuch") {
+			t.Errorf("GET %s?nonesuch=1: 400 does not name the parameter: %q", path, env.Error)
+		}
+	}
+}
+
+// concretePath fills a pattern's wildcards with real-shaped values.
+// Whether they resolve does not matter: the parameter check runs before
+// the handler, so a 404 body still carries the answer under test.
+func concretePath(pattern string) string {
+	path := strings.TrimPrefix(pattern, "GET ")
+	for wildcard, value := range map[string]string{
+		"{agent}": "claude-code",
+		"{id}":    "x",
+		"{kind}":  "plan",
+		"{name}":  "y",
+		"{seq}":   "1",
+	} {
+		path = strings.ReplaceAll(path, wildcard, value)
+	}
+	return path
+}
+
+// The pre-registry spellings are retired, not aliased: HTTP now answers
+// only to the canonical names, and the old ones fail loudly instead of
+// returning everything.
+func TestRetiredParamSpellingsAreRejected(t *testing.T) {
+	h := newHandler(t)
+	for _, path := range []string{
+		"/api/v1/sessions?q=rate",
+		"/api/v1/commands?q=git",
+		"/api/v1/history?q=rate",
+		"/api/v1/search?q=rate",
+		"/api/v1/sessions/claude-code/x/transcript?from=2",
+	} {
+		code, env := get(t, h, path)
+		if code != http.StatusBadRequest {
+			t.Errorf("GET %s = %d, want 400 (an ignored filter answers with everything)", path, code)
+			continue
+		}
+		if !strings.Contains(env.Error, "valid:") {
+			t.Errorf("GET %s: 400 does not name the accepted parameters: %q", path, env.Error)
+		}
+	}
+}
+
 // The Origin guard only ever fires when a browser sends Origin. Under DNS
 // rebinding the attacker's page is SAME origin with the server, so no
 // Origin header exists and every read would answer. The Host header is
@@ -215,7 +487,7 @@ func TestLoopbackOnlyCoversReadsWithoutOrigin(t *testing.T) {
 	h := LoopbackOnly(Handler(nil, nil, nil, nil, nil))
 	for _, path := range []string{
 		"/api/v1/sessions",
-		"/api/v1/search?q=x",
+		"/api/v1/search?query=x",
 		"/api/v1/scan",
 		"/api/v1/health",
 	} {

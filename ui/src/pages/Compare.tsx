@@ -244,7 +244,7 @@ function SessionPicker({
   const q = useDebounced(qInput, 250);
   const sessions = useQuery({
     queryKey: ["compare-sessions", q],
-    queryFn: () => api.sessions({ q, limit: String(PICKER_PAGE) }),
+    queryFn: () => api.sessions({ query: q, limit: String(PICKER_PAGE) }),
     placeholderData: (prev) => prev,
   });
   const list = sessions.data ?? [];

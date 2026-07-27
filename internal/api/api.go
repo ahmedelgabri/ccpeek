@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/model"
 	"github.com/ahmedelgabri/ccpeek/internal/ops"
@@ -44,10 +46,18 @@ type V1ImportStatus struct {
 // marks endpoints that describe this server process or need HTTP
 // semantics (health, readiness, SSE, raw bytes with CSP); "write" marks
 // mutations, which the read-op registry deliberately excludes.
+//
+// Extra completes an op route's accepted query parameters: the registry
+// op declares the read's own inputs, and Extra declares the transport-only
+// ones this endpoint additionally reads (a response format, say). The two
+// lists together are the WHOLE allowlist — every other parameter is a 400
+// — so an accepted name is always a declared one, never a conditional
+// buried in a handler.
 type Route struct {
 	Pattern string
-	Op      string // registry op name, or "" when Kind != "op"
-	Kind    string // "op" | "transport" | "write"
+	Op      string   // registry op name, or "" when Kind != "op"
+	Kind    string   // "op" | "transport" | "write"
+	Extra   []string // transport-only query parameters, "op" routes only
 }
 
 // Routes is the complete classified endpoint table — Handler registers
@@ -56,29 +66,29 @@ type Route struct {
 // the registry.
 func Routes() []Route {
 	return []Route{
-		{"GET /api/v1/health", "", "transport"},
-		{"GET /api/v1/ready", "", "transport"},
-		{"GET /api/v1/events", "", "transport"},
-		{"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", "", "transport"}, // raw bytes + CSP sandbox
-		{"GET /api/v1/stats", "stats", "op"},
-		{"GET /api/v1/sessions", "sessions", "op"},
-		{"GET /api/v1/sessions/{agent}/{id}", "session", "op"},
-		{"GET /api/v1/sessions/{agent}/{id}/transcript", "transcript", "op"},
-		{"GET /api/v1/sessions/{agent}/{id}/tools", "tools", "op"},
-		{"GET /api/v1/sessions/{agent}/{id}/tools/{seq}", "tool", "op"},
-		{"GET /api/v1/commands", "commands", "op"},
-		{"GET /api/v1/history", "history", "op"},
-		{"GET /api/v1/usage", "usage", "op"},
-		{"GET /api/v1/search", "search", "op"},
-		{"GET /api/v1/artifacts", "artifacts", "op"},
-		{"GET /api/v1/artifacts/kinds", "artifact-kinds", "op"},
-		{"GET /api/v1/artifacts/{agent}/{kind}/{name}", "artifact", "op"},
-		{"GET /api/v1/scan", "scan", "op"},
-		{"GET /api/v1/scan/rules", "scan-rules", "op"},
-		{"GET /api/v1/blocks", "blocks", "op"},
-		{"GET /api/v1/budget", "budget", "op"},
-		{"POST /api/v1/scan/{id}/ignore", "", "write"},
-		{"PUT /api/v1/budget", "", "write"},
+		{"GET /api/v1/health", "", "transport", nil},
+		{"GET /api/v1/ready", "", "transport", nil},
+		{"GET /api/v1/events", "", "transport", nil},
+		{"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", "", "transport", nil}, // raw bytes + CSP sandbox
+		{"GET /api/v1/stats", "stats", "op", nil},
+		{"GET /api/v1/sessions", "sessions", "op", nil},
+		{"GET /api/v1/sessions/{agent}/{id}", "session", "op", nil},
+		{"GET /api/v1/sessions/{agent}/{id}/transcript", "transcript", "op", nil},
+		{"GET /api/v1/sessions/{agent}/{id}/tools", "tools", "op", nil},
+		{"GET /api/v1/sessions/{agent}/{id}/tools/{seq}", "tool", "op", nil},
+		{"GET /api/v1/commands", "commands", "op", []string{"format"}}, // shell-history download
+		{"GET /api/v1/history", "history", "op", nil},
+		{"GET /api/v1/usage", "usage", "op", nil},
+		{"GET /api/v1/search", "search", "op", nil},
+		{"GET /api/v1/artifacts", "artifacts", "op", nil},
+		{"GET /api/v1/artifacts/kinds", "artifact-kinds", "op", nil},
+		{"GET /api/v1/artifacts/{agent}/{kind}/{name}", "artifact", "op", nil},
+		{"GET /api/v1/scan", "scan", "op", nil},
+		{"GET /api/v1/scan/rules", "scan-rules", "op", nil},
+		{"GET /api/v1/blocks", "blocks", "op", nil},
+		{"GET /api/v1/budget", "budget", "op", nil},
+		{"POST /api/v1/scan/{id}/ignore", "", "write", nil},
+		{"PUT /api/v1/budget", "", "write", nil},
 	}
 }
 
@@ -117,10 +127,23 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 		"GET /api/v1/budget":                              h.budget,
 		"PUT /api/v1/budget":                              sameOriginOnly(h.setBudget),
 	}
+	byOp := map[string]ops.Op{}
+	for _, op := range ops.Registry() {
+		byOp[op.Name] = op
+	}
 	for _, r := range Routes() {
 		fn, ok := byPattern[r.Pattern]
 		if !ok {
 			panic("api: route " + r.Pattern + " classified but not implemented")
+		}
+		if r.Kind == "op" {
+			op, ok := byOp[r.Op]
+			if !ok {
+				panic("api: route " + r.Pattern + " names unknown registry op " + strconv.Quote(r.Op))
+			}
+			fn = rejectUnknownParams(acceptedParams(r, op), fn)
+		} else if len(r.Extra) > 0 {
+			panic("api: route " + r.Pattern + " declares query parameters but is not an op route")
 		}
 		mux.HandleFunc(r.Pattern, fn)
 		delete(byPattern, r.Pattern)
@@ -129,6 +152,73 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 		panic("api: unclassified routes exist — add them to Routes()")
 	}
 	return mux
+}
+
+// acceptedParams is the sorted allowlist of query parameters an op route
+// takes: the registry op's parameters, minus the ones this pattern binds
+// as path segments, plus the route's declared transport-only extras.
+// Deriving it from the registry is what makes the canonical names the
+// ONLY spelling HTTP answers to — the drift it replaces had /sessions
+// reading "q" for the parameter the registry calls "query".
+func acceptedParams(r Route, op ops.Op) []string {
+	inPath := pathWildcards(r.Pattern)
+	names := append([]string(nil), r.Extra...)
+	for _, p := range op.Params {
+		if !inPath[p.Name] {
+			names = append(names, p.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// pathWildcards reports the {name} segments a pattern binds: those
+// parameters arrive in the path, so they are not query parameters here
+// even though the registry declares them (agent and id reach /transcript
+// as path segments, not ?agent=).
+func pathWildcards(pattern string) map[string]bool {
+	out := map[string]bool{}
+	for _, seg := range strings.Split(pattern, "/") {
+		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
+			out[strings.Trim(seg, "{}")] = true
+		}
+	}
+	return out
+}
+
+// rejectUnknownParams answers 400 for any query parameter outside the
+// route's allowlist. Ignoring one silently is how a caller that used the
+// wrong name got an UNFILTERED result with a 200 — a superset of what it
+// asked for, indistinguishable from an answer. The reply names the
+// offenders and the accepted set so the caller can correct itself.
+func rejectUnknownParams(accepted []string, next http.HandlerFunc) http.HandlerFunc {
+	valid := make(map[string]bool, len(accepted))
+	for _, name := range accepted {
+		valid[name] = true
+	}
+	expected := "this endpoint takes no query parameters"
+	if len(accepted) > 0 {
+		expected = "valid: " + strings.Join(accepted, ", ")
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var unknown []string
+		for name := range r.URL.Query() {
+			if !valid[name] {
+				unknown = append(unknown, strconv.Quote(name))
+			}
+		}
+		if len(unknown) > 0 {
+			slices.Sort(unknown)
+			noun := "parameter"
+			if len(unknown) > 1 {
+				noun = "parameters"
+			}
+			writeBadRequest(w, fmt.Errorf("%w: unknown %s %s (%s)",
+				query.ErrBadRequest, noun, strings.Join(unknown, ", "), expected))
+			return
+		}
+		next(w, r)
+	}
 }
 
 type handlers struct {
@@ -187,7 +277,7 @@ func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 		Model:   p.Str("model"),
 		Since:   p.Str("since"),
 		Until:   p.Str("until"),
-		Query:   p.Str("q"),
+		Query:   p.Str("query"),
 		Limit:   p.Int("limit"),
 		Offset:  p.Int("offset"),
 	}
@@ -215,7 +305,7 @@ func (h *handlers) session(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	opts := query.TranscriptOptions{
-		FromSeq: p.Int("from"),
+		FromSeq: p.Int("from_seq"),
 		Limit:   p.Int("limit"),
 		Full:    p.Bool("full"),
 	}
@@ -283,12 +373,15 @@ func (h *handlers) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	p := newParams(r)
+	// format is this route's declared transport-only parameter (see
+	// Routes); reading it through params keeps every query parameter this
+	// handler consumes visible in one place.
+	format := p.Str("format")
 	f := query.CommandsFilter{
 		Agent:   p.Str("agent"),
 		Project: p.Str("project"),
-		Query:   p.Str("q"),
+		Query:   p.Str("query"),
 		Since:   p.Str("since"),
 		Until:   p.Str("until"),
 		Limit:   p.Int("limit"),
@@ -306,7 +399,7 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 
 	// ?format=zsh|bash|fish|plain streams a shell history file instead of
 	// JSON — the UI's "export to shell" button.
-	if format := q.Get("format"); format != "" {
+	if format != "" {
 		if err := model.ValidateCommandFormat(format); err != nil {
 			writeBadRequest(w, err)
 			return
@@ -330,7 +423,7 @@ func (h *handlers) history(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.HistoryFilter{
 		Agent:  p.Str("agent"),
-		Query:  p.Str("q"),
+		Query:  p.Str("query"),
 		Limit:  p.Int("limit"),
 		Offset: p.Int("offset"),
 	}
@@ -378,7 +471,7 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, err)
 		return
 	}
-	hits, err := h.svc.Search(r.Context(), p.Str("q"), f)
+	hits, err := h.svc.Search(r.Context(), p.Str("query"), f)
 	if err != nil {
 		writeError(w, err)
 		return

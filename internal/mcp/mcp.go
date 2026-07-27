@@ -14,6 +14,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/jsonl"
 	"github.com/ahmedelgabri/ccpeek/internal/ops"
@@ -160,7 +163,10 @@ var statusToolDef = map[string]any{
 		"(while true, reads see a warming archive — per-source commits land " +
 		"incrementally and usage rollups regenerate at the end of the pass) " +
 		"and the v1 import state.",
-	"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	"inputSchema": map[string]any{
+		"type": "object", "properties": map[string]any{},
+		"additionalProperties": false,
+	},
 }
 
 func buildToolDefs() []map[string]any {
@@ -180,7 +186,13 @@ func buildToolDefs() []map[string]any {
 				required = append(required, p.Name)
 			}
 		}
-		schema := map[string]any{"type": "object", "properties": props}
+		// additionalProperties: false states on the wire what call()
+		// enforces — a misspelled argument is an error, not a dropped
+		// filter — so a client can catch it before sending.
+		schema := map[string]any{
+			"type": "object", "properties": props,
+			"additionalProperties": false,
+		}
 		if len(required) > 0 {
 			schema["required"] = required
 		}
@@ -193,7 +205,48 @@ func buildToolDefs() []map[string]any {
 	return defs
 }
 
+// rejectUnknownArgs fails a call that carries an argument the tool does
+// not declare. Dropping it silently answered a narrow question with the
+// whole archive — `search` given `agent_slug` searched EVERY agent and
+// presented the hits as filtered — and nothing in the reply said so. The
+// message names the offenders and the tool's real arguments, so a model
+// can correct the call and retry.
+func rejectUnknownArgs(tool string, args map[string]json.RawMessage, params []ops.Param) error {
+	valid := make(map[string]bool, len(params))
+	names := make([]string, 0, len(params))
+	for _, p := range params {
+		valid[p.Name] = true
+		names = append(names, p.Name)
+	}
+	var unknown []string
+	for name := range args {
+		if !valid[name] {
+			unknown = append(unknown, strconv.Quote(name))
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	slices.Sort(unknown)
+	noun := "argument"
+	if len(unknown) > 1 {
+		noun = "arguments"
+	}
+	expected := "it takes no arguments"
+	if len(names) > 0 {
+		expected = "valid arguments: " + strings.Join(names, ", ")
+	}
+	return fmt.Errorf("tool %q: unknown %s %s (%s)",
+		tool, noun, strings.Join(unknown, ", "), expected)
+}
+
 func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) {
+	// An absent params member decoded as "unexpected end of JSON input",
+	// which tells a client nothing about what tools/call wants.
+	if len(bytes.TrimSpace(params)) == 0 {
+		return nil, fmt.Errorf(`tools/call needs a params object with a "name" ` +
+			`(and "arguments" for tools that take any)`)
+	}
 	var call struct {
 		Name      string                     `json:"name"`
 		Arguments map[string]json.RawMessage `json:"arguments"`
@@ -201,8 +254,14 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 	if err := json.Unmarshal(params, &call); err != nil {
 		return nil, fmt.Errorf("invalid tool call params: %w", err)
 	}
+	if call.Name == "" {
+		return nil, fmt.Errorf(`tool call params have no "name"`)
+	}
 
 	if call.Name == "status" && s.status != nil {
+		if err := rejectUnknownArgs(call.Name, call.Arguments, nil); err != nil {
+			return nil, err
+		}
 		text, err := json.MarshalIndent(ops.Wrap(s.status()), "", "  ")
 		if err != nil {
 			return nil, err
@@ -221,6 +280,9 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 	if op == nil {
 		return nil, fmt.Errorf("unknown tool %q", call.Name)
+	}
+	if err := rejectUnknownArgs(call.Name, call.Arguments, op.Params); err != nil {
+		return nil, err
 	}
 
 	args := ops.Args{

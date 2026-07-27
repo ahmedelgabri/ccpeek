@@ -8,7 +8,7 @@ import { usePagedList } from "../../paged";
 // until the session's full set is loaded.
 const TOOLS_PAGE = 500;
 
-// The transcript pages forward through the API's from/limit window (the
+// The transcript pages forward through the API's from_seq/limit window (the
 // server caps a single response at 1000 rows). A session can run to many
 // thousands of messages, so we fetch a page at a time and append rather
 // than truncating at the first thousand.
@@ -72,7 +72,7 @@ export function useTranscriptWindow(
     queryKey: ["transcript", agent, sessionId, anchor],
     queryFn: ({ pageParam }) =>
       api.transcript(agent, sessionId, {
-        from: String(pageParam.from),
+        fromSeq: String(pageParam.from),
         limit: String(pageParam.limit),
       }),
     initialPageParam: { from: anchor, limit: TRANSCRIPT_PAGE },

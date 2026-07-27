@@ -209,7 +209,7 @@ func TestEndpoints(t *testing.T) {
 		t.Errorf("bogus group = %d, want 400", code)
 	}
 
-	code, env = get(t, h, "/api/v1/search?q=rate+limiting&limit=5")
+	code, env = get(t, h, "/api/v1/search?query=rate+limiting&limit=5")
 	if code != 200 {
 		t.Fatalf("search = %d", code)
 	}

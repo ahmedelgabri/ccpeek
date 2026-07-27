@@ -214,12 +214,16 @@ async function get<T>(
   return unwrap<T>(await fetch(`/api/v1${path}${qs}`));
 }
 
+// Filter keys are the API's own parameter names (the canonical snake_case
+// identifiers the op registry declares, shared with the CLI and MCP), so
+// these objects go to the wire as they read here. The server rejects any
+// other name with a 400 rather than answering an unfiltered query.
 export const api = {
   sessions: (filters: {
     agent?: string;
     project?: string;
     model?: string;
-    q?: string;
+    query?: string;
     since?: string;
     until?: string;
     limit?: string;
@@ -232,8 +236,13 @@ export const api = {
   transcript: (
     agent: string,
     id: string,
-    opts?: { from?: string; limit?: string; full?: string },
-  ) => get<TranscriptMessage[]>(`/sessions/${agent}/${id}/transcript`, opts),
+    opts?: { fromSeq?: string; limit?: string; full?: string },
+  ) =>
+    get<TranscriptMessage[]>(`/sessions/${agent}/${id}/transcript`, {
+      from_seq: opts?.fromSeq,
+      limit: opts?.limit,
+      full: opts?.full,
+    }),
 
   usage: (filters: {
     group?: string;
@@ -245,14 +254,14 @@ export const api = {
   }) => get<UsageRow[]>("/usage", filters),
 
   search: (q: string, agent = "", limit = "20") =>
-    get<SearchHit[]>("/search", { q, agent, limit }),
+    get<SearchHit[]>("/search", { query: q, agent, limit }),
 
   stats: () => get<Stats>("/stats"),
 
   commands: (filters: {
     agent?: string;
     project?: string;
-    q?: string;
+    query?: string;
     since?: string;
     until?: string;
     limit?: string;

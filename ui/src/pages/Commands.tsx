@@ -46,7 +46,7 @@ export function CommandsPage() {
     ["commands", q, agent, since, until],
     (offset) =>
       api.commands({
-        q,
+        query: q,
         agent,
         since,
         until,
@@ -67,7 +67,7 @@ export function CommandsPage() {
 
   const exportURL = (format: string) => {
     const p = new URLSearchParams({ format, limit: "1000" });
-    if (q) p.set("q", q);
+    if (q) p.set("query", q);
     if (agent) p.set("agent", agent);
     if (since) p.set("since", since);
     if (until) p.set("until", until);

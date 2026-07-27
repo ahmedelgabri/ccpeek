@@ -87,7 +87,7 @@ export function SessionsPage() {
     (offset) =>
       api.sessions({
         agent,
-        q,
+        query: q,
         project,
         model,
         since,

@@ -158,6 +158,109 @@ func TestStatusTool(t *testing.T) {
 	}
 }
 
+// An argument the tool does not declare is an ERROR, not a dropped
+// filter. `search` given the plausible-but-wrong `agent_slug` used to
+// search every agent and present the archive-wide hits as filtered; the
+// caller had no way to tell. The message names the offender and the real
+// arguments so a model can fix the call itself.
+func TestUnknownArgumentsAreRejected(t *testing.T) {
+	s := newServer(t)
+	s.status = func() Status { return Status{} }
+	resps := drive(
+		t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"rate limiting","agent_slug":"pi"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sessions","arguments":{"q":"rate"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{"verbose":true}}}`,
+	)
+	if len(resps) != 3 {
+		t.Fatalf("responses = %d, want 3", len(resps))
+	}
+	for i, want := range []struct{ offender, valid string }{
+		{`"agent_slug"`, "agent"},
+		{`"q"`, "query"},
+		{`"verbose"`, "takes no arguments"},
+	} {
+		result, ok := resps[i]["result"].(map[string]any)
+		if !ok || result["isError"] != true {
+			t.Errorf("call %d: unknown argument did not fail: %v", i, resps[i])
+			continue
+		}
+		text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+		if !strings.Contains(text, want.offender) {
+			t.Errorf("call %d: error does not name %s: %s", i, want.offender, text)
+		}
+		if !strings.Contains(text, want.valid) {
+			t.Errorf("call %d: error does not point at %q: %s", i, want.valid, text)
+		}
+	}
+}
+
+// Every advertised schema closes itself, so a client validating against
+// it catches a misspelled argument before the call is even sent — the
+// same rule call() enforces server-side.
+func TestToolSchemasForbidUndeclaredArguments(t *testing.T) {
+	s := newServer(t)
+	s.status = func() Status { return Status{} }
+	resps := drive(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	tools := resps[0]["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != len(ops.Registry())+1 {
+		t.Fatalf("tools = %d, want %d (registry + status)", len(tools), len(ops.Registry())+1)
+	}
+	for _, tool := range tools {
+		def := tool.(map[string]any)
+		schema, ok := def["inputSchema"].(map[string]any)
+		if !ok {
+			t.Errorf("tool %v has no inputSchema", def["name"])
+			continue
+		}
+		if schema["additionalProperties"] != false {
+			t.Errorf("tool %v: additionalProperties = %v, want false",
+				def["name"], schema["additionalProperties"])
+		}
+	}
+}
+
+// A tools/call with no params at all answered "invalid tool call params:
+// unexpected end of JSON input" — the JSON decoder's complaint, useless
+// to the caller. It must say what tools/call needs. A tool that takes no
+// arguments still works without an "arguments" key.
+func TestToolCallParamsMessages(t *testing.T) {
+	s := newServer(t)
+	resps := drive(
+		t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"stats"}}`,
+	)
+	if len(resps) != 3 {
+		t.Fatalf("responses = %d, want 3", len(resps))
+	}
+	text := func(i int) string {
+		result := resps[i]["result"].(map[string]any)
+		return result["content"].([]any)[0].(map[string]any)["text"].(string)
+	}
+
+	if resps[0]["result"].(map[string]any)["isError"] != true {
+		t.Error("tools/call without params must fail")
+	}
+	if strings.Contains(text(0), "unexpected end of JSON input") {
+		t.Errorf("absent params still reports the decoder's error: %s", text(0))
+	}
+	if !strings.Contains(text(0), `"name"`) {
+		t.Errorf("absent params does not say what is needed: %s", text(0))
+	}
+	if !strings.Contains(text(1), `"name"`) {
+		t.Errorf("empty params does not name the missing field: %s", text(1))
+	}
+
+	// A zero-argument tool needs no "arguments" key.
+	if result := resps[2]["result"].(map[string]any); result["isError"] == true {
+		t.Errorf("stats without an arguments key failed: %s", text(2))
+	} else if !strings.Contains(text(2), `"sessions"`) {
+		t.Errorf("stats payload looks wrong: %s", text(2))
+	}
+}
+
 // A parse error carries "id": null, as JSON-RPC 2.0 requires when the
 // request's id cannot be determined. Omitting the field entirely — which
 // omitempty did — makes strict clients reject the response.
