@@ -11,6 +11,7 @@ import {
   totalTokens,
   type SessionSummary,
 } from "../api";
+import { fullWhen, localDay, localTime } from "../time";
 import {
   AgentChip,
   EmptyNote,
@@ -105,9 +106,12 @@ export function SessionsPage() {
     .map((r) => r.group)
     .filter((m) => m !== "");
 
+  // Grouped by LOCAL day: the server orders by instant, and a local day
+  // key stays contiguous under that order, so headings read as the days
+  // the user actually worked rather than UTC's idea of them.
   const groups = groupRuns(
     sessions,
-    (s) => s.modifiedAt.slice(0, 10) || "(no date)",
+    (s) => localDay(s.modifiedAt) || "(no date)",
   );
   const activeFilters = [agent, project, model, since, until, q].filter(
     Boolean,
@@ -293,8 +297,11 @@ function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
         }`}
       >
         <div className="flex min-w-0 items-baseline gap-3">
-          <span className="shrink-0 font-mono text-meta text-ink-faint tabular-nums">
-            {s.modifiedAt.slice(11, 16)}
+          <span
+            title={fullWhen(s.modifiedAt)}
+            className="shrink-0 font-mono text-meta text-ink-faint tabular-nums"
+          >
+            {localTime(s.modifiedAt)}
           </span>
           <AgentChip agent={s.agent} />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">

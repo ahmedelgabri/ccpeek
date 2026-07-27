@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
@@ -701,10 +702,17 @@ export function Segmented<T extends string>({
   className?: string;
 }) {
   const isTab = variant === "tab";
+  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   // Roving tabindex: arrow keys move within the group, Tab leaves it.
-  const move = (from: number, delta: number) => {
-    const next = (from + delta + options.length) % options.length;
+  // Focus has to travel with the selection. Moving selection alone left
+  // focus on a button that had just become tabIndex -1, so the next arrow
+  // press was still handled by the ORIGINAL index and recomputed the same
+  // neighbour — a keyboard user could never get more than one step from
+  // where they started.
+  const select = (i: number) => {
+    const next = (i + options.length) % options.length;
     onChange(options[next].value);
+    buttons.current[next]?.focus();
   };
   return (
     <div
@@ -720,6 +728,9 @@ export function Segmented<T extends string>({
         return (
           <button
             key={o.value}
+            ref={(el) => {
+              buttons.current[i] = el;
+            }}
             type="button"
             role={isTab ? "tab" : "radio"}
             {...(isTab
@@ -729,11 +740,16 @@ export function Segmented<T extends string>({
             onKeyDown={(e) => {
               if (e.key === "ArrowRight" || e.key === "ArrowDown") {
                 e.preventDefault();
-                move(i, 1);
-              }
-              if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                select(i + 1);
+              } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
                 e.preventDefault();
-                move(i, -1);
+                select(i - 1);
+              } else if (e.key === "Home") {
+                e.preventDefault();
+                select(0);
+              } else if (e.key === "End") {
+                e.preventDefault();
+                select(options.length - 1);
               }
             }}
             onClick={() => onChange(o.value)}

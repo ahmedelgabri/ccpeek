@@ -292,11 +292,6 @@ export const AGENT_COLOR: Record<string, string> = {
   cursor: "var(--color-agent-cursor)",
 };
 
-export function fmtWhen(ts: string): string {
-  if (!ts) return "";
-  return ts.slice(0, 16).replace("T", " ");
-}
-
 export function shortPath(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
 }

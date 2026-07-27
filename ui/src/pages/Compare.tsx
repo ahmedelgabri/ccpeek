@@ -6,10 +6,10 @@ import {
   fmtCost,
   fmtCount,
   fmtTokens,
-  fmtWhen,
   shortPath,
   type SessionDetail,
 } from "../api";
+import { fmtWhen } from "../time";
 import {
   AgentChip,
   AgentDot,

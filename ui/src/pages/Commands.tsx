@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { LoadMore, usePagedList } from "../paged";
 import { Link } from "@tanstack/react-router";
-import { api, fmtWhen, shortPath, type CommandRow } from "../api";
+import { api, shortPath, type CommandRow } from "../api";
+import { fmtWhen, fullWhen } from "../time";
 import { useHighlight } from "../highlight";
 import { useRowWindow } from "../windowed";
 import {
@@ -156,7 +157,10 @@ export function CommandsPage() {
                 >
                   session {c.sessionId.slice(0, 8)}
                 </Link>
-                <span className="ml-auto shrink-0 tabular-nums">
+                <span
+                  title={fullWhen(c.at ?? "")}
+                  className="ml-auto shrink-0 tabular-nums"
+                >
                   {fmtWhen(c.at ?? "")}
                 </span>
                 <CopyButton text={c.command} />

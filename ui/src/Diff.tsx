@@ -123,13 +123,23 @@ function NewFileView({ text }: { text: string }) {
 
 export function DiffView({ old, new: neu }: { old: string; new: string }) {
   // A write with no prior content is a new file, not a diff.
-  if (old === "" && neu !== "") return <NewFileView text={neu} />;
+  const isNew = old === "" && neu !== "";
 
   // diffLines is an O(n²) LCS over up to MAX_LINES × MAX_LINES cells. The
   // parent is the transcript, which re-renders on every virtualizer range
   // change — i.e. continuously while scrolling — so an unmemoized call
   // rebuilt the whole DP table on every frame an expanded diff was open.
-  const ops = useMemo(() => diffLines(old, neu), [old, neu]);
+  //
+  // It stays ABOVE the new-file return: `old` flips from "" to text when a
+  // watch-mode refetch fills in a diff that is already expanded, and an
+  // early return over this hook changed the hook count mid-mount — React
+  // threw, and the route's ErrorBoundary took the whole session page with
+  // it.
+  const ops = useMemo(
+    () => (isNew ? null : diffLines(old, neu)),
+    [isNew, old, neu],
+  );
+  if (isNew) return <NewFileView text={neu} />;
   if (!ops)
     return (
       <p className="px-3 py-2 font-mono text-meta text-ink-faint">

@@ -10,6 +10,7 @@ import {
   shortPath,
   type ToolCallRow,
 } from "../../api";
+import { fullWhen, localClock } from "../../time";
 import {
   CopyButton,
   EmptyNote,
@@ -50,8 +51,11 @@ export function CommandsTab({
               </code>
             </pre>
             <JumpButton seq={c.messageSeq} onJump={onJump} />
-            <span className="shrink-0 font-mono text-micro text-ink-faint tabular-nums">
-              {c.at?.slice(11, 19)}
+            <span
+              title={fullWhen(c.at ?? "")}
+              className="shrink-0 font-mono text-micro text-ink-faint tabular-nums"
+            >
+              {localClock(c.at ?? "")}
             </span>
             <CopyButton text={c.detail ?? ""} />
           </div>
@@ -204,9 +208,10 @@ function ToolRow({
         </span>
         <span
           role="cell"
+          title={fullWhen(t.at ?? "")}
           className="px-3 py-1.5 text-right font-mono text-meta text-ink-faint tabular-nums"
         >
-          {t.at?.slice(11, 19)}
+          {localClock(t.at ?? "")}
         </span>
       </div>
       {hasDiff && open && (
@@ -324,9 +329,9 @@ function FileRow({
           {diffs.map((e) => (
             <div key={e.seq}>
               <div className="mb-1 flex items-center gap-2 font-mono text-micro text-ink-faint tabular-nums">
-                <span>
+                <span title={fullWhen(e.at ?? "")}>
                   {e.kind === "file_write" ? "write" : "edit"} #{e.seq} ·{" "}
-                  {e.at?.slice(11, 19)}
+                  {localClock(e.at ?? "")}
                 </span>
                 <JumpButton seq={e.messageSeq} onJump={onJump} />
               </div>

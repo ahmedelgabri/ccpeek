@@ -3,12 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   fmtCount,
-  fmtWhen,
   parityApi,
   plural,
   type ScanFinding,
   type ScanRule,
 } from "../api";
+import { fmtWhen, fullWhen } from "../time";
 import {
   AgentDot,
   Code,
@@ -263,7 +263,10 @@ function RuleGroup({
                 </div>
                 <FindingLocation finding={f} />
               </div>
-              <span className="shrink-0 font-mono text-micro text-ink-faint">
+              <span
+                title={fullWhen(f.scannedAt)}
+                className="shrink-0 font-mono text-micro text-ink-faint"
+              >
                 {fmtWhen(f.scannedAt)}
               </span>
               <GhostButton

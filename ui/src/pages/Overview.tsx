@@ -6,13 +6,13 @@ import {
   fmtCost,
   fmtCount,
   fmtTokens,
-  fmtWhen,
   parityApi,
   plural,
   shortPath,
   totalTokens,
   type DayActivity,
 } from "../api";
+import { fmtWhen, fullWhen } from "../time";
 import {
   AgentChip,
   AgentDot,
@@ -126,8 +126,12 @@ export function OverviewPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
+        {/* Labelled UTC because it is: the API's activity days are UTC
+            date strings and the grid's calendar math matches them. Every
+            other time in the UI is local, so the one surface that is not
+            has to say so. */}
         <Panel
-          label="Activity — sessions per day, last 52 weeks"
+          label="Activity — sessions per UTC day, last 52 weeks"
           className="xl:col-span-3"
         >
           <Heatmap days={st.activity ?? []} />
@@ -168,7 +172,12 @@ export function OverviewPage() {
                       />
                     </div>
                     <div className="mt-0.5 flex min-w-0 gap-3 font-mono text-meta text-ink-faint">
-                      <span className="shrink-0">{fmtWhen(s.modifiedAt)}</span>
+                      <span
+                        title={fullWhen(s.modifiedAt)}
+                        className="shrink-0"
+                      >
+                        {fmtWhen(s.modifiedAt)}
+                      </span>
                       <span className="min-w-0 flex-1 truncate">
                         {shortPath(s.cwd)}
                       </span>
@@ -565,6 +574,7 @@ function Heatmap({ days }: { days: DayActivity[] }) {
             const tip = (
               <>
                 <span className="text-ink">{c.day}</span>
+                <span className="text-ink-faint"> UTC</span>
                 <br />
                 {plural(n, "session")}
                 {c.d && c.d.costUSD > 0 && (

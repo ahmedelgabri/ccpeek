@@ -8,6 +8,7 @@ import {
   type ToolCallRow,
   type TranscriptMessage,
 } from "../../api";
+import { fullWhen, localClock } from "../../time";
 import type { TranscriptWindow } from "./useSessionData";
 import {
   EmptyNote,
@@ -394,8 +395,11 @@ export function Transcript({
                       {copiedSeq === m.seq ? "link copied ✓" : `#${m.seq}`}
                     </button>
                     {m.createdAt && (
-                      <span className="shrink-0 tabular-nums">
-                        {m.createdAt.slice(11, 19)}
+                      <span
+                        title={fullWhen(m.createdAt)}
+                        className="shrink-0 tabular-nums"
+                      >
+                        {localClock(m.createdAt)}
                       </span>
                     )}
                     {isMeta && m.text.trim() !== "" && (
