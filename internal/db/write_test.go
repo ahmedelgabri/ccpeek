@@ -521,7 +521,8 @@ func TestEmptyArtifactContentReplacesStoredContent(t *testing.T) {
 	}
 	var content, meta string
 	if err := s.db.QueryRow(
-		`SELECT content, metadata_json FROM artifacts WHERE id = ?`, id).
+		`SELECT content, metadata_json FROM artifacts WHERE id = ?`, id,
+	).
 		Scan(&content, &meta); err != nil {
 		t.Fatal(err)
 	}

@@ -224,7 +224,8 @@ func TestRepeatedLastTokenUsageCountsOnce(t *testing.T) {
 	)
 
 	t.Run("duplicate emission suppressed", func(t *testing.T) {
-		src := writeRollout(t, meta,
+		src := writeRollout(
+			t, meta,
 			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
 			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
 		)
@@ -238,7 +239,8 @@ func TestRepeatedLastTokenUsageCountsOnce(t *testing.T) {
 	})
 
 	t.Run("identical turn with an advanced total still counts", func(t *testing.T) {
-		src := writeRollout(t, meta,
+		src := writeRollout(
+			t, meta,
 			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
 			tokenCountLine("2026-07-06T09:00:20.000Z", cum2, turn1),
 		)
@@ -258,7 +260,8 @@ func TestRepeatedLastTokenUsageCountsOnce(t *testing.T) {
 	t.Run("a delta-only count breaks the run of repeats", func(t *testing.T) {
 		// No last_token_usage in the middle event: the identical Last that
 		// follows is a new turn, not a repeat of the first.
-		src := writeRollout(t, meta,
+		src := writeRollout(
+			t, meta,
 			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
 			`{"timestamp":"2026-07-06T09:00:15.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":`+cum2+`}}}`,
 			tokenCountLine("2026-07-06T09:00:20.000Z", cum2, turn1),
