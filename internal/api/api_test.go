@@ -47,7 +47,7 @@ func newHandler(t *testing.T) http.Handler {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return Handler(query.New(store, table), nil, nil, nil, nil)
+	return Handler(query.New(store, table), nil, nil, nil, nil, nil)
 }
 
 func get(t *testing.T, h http.Handler, path string) (int, ops.Envelope) {
@@ -80,7 +80,7 @@ func TestHealthV1Import(t *testing.T) {
 
 	h := Handler(query.New(store, table), nil, nil, nil, func() V1ImportStatus {
 		return V1ImportStatus{State: "failed", Error: "reading v1 database: file is not a database"}
-	})
+	}, nil)
 	code, env := get(t, h, "/api/v1/health")
 	if code != 200 {
 		t.Fatalf("health = %d", code)
@@ -106,12 +106,46 @@ func TestHealthV1Import(t *testing.T) {
 
 	hOK := Handler(query.New(store, table), nil, nil, nil, func() V1ImportStatus {
 		return V1ImportStatus{State: "success", ImportedAt: "2026-07-22T00:00:00Z"}
-	})
+	}, nil)
 	if code, _ := get(t, hOK, "/api/v1/ready"); code != 200 {
 		t.Errorf("ready with successful import = %d, want 200", code)
 	}
 
-	h2 := Handler(query.New(store, table), nil, nil, nil, nil)
+	// A failed bootstrap holds readiness with its own status — a client
+	// waiting on "indexing" would otherwise wait on progress that is not
+	// coming until a restart retries the pass. Health carries the detail.
+	notReady := func() bool { return false }
+	hBoot := Handler(query.New(store, table), nil, notReady, nil, nil, func() BootstrapStatus {
+		return BootstrapStatus{State: "failed", Error: "ingest: disk full"}
+	})
+	code, env = get(t, hBoot, "/api/v1/ready")
+	if code != http.StatusServiceUnavailable {
+		t.Errorf("ready with failed bootstrap = %d, want 503", code)
+	}
+	if d, _ := env.Data.(map[string]any); d["status"] != "index-failed" || d["error"] != "ingest: disk full" {
+		t.Errorf("ready status = %v, want index-failed with the recorded error", env.Data)
+	}
+	_, env = get(t, hBoot, "/api/v1/health")
+	dataBoot, _ := env.Data.(map[string]any)
+	boot, _ := dataBoot["bootstrap"].(map[string]any)
+	if boot == nil || boot["state"] != "failed" {
+		t.Errorf("health payload lacks the bootstrap failure: %v", env.Data)
+	}
+
+	// While a pass is genuinely running (no failure recorded), the
+	// readiness detail stays "indexing".
+	hRun := Handler(query.New(store, table), nil, notReady, nil, nil, func() BootstrapStatus {
+		return BootstrapStatus{}
+	})
+	code, env = get(t, hRun, "/api/v1/ready")
+	if code != http.StatusServiceUnavailable {
+		t.Errorf("ready while indexing = %d, want 503", code)
+	}
+	if d, _ := env.Data.(map[string]any); d["status"] != "indexing" {
+		t.Errorf("ready status = %v, want indexing", env.Data)
+	}
+
+	h2 := Handler(query.New(store, table), nil, nil, nil, nil, nil)
 	_, env2 := get(t, h2, "/api/v1/health")
 	data2, _ := env2.Data.(map[string]any)
 	if _, ok := data2["v1Import"]; ok {

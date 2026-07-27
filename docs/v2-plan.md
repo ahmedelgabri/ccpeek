@@ -218,8 +218,9 @@ Post-launch sprints (feedback-driven, after v2.0):
   artifact hits link to their artifact page; the plan/memory resolvers
   reconcile stale content_ref links transactionally via hash joins;
   the bootstrap scan completes before watch starts (ingest and
-  scanning never overlap) and rollups rebuild only on dirty session
-  domains; the ops registry covers every HTTP domain read (tools,
+  scanning never overlap) and rollups regenerate only on passes that
+  changed data (the regeneration itself is a full rebuild — see
+  RegenerateRollups' scope note); the ops registry covers every HTTP domain read (tools,
   artifact, budget added — CLI/MCP gain them by generation) with a
   classified route table enforcing transport parity; and the
   failed→no-legacy-db transition clears the stale import error.
@@ -860,9 +861,9 @@ Notes:
      **cache savings** ("cache reads saved you ~$X vs. uncached input").
    - **Cost explorer** page: group by day|week|month × model × project ×
      agent; CSV/JSON export.
-   - **Blocks view**: usage inside 5-hour quota windows (how Claude
-     subscription limits are actually experienced), burn-rate within the
-     current block.
+   - **Blocks view**: usage inside fixed UTC-aligned 5-hour windows (an
+     approximation of subscription quota windows, which anchor to first
+     activity), burn-rate within the current block.
    - `ccpeek usage --today|--month --json` CLI for scripts/statusline
      integration.
 3. **Migration** (§8) — automatic, reported, reversible.

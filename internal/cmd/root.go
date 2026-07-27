@@ -243,6 +243,20 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// The readiness detail: a failed bootstrap holds /api/v1/ready at
+	// 503, and this closure is how the endpoint says WHY (index-failed
+	// with the recorded error, not a perpetual "indexing").
+	readBootstrap := func() api.BootstrapStatus {
+		meta, err := eng.store.GetMetaMulti(ctx, "bootstrap_state", "bootstrap_error")
+		if err != nil {
+			return api.BootstrapStatus{}
+		}
+		return api.BootstrapStatus{
+			State: meta["bootstrap_state"],
+			Error: meta["bootstrap_error"],
+		}
+	}
+
 	// The mutex serializes the bootstrap scan with watch-triggered
 	// rescans — the scanner's per-entity state updates must not
 	// interleave.
@@ -351,7 +365,7 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import)))
+	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import, readBootstrap)))
 }
 
 // scanChanged scans what an ingest pass changed and reports through

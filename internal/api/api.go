@@ -39,6 +39,15 @@ type V1ImportStatus struct {
 	ImportedAt string `json:"importedAt,omitempty"`
 }
 
+// BootstrapStatus is the last index pass's outcome (the bootstrap_state
+// meta the CLI records). Without it a failed bootstrap reads as
+// "indexing" forever: readiness stays 503 by policy, but the client
+// deserves to know it is waiting on a failure, not a pass.
+type BootstrapStatus struct {
+	State string `json:"state"`
+	Error string `json:"error,omitempty"`
+}
+
 // Route classifies one API endpoint for the transport-parity test:
 // Op names the registry operation answering the same read (HTTP keeps
 // hand-written parsing for transport concerns, but the read itself must
@@ -97,11 +106,12 @@ func Routes() []Route {
 // reports whether the initial index pass has completed — nil means
 // "always ready"; while false, /api/v1/ready answers 503 so scripts (and
 // the e2e web server wait) can block on first data. progress, when
-// non-nil, feeds the index-pass state into the health payload, and
-// v1Import the legacy-import outcome.
-func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress, v1Import func() V1ImportStatus) http.Handler {
+// non-nil, feeds the index-pass state into the health payload, v1Import
+// the legacy-import outcome, and bootstrap the last index pass's
+// recorded outcome.
+func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress, v1Import func() V1ImportStatus, bootstrap func() BootstrapStatus) http.Handler {
 	mux := http.NewServeMux()
-	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress, v1Import: v1Import}
+	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress, v1Import: v1Import, bootstrap: bootstrap}
 	byPattern := map[string]http.HandlerFunc{
 		"GET /api/v1/health":                              h.health,
 		"GET /api/v1/ready":                               h.readiness,
@@ -226,11 +236,12 @@ func rejectUnknownParams(accepted []string, next http.HandlerFunc) http.HandlerF
 }
 
 type handlers struct {
-	svc      *query.Service
-	events_  *Broadcaster
-	ready    func() bool
-	progress func() IndexProgress
-	v1Import func() V1ImportStatus
+	svc       *query.Service
+	events_   *Broadcaster
+	ready     func() bool
+	progress  func() IndexProgress
+	v1Import  func() V1ImportStatus
+	bootstrap func() BootstrapStatus
 }
 
 func (h *handlers) isReady() bool {
@@ -251,6 +262,11 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 			payload["v1Import"] = st
 		}
 	}
+	if h.bootstrap != nil {
+		if st := h.bootstrap(); st.State != "" {
+			payload["bootstrap"] = st
+		}
+	}
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -263,6 +279,16 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 // answering 200 with the failure detail throughout.
 func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 	if !h.isReady() {
+		// A recorded bootstrap failure is why ready is being held — say
+		// so; "indexing" would promise progress that is not coming until
+		// the next start retries the pass.
+		if h.bootstrap != nil {
+			if st := h.bootstrap(); st.State == "failed" {
+				writeJSON(w, http.StatusServiceUnavailable,
+					map[string]string{"status": "index-failed", "error": st.Error})
+				return
+			}
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "indexing"})
 		return
 	}

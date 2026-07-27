@@ -30,7 +30,7 @@ func emptyHandler(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Handler(query.New(store, table), nil, nil, nil, nil)
+	return Handler(query.New(store, table), nil, nil, nil, nil, nil)
 }
 
 func rawGet(t *testing.T, h http.Handler, path string) (int, string) {
@@ -53,7 +53,7 @@ func seededHandler(t *testing.T) (http.Handler, *db.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Handler(query.New(store, table), nil, nil, nil, nil), store
+	return Handler(query.New(store, table), nil, nil, nil, nil, nil), store
 }
 
 // TestCommandExportPagesToCompletion: ?format= is a DOWNLOAD, not a page

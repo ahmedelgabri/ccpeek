@@ -94,7 +94,7 @@ The server reads each agent's data from its default root (for Claude Code,
 | --------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `-p`, `--port`  | `3000`                            | Server port                                                                                                                                                              |
 | `--claude-dir`  | `~/.claude`                       | Source directory (Claude data)                                                                                                                                           |
-| `--data-file`   | `~/.local/share/ccpeek/ccpeek.db` | Database identity: the v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`); a v1 database at this exact path is imported |
+| `--data-file`   | `~/.local/share/ccpeek/ccpeek.db` | Path of the LEGACY v1 database (imported if present). The v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`) — do not point this at a v2 index |
 | `--skip-index`  | `false`                           | Skip indexing, serve existing data                                                                                                                                       |
 | `--index-only`  | `false`                           | Index and exit                                                                                                                                                           |
 | `-o`, `--open`  | `false`                           | Open browser after starting                                                                                                                                              |
@@ -128,7 +128,8 @@ Homebrew and Nix installations include completions and man pages automatically.
 
 Scan indexed data for leaked secrets, API keys, tokens, and passwords. Uses
 gitleaks detection rules (150+ patterns). Results are stored in the database
-and viewable in the web UI at `/scan`.
+and viewable in the web UI at `/scan`. The index refreshes incrementally
+before the scan so newly written history is covered (`--no-index` opts out).
 
 ```sh
 ccpeek scan
