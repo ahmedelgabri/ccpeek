@@ -18,19 +18,12 @@ import (
 )
 
 // emptyHandler serves the API over a store with no data at all — the
-// contract tests need the zero case, not the fixture corpus.
+// contract tests need the zero case, not the fixture corpus. It is
+// seededHandler without the handle: the store starts empty either way.
 func emptyHandler(t *testing.T) http.Handler {
 	t.Helper()
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { store.Close() })
-	table, err := pricing.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return Handler(query.New(store, table), nil, nil, nil, nil, nil)
+	h, _ := seededHandler(t)
+	return h
 }
 
 func rawGet(t *testing.T, h http.Handler, path string) (int, string) {
@@ -53,7 +46,7 @@ func seededHandler(t *testing.T) (http.Handler, *db.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Handler(query.New(store, table), nil, nil, nil, nil, nil), store
+	return Handler(query.New(store, table), Deps{}), store
 }
 
 // TestCommandExportPagesToCompletion: ?format= is a DOWNLOAD, not a page

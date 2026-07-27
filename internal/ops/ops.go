@@ -15,6 +15,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/query"
@@ -56,6 +58,12 @@ type Args struct {
 
 // Op is one read operation. Run returns the payload and whether it is
 // empty (the CLI maps emptiness to its no-matches exit code).
+//
+// Run is the AGENT-TRANSPORT rendering of the read — what `ccpeek query`
+// and the MCP server return — and it may differ from the presentation
+// HTTP builds from the same query service: `search` marks its snippets
+// with SnippetMarker here, because a terminal or a model reads the web
+// UI's control characters as escape noise.
 type Op struct {
 	Name   string
 	Desc   string
@@ -75,18 +83,24 @@ func (p Param) FlagName() string {
 // own policy for that op, so the default and ceiling every transport
 // documents are the ones the read enforces — they were undocumented
 // everywhere and, on four ops, applied by silently truncating the answer.
+// Both halves of the prose are stated ALWAYS, so a policy with no
+// default but a real ceiling still advertises the ceiling: the three
+// hand-written cases this replaces printed "(default: all)" for a zero
+// default and dropped the maximum from the sentence entirely.
 func limitParam(noun string, l query.Limit) Param {
 	p := Param{Name: "limit", Type: "integer", Max: l.Max}
-	switch {
-	case l.Default == 0:
-		p.Desc = noun + " (default: all)"
-	case l.Max == 0:
+	def := "all"
+	if l.Default > 0 {
+		// Declared only when there IS one: an advertised default of 0 would
+		// read as "return nothing" in an MCP schema.
 		p.Default = l.Default
-		p.Desc = fmt.Sprintf("%s (default %d, no maximum)", noun, l.Default)
-	default:
-		p.Default = l.Default
-		p.Desc = fmt.Sprintf("%s (default %d, max %d)", noun, l.Default, l.Max)
+		def = strconv.Itoa(l.Default)
 	}
+	bound := "no maximum"
+	if l.Max > 0 {
+		bound = "max " + strconv.Itoa(l.Max)
+	}
+	p.Desc = fmt.Sprintf("%s (default %s, %s)", noun, def, bound)
 	return p
 }
 
@@ -346,6 +360,67 @@ func Registry() []Op {
 			},
 		},
 	}
+}
+
+// UnknownNames reports which keys of given are not among valid, quoted
+// and sorted so an error can name them in a stable order. given is
+// whatever the transport decoded its inputs into — url.Values, an MCP
+// arguments map — since only the KEYS matter here.
+//
+// Refusing an undeclared name is the same rule on every transport, for
+// the same reason: silently dropping one answers a narrow question with
+// the whole archive (`search` given `agent_slug` searched EVERY agent,
+// presented as filtered) and nothing in the reply says so. HTTP and MCP
+// each had their own ~25-line copy of this, down to the pluralization.
+func UnknownNames[T any](given map[string]T, valid []string) []string {
+	if len(given) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool, len(valid))
+	for _, name := range valid {
+		declared[name] = true
+	}
+	var unknown []string
+	for name := range given {
+		if !declared[name] {
+			unknown = append(unknown, strconv.Quote(name))
+		}
+	}
+	slices.Sort(unknown)
+	return unknown
+}
+
+// UnknownMessage renders the shared half of the rejection — "unknown
+// parameter "q"", "unknown arguments "a", "b"" — for a transport's own
+// noun ("parameter", "argument"), pluralized with the offenders. Each
+// caller appends what IS accepted in its own words and wraps the result
+// in its own failure shape (a 400 envelope, a tool error).
+func UnknownMessage(noun string, unknown []string) string {
+	if len(unknown) > 1 {
+		noun += "s"
+	}
+	return "unknown " + noun + " " + strings.Join(unknown, ", ")
+}
+
+// byName indexes the registry for lookup, built ONCE at init. Registry()
+// rebuilds every op — descriptions, parameter slices, executor closures —
+// on each call, so the three surfaces that resolve a name to an op were
+// each rebuilding the whole registry and scanning it: MCP did it PER TOOL
+// CALL, twice (once to list, once to find).
+var byName = func() map[string]Op {
+	reg := Registry()
+	m := make(map[string]Op, len(reg))
+	for _, op := range reg {
+		m[op.Name] = op
+	}
+	return m
+}()
+
+// Lookup returns the registry operation with this name. The returned Op
+// is shared — read it, never mutate it.
+func Lookup(name string) (Op, bool) {
+	op, ok := byName[name]
+	return op, ok
 }
 
 // PayloadSchema versions every agent-facing response envelope. It is the

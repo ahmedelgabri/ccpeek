@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,7 +24,23 @@ type params struct {
 	err    error
 }
 
+// valuesKey carries the query string an op route has ALREADY parsed (see
+// rejectUnknownParams) to the handler behind it. url.Values is recomputed
+// from the raw string on every URL.Query() call, so an op request parsed
+// its query string twice: once to check the names, once to read them.
+type valuesKey struct{}
+
+// withValues hands the parsed query string to the handler.
+func withValues(r *http.Request, values url.Values) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), valuesKey{}, values))
+}
+
 func newParams(r *http.Request) *params {
+	// The transport-only routes (raw artifact bytes, SSE) have no allowlist
+	// middleware in front of them, so parsing here stays the fallback.
+	if values, ok := r.Context().Value(valuesKey{}).(url.Values); ok {
+		return &params{values: values}
+	}
 	return &params{values: r.URL.Query()}
 }
 

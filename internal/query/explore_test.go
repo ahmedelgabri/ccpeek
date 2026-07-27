@@ -14,7 +14,6 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
-	"github.com/ahmedelgabri/ccpeek/internal/ingest"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
@@ -23,37 +22,7 @@ import (
 // tested against more than one agent's shapes.
 func allAgentsService(t *testing.T) *Service {
 	t.Helper()
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { store.Close() })
-	table, err := pricing.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixtures := func(dir string) []string {
-		p, err := filepath.Abs(filepath.Join("../../testdata/agents", dir))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return []string{p}
-	}
-	runner := ingest.New(store, table,
-		claude.New(), pi.New(), codex.New(), opencode.New())
-	if _, err := runner.Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{
-			claude.Slug:   fixtures("claude-code"),
-			pi.Slug:       fixtures("pi"),
-			codex.Slug:    fixtures("codex"),
-			opencode.Slug: fixtures("opencode"),
-		},
-		Getenv: func(string) string { return "" },
-		Home:   "/nonexistent",
-	}); err != nil {
-		t.Fatalf("ingest: %v", err)
-	}
-	return New(store, table)
+	return fixtureService(t, claude.Slug, pi.Slug, codex.Slug, opencode.Slug)
 }
 
 // The commands browser is a CROSS-AGENT surface, and it used to read

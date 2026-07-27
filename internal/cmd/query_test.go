@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ops"
 	"github.com/spf13/cobra"
 )
@@ -19,14 +18,7 @@ import (
 func newQueryTestCommand(t *testing.T, opName string) *cobra.Command {
 	t.Helper()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	store, err := db.Open(context.Background(), storeDBPath(dataFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	markInitialized(t, store)
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	initStore(t, dataFile)
 
 	var op ops.Op
 	for _, o := range ops.Registry() {

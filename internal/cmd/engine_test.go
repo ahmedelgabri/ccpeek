@@ -102,13 +102,13 @@ func TestFirstRunBootstrapImportsV1(t *testing.T) {
 	if _, ok, err := eng.store.GetMeta(ctx, "migrated_at"); err != nil || !ok {
 		t.Fatalf("migrated_at meta missing (ok=%v err=%v)", ok, err)
 	}
-	if _, ok, err := eng.store.GetMeta(ctx, "v1_import_report"); err != nil || !ok {
+	if _, ok, err := eng.store.GetMeta(ctx, metaV1ImportReport); err != nil || !ok {
 		t.Fatalf("v1_import_report meta missing (ok=%v err=%v)", ok, err)
 	}
-	if v, _, _ := eng.store.GetMeta(ctx, "v1_import_state"); v != "success" {
+	if v, _, _ := eng.store.GetMeta(ctx, metaV1ImportState); v != "success" {
 		t.Errorf("v1_import_state = %q, want success", v)
 	}
-	if _, ok, _ := eng.store.GetMeta(ctx, "v1_imported_at"); !ok {
+	if _, ok, _ := eng.store.GetMeta(ctx, metaV1ImportedAt); !ok {
 		t.Error("v1_imported_at meta missing")
 	}
 
@@ -193,13 +193,13 @@ func TestV1ImportFailureRetries(t *testing.T) {
 	if _, ok := meta(eng, "migrated_at"); !ok {
 		t.Error("migrated_at missing: bootstrap did not complete")
 	}
-	if v, _ := meta(eng, "v1_import_state"); v != "failed" {
+	if v, _ := meta(eng, metaV1ImportState); v != "failed" {
 		t.Errorf("v1_import_state = %q, want failed", v)
 	}
-	if v, _ := meta(eng, "v1_import_error"); v == "" {
+	if v, _ := meta(eng, metaV1ImportError); v == "" {
 		t.Error("v1_import_error empty: the failure is invisible")
 	}
-	if _, ok := meta(eng, "v1_imported_at"); ok {
+	if _, ok := meta(eng, metaV1ImportedAt); ok {
 		t.Error("v1_imported_at stamped despite failure")
 	}
 	eng.Close()
@@ -219,13 +219,13 @@ func TestV1ImportFailureRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng2.Close()
-	if v, _ := meta(eng2, "v1_import_state"); v != "success" {
+	if v, _ := meta(eng2, metaV1ImportState); v != "success" {
 		t.Errorf("v1_import_state after retry = %q, want success", v)
 	}
-	if v, _ := meta(eng2, "v1_import_error"); v != "" {
+	if v, _ := meta(eng2, metaV1ImportError); v != "" {
 		t.Errorf("v1_import_error not cleared: %q", v)
 	}
-	if _, ok := meta(eng2, "v1_imported_at"); !ok {
+	if _, ok := meta(eng2, metaV1ImportedAt); !ok {
 		t.Error("v1_imported_at missing after successful retry")
 	}
 	var n int
@@ -288,10 +288,10 @@ func TestV1ImportStatErrorIsFailure(t *testing.T) {
 		}
 		return v, ok
 	}
-	if v, _ := meta("v1_import_state"); v != "failed" {
+	if v, _ := meta(metaV1ImportState); v != "failed" {
 		t.Fatalf("v1_import_state = %q, want failed (a stat error is not no-legacy-db)", v)
 	}
-	if v, _ := meta("v1_import_error"); v == "" {
+	if v, _ := meta(metaV1ImportError); v == "" {
 		t.Error("v1_import_error empty for the unreachable legacy file")
 	}
 
@@ -305,10 +305,10 @@ func TestV1ImportStatErrorIsFailure(t *testing.T) {
 	}
 	seedV1DB(t, dataFile, live)
 	maybeImportV1(ctx, store, dataFile, io.Discard)
-	if v, _ := meta("v1_import_state"); v != "success" {
+	if v, _ := meta(metaV1ImportState); v != "success" {
 		t.Errorf("v1_import_state after retry = %q, want success", v)
 	}
-	if v, _ := meta("v1_import_error"); v != "" {
+	if v, _ := meta(metaV1ImportError); v != "" {
 		t.Errorf("v1_import_error not cleared: %q", v)
 	}
 
@@ -319,7 +319,7 @@ func TestV1ImportStatErrorIsFailure(t *testing.T) {
 	}
 	defer store2.Close()
 	maybeImportV1(ctx, store2, filepath.Join(t.TempDir(), "nope.db"), io.Discard)
-	if v, _, _ := store2.GetMeta(ctx, "v1_import_state"); v != "no-legacy-db" {
+	if v, _, _ := store2.GetMeta(ctx, metaV1ImportState); v != "no-legacy-db" {
 		t.Errorf("v1_import_state for missing file = %q, want no-legacy-db", v)
 	}
 
@@ -335,17 +335,17 @@ func TestV1ImportStatErrorIsFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	maybeImportV1(ctx, store3, garbage, io.Discard)
-	if v, _, _ := store3.GetMeta(ctx, "v1_import_state"); v != "failed" {
+	if v, _, _ := store3.GetMeta(ctx, metaV1ImportState); v != "failed" {
 		t.Fatalf("v1_import_state for garbage file = %q, want failed", v)
 	}
 	if err := os.Remove(garbage); err != nil {
 		t.Fatal(err)
 	}
 	maybeImportV1(ctx, store3, garbage, io.Discard)
-	if v, _, _ := store3.GetMeta(ctx, "v1_import_state"); v != "no-legacy-db" {
+	if v, _, _ := store3.GetMeta(ctx, metaV1ImportState); v != "no-legacy-db" {
 		t.Errorf("v1_import_state after removal = %q, want no-legacy-db", v)
 	}
-	if v, _, _ := store3.GetMeta(ctx, "v1_import_error"); v != "" {
+	if v, _, _ := store3.GetMeta(ctx, metaV1ImportError); v != "" {
 		t.Errorf("v1_import_error stale after failed→absent transition: %q", v)
 	}
 }
@@ -416,17 +416,9 @@ func TestRootSpecsAreValidatedOnEveryPath(t *testing.T) {
 			dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
 			// An initialized store, so the skipping path takes its early
 			// return rather than falling through to the first-run bootstrap.
-			store, err := db.Open(ctx, storeDBPath(dataFile))
-			if err != nil {
-				t.Fatal(err)
-			}
-			markInitialized(t, store)
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
+			initStore(t, dataFile)
 
 			cmd := pinRoots(t, dataFile, t.TempDir())
-			cmd.Flags().StringArray("root", nil, "")
 			if err := cmd.Flags().Set("root", "gemini=/tmp/x"); err != nil {
 				t.Fatal(err)
 			}
@@ -453,17 +445,8 @@ func TestExplicitRootsMustExist(t *testing.T) {
 	newCmd := func(t *testing.T) *cobra.Command {
 		t.Helper()
 		dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-		store, err := db.Open(ctx, storeDBPath(dataFile))
-		if err != nil {
-			t.Fatal(err)
-		}
-		markInitialized(t, store)
-		if err := store.Close(); err != nil {
-			t.Fatal(err)
-		}
-		cmd := pinRoots(t, dataFile, t.TempDir())
-		cmd.Flags().StringArray("root", nil, "")
-		return cmd
+		initStore(t, dataFile)
+		return pinRoots(t, dataFile, t.TempDir())
 	}
 
 	t.Run("claude-dir on a skipping path", func(t *testing.T) {
@@ -576,7 +559,7 @@ func TestDataFileAtV2StoreStopsRetrying(t *testing.T) {
 	if rep := maybeImportV1(ctx, store, v2Path, &log); rep != nil {
 		t.Fatalf("the v2 store was imported as v1: %+v", rep)
 	}
-	if state, _, _ := store.GetMeta(ctx, "v1_import_state"); state != v1ImportNoLegacyDB {
+	if state, _, _ := store.GetMeta(ctx, metaV1ImportState); state != v1ImportNoLegacyDB {
 		t.Errorf("v1_import_state = %q, want %q (a retrying state repeats a doomed import forever)",
 			state, v1ImportNoLegacyDB)
 	}
@@ -625,8 +608,8 @@ func TestBootstrapOutcomeIsRecorded(t *testing.T) {
 	// A pass that cannot complete records the reason and returns it, so
 	// the serving path knows not to flip readiness.
 	failure := errors.New("indexing: disk on fire")
-	if err := runBootstrap(ctx, eng, func(context.Context) error { return failure }); !errors.Is(err, failure) {
-		t.Fatalf("runBootstrap error = %v, want the pass's own error", err)
+	if err := recordOutcome(eng, func(context.Context) error { return failure })(ctx); !errors.Is(err, failure) {
+		t.Fatalf("recorded pass error = %v, want the pass's own error", err)
 	}
 	if state, _, _ := eng.store.GetMeta(ctx, metaBootstrapState); state != bootstrapFailed {
 		t.Errorf("%s after a failed pass = %q, want %q", metaBootstrapState, state, bootstrapFailed)
@@ -637,7 +620,7 @@ func TestBootstrapOutcomeIsRecorded(t *testing.T) {
 
 	// A later good pass clears it — readiness must not stay held once the
 	// index is whole again.
-	if err := runBootstrap(ctx, eng, func(context.Context) error { return nil }); err != nil {
+	if err := recordOutcome(eng, func(context.Context) error { return nil })(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if state, _, _ := eng.store.GetMeta(ctx, metaBootstrapState); state != bootstrapSuccess {
@@ -754,6 +737,11 @@ func pinRoots(t *testing.T, dataFile, claudeDir string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")
 	cmd.Flags().String("claude-dir", "", "")
+	// --root is part of the pinning, not an extra: every path that opens an
+	// engine reads it (ingestOptions, checkExplicitRoots), so a command
+	// without it panics on the lookup. Four helpers registered it
+	// separately, right after calling this one.
+	cmd.Flags().StringArray("root", nil, "")
 	if err := cmd.Flags().Set("claude-dir", claudeDir); err != nil {
 		t.Fatal(err)
 	}
@@ -842,7 +830,7 @@ func seedV1HistoryDB(t *testing.T, path, sourcePath string, entries ...v1History
 // importReport reads back the report the bootstrap import recorded.
 func importReport(t *testing.T, eng *engine) migrate.Report {
 	t.Helper()
-	raw, ok, err := eng.store.GetMeta(context.Background(), "v1_import_report")
+	raw, ok, err := eng.store.GetMeta(context.Background(), metaV1ImportReport)
 	if err != nil || !ok {
 		t.Fatalf("v1_import_report meta missing (ok=%v err=%v)", ok, err)
 	}
@@ -1027,7 +1015,7 @@ func TestV1ImportRetriesUnderSkipIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, _, err := eng.store.GetMeta(ctx, "v1_import_state")
+	state, _, err := eng.store.GetMeta(ctx, metaV1ImportState)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1049,17 +1037,17 @@ func TestV1ImportRetriesUnderSkipIndex(t *testing.T) {
 	}
 	defer eng.Close()
 
-	state, _, err = eng.store.GetMeta(ctx, "v1_import_state")
+	state, _, err = eng.store.GetMeta(ctx, metaV1ImportState)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if state != v1ImportSuccess {
 		t.Errorf("v1_import_state = %q after a --skip-index open, want success", state)
 	}
-	if v, _, _ := eng.store.GetMeta(ctx, "v1_import_error"); v != "" {
+	if v, _, _ := eng.store.GetMeta(ctx, metaV1ImportError); v != "" {
 		t.Errorf("v1_import_error = %q, want it cleared after success", v)
 	}
-	if _, ok, _ := eng.store.GetMeta(ctx, "v1_imported_at"); !ok {
+	if _, ok, _ := eng.store.GetMeta(ctx, metaV1ImportedAt); !ok {
 		t.Error("v1_imported_at not stamped")
 	}
 }

@@ -33,14 +33,12 @@ type ArtifactsFilter struct {
 // with offset, and an explicit larger limit is honored — the old 500
 // clamp silently truncated corpora past it.
 func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactSummary, error) {
-	if err := checkPaging(f.Limit, f.Offset); err != nil {
+	if err := checkOffset(f.Offset); err != nil {
 		return nil, err
 	}
-	limit, err := ArtifactsLimit.resolve(f.Limit)
-	if err != nil {
+	if err := ArtifactsLimit.apply(&f.Limit); err != nil {
 		return nil, err
 	}
-	f.Limit = limit
 	var where []string
 	var args []any
 	if f.Agent != "" {

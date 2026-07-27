@@ -18,7 +18,9 @@ import (
 )
 
 // newService opens an empty store; ingest is the caller's business.
-func newService(t *testing.T) *query.Service {
+// openStore opens an empty store with the embedded pricing table — the
+// two-thirds of every service helper here that never varies.
+func openStore(t *testing.T) (*db.Store, *pricing.Table) {
 	t.Helper()
 	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
 	if err != nil {
@@ -29,22 +31,19 @@ func newService(t *testing.T) *query.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return query.New(store, table)
+	return store, table
+}
+
+func newService(t *testing.T) *query.Service {
+	t.Helper()
+	return query.New(openStore(t))
 }
 
 // newFixtureService ingests the Claude fixture corpus, which the search
 // assertions need real hits from.
 func newFixtureService(t *testing.T) *query.Service {
 	t.Helper()
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { store.Close() })
-	table, err := pricing.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, table := openStore(t)
 	fixtures, err := filepath.Abs("../../testdata/agents/claude-code")
 	if err != nil {
 		t.Fatal(err)

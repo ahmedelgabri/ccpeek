@@ -130,25 +130,21 @@ func opCommand(op ops.Op) *cobra.Command {
 	for _, p := range flags {
 		switch p.Type {
 		case "string":
-			c.Flags().String(p.FlagName(), stringDefault(p.Default), p.Desc)
+			// The registry types its defaults (an integer default reaches an
+			// MCP schema as 200, not "200"), so each case asserts its own; a
+			// parameter with no declared default gets the zero value, which is
+			// the "unset" every op already understands.
+			def, _ := p.Default.(string)
+			c.Flags().String(p.FlagName(), def, p.Desc)
 		case "integer":
-			c.Flags().Int(p.FlagName(), intDefault(p.Default), p.Desc)
+			def, _ := p.Default.(int)
+			c.Flags().Int(p.FlagName(), def, p.Desc)
 		case "boolean":
 			c.Flags().Bool(p.FlagName(), false, p.Desc)
 		}
 	}
 	c.Flags().Bool("no-index", false, "Skip the incremental re-index before querying")
 	return c
-}
-
-func stringDefault(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
-func intDefault(v any) int {
-	n, _ := v.(int)
-	return n
 }
 
 // runOp opens the engine, decodes the CLI arguments into the registry's

@@ -47,6 +47,14 @@ type Options struct {
 	// it is hashed. Callbacks run on the ingest goroutine — keep them
 	// cheap and throttle any output on the consumer side.
 	Progress func(Progress)
+	// OnPass, when non-nil, brackets each pass: true when Run starts, false
+	// when it returns — including the passes Watch drives itself, which a
+	// caller outside this package cannot otherwise see. Watch announces
+	// only the END of a pass that CHANGED something, so a consumer wanting
+	// "is a pass running" had to INFER it from progress events and a
+	// timeout; this states it. Like Progress, it runs on the ingest
+	// goroutine: keep it cheap.
+	OnPass func(running bool)
 }
 
 // Progress is one pipeline progress event.
@@ -98,6 +106,13 @@ type resolvedRoot struct {
 
 // Run executes one ingest pass.
 func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
+	// The bracket wraps the WHOLE pass, every return included — which is
+	// why it lives here rather than at the call sites: Watch runs passes
+	// nobody outside this package calls.
+	if opts.OnPass != nil {
+		opts.OnPass(true)
+		defer opts.OnPass(false)
+	}
 	started := time.Now()
 	if opts.Getenv == nil {
 		opts.Getenv = os.Getenv

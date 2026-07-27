@@ -26,10 +26,6 @@ func TestBadFilterValuesAreBadRequests(t *testing.T) {
 			_, err := s.Sessions(ctx, SessionsFilter{Until: "07-2026"})
 			return err
 		}},
-		{"sessions negative limit", func() error {
-			_, err := s.Sessions(ctx, SessionsFilter{Limit: -1})
-			return err
-		}},
 		{"sessions negative offset", func() error {
 			_, err := s.Sessions(ctx, SessionsFilter{Offset: -5})
 			return err
@@ -46,10 +42,6 @@ func TestBadFilterValuesAreBadRequests(t *testing.T) {
 			_, err := s.Usage(ctx, UsageFilter{GroupBy: "nonsense"})
 			return err
 		}},
-		{"artifacts negative limit", func() error {
-			_, err := s.Artifacts(ctx, ArtifactsFilter{Limit: -2})
-			return err
-		}},
 		{"history negative offset", func() error {
 			_, err := s.History(ctx, HistoryFilter{Offset: -1})
 			return err
@@ -57,10 +49,6 @@ func TestBadFilterValuesAreBadRequests(t *testing.T) {
 		// tools and transcript reached SQL unchecked: they are the two ops
 		// whose bounds the HTTP layer validated and the query layer did not,
 		// so the agent surfaces answered a malformed request in full.
-		{"tools negative limit", func() error {
-			_, err := s.SessionTools(ctx, "claude-code", claudeSession1, ToolsFilter{Limit: -1})
-			return err
-		}},
 		{"tools negative offset", func() error {
 			_, err := s.SessionTools(ctx, "claude-code", claudeSession1, ToolsFilter{Offset: -3})
 			return err
@@ -73,35 +61,8 @@ func TestBadFilterValuesAreBadRequests(t *testing.T) {
 			_, err := s.SessionTools(ctx, "claude-code", claudeSession1, ToolsFilter{ToSeq: -1})
 			return err
 		}},
-		{"transcript negative limit", func() error {
-			_, err := s.Transcript(ctx, "claude-code", claudeSession1, TranscriptOptions{Limit: -10})
-			return err
-		}},
 		{"transcript negative from_seq", func() error {
 			_, err := s.Transcript(ctx, "claude-code", claudeSession1, TranscriptOptions{FromSeq: -10})
-			return err
-		}},
-		// Above the ceiling is a refusal, not a truncation: an agent that
-		// asked for everything and got a capped page has no way to tell.
-		{"sessions over cap", func() error {
-			_, err := s.Sessions(ctx, SessionsFilter{Limit: SessionsLimit.Max + 1})
-			return err
-		}},
-		{"transcript over cap", func() error {
-			_, err := s.Transcript(ctx, "claude-code", claudeSession1,
-				TranscriptOptions{Limit: TranscriptLimit.Max + 1})
-			return err
-		}},
-		{"search over cap", func() error {
-			_, err := s.Search(ctx, "rate", SearchFilter{Limit: SearchLimit.Max + 1})
-			return err
-		}},
-		{"commands over cap", func() error {
-			_, err := s.Commands(ctx, CommandsFilter{Limit: CommandsLimit.Max + 1})
-			return err
-		}},
-		{"blocks over cap", func() error {
-			_, err := s.Blocks(ctx, "", BlocksLimit.Max+1)
 			return err
 		}},
 	} {
@@ -175,23 +136,86 @@ func TestNegativeBoundsAreRefusedNotIgnored(t *testing.T) {
 	}
 }
 
-// The ceiling itself is a valid page size — the web UI asks for exactly
-// the transcript maximum — and the uncapped ops keep honoring any
-// explicit page.
-func TestLimitsAtAndBeyondTheCeiling(t *testing.T) {
+// Every op's limit obeys ONE policy — negative is a mistake, zero takes
+// the op's default, the ceiling itself is a valid page size (the web UI
+// asks for exactly the transcript maximum), above it is a refusal rather
+// than a truncation, and an uncapped op honors any explicit page. It is
+// checked as one table over the Limit vars because it used to be checked
+// per op, by hand: Blocks was the op nobody wrote the negative case for,
+// and `blocks --limit -5` reached SQL as the unbounded LIMIT -1 while the
+// same limit on sessions was a 400.
+func TestLimitPolicyHoldsForEveryOp(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	if _, err := s.Transcript(ctx, "claude-code", claudeSession1,
-		TranscriptOptions{Limit: TranscriptLimit.Max}); err != nil {
-		t.Errorf("transcript at its maximum was rejected: %v", err)
-	}
-	if _, err := s.Sessions(ctx, SessionsFilter{Limit: SessionsLimit.Max}); err != nil {
-		t.Errorf("sessions at its maximum was rejected: %v", err)
-	}
-	if _, err := s.Artifacts(ctx, ArtifactsFilter{Limit: 5000}); err != nil {
-		t.Errorf("artifacts is uncapped but rejected a large page: %v", err)
-	}
-	if _, err := s.History(ctx, HistoryFilter{Limit: 5000}); err != nil {
-		t.Errorf("history is uncapped but rejected a large page: %v", err)
+
+	for _, tt := range []struct {
+		name  string
+		limit Limit
+		call  func(n int) error
+	}{
+		{"sessions", SessionsLimit, func(n int) error {
+			_, err := s.Sessions(ctx, SessionsFilter{Limit: n})
+			return err
+		}},
+		{"transcript", TranscriptLimit, func(n int) error {
+			_, err := s.Transcript(ctx, "claude-code", claudeSession1, TranscriptOptions{Limit: n})
+			return err
+		}},
+		{"search", SearchLimit, func(n int) error {
+			_, err := s.Search(ctx, "rate", SearchFilter{Limit: n})
+			return err
+		}},
+		{"commands", CommandsLimit, func(n int) error {
+			_, err := s.Commands(ctx, CommandsFilter{Limit: n})
+			return err
+		}},
+		// The export walk enforces the same ceiling — an over-cap limit
+		// must not become a quietly clipped history file — but leaves an
+		// unset limit unbounded rather than resolving it to a page.
+		{"commands export", CommandsLimit, func(n int) error {
+			return s.EachCommand(ctx, CommandsFilter{Limit: n}, func(CommandRow) error { return nil })
+		}},
+		{"blocks", BlocksLimit, func(n int) error {
+			_, err := s.Blocks(ctx, "", n)
+			return err
+		}},
+		{"artifacts", ArtifactsLimit, func(n int) error {
+			_, err := s.Artifacts(ctx, ArtifactsFilter{Limit: n})
+			return err
+		}},
+		{"history", HistoryLimit, func(n int) error {
+			_, err := s.History(ctx, HistoryFilter{Limit: n})
+			return err
+		}},
+		{"tools", ToolsLimit, func(n int) error {
+			_, err := s.SessionTools(ctx, "claude-code", claudeSession1, ToolsFilter{Limit: n})
+			return err
+		}},
+		{"usage", UsageLimit, func(n int) error {
+			_, err := s.Usage(ctx, UsageFilter{Limit: n})
+			return err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(-1); !errors.Is(err, ErrBadRequest) {
+				t.Errorf("limit=-1: err = %v, want ErrBadRequest", err)
+			}
+			if err := tt.call(0); err != nil {
+				t.Errorf("unset limit rejected: %v", err)
+			}
+			if tt.limit.Max == 0 {
+				if err := tt.call(5000); err != nil {
+					t.Errorf("uncapped op rejected a large explicit page: %v", err)
+				}
+				return
+			}
+			if err := tt.call(tt.limit.Max); err != nil {
+				t.Errorf("limit at the maximum of %d was rejected: %v", tt.limit.Max, err)
+			}
+			if err := tt.call(tt.limit.Max + 1); !errors.Is(err, ErrBadRequest) {
+				t.Errorf("limit=%d (one past the maximum): err = %v, want ErrBadRequest",
+					tt.limit.Max+1, err)
+			}
+		})
 	}
 }

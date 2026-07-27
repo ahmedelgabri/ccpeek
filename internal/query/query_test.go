@@ -14,6 +14,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/codex"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/opencode"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
+	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
@@ -27,37 +28,51 @@ const (
 	piFork         = "1a2b3c4d-7777-8888-9999-000011112222"
 )
 
-// newService ingests the fixture corpus once per test into a fresh store.
-func newService(t *testing.T) *Service {
+// fixtureService ingests the named agents' fixture corpora into a fresh
+// store and returns a service over it. The three builders it replaces
+// differed only in WHICH agents they ingested, and each carried its own
+// copy of the store/pricing/abs-path/options dance — including one
+// written out inline inside a test.
+//
+// The fixture directory is the agent's own slug, so adding a corpus is
+// one map entry.
+func fixtureService(t *testing.T, slugs ...canon.AgentSlug) *Service {
 	t.Helper()
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+	store, table := newStore(t)
+	known := map[canon.AgentSlug]agent.Adapter{
+		claude.Slug:   claude.New(),
+		pi.Slug:       pi.New(),
+		codex.Slug:    codex.New(),
+		opencode.Slug: opencode.New(),
 	}
-	t.Cleanup(func() { store.Close() })
-	table, err := pricing.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixtures := func(dir string) []string {
-		p, err := filepath.Abs(filepath.Join("../../testdata/agents", dir))
+	adapters := make([]agent.Adapter, 0, len(slugs))
+	roots := make(map[canon.AgentSlug][]string, len(slugs))
+	for _, slug := range slugs {
+		a, ok := known[slug]
+		if !ok {
+			t.Fatalf("no fixture adapter registered for %q", slug)
+		}
+		dir, err := filepath.Abs(filepath.Join("../../testdata/agents", string(slug)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return []string{p}
+		adapters = append(adapters, a)
+		roots[slug] = []string{dir}
 	}
-	runner := ingest.New(store, table, claude.New(), pi.New())
-	if _, err := runner.Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{
-			claude.Slug: fixtures("claude-code"),
-			pi.Slug:     fixtures("pi"),
-		},
-		Getenv: func(string) string { return "" },
-		Home:   "/nonexistent",
+	if _, err := ingest.New(store, table, adapters...).Run(context.Background(), ingest.Options{
+		ConfigRoots: roots,
+		Getenv:      func(string) string { return "" },
+		Home:        "/nonexistent",
 	}); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
 	return New(store, table)
+}
+
+// newService is the default corpus: Claude Code plus Pi.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	return fixtureService(t, claude.Slug, pi.Slug)
 }
 
 func TestSessionsList(t *testing.T) {
@@ -306,35 +321,7 @@ func TestSearch(t *testing.T) {
 // OpenCode reasoning or double-counted Codex reasoning — the exact
 // token totals here break.
 func TestReasoningSemanticsAcrossProviders(t *testing.T) {
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { store.Close() })
-	table, err := pricing.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixtures := func(dir string) []string {
-		p, err := filepath.Abs(filepath.Join("../../testdata/agents", dir))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return []string{p}
-	}
-	runner := ingest.New(store, table, codex.New(), opencode.New())
-	if _, err := runner.Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{
-			codex.Slug:    fixtures("codex"),
-			opencode.Slug: fixtures("opencode"),
-		},
-		Getenv: func(string) string { return "" },
-		Home:   "/nonexistent",
-	}); err != nil {
-		t.Fatalf("ingest: %v", err)
-	}
-	svc := New(store, table)
-
+	svc := fixtureService(t, codex.Slug, opencode.Slug)
 	sessions, err := svc.Sessions(context.Background(), SessionsFilter{})
 	if err != nil {
 		t.Fatal(err)

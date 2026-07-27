@@ -84,18 +84,13 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	if err := checkWindow(f.Since, f.Until); err != nil {
 		return nil, err
 	}
-	if err := checkPaging(f.Limit, 0); err != nil {
-		return nil, err
-	}
 	// Usage is an aggregate surface: its group cardinality is naturally
 	// bounded (days, models, agents, workspaces), so the default is ALL
 	// groups — totals, charts, and CSV exports must never be silently
 	// partial. A positive limit remains an explicit, caller-owned bound.
-	limit, err := UsageLimit.resolve(f.Limit)
-	if err != nil {
+	if err := UsageLimit.apply(&f.Limit); err != nil {
 		return nil, err
 	}
-	f.Limit = limit
 
 	where, args := f.where()
 	limitClause := ""

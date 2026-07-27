@@ -118,6 +118,21 @@ func markInitialized(t *testing.T, store *db.Store) {
 	}
 }
 
+// initStore creates the v2 store for dataFile, stamps it as past its
+// first run, and closes it — the three-step preamble of every command
+// test that exercises the INCREMENTAL path rather than the bootstrap.
+func initStore(t *testing.T, dataFile string) {
+	t.Helper()
+	store, err := db.Open(context.Background(), storeDBPath(dataFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	markInitialized(t, store)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newExportTestCommand(dataFile, format string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")

@@ -69,6 +69,12 @@ var doctorCmd = &cobra.Command{
 		}
 		fmt.Printf("\nStore state:\n  schema version        %s\n", st.SchemaVersion)
 		fmt.Printf("  bootstrap completed   %s\n", st.MigratedAt)
+		// The last pass's outcome, beside the import's. Both are recorded
+		// the same way and both explain missing history, but only the import
+		// was reported here — so a store whose last index pass FAILED (the
+		// state that holds /api/v1/ready at 503) diagnosed as healthy.
+		fmt.Printf("  last index pass       %s\n", st.BootstrapState)
+		fmt.Printf("  last index error      %s\n", st.BootstrapError)
 		fmt.Printf("  v1 import state       %s\n", st.V1ImportState)
 		fmt.Printf("  v1 import error       %s\n", st.V1ImportError)
 		fmt.Printf("  indexed               %d sessions, %d messages\n", st.Sessions, st.Messages)
@@ -78,12 +84,14 @@ var doctorCmd = &cobra.Command{
 
 // storeState is what doctor reads out of an existing store.
 type storeState struct {
-	SchemaVersion string // rendered: a number, or a note when unreadable
-	MigratedAt    string
-	V1ImportState string
-	V1ImportError string
-	Sessions      int
-	Messages      int
+	SchemaVersion  string // rendered: a number, or a note when unreadable
+	MigratedAt     string
+	BootstrapState string
+	BootstrapError string
+	V1ImportState  string
+	V1ImportError  string
+	Sessions       int
+	Messages       int
 }
 
 // readStoreState opens the store strictly read-only and reports its
@@ -110,9 +118,11 @@ func readStoreState(storePath string) (*storeState, error) {
 		return v
 	}
 	st := &storeState{
-		MigratedAt:    meta("migrated_at"),
-		V1ImportState: meta("v1_import_state"),
-		V1ImportError: meta("v1_import_error"),
+		MigratedAt:     meta("migrated_at"),
+		BootstrapState: meta(metaBootstrapState),
+		BootstrapError: meta(metaBootstrapError),
+		V1ImportState:  meta(metaV1ImportState),
+		V1ImportError:  meta(metaV1ImportError),
 	}
 	switch raw := meta("schema_version"); raw {
 	case "(unset)", "(empty)":

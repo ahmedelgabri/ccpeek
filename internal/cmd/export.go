@@ -76,42 +76,37 @@ func runExportCommands(cmd *cobra.Command, args []string) error {
 	}
 	defer eng.Close()
 
-	// query.Commands answers newest-first (the order the UI lists in), and
-	// this used to stream the pages out in that order. A shell history file
-	// is read oldest-first, so an appended export landed reversed: `fc -R`
-	// and `history -r` then present yesterday's commands as the most recent
-	// ones, and a later export appended after it interleaves wrongly.
-	// The HTTP download reverses for the same reason (see the formatted
-	// branch of the commands endpoint) — collect, then write backwards.
-	const page = 1000
-	var entries []model.CommandEntry
-	for offset := 0; ; offset += page {
-		rows, err := eng.query.Commands(ctx, query.CommandsFilter{
-			Agent:   agent,
-			Project: project,
-			Query:   search,
-			Since:   from,
-			Until:   to,
-			Limit:   page,
-			Offset:  offset,
-		})
-		if err != nil {
-			return fmt.Errorf("loading commands: %w", err)
-		}
-		for _, r := range rows {
-			entries = append(entries, model.CommandEntry{Command: r.Command, Timestamp: r.At})
-		}
-		if len(rows) < page {
-			break
-		}
+	// EachCommand walks the selection OLDEST FIRST, which is the order a
+	// shell history file is read in: an export appended in the op's own
+	// newest-first order lands reversed, and `fc -R` / `history -r` then
+	// present yesterday's commands as the most recent ones. The HTTP
+	// download walks the same way, through the same call — this used to
+	// page the newest-first op to completion and buffer the whole corpus
+	// before writing a byte, and so did the endpoint, separately.
+	written := 0
+	var writeErr error
+	err = eng.query.EachCommand(ctx, query.CommandsFilter{
+		Agent:   agent,
+		Project: project,
+		Query:   search,
+		Since:   from,
+		Until:   to,
+	}, func(row query.CommandRow) error {
+		written++
+		writeErr = model.WriteCommand(os.Stdout,
+			model.CommandEntry{Command: row.Command, Timestamp: row.At}, format)
+		return writeErr
+	})
+	// A failed stdout write is reported as itself; only a query failure is
+	// "loading commands".
+	if writeErr != nil {
+		return writeErr
 	}
-	for i := len(entries) - 1; i >= 0; i-- {
-		if err := model.WriteCommand(os.Stdout, entries[i], format); err != nil {
-			return err
-		}
+	if err != nil {
+		return fmt.Errorf("loading commands: %w", err)
 	}
 
-	if len(entries) == 0 {
+	if written == 0 {
 		fmt.Fprintln(os.Stderr, "hint: no commands found. Run 'ccpeek --index-only' first to index your agent data.")
 	}
 

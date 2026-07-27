@@ -133,7 +133,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	port, _ := cmd.Flags().GetInt("port")
-	skipIndex, _ := cmd.Flags().GetBool("skip-index")
+	// Read ONCE, as the decision the engine takes (flag name attached), and
+	// reused by the conflict checks below — a second GetBool for the same
+	// flag is a second thing to keep in step.
+	skipIndex := skipFlag(cmd, "skip-index")
 	indexOnly, _ := cmd.Flags().GetBool("index-only")
 	openBrowser, _ := cmd.Flags().GetBool("open")
 	watch, _ := cmd.Flags().GetBool("watch")
@@ -153,13 +156,13 @@ func run(cmd *cobra.Command, args []string) error {
 	// and were being ignored: --index-only never starts a server, so
 	// every serving flag beside it asks for something that cannot happen,
 	// and --prune is work the skipped pass would have done.
-	if skipIndex && indexOnly {
+	if skipIndex.skip && indexOnly {
 		return fmt.Errorf("--skip-index and --index-only are mutually exclusive")
 	}
-	if skipIndex && rebuild {
+	if skipIndex.skip && rebuild {
 		return fmt.Errorf("--skip-index and --rebuild are mutually exclusive")
 	}
-	if skipIndex && prune {
+	if skipIndex.skip && prune {
 		return fmt.Errorf("--skip-index and --prune are mutually exclusive: pruning happens during an index pass")
 	}
 	if indexOnly {
@@ -199,7 +202,7 @@ func run(cmd *cobra.Command, args []string) error {
 	// or --root that does not exist fails here, on every path. That check
 	// used to live in this function and only in this function, so the
 	// subcommands accepted a missing directory the root command rejected.
-	eng, bootstrap, err := openEngineDeferred(ctx, cmd, skipFlag(cmd, "skip-index"), os.Stderr, func(o *ingest.Options) {
+	eng, bootstrap, err := openEngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
 		o.Rebuild = rebuild
 		o.Prune = prune
 		var logProgress func(ingest.Progress)
@@ -227,34 +230,29 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	defer eng.Close()
 
-	// The health payload carries the v1 import outcome so a failed import
-	// stays visible in the UI instead of dissolving into a startup log
-	// line (the bootstrap retries it on every start until it succeeds).
-	readV1Import := func() api.V1ImportStatus {
+	// Both recorded outcomes in ONE meta round trip, because health and
+	// readiness both want both: the v1 import outcome so a failed import
+	// stays visible in the UI instead of dissolving into a startup log line
+	// (the bootstrap retries it on every start until it succeeds), and the
+	// bootstrap outcome so /api/v1/ready can say WHY it is holding at 503
+	// (index-failed with the recorded error, not a perpetual "indexing").
+	// The SPA polls health every 1.5s for the whole first pass; two reads
+	// of the same table per poll was one too many.
+	readOutcomes := func() (api.V1ImportStatus, api.BootstrapStatus) {
 		meta, err := eng.store.GetMetaMulti(ctx,
-			"v1_import_state", "v1_import_error", "v1_imported_at")
+			metaV1ImportState, metaV1ImportError, metaV1ImportedAt,
+			metaBootstrapState, metaBootstrapError)
 		if err != nil {
-			return api.V1ImportStatus{}
+			return api.V1ImportStatus{}, api.BootstrapStatus{}
 		}
 		return api.V1ImportStatus{
-			State:      meta["v1_import_state"],
-			Error:      meta["v1_import_error"],
-			ImportedAt: meta["v1_imported_at"],
-		}
-	}
-
-	// The readiness detail: a failed bootstrap holds /api/v1/ready at
-	// 503, and this closure is how the endpoint says WHY (index-failed
-	// with the recorded error, not a perpetual "indexing").
-	readBootstrap := func() api.BootstrapStatus {
-		meta, err := eng.store.GetMetaMulti(ctx, "bootstrap_state", "bootstrap_error")
-		if err != nil {
-			return api.BootstrapStatus{}
-		}
-		return api.BootstrapStatus{
-			State: meta["bootstrap_state"],
-			Error: meta["bootstrap_error"],
-		}
+				State:      meta[metaV1ImportState],
+				Error:      meta[metaV1ImportError],
+				ImportedAt: meta[metaV1ImportedAt],
+			}, api.BootstrapStatus{
+				State: meta[metaBootstrapState],
+				Error: meta[metaBootstrapError],
+			}
 	}
 
 	// The mutex serializes the bootstrap scan with watch-triggered
@@ -272,7 +270,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if indexOnly {
 		if bootstrap != nil {
-			if err := runBootstrap(ctx, eng, bootstrap); err != nil {
+			if err := bootstrap(ctx); err != nil {
 				return err
 			}
 		}
@@ -312,14 +310,14 @@ func run(cmd *cobra.Command, args []string) error {
 	var ready atomic.Bool
 	go func() {
 		if bootstrap != nil {
-			err := runBootstrap(ctx, eng, bootstrap)
+			err := bootstrap(ctx)
 			if err != nil {
 				// Readiness is NOT flipped. The server keeps serving what is
 				// already indexed (queries answer, the UI loads), but
 				// /api/v1/ready stays 503 — the same policy a failed v1 import
 				// gets, for the same reason: a caller that blocks on readiness
 				// is asking "is the history complete", and after a failed pass
-				// it is not. runBootstrap recorded the reason in meta so the
+				// it is not. The pass recorded the reason in meta so the
 				// state outlives this log line.
 				events.Notify()
 				if ctx.Err() == nil {
@@ -365,7 +363,12 @@ func run(cmd *cobra.Command, args []string) error {
 		openURL(url)
 	}
 
-	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import, readBootstrap)))
+	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, api.Deps{
+		Events:   events,
+		Ready:    ready.Load,
+		Progress: readProgress,
+		Outcomes: readOutcomes,
+	})))
 }
 
 // scanChanged scans what an ingest pass changed and reports through

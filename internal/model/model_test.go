@@ -2,9 +2,26 @@ package model
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
+
+// formatCommands writes a whole slice in one call — the shape these
+// format cases are written against. Both exporters stream row by row
+// through WriteCommand now, so the slice form has no caller outside this
+// file and lives here rather than in the package.
+func formatCommands(w io.Writer, commands []CommandEntry, format string) error {
+	if err := ValidateCommandFormat(format); err != nil {
+		return err
+	}
+	for _, cmd := range commands {
+		if err := WriteCommand(w, cmd, format); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func TestFormatCommands(t *testing.T) {
 	cmds := []CommandEntry{
@@ -14,7 +31,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("plain", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "plain")
+		_ = formatCommands(&buf, cmds, "plain")
 		out := buf.String()
 		if !strings.Contains(out, "ls -la\n") {
 			t.Error("plain format missing command")
@@ -26,7 +43,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("bash", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "bash")
+		_ = formatCommands(&buf, cmds, "bash")
 		if !strings.Contains(buf.String(), "ls -la\n") {
 			t.Error("bash format missing command")
 		}
@@ -34,7 +51,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("zsh", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "zsh")
+		_ = formatCommands(&buf, cmds, "zsh")
 		out := buf.String()
 		if !strings.Contains(out, ":0;ls -la") {
 			t.Error("zsh format missing command with timestamp")
@@ -49,7 +66,7 @@ func TestFormatCommands(t *testing.T) {
 			{Command: "git log --shortstat |\nawk '/^ [0-9]/ { f += $1 }'\nEND", Timestamp: "2025-01-15T10:30:00Z"},
 		}
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, multiCmds, "zsh")
+		_ = formatCommands(&buf, multiCmds, "zsh")
 		out := buf.String()
 		// Non-empty continuation lines end with \\
 		if !strings.Contains(out, "\\\\\n") {
@@ -62,7 +79,7 @@ func TestFormatCommands(t *testing.T) {
 			{Command: "echo hello\n\necho world", Timestamp: "2025-01-15T10:30:00Z"},
 		}
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, multiCmds, "zsh")
+		_ = formatCommands(&buf, multiCmds, "zsh")
 		out := buf.String()
 		// "echo hello" (non-empty) → ends with \\
 		// "" (empty) → ends with \
@@ -75,7 +92,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("fish", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "fish")
+		_ = formatCommands(&buf, cmds, "fish")
 		out := buf.String()
 		if !strings.Contains(out, "- cmd: ls -la") {
 			t.Error("fish format missing command")
@@ -95,7 +112,7 @@ func TestFormatCommands(t *testing.T) {
 			{Command: "git log --shortstat |\nawk '/^ [0-9]/ { f += $1 }'", Timestamp: "2025-01-15T10:30:00Z"},
 		}
 		var buf bytes.Buffer
-		if err := FormatCommands(&buf, multiCmds, "fish"); err != nil {
+		if err := formatCommands(&buf, multiCmds, "fish"); err != nil {
 			t.Fatal(err)
 		}
 		out := buf.String()
@@ -118,7 +135,7 @@ func TestFormatCommands(t *testing.T) {
 			{Command: "printf 'a'\n", Timestamp: "2025-01-15T10:30:00Z"},
 		}
 		var buf bytes.Buffer
-		if err := FormatCommands(&buf, cmds, "fish"); err != nil {
+		if err := formatCommands(&buf, cmds, "fish"); err != nil {
 			t.Fatal(err)
 		}
 		out := buf.String()
@@ -136,7 +153,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("invalid_format", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := FormatCommands(&buf, cmds, "wat"); err == nil {
+		if err := formatCommands(&buf, cmds, "wat"); err == nil {
 			t.Error("expected unsupported format error")
 		}
 	})

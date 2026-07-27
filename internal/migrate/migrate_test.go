@@ -109,6 +109,21 @@ func buildV1DB(t *testing.T, liveSourcePath string) string {
 	return path
 }
 
+// insertV1History adds one history row to a v1 database buildV1DB made,
+// for the tests that need an entry with a source path of their own.
+func insertV1History(t *testing.T, v1Path, display, sourcePath string) {
+	t.Helper()
+	v1, err := sql.Open("sqlite", "file:"+v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v1.Close()
+	if _, err := v1.Exec(`INSERT INTO history (display, timestamp, source_path)
+	      VALUES (?, 1746093600000, ?)`, display, sourcePath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestImportV1(t *testing.T) {
 	ctx := context.Background()
 
@@ -269,29 +284,10 @@ func TestImportV1HistoryEscapesLiveSourceReplacement(t *testing.T) {
 	if err := os.WriteFile(livePath, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	v1Path := filepath.Join(t.TempDir(), "ccpeek.db")
-	v1, err := sql.Open("sqlite", "file:"+v1Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v1.Exec(`
-		CREATE TABLE projects (id INTEGER PRIMARY KEY, dir_name TEXT,
-			display_name TEXT, canonical_path TEXT);
-		CREATE TABLE sessions (id INTEGER PRIMARY KEY, session_id TEXT,
-			project_id INTEGER, first_prompt TEXT, created_at TEXT,
-			modified_at TEXT, git_branch TEXT, project_path TEXT, source_path TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id INTEGER,
-			seq INTEGER, type TEXT, role TEXT, timestamp TEXT, uuid TEXT,
-			content TEXT, cwd TEXT);
-		CREATE TABLE history (id INTEGER PRIMARY KEY, source_id INTEGER,
-			display TEXT, timestamp INTEGER, project TEXT, source_path TEXT);`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v1.Exec(`INSERT INTO history (display, timestamp, source_path)
-		VALUES ('rotated out of the file', 1746093600000, ?)`, livePath); err != nil {
-		t.Fatal(err)
-	}
-	v1.Close()
+	// The shared v1 fixture, plus the one row this test is about: an entry
+	// the live file has since rotated out, still attributed to that file.
+	v1Path := buildV1DB(t, livePath)
+	insertV1History(t, v1Path, "rotated out of the file", livePath)
 
 	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
 	if err != nil {
@@ -302,8 +298,9 @@ func TestImportV1HistoryEscapesLiveSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportV1: %v", err)
 	}
-	if report.HistoryEntries != 1 {
-		t.Fatalf("imported history entries = %d, want 1", report.HistoryEntries)
+	if report.HistoryEntries != 2 {
+		t.Fatalf("imported history entries = %d, want 2 (the fixture's retained entry and the rotated-out one)",
+			report.HistoryEntries)
 	}
 
 	// What the next ingest pass over the live file does first.

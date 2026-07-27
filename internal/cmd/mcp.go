@@ -69,7 +69,7 @@ func runMCP(cmd *cobra.Command, stdin io.Reader, stdout, logw io.Writer, debounc
 		return err
 	}
 	var index indexState
-	watchOpts.Progress = index.progress
+	watchOpts.OnPass = index.pass
 
 	// The background pipeline must not outlive the store. On EOF — a
 	// client that connects, probes, and disconnects — Serve returns while
@@ -99,10 +99,17 @@ func runMCP(cmd *cobra.Command, stdin io.Reader, stdout, logw io.Writer, debounc
 		// ingest's write transactions — and MCP processes requests
 		// serially, so a stalled status stalled every request behind it,
 		// ping included.
-		meta, err := eng.store.GetMetaMulti(ctx, "v1_import_state", "v1_import_error")
+		meta, err := eng.store.GetMetaMulti(ctx,
+			metaV1ImportState, metaV1ImportError,
+			metaBootstrapState, metaBootstrapError)
 		if err == nil {
-			st.V1ImportState = meta["v1_import_state"]
-			st.V1ImportError = meta["v1_import_error"]
+			st.V1ImportState = meta[metaV1ImportState]
+			st.V1ImportError = meta[metaV1ImportError]
+			// The last pass's outcome rides the SAME read: a failed pass is
+			// why an archive is incomplete, and MCP clients had no way to see
+			// it while HTTP's readiness endpoint reported it.
+			st.BootstrapState = meta[metaBootstrapState]
+			st.BootstrapError = meta[metaBootstrapError]
 		}
 		return st
 	}
@@ -132,10 +139,10 @@ func runMCP(cmd *cobra.Command, stdin io.Reader, stdout, logw io.Writer, debounc
 // the bootstrap snapshot instead of taking the server down.
 func liveIndex(ctx context.Context, eng *engine, bootstrap func(context.Context) error, opts ingest.Options, debounce time.Duration, index *indexState, logf func(string, ...any)) {
 	if bootstrap != nil {
-		// Through runBootstrap, so the pass's outcome is recorded in meta
-		// here too: whichever entry point ran last, the state a serving
-		// ccpeek reads describes the index it is actually serving.
-		if err := index.during(func() error { return runBootstrap(ctx, eng, bootstrap) }); err != nil {
+		// The closure records its own outcome (openEngineDeferred wraps it),
+		// so the state a serving ccpeek reads describes the index it is
+		// actually serving whichever entry point ran the last pass.
+		if err := index.during(func() error { return bootstrap(ctx) }); err != nil {
 			if ctx.Err() == nil {
 				logf("WARNING: indexing failed (serving whatever is indexed so far): %v\n", err)
 			}
@@ -161,25 +168,17 @@ func liveIndex(ctx context.Context, eng *engine, bootstrap func(context.Context)
 // indexState backs the `status` tool's Indexing flag, which has to read
 // true while ANY pass rewrites the archive, not only the first one.
 //
-// Passes this file calls — the bootstrap and the two scan sites —
-// bracket exactly. Watch passes cannot: ingest.Runner.Watch owns its
-// loop and announces only the END of a pass that CHANGED something, so a
-// flag latched on that announcement would pin true forever after the
-// first pass that found nothing new. Watch passes report through
-// Options.Progress instead — one event per root, one per source — and
-// the flag lapses passGrace after the last of them. Indexing is a
-// freshness hint rather than a lock, and this is where the hint is
-// approximate: a pass whose tail (link reconciliation, rollups) outlasts
-// the grace reads as settled a moment early.
+// Everything that rewrites the archive brackets exactly: the passes this
+// file drives (the bootstrap and the two scan sites) through during, and
+// the watch passes ingest.Runner.Watch drives itself through
+// Options.OnPass. The flag used to INFER the watch half from progress
+// events plus a two-second grace, because Watch announced only the END of
+// a pass that CHANGED something — so a pass whose tail (link
+// reconciliation, rollups) outlasted the grace read as settled while it
+// was still writing. The counter nests, so overlapping brackets are fine.
 type indexState struct {
 	bracketed atomic.Int64
-	// lastEvent is the UnixNano of the most recent watch-pass progress
-	// event; 0 until one arrives.
-	lastEvent atomic.Int64
 }
-
-// passGrace is how long one watch-pass progress event holds the flag.
-const passGrace = 2 * time.Second
 
 func (s *indexState) begin() { s.bracketed.Add(1) }
 
@@ -192,19 +191,17 @@ func (s *indexState) during(pass func() error) error {
 	return pass()
 }
 
-// progress runs on the ingest goroutine, so it does one atomic store and
-// nothing else.
-func (s *indexState) progress(ingest.Progress) {
-	s.lastEvent.Store(time.Now().UnixNano())
+// pass is the ingest pipeline's own bracket (Options.OnPass). It runs on
+// the ingest goroutine, so it does one atomic add and nothing else.
+func (s *indexState) pass(running bool) {
+	if running {
+		s.begin()
+		return
+	}
+	s.end()
 }
 
-func (s *indexState) running() bool {
-	if s.bracketed.Load() > 0 {
-		return true
-	}
-	last := s.lastEvent.Load()
-	return last != 0 && time.Since(time.Unix(0, last)) < passGrace
-}
+func (s *indexState) running() bool { return s.bracketed.Load() > 0 }
 
 func init() {
 	rootCmd.AddCommand(mcpCmd)

@@ -268,19 +268,28 @@ type CommandsFilter struct {
 	Offset  int
 }
 
-// Commands lists shell commands newest-first across every agent.
-func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow, error) {
-	if err := checkWindow(f.Since, f.Until); err != nil {
-		return nil, err
-	}
-	if err := checkPaging(f.Limit, f.Offset); err != nil {
-		return nil, err
-	}
-	limit, err := CommandsLimit.resolve(f.Limit)
-	if err != nil {
-		return nil, err
-	}
-	f.Limit = limit
+// commandsFrom is the joins every reading of the commands query shares,
+// up to and including the WHERE keyword — the caller appends its own
+// clause. The count in EachCommand needs the joins without the
+// projection, which is why the two are separate constants.
+const commandsFrom = `
+	FROM tool_calls tc
+	JOIN sessions se ON se.id = tc.session_id
+	JOIN agents a ON a.id = se.agent_id
+	WHERE `
+
+// commandsSelect is the row projection both readings share: the paged
+// newest-first op below and the oldest-first export walk in EachCommand.
+// One text, so a column added to one reading cannot go missing from the
+// other.
+const commandsSelect = `
+	SELECT tc.command,
+	       COALESCE(tc.started_at, ''),
+	       a.slug, se.external_id, se.cwd` + commandsFrom
+
+// clauses renders the filter as WHERE fragments and their arguments,
+// shared by both readings so one filter cannot mean two different sets.
+func (f CommandsFilter) clauses() ([]string, []any) {
 	where := []string{
 		`tc.kind = 'shell'`,
 		`tc.command <> ''`,
@@ -313,32 +322,118 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 		where = append(where, `tc.started_at < ?`)
 		args = append(args, exclusiveUntil(f.Until))
 	}
-	args = append(args, f.Limit, f.Offset)
+	return where, args
+}
 
-	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT tc.command,
-		       COALESCE(tc.started_at, ''),
-		       a.slug, se.external_id, se.cwd
-		FROM tool_calls tc
-		JOIN sessions se ON se.id = tc.session_id
-		JOIN agents a ON a.id = se.agent_id
-		WHERE %s
-		ORDER BY tc.started_at DESC, tc.id DESC
-		LIMIT ? OFFSET ?`, strings.Join(where, " AND ")), args...)
-	if err != nil {
-		return nil, fmt.Errorf("listing commands: %w", err)
-	}
+// scanCommands reads a command result set.
+func scanCommands(rows *sql.Rows, fn func(CommandRow) error) error {
 	defer rows.Close()
-
-	var out []CommandRow
 	for rows.Next() {
 		var c CommandRow
 		if err := rows.Scan(&c.Command, &c.At, &c.Agent, &c.SessionID, &c.CWD); err != nil {
-			return nil, err
+			return err
 		}
-		out = append(out, c)
+		if err := fn(c); err != nil {
+			return err
+		}
 	}
-	return out, rows.Err()
+	return rows.Err()
+}
+
+// Commands lists shell commands newest-first across every agent.
+func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow, error) {
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return nil, err
+	}
+	if err := checkOffset(f.Offset); err != nil {
+		return nil, err
+	}
+	if err := CommandsLimit.apply(&f.Limit); err != nil {
+		return nil, err
+	}
+	where, args := f.clauses()
+	args = append(args, f.Limit, f.Offset)
+
+	rows, err := s.store.ReadDB().QueryContext(ctx, commandsSelect+
+		strings.Join(where, " AND ")+`
+		ORDER BY tc.started_at DESC, tc.id DESC
+		LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing commands: %w", err)
+	}
+	var out []CommandRow
+	err = scanCommands(rows, func(c CommandRow) error {
+		out = append(out, c)
+		return nil
+	})
+	return out, err
+}
+
+// EachCommand walks the commands matching f OLDEST FIRST — the order a
+// shell history file is read in — handing each row to fn as it is read.
+//
+// This is the export reading, and it exists because both exporters (the
+// CLI's `export commands` and HTTP's ?format=) had hand-rolled the same
+// wrong shape: page the newest-first op to completion, buffer the WHOLE
+// corpus, then walk it backwards. Every page re-produced and discarded
+// its OFFSET rows, so exporting N commands cost O(N²/page) row
+// production, and none of it reached the writer until all of it was in
+// memory. One ascending query streams instead: rows arrive in the file's
+// own order and go straight out.
+//
+// fn's error stops the walk and is returned as-is (a writer that fails
+// has nowhere to put the rest).
+//
+// Limit and Offset keep the meaning they have on the paged op — the
+// newest N, skipping the newest M — because that is what a caller who
+// sends ?limit= means. Translating them onto an ascending walk needs the
+// selection's size, so they cost one COUNT; an unbounded export (the
+// normal one) pays nothing.
+func (s *Service) EachCommand(ctx context.Context, f CommandsFilter, fn func(CommandRow) error) error {
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return err
+	}
+	if err := checkOffset(f.Offset); err != nil {
+		return err
+	}
+	if f.Limit != 0 {
+		// Applied only to enforce the ceiling — an over-cap limit is refused
+		// here as it is on the paged op, never silently clipped. Zero is
+		// left alone rather than resolved to the op default: an unbounded
+		// export is the whole selection, not a page of it.
+		if err := CommandsLimit.apply(&f.Limit); err != nil {
+			return err
+		}
+	}
+
+	where, args := f.clauses()
+	clause := strings.Join(where, " AND ")
+	bounds := ""
+	if f.Limit > 0 || f.Offset > 0 {
+		var total int
+		if err := s.store.ReadDB().QueryRowContext(ctx,
+			`SELECT COUNT(*)`+commandsFrom+clause, args...).Scan(&total); err != nil {
+			return fmt.Errorf("counting commands: %w", err)
+		}
+		end := total - f.Offset // the newest row of the selection, exclusive
+		start := 0
+		if f.Limit > 0 {
+			start = end - f.Limit
+		}
+		start = max(start, 0)
+		if end <= start {
+			return nil
+		}
+		bounds = "\n\t\tLIMIT ? OFFSET ?"
+		args = append(args, end-start, start)
+	}
+
+	rows, err := s.store.ReadDB().QueryContext(ctx, commandsSelect+clause+`
+		ORDER BY tc.started_at ASC, tc.id ASC`+bounds, args...)
+	if err != nil {
+		return fmt.Errorf("listing commands: %w", err)
+	}
+	return scanCommands(rows, fn)
 }
 
 // chipDetailCap bounds the detail column of a compact chip row: a chip
@@ -395,7 +490,10 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	// returned with a success status for a request that made no sense.
 	// Checked before the session lookup, like Transcript's page size: a
 	// malformed bound is a caller mistake whether or not the session exists.
-	if err := checkPaging(f.Limit, f.Offset); err != nil {
+	if err := checkOffset(f.Offset); err != nil {
+		return nil, err
+	}
+	if err := ToolsLimit.apply(&f.Limit); err != nil {
 		return nil, err
 	}
 	if err := checkSeq("from_seq", f.FromSeq); err != nil {
@@ -404,11 +502,6 @@ func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string
 	if err := checkSeq("to_seq", f.ToSeq); err != nil {
 		return nil, err
 	}
-	limit, err := ToolsLimit.resolve(f.Limit)
-	if err != nil {
-		return nil, err
-	}
-	f.Limit = limit
 	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
 	if err != nil {
 		return nil, err
@@ -516,14 +609,12 @@ type HistoryFilter struct {
 
 // History lists prompt-history entries newest first.
 func (s *Service) History(ctx context.Context, f HistoryFilter) ([]HistoryRow, error) {
-	if err := checkPaging(f.Limit, f.Offset); err != nil {
+	if err := checkOffset(f.Offset); err != nil {
 		return nil, err
 	}
-	limit, err := HistoryLimit.resolve(f.Limit)
-	if err != nil {
+	if err := HistoryLimit.apply(&f.Limit); err != nil {
 		return nil, err
 	}
-	f.Limit = limit
 	where := "WHERE h.display <> ''"
 	var args []any
 	if f.Agent != "" {

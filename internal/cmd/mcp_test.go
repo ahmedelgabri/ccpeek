@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 	"github.com/fsnotify/fsnotify"
-	"github.com/spf13/cobra"
 )
 
 // lockedBuffer collects a server's stderr from the serving goroutine and
@@ -33,15 +34,6 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
-}
-
-// newMCPCommand builds the flag set runMCP reads, with every agent root
-// pinned inside the test's temp directories.
-func newMCPCommand(t *testing.T, claudeDir string) *cobra.Command {
-	t.Helper()
-	cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), claudeDir)
-	cmd.Flags().StringArray("root", nil, "")
-	return cmd
 }
 
 // mcpConn drives a server over the stdio pair, one request at a time —
@@ -111,7 +103,7 @@ func TestMCPIndexStaysLiveForTheConnection(t *testing.T) {
 
 	claudeDir := t.TempDir()
 	writeClaudeSession(t, claudeDir, "11111111-1111-1111-1111-111111111111", "indexed at startup")
-	cmd := newMCPCommand(t, claudeDir)
+	cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), claudeDir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd.SetContext(ctx)
@@ -136,17 +128,24 @@ func TestMCPIndexStaysLiveForTheConnection(t *testing.T) {
 	conn.call("initialize", nil)
 
 	// The handshake is answered while the first pass runs — that is the
-	// point of indexing in the background — so wait for the archive to
-	// settle before asking what changed after it.
+	// point of indexing in the background — so wait for the archive before
+	// asking what changed after it. The wait polls the DATA, not only the
+	// status flag: the flag answers false in the moment between the
+	// handshake and the background goroutine reaching its first pass, and a
+	// test that stopped there raced the bootstrap it means to wait for.
 	deadline := time.Now().Add(45 * time.Second)
+	for !strings.Contains(conn.tool("sessions"), "11111111-1111-1111-1111-111111111111") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the startup session never reached the bootstrap index\nstderr: %s", stderr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// …and the pass then settles, which is what the flag is for.
 	for strings.Contains(conn.tool("status"), `"indexing": true`) {
 		if time.Now().After(deadline) {
 			t.Fatal("the first pass never finished")
 		}
 		time.Sleep(50 * time.Millisecond)
-	}
-	if got := conn.tool("sessions"); !strings.Contains(got, "11111111-1111-1111-1111-111111111111") {
-		t.Fatalf("the startup session is missing from the bootstrap index: %s", got)
 	}
 
 	const fresh = "22222222-2222-2222-2222-222222222222"
@@ -184,7 +183,7 @@ func TestMCPEOFWaitsForBackgroundIndexing(t *testing.T) {
 	for _, id := range sessionIDs(60) {
 		writeClaudeSession(t, claudeDir, id, "probe corpus")
 	}
-	cmd := newMCPCommand(t, claudeDir)
+	cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), claudeDir)
 	cmd.SetContext(context.Background())
 
 	var stderr lockedBuffer
@@ -216,10 +215,11 @@ func sessionIDs(n int) []string {
 	return out
 }
 
-// The `status` tool's Indexing flag has to cover EVERY pass. Passes this
-// package drives bracket exactly; watch passes report through progress
-// events and lapse, because the watch loop announces only the end of a
-// pass that changed something.
+// The `status` tool's Indexing flag has to cover EVERY pass — the ones
+// this package drives and the ones the watch loop drives itself — and
+// both bracket exactly now: the pipeline reports its own pass through
+// ingest.Options.OnPass, so nothing is inferred from progress events and
+// a grace period any more.
 func TestIndexStateCoversEveryPass(t *testing.T) {
 	var s indexState
 	if s.running() {
@@ -240,16 +240,53 @@ func TestIndexStateCoversEveryPass(t *testing.T) {
 		t.Error("the flag stayed set after the bracketed pass finished")
 	}
 
-	// A watch pass in flight: its progress events hold the flag.
-	s.progress(ingest.Progress{})
+	// A watch pass the pipeline drives: OnPass brackets it, so the flag is
+	// set for exactly its duration — including a pass that changes nothing,
+	// which announces no end of its own.
+	s.pass(true)
 	if !s.running() {
-		t.Error("a watch pass's progress event does not report indexing")
+		t.Error("a watch pass in flight does not report indexing")
 	}
-	// …and it lapses instead of latching true forever, which is what a
-	// pass that changed nothing (no end announcement) would otherwise do.
-	s.lastEvent.Store(time.Now().Add(-2 * passGrace).UnixNano())
+	s.pass(false)
 	if s.running() {
-		t.Error("the flag latched true after the watch pass went quiet")
+		t.Error("the flag stayed set after the watch pass finished")
+	}
+}
+
+// The pipeline's bracket must fire around a REAL pass, not just in the
+// unit above: ingest.Runner.Run owns it, so the watch loop's own passes
+// carry it without the caller doing anything.
+func TestIngestOnPassBracketsARealRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var s indexState
+	insideRun := false
+	if _, err := ingest.New(store, table).Run(ctx, ingest.Options{
+		Getenv: func(string) string { return "" },
+		Home:   t.TempDir(),
+		OnPass: func(running bool) {
+			s.pass(running)
+			if running {
+				insideRun = s.running()
+			}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !insideRun {
+		t.Error("OnPass(true) did not fire before the pass ran")
+	}
+	if s.running() {
+		t.Error("OnPass(false) did not fire when the pass returned")
 	}
 }
 

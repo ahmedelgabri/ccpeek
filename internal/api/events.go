@@ -49,7 +49,7 @@ func (b *Broadcaster) unsubscribe(ch chan string) {
 
 // events serves /api/v1/events as Server-Sent Events.
 func (h *handlers) events(w http.ResponseWriter, r *http.Request) {
-	if h.events_ == nil {
+	if h.deps.Events == nil {
 		http.Error(w, "live updates unavailable", http.StatusNotImplemented)
 		return
 	}
@@ -62,8 +62,8 @@ func (h *handlers) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := h.events_.subscribe()
-	defer h.events_.unsubscribe(ch)
+	ch := h.deps.Events.subscribe()
+	defer h.deps.Events.unsubscribe(ch)
 
 	// Initial hello so clients know the stream is live.
 	fmt.Fprintf(w, "event: hello\ndata: connected\n\n")

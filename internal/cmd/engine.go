@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -112,7 +113,7 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkExplicitRoots(cmd); err != nil {
+	if err := checkExplicitRoots(opts.ConfigRoots); err != nil {
 		return nil, nil, err
 	}
 
@@ -213,13 +214,26 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 		}
 		return nil
 	}
-	return eng, bootstrap, nil
+	// Wrapped HERE, so what every caller receives is the recorded pass —
+	// see recordOutcome.
+	return eng, recordOutcome(eng, bootstrap), nil
 }
 
-// v1_import_state meta values. Success and no-legacy-db both stop the
-// bootstrap from probing again; anything else — unset, or "failed" —
-// makes the next indexing start retry.
+// The v1 import's meta keys and their state values, spelled once — the
+// same shape the bootstrap outcome uses below. Five packages' worth of
+// readers (the engine, the serving path's health closure, `ccpeek
+// doctor`, the MCP status tool) name these keys, and a typo in any of
+// them reads as "unset" rather than failing.
+//
+// Success and no-legacy-db both stop the bootstrap from probing again;
+// anything else — unset, or "failed" — makes the next indexing start
+// retry.
 const (
+	metaV1ImportState  = "v1_import_state"
+	metaV1ImportError  = "v1_import_error"
+	metaV1ImportedAt   = "v1_imported_at"
+	metaV1ImportReport = "v1_import_report"
+
 	v1ImportSuccess    = "success"
 	v1ImportFailed     = "failed"
 	v1ImportNoLegacyDB = "no-legacy-db"
@@ -235,7 +249,7 @@ const (
 // for /api/v1/health and the UI, and `ccpeek migrate` re-runs the import
 // with a non-zero exit on error.
 func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) *migrate.Report {
-	state, _, err := store.GetMeta(ctx, "v1_import_state")
+	state, _, err := store.GetMeta(ctx, metaV1ImportState)
 	if err == nil && (state == v1ImportSuccess || state == v1ImportNoLegacyDB) {
 		return nil
 	}
@@ -276,14 +290,14 @@ func checkV1Source(ctx context.Context, store *db.Store, dataFile string) (prese
 			// A previous failed attempt may have recorded an error; the
 			// legacy file being gone resolves it, so health must not keep
 			// showing a stale message next to the terminal state.
-			_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
-			_ = store.SetMeta(ctx, "v1_import_error", "")
+			_ = store.SetMeta(ctx, metaV1ImportState, v1ImportNoLegacyDB)
+			_ = store.SetMeta(ctx, metaV1ImportError, "")
 			return false, nil
 		}
 		// Permission or I/O trouble reaching the legacy file is a failed
 		// attempt to retry, not proof there is nothing to import.
-		_ = store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
-		_ = store.SetMeta(ctx, "v1_import_error", err.Error())
+		_ = store.SetMeta(ctx, metaV1ImportState, v1ImportFailed)
+		_ = store.SetMeta(ctx, metaV1ImportError, err.Error())
 		return false, fmt.Errorf("checking v1 database: %w", err)
 	}
 	// --data-file names the LEGACY database; pointing it at a v2 store is
@@ -296,8 +310,8 @@ func checkV1Source(ctx context.Context, store *db.Store, dataFile string) (prese
 	if isV2Store(ctx, dataFile) {
 		msg := fmt.Sprintf("%s is a ccpeek v2 index, not a legacy v1 database — --data-file names the v1 database and the v2 index lives at the derived sibling %s; no v1 import will be attempted",
 			dataFile, storeDBPath(dataFile))
-		_ = store.SetMeta(ctx, "v1_import_state", v1ImportNoLegacyDB)
-		_ = store.SetMeta(ctx, "v1_import_error", msg)
+		_ = store.SetMeta(ctx, metaV1ImportState, v1ImportNoLegacyDB)
+		_ = store.SetMeta(ctx, metaV1ImportError, msg)
 		return false, fmt.Errorf("%w: %s", errDataFileIsV2, msg)
 	}
 	return true, nil
@@ -338,8 +352,8 @@ func runV1Import(ctx context.Context, store *db.Store, dataFile string, logw io.
 	fmt.Fprintf(logw, "Importing v1 data from %s\n", dataFile)
 	mreport, err := migrate.ImportV1(ctx, store, dataFile)
 	if err != nil {
-		_ = store.SetMeta(ctx, "v1_import_state", v1ImportFailed)
-		_ = store.SetMeta(ctx, "v1_import_error", err.Error())
+		_ = store.SetMeta(ctx, metaV1ImportState, v1ImportFailed)
+		_ = store.SetMeta(ctx, metaV1ImportError, err.Error())
 		return nil, err
 	}
 	fmt.Fprintf(logw, "Imported from v1: %d orphaned sessions (%d messages, %d tool calls), %d artifacts, %d history entries, %d ignore flags\n",
@@ -347,10 +361,10 @@ func runV1Import(ctx context.Context, store *db.Store, dataFile string, logw io.
 		mreport.OrphanToolCalls, mreport.OrphanArtifacts,
 		mreport.HistoryEntries, mreport.IgnoreFlags)
 	b, _ := json.Marshal(mreport)
-	_ = store.SetMeta(ctx, "v1_import_report", string(b))
-	_ = store.SetMeta(ctx, "v1_import_state", v1ImportSuccess)
-	_ = store.SetMeta(ctx, "v1_imported_at", time.Now().UTC().Format(time.RFC3339))
-	_ = store.SetMeta(ctx, "v1_import_error", "")
+	_ = store.SetMeta(ctx, metaV1ImportReport, string(b))
+	_ = store.SetMeta(ctx, metaV1ImportState, v1ImportSuccess)
+	_ = store.SetMeta(ctx, metaV1ImportedAt, time.Now().UTC().Format(time.RFC3339))
+	_ = store.SetMeta(ctx, metaV1ImportError, "")
 	return mreport, nil
 }
 
@@ -363,7 +377,7 @@ func openEngine(ctx context.Context, cmd *cobra.Command, skip indexSkip, logw io
 		return nil, err
 	}
 	if bootstrap != nil {
-		if err := runBootstrap(ctx, eng, bootstrap); err != nil {
+		if err := bootstrap(ctx); err != nil {
 			eng.Close()
 			return nil, err
 		}
@@ -382,14 +396,19 @@ const (
 	bootstrapFailed  = "failed"
 )
 
-// runBootstrap runs the bootstrap pass and records its outcome in meta.
+// recordOutcome wraps a bootstrap pass so running it records its outcome
+// in meta. openEngineDeferred returns the WRAPPED closure, so there is no
+// unwrapped pass for a caller to run by mistake — the recording used to
+// be a second function every call site had to remember, enforced by
+// comments, and a fifth entry point would have inherited nothing but the
+// convention.
 //
 // The serving path used to flip /api/v1/ready to 200 whether the pass
 // succeeded or not, while a failed v1 import deliberately HELD readiness
 // at 503 — the same "partial history must not read as ready" argument,
 // applied to only one of the two ways history goes missing. Recording the
-// outcome here is what lets the serving path hold readiness for a failed
-// pass with a reason attached; the caller decides what to do with the
+// outcome is what lets the serving path hold readiness for a failed pass
+// with a reason attached; the caller still decides what to do with the
 // error, because a CLI command reports it by exiting non-zero instead.
 //
 // Warnings inside a SUCCESSFUL pass (one agent's root unreadable, a
@@ -399,19 +418,21 @@ const (
 //
 // A canceled pass records nothing: shutdown is not an outcome, and the
 // writes would fail against the canceled context anyway.
-func runBootstrap(ctx context.Context, eng *engine, bootstrap func(context.Context) error) error {
-	err := bootstrap(ctx)
-	if ctx.Err() != nil {
-		return err
+func recordOutcome(eng *engine, pass func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		err := pass(ctx)
+		if ctx.Err() != nil {
+			return err
+		}
+		if err != nil {
+			_ = eng.store.SetMeta(ctx, metaBootstrapState, bootstrapFailed)
+			_ = eng.store.SetMeta(ctx, metaBootstrapError, err.Error())
+			return err
+		}
+		_ = eng.store.SetMeta(ctx, metaBootstrapState, bootstrapSuccess)
+		_ = eng.store.SetMeta(ctx, metaBootstrapError, "")
+		return nil
 	}
-	if err != nil {
-		_ = eng.store.SetMeta(ctx, metaBootstrapState, bootstrapFailed)
-		_ = eng.store.SetMeta(ctx, metaBootstrapError, err.Error())
-		return err
-	}
-	_ = eng.store.SetMeta(ctx, metaBootstrapState, bootstrapSuccess)
-	_ = eng.store.SetMeta(ctx, metaBootstrapError, "")
-	return nil
 }
 
 func (e *engine) Close() error { return e.store.Close() }
@@ -460,27 +481,33 @@ func ingestOptions(cmd *cobra.Command) (ingest.Options, error) {
 // typo must be loud; a DEFAULT root that is missing only means the agent
 // is not installed, which is normal on every machine and stays silent.
 //
-// It lives beside ingestOptions rather than inside it because `ccpeek
-// doctor` calls that one to REPORT missing roots — erroring there would
-// break the command whose whole job is saying which roots are missing.
-// Every path that opens the store runs this instead, so the root command
-// and the subcommands agree: `ccpeek --claude-dir /gone` and `ccpeek
-// query sessions --claude-dir /gone` both fail, and both say why.
-func checkExplicitRoots(cmd *cobra.Command) error {
-	if cmd.Flags().Changed("claude-dir") {
-		dir, _ := cmd.Flags().GetString("claude-dir")
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return fmt.Errorf("claude data directory not found: %s", dir)
-		}
-	}
-	specs, _ := cmd.Flags().GetStringArray("root")
-	for _, spec := range specs {
-		slug, path, ok := strings.Cut(spec, "=")
-		if !ok || path == "" {
-			continue // ingestOptions reports the malformed spec itself
-		}
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return fmt.Errorf("--root %s: data directory not found: %s", slug, path)
+// It takes ingestOptions' OWN output, which by construction holds
+// exactly the explicitly-set roots (--claude-dir and every --root spec,
+// already parsed and validated). Re-reading and re-splitting the flags
+// here meant a second parser for the same syntax, whose "malformed spec"
+// branch could never fire because ingestOptions had already refused
+// those specs before this ran.
+//
+// It stays separate from ingestOptions because `ccpeek doctor` calls
+// that one to REPORT missing roots — erroring there would break the
+// command whose whole job is saying which roots are missing. Every path
+// that opens the store runs this instead, so the root command and the
+// subcommands agree: `ccpeek --claude-dir /gone` and `ccpeek query
+// sessions --claude-dir /gone` both fail, and both say why.
+func checkExplicitRoots(roots map[canon.AgentSlug][]string) error {
+	// Sorted, so a run with several missing roots names the same one every
+	// time rather than whichever the map iteration reached first.
+	for _, slug := range slices.Sorted(maps.Keys(roots)) {
+		for _, path := range roots[slug] {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				// --claude-dir is the Claude-specific alias for --root
+				// claude-code=<path>, and its own message names the flag the
+				// v1 CLI's users know.
+				if slug == claude.Slug {
+					return fmt.Errorf("claude data directory not found: %s", path)
+				}
+				return fmt.Errorf("--root %s: data directory not found: %s", slug, path)
+			}
 		}
 	}
 	return nil

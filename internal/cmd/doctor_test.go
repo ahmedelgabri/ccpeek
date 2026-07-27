@@ -23,7 +23,7 @@ func TestReadStoreStateReportsMetaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetMeta(ctx, "v1_import_state", "no-legacy-db"); err != nil {
+	if err := store.SetMeta(ctx, metaV1ImportState, "no-legacy-db"); err != nil {
 		t.Fatal(err)
 	}
 	// The store's own idea of its version, read back through its API so

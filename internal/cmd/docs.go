@@ -21,70 +21,6 @@ var docsCmd = &cobra.Command{
 	},
 }
 
-// The cheatsheet is the self-description agents read to use ccpeek
-// without hand-written prompts (docs/v2-plan.md §5.7), so the parts that
-// enumerate the surface are GENERATED from the surface itself: the op
-// list from ops.Registry(), the endpoint list from api.Routes() with the
-// canonical parameter names the server actually accepts, the tool list
-// from the registry plus MCP's transport-owned status tool.
-//
-// Hand-written before that: it documented 5 of 17 ops, claimed 5 MCP
-// tools of 18, named nine fewer endpoints than exist, described snippet
-// delimiters it had never used, and — after the parameter rename —
-// advertised spellings that now answer 400. Prose that describes a
-// surface it cannot see goes stale silently.
-const cheatsheetHeader = `# ccpeek — query your coding-agent history
-
-ccpeek indexes local sessions from Claude Code, Pi, Codex CLI, OpenCode,
-and Cursor into one session-centric database with real token usage and
-estimated cost. Everything is local; nothing leaves the machine.
-
-Every response is the envelope {"schema":"ccpeek/v1","data":...}; a
-failure is {"schema":"ccpeek/v1","error":"..."} — on stdout too, so one
-parse handles both. Lists are always arrays, never null.
-Exit codes: 0 = results, 1 = error, 2 = ` + "`ccpeek scan`" + ` found active
-secrets, 3 = valid query but no matches.
-
-Reading the results:
-  - costUSD is a lower bound when unpricedTokens > 0.
-  - search snippets mark matches with ` + snippetMarkerDoc + ` (…` + snippetMarkerDoc + `match` + snippetMarkerDoc + `…) and carry
-    sessionId + seq, or artifact + kind for sidecar hits.
-  - a limit above an op's maximum is an ERROR naming the maximum, not a
-    truncated answer: ask for the default and page, never assume a full
-    page is everything.
-`
-
-// snippetMarkerDoc is the marker the agent transports substitute for the
-// FTS control characters; it must match what ops emits, so the line
-// above cannot describe delimiters nothing produces (it used to say
-// "[ and ]").
-const snippetMarkerDoc = ops.SnippetMarker
-
-const cheatsheetCLIHeader = `
-## CLI (no server needed; re-indexes incrementally first, --no-index to skip)
-`
-
-const cheatsheetCLIFooter = `
-ccpeek scan [--format text|json] [--full] [--no-index]
-  Scan for leaked secrets, re-indexing incrementally first (--no-index
-  to scan the index as it stands); exit 2 when active findings exist.
-
-ccpeek migrate
-  Rebuild the index and re-run the v1 import (also automatic on
-  first run).
-`
-
-const cheatsheetHTTPHeader = `
-## HTTP (when the ccpeek server is running; localhost only)
-
-Each op endpoint answers the same read as the CLI command of the same
-name, and takes exactly the parameters listed — any other name is a 400.
-`
-
-const cheatsheetFooter = `
-Agent slugs: claude-code, pi, codex, opencode, cursor.
-`
-
 // routeNotes annotates endpoints whose purpose the pattern alone does
 // not carry. Only a note lives here — the endpoint list itself comes
 // from api.Routes(), so an endpoint can never go missing from the doc.
@@ -98,12 +34,48 @@ var routeNotes = map[string]string{
 	"PUT /api/v1/budget":                              `write: {"monthlyUSD":25}`,
 }
 
-// agentCheatsheet renders the document.
+// agentCheatsheet renders the document agents read to use ccpeek without
+// hand-written prompts (docs/v2-plan.md §5.7), so the parts that
+// enumerate the surface are GENERATED from the surface itself: the op
+// list from ops.Registry(), the endpoint list from api.Routes() with the
+// canonical parameter names the server actually accepts, the tool list
+// from the registry plus MCP's transport-owned status tool.
+//
+// Hand-written before that: it documented 5 of 17 ops, claimed 5 MCP
+// tools of 18, named nine fewer endpoints than exist, described snippet
+// delimiters it had never used, and — after the parameter rename —
+// advertised spellings that now answer 400. Prose that describes a
+// surface it cannot see goes stale silently.
+//
+// The FIXED prose sits inline below, in the order it is emitted: it was
+// five single-use consts declared above the renderer, so reading the
+// document meant reassembling it from names.
 func agentCheatsheet() string {
 	var b strings.Builder
-	b.WriteString(cheatsheetHeader)
+	b.WriteString(`# ccpeek — query your coding-agent history
 
-	b.WriteString(cheatsheetCLIHeader)
+ccpeek indexes local sessions from Claude Code, Pi, Codex CLI, OpenCode,
+and Cursor into one session-centric database with real token usage and
+estimated cost. Everything is local; nothing leaves the machine.
+
+Every response is the envelope {"schema":"ccpeek/v1","data":...}; a
+failure is {"schema":"ccpeek/v1","error":"..."} — on stdout too, so one
+parse handles both. Lists are always arrays, never null.
+Exit codes: 0 = results, 1 = error, 2 = ` + "`ccpeek scan`" + ` found active
+secrets, 3 = valid query but no matches.
+
+Reading the results:
+  - costUSD is a lower bound when unpricedTokens > 0.
+  - search snippets mark matches with ` + ops.SnippetMarker + ` (…` + ops.SnippetMarker + `match` + ops.SnippetMarker + `…) and carry
+    sessionId + seq, or artifact + kind for sidecar hits.
+  - a limit above an op's maximum is an ERROR naming the maximum, not a
+    truncated answer: ask for the default and page, never assume a full
+    page is everything.
+`)
+
+	b.WriteString(`
+## CLI (no server needed; re-indexes incrementally first, --no-index to skip)
+`)
 	for _, op := range ops.Registry() {
 		b.WriteString("\n")
 		b.WriteString(cliUsage(op))
@@ -115,18 +87,28 @@ func agentCheatsheet() string {
 			}
 		}
 	}
-	b.WriteString(cheatsheetCLIFooter)
+	b.WriteString(`
+ccpeek scan [--format text|json] [--full] [--no-index]
+  Scan for leaked secrets, re-indexing incrementally first (--no-index
+  to scan the index as it stands); exit 2 when active findings exist.
 
-	b.WriteString(cheatsheetHTTPHeader)
-	byOp := map[string]ops.Op{}
-	for _, op := range ops.Registry() {
-		byOp[op.Name] = op
-	}
+ccpeek migrate
+  Rebuild the index and re-run the v1 import (also automatic on
+  first run).
+`)
+
+	b.WriteString(`
+## HTTP (when the ccpeek server is running; localhost only)
+
+Each op endpoint answers the same read as the CLI command of the same
+name, and takes exactly the parameters listed — any other name is a 400.
+`)
 	b.WriteString("\n")
 	for _, r := range api.Routes() {
 		line := r.Pattern
 		if r.Kind == "op" {
-			if params := api.AcceptedParams(r, byOp[r.Op]); len(params) > 0 {
+			op, _ := ops.Lookup(r.Op)
+			if params := api.AcceptedParams(r, op); len(params) > 0 {
 				line += "?" + strings.Join(params, "=&") + "="
 			}
 		}
@@ -141,7 +123,9 @@ func agentCheatsheet() string {
 		strings.Join(toolNames(), ", ")+
 		" — every CLI op plus status (index freshness).", "  ", 72))
 	b.WriteString("  Register: claude mcp add ccpeek -- ccpeek mcp\n")
-	b.WriteString(cheatsheetFooter)
+	b.WriteString(`
+Agent slugs: claude-code, pi, codex, opencode, cursor.
+`)
 	return b.String()
 }
 

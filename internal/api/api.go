@@ -101,17 +101,39 @@ func Routes() []Route {
 	}
 }
 
-// Handler mounts the API routes. events may be nil when live updates are
-// not running (e.g. `--watch` off); the endpoint then answers 501. ready
-// reports whether the initial index pass has completed — nil means
-// "always ready"; while false, /api/v1/ready answers 503 so scripts (and
-// the e2e web server wait) can block on first data. progress, when
-// non-nil, feeds the index-pass state into the health payload, v1Import
-// the legacy-import outcome, and bootstrap the last index pass's
-// recorded outcome.
-func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progress func() IndexProgress, v1Import func() V1ImportStatus, bootstrap func() BootstrapStatus) http.Handler {
+// Deps are the server-state hooks the API reads — everything that
+// describes THIS process rather than the archive. Every field is
+// optional: the zero Deps serves a plain, always-ready API, which is what
+// tests and the API-only paths want.
+//
+// They travel as a struct rather than as positional parameters because
+// they are a run of same-shaped callbacks: `Handler(svc, nil, nil, nil,
+// nil, nil)` said nothing about which hook was which, and a swapped pair
+// would have compiled.
+type Deps struct {
+	// Events fans SSE notifications out. Nil when live updates are not
+	// running (e.g. `--watch` off); the endpoint then answers 501.
+	Events *Broadcaster
+	// Ready reports whether the initial index pass has completed. Nil means
+	// "always ready"; while false, /api/v1/ready answers 503 so scripts
+	// (and the e2e web server wait) can block on first data.
+	Ready func() bool
+	// Progress, when non-nil, feeds the live index-pass state into the
+	// health payload.
+	Progress func() IndexProgress
+	// Outcomes reports the legacy-import and last-bootstrap outcomes
+	// TOGETHER, in one call. Health and readiness need both, and the SPA
+	// polls health every 1.5s for the whole first pass — two callbacks
+	// meant two meta round trips per poll for state that lives in one
+	// table (db.Store.GetMetaMulti exists for exactly this).
+	Outcomes func() (V1ImportStatus, BootstrapStatus)
+}
+
+// Handler mounts the API routes over svc, with d supplying the
+// server-state hooks (see Deps; the zero value is valid).
+func Handler(svc *query.Service, d Deps) http.Handler {
 	mux := http.NewServeMux()
-	h := &handlers{svc: svc, events_: events, ready: ready, progress: progress, v1Import: v1Import, bootstrap: bootstrap}
+	h := &handlers{svc: svc, deps: d}
 	byPattern := map[string]http.HandlerFunc{
 		"GET /api/v1/health":                              h.health,
 		"GET /api/v1/ready":                               h.readiness,
@@ -137,17 +159,13 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 		"GET /api/v1/budget":                              h.budget,
 		"PUT /api/v1/budget":                              sameOriginOnly(h.setBudget),
 	}
-	byOp := map[string]ops.Op{}
-	for _, op := range ops.Registry() {
-		byOp[op.Name] = op
-	}
 	for _, r := range Routes() {
 		fn, ok := byPattern[r.Pattern]
 		if !ok {
 			panic("api: route " + r.Pattern + " classified but not implemented")
 		}
 		if r.Kind == "op" {
-			op, ok := byOp[r.Op]
+			op, ok := ops.Lookup(r.Op)
 			if !ok {
 				panic("api: route " + r.Pattern + " names unknown registry op " + strconv.Quote(r.Op))
 			}
@@ -206,46 +224,41 @@ func pathWildcards(pattern string) map[string]bool {
 // asked for, indistinguishable from an answer. The reply names the
 // offenders and the accepted set so the caller can correct itself.
 func rejectUnknownParams(accepted []string, next http.HandlerFunc) http.HandlerFunc {
-	valid := make(map[string]bool, len(accepted))
-	for _, name := range accepted {
-		valid[name] = true
-	}
 	expected := "this endpoint takes no query parameters"
 	if len(accepted) > 0 {
 		expected = "valid: " + strings.Join(accepted, ", ")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		var unknown []string
-		for name := range r.URL.Query() {
-			if !valid[name] {
-				unknown = append(unknown, strconv.Quote(name))
-			}
-		}
-		if len(unknown) > 0 {
-			slices.Sort(unknown)
-			noun := "parameter"
-			if len(unknown) > 1 {
-				noun = "parameters"
-			}
-			writeBadRequest(w, fmt.Errorf("%w: unknown %s %s (%s)",
-				query.ErrBadRequest, noun, strings.Join(unknown, ", "), expected))
+		// The collect-quote-sort-pluralize half is ops.UnknownNames /
+		// UnknownMessage, shared with the MCP server's identical rule; only
+		// the wording of what IS accepted and the 400 envelope are HTTP's.
+		values := r.URL.Query()
+		if unknown := ops.UnknownNames(values, accepted); len(unknown) > 0 {
+			writeBadRequest(w, fmt.Errorf("%w: %s (%s)", query.ErrBadRequest,
+				ops.UnknownMessage("parameter", unknown), expected))
 			return
 		}
-		next(w, r)
+		// The handler reads THIS parse rather than repeating it.
+		next(w, withValues(r, values))
 	}
 }
 
 type handlers struct {
-	svc       *query.Service
-	events_   *Broadcaster
-	ready     func() bool
-	progress  func() IndexProgress
-	v1Import  func() V1ImportStatus
-	bootstrap func() BootstrapStatus
+	svc  *query.Service
+	deps Deps
 }
 
 func (h *handlers) isReady() bool {
-	return h.ready == nil || h.ready()
+	return h.deps.Ready == nil || h.deps.Ready()
+}
+
+// outcomes reads both recorded outcomes in ONE call, or zero values when
+// no hook is wired.
+func (h *handlers) outcomes() (V1ImportStatus, BootstrapStatus) {
+	if h.deps.Outcomes == nil {
+		return V1ImportStatus{}, BootstrapStatus{}
+	}
+	return h.deps.Outcomes()
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
@@ -254,18 +267,15 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 		"status":   "ok",
 		"indexing": indexing,
 	}
-	if indexing && h.progress != nil {
-		payload["progress"] = h.progress()
+	if indexing && h.deps.Progress != nil {
+		payload["progress"] = h.deps.Progress()
 	}
-	if h.v1Import != nil {
-		if st := h.v1Import(); st.State != "" {
-			payload["v1Import"] = st
-		}
+	v1Import, bootstrap := h.outcomes()
+	if v1Import.State != "" {
+		payload["v1Import"] = v1Import
 	}
-	if h.bootstrap != nil {
-		if st := h.bootstrap(); st.State != "" {
-			payload["bootstrap"] = st
-		}
+	if bootstrap.State != "" {
+		payload["bootstrap"] = bootstrap
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -278,21 +288,20 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 // endpoint would otherwise read partial history as ready. Health keeps
 // answering 200 with the failure detail throughout.
 func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
+	v1Import, bootstrap := h.outcomes()
 	if !h.isReady() {
 		// A recorded bootstrap failure is why ready is being held — say
 		// so; "indexing" would promise progress that is not coming until
 		// the next start retries the pass.
-		if h.bootstrap != nil {
-			if st := h.bootstrap(); st.State == "failed" {
-				writeJSON(w, http.StatusServiceUnavailable,
-					map[string]string{"status": "index-failed", "error": st.Error})
-				return
-			}
+		if bootstrap.State == "failed" {
+			writeJSON(w, http.StatusServiceUnavailable,
+				map[string]string{"status": "index-failed", "error": bootstrap.Error})
+			return
 		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "indexing"})
 		return
 	}
-	if h.v1Import != nil && h.v1Import().State == "failed" {
+	if v1Import.State == "failed" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "v1-import-failed"})
 		return
 	}
@@ -439,12 +448,16 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 
 // exportCommands writes the shell-history download.
 //
-// It pages the op to COMPLETION, the way `ccpeek export commands` does.
-// Serving a single page here meant the commands ceiling (1000) was also the
-// export's: a larger corpus produced a file missing everything older, with
-// no truncation marker anywhere in it — the browser tab's own history
-// silently rewritten to end a year ago. An export is a download of a
-// selection, not a page of a list view.
+// It exports the WHOLE selection, the way `ccpeek export commands` does —
+// through the same query.EachCommand walk, so the two exporters cannot
+// answer the same filter differently. Serving a single page here meant the
+// commands ceiling (1000) was also the export's: a larger corpus produced
+// a file missing everything older, with no truncation marker anywhere in
+// it — the browser tab's own history silently rewritten to end a year ago.
+// An export is a download of a selection, not a page of a list view.
+//
+// The walk yields commands oldest-first (the order a history file is read
+// in), so rows go straight to the wire as they are read; nothing buffers.
 //
 // An explicitly supplied limit stays the export's bound, including an
 // over-cap one: the query layer refuses that rather than truncating, and
@@ -455,45 +468,36 @@ func (h *handlers) exportCommands(w http.ResponseWriter, r *http.Request, f quer
 		return
 	}
 
-	bounded := f.Limit > 0
-	if !bounded {
-		// Page at the op's own ceiling — the largest page it will answer.
-		// A ceiling of 0 would mean "no maximum"; page at a fixed size then,
-		// so the loop below always has a page length to compare against.
-		f.Limit = query.CommandsLimit.Max
-		if f.Limit <= 0 {
-			f.Limit = 1000
-		}
+	// The attachment headers go out with the FIRST row rather than before
+	// the query, so a filter the query layer refuses (an over-cap limit, a
+	// malformed date) is still answered with a status and a JSON error
+	// instead of a 200 attachment that turns out to be an error message.
+	sentHeader := false
+	sendHeader := func() {
+		sentHeader = true
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=%q", "ccpeek-commands."+format))
 	}
-	var rows []query.CommandRow
-	for {
-		page, err := h.svc.Commands(r.Context(), f)
-		if err != nil {
-			// Nothing has been written yet, so a failure mid-export is still
-			// a clean status rather than a truncated attachment.
+	err := h.svc.EachCommand(r.Context(), f, func(row query.CommandRow) error {
+		if !sentHeader {
+			sendHeader()
+		}
+		return model.WriteCommand(w,
+			model.CommandEntry{Command: row.Command, Timestamp: row.At}, format)
+	})
+	if err != nil {
+		if !sentHeader {
 			writeError(w, err)
 			return
 		}
-		rows = append(rows, page...)
-		if bounded || len(page) < f.Limit {
-			break
-		}
-		f.Offset += len(page)
+		// Bytes are already on the wire; there is no status left to change,
+		// so the truncation is reported to the operator instead.
+		log.Printf("api: commands export truncated: %v", err)
+		return
 	}
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename=%q", "ccpeek-commands."+format))
-	// History files read oldest-first while the op answers newest-first, so
-	// the WHOLE result is reversed ONCE, here. Reversing each page as it
-	// arrived would order commands correctly inside a page and backwards
-	// across them — the second page's oldest command landing after the
-	// first page's newest.
-	for i := len(rows) - 1; i >= 0; i-- {
-		entry := model.CommandEntry{Command: rows[i].Command, Timestamp: rows[i].At}
-		if err := model.WriteCommand(w, entry, format); err != nil {
-			return
-		}
+	if !sentHeader {
+		sendHeader() // an empty selection is still an (empty) attachment
 	}
 }
 

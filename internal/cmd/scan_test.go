@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -17,17 +15,9 @@ func newScanTestCommand(t *testing.T, dataFile, claudeDir, format string) *cobra
 	t.Helper()
 	// Pre-create the store so the engine treats it as past its first run:
 	// what the tests exercise is the incremental pass, not the bootstrap.
-	store, err := db.Open(context.Background(), storeDBPath(dataFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	markInitialized(t, store)
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	initStore(t, dataFile)
 
 	cmd := pinRoots(t, dataFile, claudeDir)
-	cmd.Flags().StringArray("root", nil, "")
 	cmd.Flags().String("format", format, "")
 	cmd.Flags().Bool("full", false, "")
 	cmd.Flags().Bool("no-index", false, "")

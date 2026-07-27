@@ -26,6 +26,37 @@ func count(t *testing.T, s *Store, query string, args ...any) int {
 	return n
 }
 
+// parkArtifactLink writes one task-group artifact and parks a link from
+// it to each of the given (not yet indexed) sessions, committing the
+// write. It is the preamble of every pending-link lifecycle test, which
+// are about what happens AFTER a link is parked.
+func parkArtifactLink(t *testing.T, s *Store, sessionIDs ...string) {
+	t.Helper()
+	w := beginWrite(t, s)
+	artID, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactTaskGroup, Name: "tasks",
+		SourcePath: "/roots/claude/tasks/x",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range sessionIDs {
+		resolved, err := w.LinkArtifact(artID, canon.ArtifactLink{
+			Agent: "claude-code", SessionExternalID: id,
+			Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved {
+			t.Fatalf("link to %q resolved against a store without it", id)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testSession(id string) canon.Session {
 	return canon.Session{
 		Agent:      "claude-code",
@@ -512,31 +543,9 @@ func TestPendingLinksAgeOutButLateArrivalsStillResolve(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 
-	w := beginWrite(t, s)
-	artID, err := w.UpsertArtifact(canon.Artifact{
-		Agent: "claude-code", Kind: canon.ArtifactTaskGroup, Name: "tasks",
-		SourcePath: "/roots/claude/tasks/x",
-	}, "h")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// One link will never resolve; one is waiting on a session that
 	// arrives a few passes later.
-	for _, target := range []string{"never-exists", "arrives-late"} {
-		resolved, err := w.LinkArtifact(artID, canon.ArtifactLink{
-			Agent: "claude-code", SessionExternalID: target,
-			Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resolved {
-			t.Fatalf("link to %q resolved against an empty store", target)
-		}
-	}
-	if err := w.Commit(); err != nil {
-		t.Fatal(err)
-	}
+	parkArtifactLink(t, s, "never-exists", "arrives-late")
 	if n := count(t, s, `SELECT COUNT(*) FROM pending_artifact_links`); n != 2 {
 		t.Fatalf("parked links = %d, want 2", n)
 	}
@@ -552,7 +561,7 @@ func TestPendingLinksAgeOutButLateArrivalsStillResolve(t *testing.T) {
 	}
 
 	// The session finally lands — its link must still resolve.
-	w = beginWrite(t, s)
+	w := beginWrite(t, s)
 	late := testSession("arrives-late")
 	if _, err := w.UpsertSession(late, "h"); err != nil {
 		t.Fatal(err)
@@ -598,23 +607,7 @@ func TestNoChangeRunsDoNotAgePendingLinks(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 
-	w := beginWrite(t, s)
-	artID, err := w.UpsertArtifact(canon.Artifact{
-		Agent: "claude-code", Kind: canon.ArtifactTaskGroup, Name: "tasks",
-		SourcePath: "/roots/claude/tasks/x",
-	}, "h")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.LinkArtifact(artID, canon.ArtifactLink{
-		Agent: "claude-code", SessionExternalID: "arrives-much-later",
-		Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Commit(); err != nil {
-		t.Fatal(err)
-	}
+	parkArtifactLink(t, s, "arrives-much-later")
 
 	attempts := func() int {
 		return count(t, s, `SELECT COALESCE(MAX(attempts), -1) FROM pending_artifact_links`)
@@ -637,7 +630,7 @@ func TestNoChangeRunsDoNotAgePendingLinks(t *testing.T) {
 	}
 
 	// The session finally lands — the link is still there to resolve.
-	w = beginWrite(t, s)
+	w := beginWrite(t, s)
 	if _, err := w.UpsertSession(testSession("arrives-much-later"), "h"); err != nil {
 		t.Fatal(err)
 	}
@@ -657,23 +650,7 @@ func TestChangingRunsStillAgePendingLinks(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 
-	w := beginWrite(t, s)
-	artID, err := w.UpsertArtifact(canon.Artifact{
-		Agent: "claude-code", Kind: canon.ArtifactTaskGroup, Name: "tasks",
-		SourcePath: "/roots/claude/tasks/x",
-	}, "h")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.LinkArtifact(artID, canon.ArtifactLink{
-		Agent: "claude-code", SessionExternalID: "never-exists",
-		Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Commit(); err != nil {
-		t.Fatal(err)
-	}
+	parkArtifactLink(t, s, "never-exists")
 
 	// Interleaving no-change passes must not shorten NOR extend the count:
 	// only the ageing ones advance it.

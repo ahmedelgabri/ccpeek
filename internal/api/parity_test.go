@@ -484,7 +484,7 @@ func TestLoopbackOnlyRejectsRebinding(t *testing.T) {
 // The guard has to cover reads, not just the two mutating endpoints —
 // that is the entire point, since rebinding sends no Origin header.
 func TestLoopbackOnlyCoversReadsWithoutOrigin(t *testing.T) {
-	h := LoopbackOnly(Handler(nil, nil, nil, nil, nil, nil))
+	h := LoopbackOnly(Handler(nil, Deps{}))
 	for _, path := range []string{
 		"/api/v1/sessions",
 		"/api/v1/search?query=x",

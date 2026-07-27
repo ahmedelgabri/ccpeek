@@ -48,20 +48,6 @@ func WriteCommand(w io.Writer, cmd CommandEntry, format string) error {
 	}
 }
 
-// FormatCommands writes commands to w in the given shell history format.
-// Supported formats: "zsh", "bash", "fish", "plain".
-func FormatCommands(w io.Writer, commands []CommandEntry, format string) error {
-	if err := ValidateCommandFormat(format); err != nil {
-		return err
-	}
-	for _, cmd := range commands {
-		if err := WriteCommand(w, cmd, format); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // escapeFishCommand renders a command the way fish's own history writer
 // does: fish stores one entry as a two-line YAML-ish record, so a raw
 // newline inside `- cmd: ` ends the entry and turns the rest of the

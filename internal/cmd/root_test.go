@@ -15,20 +15,12 @@ func newRootTestCommand(t *testing.T) *cobra.Command {
 	t.Helper()
 
 	// run() indexes, so every agent root is pinned inside the test's temp
-	// directories — Claude by the flag below, the rest by their env
-	// overrides. Without this the root command's tests ingest (and secret
-	// scan) the developer's real ~/.codex, ~/.cursor and friends.
-	emptyRoot := t.TempDir()
-	t.Setenv("PI_CODING_AGENT_DIR", emptyRoot)
-	t.Setenv("CODEX_HOME", emptyRoot)
-	t.Setenv("OPENCODE_DATA_DIR", emptyRoot)
-	t.Setenv("CCPEEK_CURSOR_DIR", emptyRoot)
-
-	cmd := &cobra.Command{}
+	// directories — pinRoots does exactly that (Claude by flag, the rest by
+	// their env overrides) and also registers --data-file and --root.
+	// Without it the root command's tests ingest (and secret scan) the
+	// developer's real ~/.claude, ~/.codex, ~/.cursor and friends.
+	cmd := pinRoots(t, filepath.Join(t.TempDir(), "ccpeek.db"), t.TempDir())
 	cmd.Flags().Int("port", 3000, "")
-	cmd.Flags().String("claude-dir", t.TempDir(), "")
-	cmd.Flags().StringArray("root", nil, "")
-	cmd.Flags().String("data-file", filepath.Join(t.TempDir(), "ccpeek.db"), "")
 	cmd.Flags().Bool("skip-index", false, "")
 	cmd.Flags().Bool("index-only", true, "")
 	cmd.Flags().Bool("open", false, "")

@@ -36,12 +36,15 @@ func checkWindow(since, until string) error {
 	return nil
 }
 
-// checkPaging rejects negative bounds. Zero is not an error — it is how
-// every filter spells "unset", and each query substitutes its own default.
-func checkPaging(limit, offset int) error {
-	if limit < 0 {
-		return fmt.Errorf("%w: limit=%d (want a non-negative integer)", ErrBadRequest, limit)
-	}
+// checkOffset rejects a negative offset. Zero is not an error — it is how
+// every filter spells "unset".
+//
+// The limit is NOT checked here: it belongs to Limit.apply, which every
+// op calls anyway. Split across two calls, a negative limit was rejected
+// only where the caller remembered both — and Blocks remembered one, so
+// `ccpeek query blocks --limit -5` answered in full while the same limit
+// on `sessions` was a 400.
+func checkOffset(offset int) error {
 	if offset < 0 {
 		return fmt.Errorf("%w: offset=%d (want a non-negative integer)", ErrBadRequest, offset)
 	}
@@ -86,20 +89,31 @@ var (
 	UsageLimit = Limit{}
 )
 
-// resolve turns a caller's limit into the one the query runs. Zero — how
-// every transport spells "unset" — takes the default.
+// apply turns a caller's limit into the one the query runs, IN PLACE:
+// every op holds its limit in a filter field it then passes to SQL, so
+// the resolved value belongs back where it came from. The four-line
+// resolve-check-assign dance this replaces was written out at nine call
+// sites.
+//
+// Zero — how every transport spells "unset" — takes the default. A
+// NEGATIVE limit is refused here rather than in a separate paging check:
+// it is a property of the limit, and the op that forgot to make the
+// second call (Blocks) accepted `--limit -5`, which reaches SQL as the
+// unbounded `LIMIT -1`.
 //
 // A limit ABOVE the ceiling is REFUSED, not capped. Silently returning
 // 1000 of the 2000 transcript entries an agent asked for, with a success
 // status and nothing saying otherwise, tells it the session ends there;
 // the error names the ceiling instead, so the caller can page.
-func (l Limit) resolve(limit int) (int, error) {
-	if limit <= 0 {
-		return l.Default, nil
+func (l Limit) apply(limit *int) error {
+	switch {
+	case *limit < 0:
+		return fmt.Errorf("%w: limit=%d (want a non-negative integer)", ErrBadRequest, *limit)
+	case *limit == 0:
+		*limit = l.Default
+	case l.Max > 0 && *limit > l.Max:
+		return fmt.Errorf("%w: limit=%d exceeds the maximum of %d (omit limit for the default of %d, then page for the rest)",
+			ErrBadRequest, *limit, l.Max, l.Default)
 	}
-	if l.Max > 0 && limit > l.Max {
-		return 0, fmt.Errorf("%w: limit=%d exceeds the maximum of %d (omit limit for the default of %d, then page for the rest)",
-			ErrBadRequest, limit, l.Max, l.Default)
-	}
-	return limit, nil
+	return nil
 }

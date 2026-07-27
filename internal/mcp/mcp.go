@@ -14,8 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/jsonl"
@@ -26,15 +24,23 @@ import (
 const protocolVersion = "2025-06-18"
 
 // Status is the index-freshness snapshot behind the transport-owned
-// `status` tool: whether a refresh pass is running and the v1 import
-// outcome — MCP's equivalent of HTTP's /health. While Indexing is true
-// tools read a visibly WARMING archive, not a frozen snapshot:
-// per-source transactions commit as the pass runs and usage rollups
-// regenerate at its end, so counts and totals can grow between calls.
+// `status` tool: whether a refresh pass is running, and the recorded
+// outcomes of the last index pass and the v1 import — MCP's equivalent
+// of HTTP's /health. While Indexing is true tools read a visibly WARMING
+// archive, not a frozen snapshot: per-source transactions commit as the
+// pass runs and usage rollups regenerate at its end, so counts and
+// totals can grow between calls.
+//
+// BootstrapState is what /api/v1/ready holds 503 on: with only the
+// import outcome here, an MCP client whose last index pass FAILED saw
+// indexing=false and a clean v1 import — settled and complete — over an
+// archive that is neither.
 type Status struct {
-	Indexing      bool   `json:"indexing"`
-	V1ImportState string `json:"v1ImportState,omitempty"`
-	V1ImportError string `json:"v1ImportError,omitempty"`
+	Indexing       bool   `json:"indexing"`
+	BootstrapState string `json:"bootstrapState,omitempty"`
+	BootstrapError string `json:"bootstrapError,omitempty"`
+	V1ImportState  string `json:"v1ImportState,omitempty"`
+	V1ImportError  string `json:"v1ImportError,omitempty"`
 }
 
 // Server speaks MCP over one reader/writer pair.
@@ -161,8 +167,8 @@ var statusToolDef = map[string]any{
 	"name": "status",
 	"description": "Index freshness: whether a background refresh pass is running " +
 		"(while true, reads see a warming archive — per-source commits land " +
-		"incrementally and usage rollups regenerate at the end of the pass) " +
-		"and the v1 import state.",
+		"incrementally and usage rollups regenerate at the end of the pass), " +
+		"plus the last index pass's outcome and the v1 import state.",
 	"inputSchema": map[string]any{
 		"type": "object", "properties": map[string]any{},
 		"additionalProperties": false,
@@ -217,32 +223,22 @@ func buildToolDefs() []map[string]any {
 // message names the offenders and the tool's real arguments, so a model
 // can correct the call and retry.
 func rejectUnknownArgs(tool string, args map[string]json.RawMessage, params []ops.Param) error {
-	valid := make(map[string]bool, len(params))
 	names := make([]string, 0, len(params))
 	for _, p := range params {
-		valid[p.Name] = true
 		names = append(names, p.Name)
 	}
-	var unknown []string
-	for name := range args {
-		if !valid[name] {
-			unknown = append(unknown, strconv.Quote(name))
-		}
-	}
+	// The collect-quote-sort-pluralize half is ops.UnknownNames /
+	// UnknownMessage, shared with the HTTP API's identical rule; only the
+	// wording of what IS accepted and the tool-error shape are MCP's.
+	unknown := ops.UnknownNames(args, names)
 	if len(unknown) == 0 {
 		return nil
-	}
-	slices.Sort(unknown)
-	noun := "argument"
-	if len(unknown) > 1 {
-		noun = "arguments"
 	}
 	expected := "it takes no arguments"
 	if len(names) > 0 {
 		expected = "valid arguments: " + strings.Join(names, ", ")
 	}
-	return fmt.Errorf("tool %q: unknown %s %s (%s)",
-		tool, noun, strings.Join(unknown, ", "), expected)
+	return fmt.Errorf("tool %q: %s (%s)", tool, ops.UnknownMessage("argument", unknown), expected)
 }
 
 func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) {
@@ -276,14 +272,8 @@ func (s *Server) call(ctx context.Context, params json.RawMessage) (any, error) 
 		}, nil
 	}
 
-	var op *ops.Op
-	for _, o := range ops.Registry() {
-		if o.Name == call.Name {
-			op = &o
-			break
-		}
-	}
-	if op == nil {
+	op, ok := ops.Lookup(call.Name)
+	if !ok {
 		return nil, fmt.Errorf("unknown tool %q", call.Name)
 	}
 	if err := rejectUnknownArgs(call.Name, call.Arguments, op.Params); err != nil {

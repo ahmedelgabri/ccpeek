@@ -52,8 +52,7 @@ const blockSeconds = 5 * 60 * 60
 // and then discard everything but the newest `limit` windows in Go. Years
 // of history were read to answer about one day of it.
 func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockRow, error) {
-	limit, err := BlocksLimit.resolve(limit)
-	if err != nil {
+	if err := BlocksLimit.apply(&limit); err != nil {
 		return nil, err
 	}
 	agentFilter := ""
