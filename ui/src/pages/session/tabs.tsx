@@ -15,22 +15,13 @@ import {
   EmptyNote,
   KindBars,
   kindLabel,
+  onDisclosureKey,
   Panel,
   toolColor,
   useToggleSet,
 } from "../../ui";
 
 import { JumpButton, ToolExpansion } from "./ToolExpansion";
-
-// Enter and space open a disclosure that is not a <button> — the tool
-// rows, which cannot BE buttons because each contains its own controls.
-// The target check leaves those inner controls their own keys.
-function onDisclosureKey(e: KeyboardEvent<HTMLElement>, toggle: () => void) {
-  if (e.target !== e.currentTarget) return;
-  if (e.key !== "Enter" && e.key !== " ") return;
-  e.preventDefault();
-  toggle();
-}
 
 export function CommandsTab({
   commands,

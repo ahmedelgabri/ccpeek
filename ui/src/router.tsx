@@ -25,6 +25,10 @@ import { useThemePref, type ThemePref } from "./theme";
 import { PALETTE_KEY, openPalette } from "./ui";
 import { useEffect } from "react";
 
+// The health endpoint's terminal state for a pass that gave up. Both the
+// v1 import and the bootstrap index are read against it, in three places.
+const FAILED = "failed";
+
 // IndexingBanner shows while the server's initial index pass runs — the
 // UI is up immediately (serve-first startup), pages fill in live as data
 // lands (SSE notifies fire during the pass), and the banner carries the
@@ -51,15 +55,15 @@ function IndexingBanner() {
     // would spin forever for no news.
     refetchInterval: (query) =>
       query.state.data?.indexing &&
-      query.state.data?.bootstrap?.state !== "failed"
+      query.state.data?.bootstrap?.state !== FAILED
         ? 1500
         : false,
   });
-  const importFailed = data?.v1Import?.state === "failed";
+  const importFailed = data?.v1Import?.state === FAILED;
   // indexing stays true after a FAILED pass (readiness is held), but no
   // progress is coming until a restart retries it — an indefinite
   // "indexing…" banner would be a lie.
-  const indexFailed = data?.bootstrap?.state === "failed";
+  const indexFailed = data?.bootstrap?.state === FAILED;
   if (!data?.indexing && !importFailed) return null;
   const p = data?.progress;
   return (

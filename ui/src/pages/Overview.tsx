@@ -12,7 +12,7 @@ import {
   totalTokens,
   type DayActivity,
 } from "../api";
-import { fmtWhen, fullWhen } from "../time";
+import { fmtWhen, fullWhen, todayUTC, utcDay } from "../time";
 import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
@@ -22,7 +22,6 @@ import {
   Code,
   EmptyNote,
   KindBars,
-  LoadError,
   Loading,
   Money,
   PageHeader,
@@ -159,13 +158,7 @@ export function OverviewPage() {
       <div className="grid gap-4 xl:grid-cols-5">
         <Panel label="Latest sessions" className="xl:col-span-3">
           {(recent.data ?? []).length === 0 ? (
-            recent.error ? (
-              <div className="px-3 py-3">
-                <LoadError error={recent.error} />
-              </div>
-            ) : (
-              <EmptyNote>No sessions yet.</EmptyNote>
-            )
+            <EmptyNote error={recent.error}>No sessions yet.</EmptyNote>
           ) : (
             <ul className="divide-y divide-edge">
               {(recent.data ?? []).map((s) => (
@@ -317,16 +310,9 @@ export function OverviewPage() {
 // trend out of a sparse one. Idle days are part of the trend.
 function lastDays(days: DayActivity[], n: number): DayActivity[] {
   const byDay = new Map(days.map((d) => [d.day, d]));
-  const now = new Date();
-  const todayUTC = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
+  const today = todayUTC();
   return Array.from({ length: n }, (_, i) => {
-    const day = new Date(todayUTC - (n - 1 - i) * DAY_MS)
-      .toISOString()
-      .slice(0, 10);
+    const day = utcDay(new Date(today - (n - 1 - i) * DAY_MS));
     return byDay.get(day) ?? { day, sessions: 0, costUSD: 0 };
   });
 }
@@ -378,15 +364,14 @@ function BudgetPace({
 }) {
   // A budget that failed to load says so. The panel used to vanish
   // entirely, which reads as "no budget feature here" rather than "this
-  // one request failed".
+  // one request failed". Still in flight is a different thing again, and
+  // stays silent.
   if (!budget)
-    return error ? (
+    return error == null ? null : (
       <Panel label="Spend this month" className={className}>
-        <div className="px-3 py-3">
-          <LoadError error={error} />
-        </div>
+        <EmptyNote error={error} />
       </Panel>
-    ) : null;
+    );
   // The projection and its verdict come from the query layer, so `ccpeek
   // query budget` and the MCP tool answer "am I on track" too — this used
   // to be month arithmetic living in a React component.
@@ -463,13 +448,7 @@ function WorkspacesByCost({
   // "No workspaces recorded" is a claim about the archive, so it is only
   // made when the archive actually answered.
   if (top.length === 0)
-    return error ? (
-      <div className="px-3 py-3">
-        <LoadError error={error} />
-      </div>
-    ) : (
-      <EmptyNote>No workspaces recorded.</EmptyNote>
-    );
+    return <EmptyNote error={error}>No workspaces recorded.</EmptyNote>;
   const max = Math.max(...top.map((r) => r.costUSD), Number.EPSILON);
   return (
     <ul className="divide-y divide-edge">
@@ -540,23 +519,18 @@ function Heatmap({ days }: { days: DayActivity[] }) {
   const byDay = new Map(days.map((d) => [d.day, d]));
 
   // Grid anchored to the current week's Sunday, going back WEEKS weeks.
-  // All calendar math runs in UTC: mixing local Date arithmetic with
-  // toISOString (which is UTC) shifts every cell by a day in zones far
-  // from UTC, and the activity days from the API are date strings.
-  const now = new Date();
-  const todayUTC = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
-  const endUTC = todayUTC + (6 - new Date(todayUTC).getUTCDay()) * DAY_MS;
+  // All calendar math runs in UTC (see time.ts): the activity days from the
+  // API are UTC date strings, and mixing local Date arithmetic with them
+  // shifts every cell by a day in zones far from UTC.
+  const today = todayUTC();
+  const endUTC = today + (6 - new Date(today).getUTCDay()) * DAY_MS;
   const cells: { day: string; week: number; dow: number; d?: DayActivity }[] =
     [];
   for (let w = 0; w < WEEKS; w++) {
     for (let dow = 0; dow < 7; dow++) {
       const t = endUTC - ((WEEKS - 1 - w) * 7 + (6 - dow)) * DAY_MS;
-      if (t > todayUTC) continue;
-      const day = new Date(t).toISOString().slice(0, 10);
+      if (t > today) continue;
+      const day = utcDay(new Date(t));
       cells.push({ day, week: w, dow, d: byDay.get(day) });
     }
   }

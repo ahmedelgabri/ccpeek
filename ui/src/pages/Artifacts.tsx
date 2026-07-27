@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { LoadMore, usePagedList } from "../paged";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { fmtBytes, fmtCount, parityApi, plural } from "../api";
 import {
   AgentDot,
@@ -14,6 +14,7 @@ import {
   Panel,
   SectionHeading,
   SkeletonRows,
+  useSetFilter,
 } from "../ui";
 
 const PAGE = 100;
@@ -58,18 +59,9 @@ const KIND_BLURB: Record<string, string> = {
 // screen before any choice is made.
 export function ArtifactsPage() {
   const search = useSearch({ from: "/artifacts" });
-  const navigate = useNavigate({ from: "/artifacts" });
+  const setFilter = useSetFilter("/artifacts");
   const kind = search.kind ?? "";
   const agent = search.agent ?? "";
-
-  const setFilter = (patch: { agent?: string; kind?: string }) =>
-    void navigate({
-      search: (prev: { agent?: string; kind?: string }) => ({
-        ...prev,
-        ...patch,
-      }),
-      replace: true,
-    });
 
   // Counted under the SAME agent filter as the list. These used to come
   // from corpus-wide /stats, so narrowing to one agent left the rail
@@ -155,14 +147,9 @@ export function ArtifactsPage() {
               {/* A failed facet count is not a count of zero. The rail used
                   to claim "none indexed" on any error, telling the reader
                   their corpus was empty when one request had failed. */}
-              {facets.error && (
-                <li className="px-3 py-3">
-                  <LoadError error={facets.error} compact />
-                </li>
-              )}
-              {kinds.length === 0 && !facets.isLoading && !facets.error && (
-                <li className="px-3 py-4 text-center text-meta text-ink-faint">
-                  none indexed
+              {(facets.error || (kinds.length === 0 && !facets.isLoading)) && (
+                <li>
+                  <EmptyNote error={facets.error}>none indexed</EmptyNote>
                 </li>
               )}
             </ul>

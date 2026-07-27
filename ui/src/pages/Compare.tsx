@@ -271,18 +271,17 @@ function SessionPicker({
         aria-label={label}
         className="h-56 divide-y divide-edge overflow-y-auto rounded-md border border-edge bg-surface-1"
       >
-        {list.length === 0 && (
-          <li className="px-3 py-4 text-center text-sm text-ink-dim">
-            {/* A failed lookup is not an empty archive. */}
-            {sessions.isLoading ? (
-              "Loading…"
-            ) : sessions.error ? (
-              <LoadError error={sessions.error} compact />
-            ) : (
-              "No sessions match."
-            )}
-          </li>
-        )}
+        {list.length === 0 &&
+          (sessions.isLoading ? (
+            <li className="px-3 py-4 text-center text-sm text-ink-dim">
+              Loading…
+            </li>
+          ) : (
+            <li>
+              {/* A failed lookup is not an empty archive. */}
+              <EmptyNote error={sessions.error}>No sessions match.</EmptyNote>
+            </li>
+          ))}
         {list.map((s) => {
           const id = `${s.agent}|${s.id}`;
           const on = id === value;

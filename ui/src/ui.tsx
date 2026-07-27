@@ -6,11 +6,13 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
   type FocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type RefObject,
 } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { AGENT_COLOR, fmtCost, type Budget } from "./api";
+import { todayUTC, utcDay } from "./time";
 
 // The palette's shortcut is Cmd on Apple platforms and Ctrl everywhere
 // else. The handler always accepted both; the hint claimed ⌘ on every
@@ -291,19 +293,44 @@ export function CopyButton({ text }: { text: string }) {
 // EmptyNote states what is absent and, where there is one, the action
 // that would fill it. An empty panel with no words at all — which two
 // Overview panels used to render — reads as a broken box.
-export function EmptyNote({
-  children,
-  hint,
-}: {
-  children: ReactNode;
-  hint?: ReactNode;
-}) {
+//
+// It also owns the OTHER reason a panel has nothing in it. "No workspaces
+// recorded" is a claim about the archive, and it must not be made when the
+// request simply failed — so an `error` replaces the note with the failure
+// instead. Six panels wrote that ternary out by hand, each with its own
+// wrapper, which is precisely how a panel ends up forgetting it.
+type EmptyNoteProps =
+  | { children: ReactNode; hint?: ReactNode; error?: undefined }
+  | { children?: ReactNode; hint?: ReactNode; error: unknown };
+
+export function EmptyNote({ children, hint, error }: EmptyNoteProps) {
+  if (error != null) {
+    return (
+      <div className="px-3 py-3">
+        <LoadError error={error} />
+      </div>
+    );
+  }
   return (
     <div className="px-3 py-6 text-center">
       <p className="text-sm text-ink-dim">{children}</p>
       {hint && <p className="mt-1 text-meta text-ink-faint">{hint}</p>}
     </div>
   );
+}
+
+// onDisclosureKey opens a disclosure that is NOT a <button> with enter or
+// space — the tool rows and the transcript's meta lines, which cannot BE
+// buttons because each carries its own controls. The target check leaves
+// those inner controls their own keys.
+export function onDisclosureKey(
+  e: ReactKeyboardEvent<HTMLElement>,
+  toggle: () => void,
+) {
+  if (e.target !== e.currentTarget) return;
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  toggle();
 }
 
 // Skeleton rows: loading states shaped like the content they replace.
@@ -448,6 +475,28 @@ export function dropEmpty(
     if (!merged[k]) delete merged[k];
   }
   return merged;
+}
+
+/** The routes whose search IS their filter state. */
+type FilterRoute = "/sessions" | "/commands" | "/usage" | "/artifacts";
+
+/** useSetFilter is the one way those routes change a filter: merge the
+ *  patch into the URL's search through dropEmpty, and REPLACE rather than
+ *  push, so narrowing a list is not a pile of history entries to walk back
+ *  through one keystroke at a time.
+ *
+ *  Four pages carried this closure. Three were byte-identical; the fourth
+ *  spread `{...prev, ...patch}` by hand and so kept the blanks — clearing
+ *  its kind facet left a `?kind=` behind, which is the one thing dropEmpty
+ *  exists to prevent. */
+export function useSetFilter(from: FilterRoute) {
+  const navigate = useNavigate({ from });
+  return (patch: Record<string, string>) =>
+    void navigate({
+      search: (prev: Record<string, string | undefined>) =>
+        dropEmpty(prev, patch),
+      replace: true,
+    });
 }
 
 /** useUrlText drives a text filter whose value lives in the URL.
@@ -894,24 +943,19 @@ const PRESETS: { label: string; days: number | "month" | "all" }[] = [
   { label: "all", days: "all" },
 ];
 
-function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
+// Presets are UTC days, like every other date key the API takes — see the
+// UTC calendar section of time.ts.
 function presetRange(days: number | "month" | "all"): [string, string] {
   if (days === "all") return ["", ""];
-  const now = new Date();
-  const today = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
+  const today = new Date(todayUTC());
   if (days === "month") {
     const first = new Date(
       Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1),
     );
-    return [isoDay(first), isoDay(today)];
+    return [utcDay(first), utcDay(today)];
   }
   const from = new Date(today.getTime() - (days - 1) * 86_400_000);
-  return [isoDay(from), isoDay(today)];
+  return [utcDay(from), utcDay(today)];
 }
 
 function activePreset(since: string, until: string): string | null {

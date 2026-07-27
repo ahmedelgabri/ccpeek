@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
   fmtCost,
@@ -16,7 +16,6 @@ import {
 import {
   BudgetMeter,
   budgetVerdict,
-  dropEmpty,
   EmptyNote,
   FilterBar,
   LoadError,
@@ -26,6 +25,7 @@ import {
   Panel,
   Segmented,
   SkeletonRows,
+  useSetFilter,
   useTooltip,
 } from "../ui";
 
@@ -136,7 +136,7 @@ export function UsagePage() {
   // OUT of the table already produced URL-encoded /sessions views; this is
   // the same promise kept on the way in.
   const search = useSearch({ from: "/usage" });
-  const navigate = useNavigate({ from: "/usage" });
+  const setFilter = useSetFilter("/usage");
   const group: Group = isGroup(search.group) ? search.group : "day";
   const since = search.since ?? "";
   const until = search.until ?? "";
@@ -144,12 +144,6 @@ export function UsagePage() {
   const model = search.model ?? "";
   const isBlocks = group === "blocks";
 
-  const setFilter = (patch: Record<string, string>) =>
-    void navigate({
-      search: (prev: Record<string, string | undefined>) =>
-        dropEmpty(prev, patch),
-      replace: true,
-    });
   // "day" is the default and stays out of the URL.
   const setGroup = (g: Group) => setFilter({ group: g === "day" ? "" : g });
 
@@ -631,13 +625,7 @@ function BlocksTable({
   if (loading) return <SkeletonRows rows={5} />;
   // A failed window rollup is not a quiet month.
   if (blocks.length === 0)
-    return error ? (
-      <div className="px-3 py-3">
-        <LoadError error={error} />
-      </div>
-    ) : (
-      <EmptyNote>No usage recorded yet.</EmptyNote>
-    );
+    return <EmptyNote error={error}>No usage recorded yet.</EmptyNote>;
   const maxTokens = Math.max(...blocks.map((b) => totalTokens(b.tokens)), 1);
   return (
     <div className="overflow-x-auto">

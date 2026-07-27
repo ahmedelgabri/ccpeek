@@ -20,6 +20,7 @@ import type { TranscriptWindow } from "./useSessionData";
 import {
   EmptyNote,
   LoadError,
+  onDisclosureKey,
   PALETTE_KEY,
   Segmented,
   SkeletonRows,
@@ -393,9 +394,7 @@ export function Transcript({
                   {/* An expandable meta line is a disclosure control, so it
                       carries the semantics of one: reachable by tab, opened
                       with enter or space, and announced as expanded or
-                      collapsed. It was a mouse-only <div>. The permalink
-                      button inside it keeps its own keys — hence the
-                      target check. */}
+                      collapsed. It was a mouse-only <div>. */}
                   <div
                     {...(isMeta && m.text.trim() !== ""
                       ? {
@@ -403,12 +402,8 @@ export function Transcript({
                           tabIndex: 0,
                           "aria-expanded": openMeta.has(m.seq),
                           onClick: () => toggleMeta(m.seq),
-                          onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => {
-                            if (e.target !== e.currentTarget) return;
-                            if (e.key !== "Enter" && e.key !== " ") return;
-                            e.preventDefault();
-                            toggleMeta(m.seq);
-                          },
+                          onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) =>
+                            onDisclosureKey(e, () => toggleMeta(m.seq)),
                         }
                       : {})}
                     className={`flex min-w-0 gap-2 font-mono text-meta text-ink-faint ${isMeta ? "" : "mb-1"} ${

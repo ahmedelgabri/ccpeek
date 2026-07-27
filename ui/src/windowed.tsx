@@ -36,18 +36,36 @@ export function useRowWindow<T, E extends HTMLElement = HTMLElement>(
       // Sub-pixel jitter must not loop back through the observer.
       setScrollMargin((prev) => (Math.abs(prev - top) > 0.5 ? top : prev));
     };
+    // Coalesced to one measurement per frame: a burst of observations is
+    // still a single forced layout read, not one per notification.
+    let frame = 0;
+    const schedule = () => {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
     measure();
-    // Every ancestor is observed, not just the list: what moves a list is a
-    // height change ABOVE it, which surfaces as a resize of some container
-    // the list sits inside — never as a resize of the list itself.
-    const ro = new ResizeObserver(measure);
-    for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    // The ANCESTORS are observed, from the parent up to (not including)
+    // <body>: what moves a list is a height change ABOVE it, which surfaces
+    // as a resize of some container the list sits inside. Observing the list
+    // ITSELF fired on every change to the virtualizer's total size — which
+    // is to say on every scroll frame while rows are still measuring, each
+    // one a forced layout read that could re-render the list.
+    const ro = new ResizeObserver(schedule);
+    for (
+      let node: HTMLElement | null = el.parentElement;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
       ro.observe(node);
     }
-    window.addEventListener("resize", measure);
+    // The viewport itself resizes without resizing any of them.
+    window.addEventListener("resize", schedule);
     return () => {
+      if (frame) cancelAnimationFrame(frame);
       ro.disconnect();
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("resize", schedule);
     };
   }, []);
   const virtualizer = useWindowVirtualizer({
@@ -90,10 +108,14 @@ export function WindowedList<T>({
     T,
     HTMLUListElement
   >(items, getKey, estimateSize);
-  // A ref that is always null turns the pass off without disturbing hook
-  // order.
-  const noHighlight = useRef<HTMLUListElement>(null);
-  useHighlight(highlight ? listRef : noHighlight, [virtualItems]);
+  // Keyed on the window's EDGES, not the virtualItems array: that array is
+  // a fresh identity every render, so the pass re-ran on each one. What
+  // actually needs re-highlighting is a window that has moved.
+  useHighlight(highlight ? listRef : null, [
+    items,
+    virtualItems[0]?.key,
+    virtualItems[virtualItems.length - 1]?.key,
+  ]);
   return (
     <ul
       ref={listRef}

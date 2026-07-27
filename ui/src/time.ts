@@ -7,6 +7,12 @@
 // The two deliberately-UTC surfaces keep their own formatting and say so:
 // the 5h blocks table ("5h window (UTC)") and the activity heatmap, whose
 // day math is UTC because the API's activity days are UTC date strings.
+//
+// Everything above the divider below is LOCAL — the formatters the reader
+// sees. Everything under it is the deliberately-UTC pair (utcDay, todayUTC)
+// the heatmap grid, the tile sparklines and the date presets count with,
+// because they key off UTC date strings the server produced. Three files
+// had spelled that calendar rule out for themselves.
 
 function parse(ts: string): Date | null {
   if (!ts) return null;
@@ -61,4 +67,23 @@ export function fullWhen(ts: string): string | undefined {
     dateStyle: "medium",
     timeStyle: "long",
   });
+}
+
+// ── UTC calendar ─────────────────────────────────────────────────────────
+// The day keys, not the display formats: what the heatmap, the sparklines
+// and the date presets index by.
+
+/** utcDay is the YYYY-MM-DD an instant falls on in UTC — the key the API's
+ *  activity days and `?since=`/`?until=` are written in. */
+export function utcDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** todayUTC is midnight of the current UTC day, in epoch ms: the anchor
+ *  every "last N days" run and the heatmap grid count back from. Local
+ *  Date arithmetic mixed with utcDay shifts every cell by a day in zones
+ *  far from UTC, so the anchor has to be UTC too. */
+export function todayUTC(): number {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }

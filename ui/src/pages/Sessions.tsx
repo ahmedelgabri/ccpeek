@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LoadMore, usePagedList } from "../paged";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
   fmtCount,
@@ -14,7 +14,6 @@ import {
 import { fullWhen, localDay, localTime } from "../time";
 import {
   AgentChip,
-  dropEmpty,
   EmptyNote,
   FilterBar,
   groupRuns,
@@ -25,6 +24,7 @@ import {
   PageHeader,
   SectionHeading,
   SkeletonRows,
+  useSetFilter,
   useSlashFocus,
   useUrlText,
 } from "../ui";
@@ -36,7 +36,7 @@ const PAGE = 100;
 // deep link (docs/v2-plan.md §5.2).
 export function SessionsPage() {
   const search = useSearch({ from: "/sessions" });
-  const navigate = useNavigate({ from: "/sessions" });
+  const setFilter = useSetFilter("/sessions");
   const agent = search.agent ?? "";
   const project = search.project ?? "";
   const model = search.model ?? "";
@@ -56,13 +56,6 @@ export function SessionsPage() {
   const titleBox = useRef<HTMLInputElement>(null);
   useSlashFocus(titleBox);
   const [dense, setDense] = useState(false);
-
-  const setFilter = (patch: Record<string, string>) =>
-    void navigate({
-      search: (prev: Record<string, string | undefined>) =>
-        dropEmpty(prev, patch),
-      replace: true,
-    });
 
   // Offset pages of a fixed size: a growing single limit would silently
   // stop at the server's cap and hide everything past it.

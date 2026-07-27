@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { LoadMore, usePagedList } from "../paged";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { api, shortPath, type CommandRow } from "../api";
 import { fmtWhen, fullWhen } from "../time";
 import { useHighlight } from "../highlight";
@@ -8,7 +8,6 @@ import { useRowWindow } from "../windowed";
 import {
   AgentDot,
   CopyButton,
-  dropEmpty,
   EmptyNote,
   FilterBar,
   inputCls,
@@ -16,6 +15,7 @@ import {
   Loading,
   PageHeader,
   SkeletonRows,
+  useSetFilter,
   useSlashFocus,
   useUrlText,
 } from "../ui";
@@ -32,18 +32,11 @@ export function CommandsPage() {
   // walks back through the narrowing. They used to be component state, so
   // the one thing you could not do with a filtered view was keep it.
   const search = useSearch({ from: "/commands" });
-  const navigate = useNavigate({ from: "/commands" });
+  const setFilter = useSetFilter("/commands");
   const q = search.q ?? "";
   const agent = search.agent ?? "";
   const since = search.since ?? "";
   const until = search.until ?? "";
-
-  const setFilter = (patch: Record<string, string>) =>
-    void navigate({
-      search: (prev: Record<string, string | undefined>) =>
-        dropEmpty(prev, patch),
-      replace: true,
-    });
 
   // Settled before it reaches the URL and the query: the filter used to
   // fire one full-text request per keystroke.
@@ -81,7 +74,13 @@ export function CommandsPage() {
     CommandRow,
     HTMLUListElement
   >(rows, (c, i) => `${c.sessionId}-${c.at}-${i}`, 76);
-  useHighlight(listRef, [virtualItems]);
+  // Keyed on the window's edges: virtualItems is a new array every render,
+  // so depending on its identity ran the pass on all of them.
+  useHighlight(listRef, [
+    rows,
+    virtualItems[0]?.key,
+    virtualItems[virtualItems.length - 1]?.key,
+  ]);
 
   // No limit: the export endpoint pages to completion server-side, and a
   // shell history file that stops at a thousand commands is not the user's

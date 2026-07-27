@@ -59,13 +59,32 @@ export function Palette() {
     setOpen(false);
     setMode("jump");
   };
-  // The key handler is registered once, so it reads `open` through a ref
-  // rather than a closure that would be stale after the first render.
-  const isOpen = useRef(false);
+  // ⌘K toggles, so the handler has to know whether the palette is up. It
+  // re-registers on `open` and reads it straight from the render — the same
+  // shape as the Escape listener below. Registering once and routing `open`
+  // through a ref was a second copy of the state to keep in step.
   useEffect(() => {
-    isOpen.current = open;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      e.preventDefault();
+      // Closing goes through close(), like every other way out. Toggling
+      // `open` alone left the mode behind, so the next ⌘K reopened into
+      // whatever search the last visit had ended in — the palette is a
+      // jump list first, and it has to open as one every time.
+      if (open) close();
+      else {
+        setOpen(true);
+        setCursor(0);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // close() only sets state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // The other way in — openPalette() from anywhere — reads no state, so it
+  // registers once.
   useEffect(() => {
     // An explicit query (the /search doorway, a v1 bookmark) opens straight
     // into search — that request is unambiguous.
@@ -78,26 +97,8 @@ export function Palette() {
       setOpen(true);
       setCursor(0);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        // Closing goes through close(), like every other way out. Toggling
-        // `open` alone left the mode behind, so the next ⌘K reopened into
-        // whatever search the last visit had ended in — the palette is a
-        // jump list first, and it has to open as one every time.
-        if (isOpen.current) close();
-        else {
-          setOpen(true);
-          setCursor(0);
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
     window.addEventListener("ccpeek-palette", openPalette);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("ccpeek-palette", openPalette);
-    };
+    return () => window.removeEventListener("ccpeek-palette", openPalette);
   }, []);
 
   useEffect(() => {
