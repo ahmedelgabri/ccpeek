@@ -217,6 +217,24 @@ func TestToolSchemasForbidUndeclaredArguments(t *testing.T) {
 			t.Errorf("tool %v: additionalProperties = %v, want false",
 				def["name"], schema["additionalProperties"])
 		}
+		// A declared default or ceiling rides the typed JSON Schema
+		// keyword, so a client can validate a call before sending it. The
+		// registry's Default was string-typed, which would have put "200"
+		// where an integer belongs.
+		props, _ := schema["properties"].(map[string]any)
+		for name, raw := range props {
+			prop := raw.(map[string]any)
+			if prop["type"] != "integer" {
+				continue
+			}
+			for _, key := range []string{"default", "maximum"} {
+				if v, present := prop[key]; present {
+					if _, ok := v.(float64); !ok {
+						t.Errorf("tool %v: %s.%s = %#v, want a number", def["name"], name, key, v)
+					}
+				}
+			}
+		}
 	}
 }
 

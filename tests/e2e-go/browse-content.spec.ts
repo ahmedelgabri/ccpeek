@@ -92,10 +92,10 @@ test.describe("transcript deep-link paging", () => {
     await page.goto(`/sessions/claude-code/${bigSession}?seq=500`);
     await expect(page.getByText("deep link message 500")).toBeVisible();
 
-    // The anchored request covers from=400 with a full page limit.
+    // The anchored request covers from_seq=400 with a full page limit.
     expect(
       transcriptRequests.some(
-        (u) => u.includes("from=400") && u.includes("limit=1000"),
+        (u) => u.includes("from_seq=400") && u.includes("limit=1000"),
       ),
       `anchored request missing in ${transcriptRequests.join(", ")}`,
     ).toBeTruthy();
@@ -108,7 +108,7 @@ test.describe("transcript deep-link paging", () => {
       .poll(
         () =>
           transcriptRequests.some(
-            (u) => u.includes("from=0") && u.includes("limit=400"),
+            (u) => u.includes("from_seq=0") && u.includes("limit=400"),
           ),
         {
           message: `gap-bounded backward request missing in ${transcriptRequests.join(", ")}`,
@@ -117,7 +117,7 @@ test.describe("transcript deep-link paging", () => {
       .toBeTruthy();
     expect(
       transcriptRequests.some(
-        (u) => u.includes("from=0") && u.includes("limit=1000"),
+        (u) => u.includes("from_seq=0") && u.includes("limit=1000"),
       ),
       "backward request used a full page limit (overlap)",
     ).toBeFalsy();

@@ -91,9 +91,11 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	// bounded (days, models, agents, workspaces), so the default is ALL
 	// groups — totals, charts, and CSV exports must never be silently
 	// partial. A positive limit remains an explicit, caller-owned bound.
-	if f.Limit < 0 {
-		f.Limit = 0
+	limit, err := UsageLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
 	}
+	f.Limit = limit
 
 	where, args := f.where()
 	limitClause := ""

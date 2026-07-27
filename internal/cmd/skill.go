@@ -34,13 +34,17 @@ func init() {
 }
 
 // skillFile is the SKILL.md content: frontmatter the harness matches on,
-// then the same self-description agents get from `ccpeek docs --agents`.
-const skillFile = `---
+// then the same self-description agents get from `ccpeek docs --agents`
+// — generated from the live registry, so an installed skill describes
+// the binary that installed it.
+func skillFile() string {
+	return `---
 name: ccpeek
 description: Query local coding-agent history — sessions, transcripts, token usage, cost, and full-text search across Claude Code, Pi, Codex CLI, OpenCode, and Cursor. Use when asked about past sessions, earlier conversations, what an agent did before, previously run commands, or token/cost spend.
 ---
 
-` + agentCheatsheet
+` + agentCheatsheet()
+}
 
 // skillsDir resolves where the skill should go: --dir wins, then the
 // --claude-dir flag when explicitly set, then CLAUDE_CONFIG_DIR, then
@@ -72,7 +76,7 @@ func runSkillInstall(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("creating skill directory: %w", err)
 	}
-	if err := os.WriteFile(target, []byte(skillFile), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(skillFile()), 0o644); err != nil {
 		return fmt.Errorf("writing skill file: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Installed skill: %s\n", target)

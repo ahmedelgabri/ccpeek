@@ -104,7 +104,11 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	f.Limit = clampLimit(f.Limit, 50, 500)
+	limit, err := SessionsLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
+	}
+	f.Limit = limit
 	var where []string
 	var args []any
 	if f.Agent != "" {
@@ -393,11 +397,17 @@ type TranscriptOptions struct {
 
 // Transcript returns a session's entries in seq order.
 func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, opts TranscriptOptions) ([]TranscriptMessage, error) {
+	// The page size is checked before the session is looked up: an
+	// over-cap limit is a caller mistake whether or not the session exists.
+	limit, err := TranscriptLimit.resolve(opts.Limit)
+	if err != nil {
+		return nil, err
+	}
+	opts.Limit = limit
 	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
 	if err != nil {
 		return nil, err
 	}
-	opts.Limit = clampLimit(opts.Limit, 200, 1000)
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.seq, m.external_id, m.parent_external_id,
 		       m.role, m.kind, COALESCE(m.created_at, ''), m.model,

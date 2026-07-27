@@ -54,6 +54,29 @@ func TestBadFilterValuesAreBadRequests(t *testing.T) {
 			_, err := s.History(ctx, HistoryFilter{Offset: -1})
 			return err
 		}},
+		// Above the ceiling is a refusal, not a truncation: an agent that
+		// asked for everything and got a capped page has no way to tell.
+		{"sessions over cap", func() error {
+			_, err := s.Sessions(ctx, SessionsFilter{Limit: SessionsLimit.Max + 1})
+			return err
+		}},
+		{"transcript over cap", func() error {
+			_, err := s.Transcript(ctx, "claude-code", claudeSession1,
+				TranscriptOptions{Limit: TranscriptLimit.Max + 1})
+			return err
+		}},
+		{"search over cap", func() error {
+			_, err := s.Search(ctx, "rate", SearchFilter{Limit: SearchLimit.Max + 1})
+			return err
+		}},
+		{"commands over cap", func() error {
+			_, err := s.Commands(ctx, CommandsFilter{Limit: CommandsLimit.Max + 1})
+			return err
+		}},
+		{"blocks over cap", func() error {
+			_, err := s.Blocks(ctx, "", BlocksLimit.Max+1)
+			return err
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := tt.call(); !errors.Is(err, ErrBadRequest) {
@@ -73,5 +96,26 @@ func TestZeroPagingIsNotAnError(t *testing.T) {
 	}
 	if _, err := s.Usage(ctx, UsageFilter{}); err != nil {
 		t.Errorf("empty usage filter rejected: %v", err)
+	}
+}
+
+// The ceiling itself is a valid page size — the web UI asks for exactly
+// the transcript maximum — and the uncapped ops keep honoring any
+// explicit page.
+func TestLimitsAtAndBeyondTheCeiling(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	if _, err := s.Transcript(ctx, "claude-code", claudeSession1,
+		TranscriptOptions{Limit: TranscriptLimit.Max}); err != nil {
+		t.Errorf("transcript at its maximum was rejected: %v", err)
+	}
+	if _, err := s.Sessions(ctx, SessionsFilter{Limit: SessionsLimit.Max}); err != nil {
+		t.Errorf("sessions at its maximum was rejected: %v", err)
+	}
+	if _, err := s.Artifacts(ctx, ArtifactsFilter{Limit: 5000}); err != nil {
+		t.Errorf("artifacts is uncapped but rejected a large page: %v", err)
+	}
+	if _, err := s.History(ctx, HistoryFilter{Limit: 5000}); err != nil {
+		t.Errorf("history is uncapped but rejected a large page: %v", err)
 	}
 }

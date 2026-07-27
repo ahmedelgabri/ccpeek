@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,11 +67,27 @@ func init() {
 // shutdown path (the HTTP server's graceful stop, the MCP server's
 // background indexing) cannot double-register handlers and disagree
 // about who cancels what.
+// It is also the ONLY place the process exits non-zero. A command that
+// needs a specific exit code returns an exitError instead of calling
+// os.Exit, which would skip its own deferred cleanup (the query and scan
+// paths defer the store close); by the time this unwraps one, cobra has
+// returned and the defers have run.
 func ExecuteContext(ctx context.Context) {
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	err := rootCmd.ExecuteContext(ctx)
+	if err == nil {
+		return
 	}
+	code := 1
+	var exit *exitError
+	if errors.As(err, &exit) {
+		// A nil cause means the command already reported the failure in
+		// its own contract (the JSON envelope on stdout).
+		code, err = exit.code, exit.err
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	os.Exit(code)
 }
 
 func run(cmd *cobra.Command, args []string) error {

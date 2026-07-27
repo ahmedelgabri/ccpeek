@@ -270,7 +270,11 @@ func (s *Service) Commands(ctx context.Context, f CommandsFilter) ([]CommandRow,
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	f.Limit = clampLimit(f.Limit, 100, 1000)
+	limit, err := CommandsLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
+	}
+	f.Limit = limit
 	where := []string{
 		`tc.kind = 'shell'`,
 		`tc.command <> ''`,
@@ -378,6 +382,11 @@ type ToolsFilter struct {
 
 // SessionTools returns one session's tool calls in order, paged by f.
 func (s *Service) SessionTools(ctx context.Context, agentSlug, externalID string, f ToolsFilter) ([]ToolCallRow, error) {
+	limit, err := ToolsLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
+	}
+	f.Limit = limit
 	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
 	if err != nil {
 		return nil, err
@@ -488,7 +497,11 @@ func (s *Service) History(ctx context.Context, f HistoryFilter) ([]HistoryRow, e
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	f.Limit = clampLimit(f.Limit, 100, 0)
+	limit, err := HistoryLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
+	}
+	f.Limit = limit
 	where := "WHERE h.display <> ''"
 	var args []any
 	if f.Agent != "" {

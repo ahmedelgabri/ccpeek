@@ -50,7 +50,11 @@ func (s *Service) Search(ctx context.Context, q string, f SearchFilter) ([]Searc
 	if err := checkPaging(f.Limit, 0); err != nil {
 		return nil, err
 	}
-	f.Limit = clampLimit(f.Limit, 20, 100)
+	limit, err := SearchLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
+	}
+	f.Limit = limit
 
 	where := ""
 	args := []any{ftsQuery(q)}

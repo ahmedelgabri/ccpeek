@@ -141,7 +141,7 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 			if !ok {
 				panic("api: route " + r.Pattern + " names unknown registry op " + strconv.Quote(r.Op))
 			}
-			fn = rejectUnknownParams(acceptedParams(r, op), fn)
+			fn = rejectUnknownParams(AcceptedParams(r, op), fn)
 		} else if len(r.Extra) > 0 {
 			panic("api: route " + r.Pattern + " declares query parameters but is not an op route")
 		}
@@ -154,13 +154,17 @@ func Handler(svc *query.Service, events *Broadcaster, ready func() bool, progres
 	return mux
 }
 
-// acceptedParams is the sorted allowlist of query parameters an op route
+// AcceptedParams is the sorted allowlist of query parameters an op route
 // takes: the registry op's parameters, minus the ones this pattern binds
 // as path segments, plus the route's declared transport-only extras.
 // Deriving it from the registry is what makes the canonical names the
 // ONLY spelling HTTP answers to — the drift it replaces had /sessions
 // reading "q" for the parameter the registry calls "query".
-func acceptedParams(r Route, op ops.Op) []string {
+//
+// Exported because `ccpeek docs --agents` generates its endpoint list
+// from the same source the server enforces, rather than a hand-written
+// copy that went stale the moment a parameter was renamed.
+func AcceptedParams(r Route, op ops.Op) []string {
 	inPath := pathWildcards(r.Pattern)
 	names := append([]string(nil), r.Extra...)
 	for _, p := range op.Params {
@@ -290,7 +294,7 @@ func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(sessions))
+	writeJSON(w, http.StatusOK, sessions)
 }
 
 func (h *handlers) session(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +329,7 @@ func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 			msgs[i].HTML = renderMarkdown(msgs[i].Text)
 		}
 	}
-	writeJSON(w, http.StatusOK, orEmpty(msgs))
+	writeJSON(w, http.StatusOK, msgs)
 }
 
 func (h *handlers) sessionTools(w http.ResponseWriter, r *http.Request) {
@@ -344,7 +348,7 @@ func (h *handlers) sessionTools(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(tools))
+	writeJSON(w, http.StatusOK, tools)
 }
 
 // sessionTool serves one call's full payload including diff excerpts —
@@ -416,7 +420,7 @@ func (h *handlers) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(rows))
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (h *handlers) history(w http.ResponseWriter, r *http.Request) {
@@ -436,7 +440,7 @@ func (h *handlers) history(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(rows))
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
@@ -458,7 +462,7 @@ func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(rows))
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
@@ -476,7 +480,7 @@ func (h *handlers) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(hits))
+	writeJSON(w, http.StatusOK, hits)
 }
 
 // writeEnvelope is the ONE place a response envelope reaches the wire.
@@ -489,8 +493,11 @@ func writeEnvelope(w http.ResponseWriter, status int, e ops.Envelope) {
 	_ = json.NewEncoder(w).Encode(e)
 }
 
+// writeJSON builds its envelope with ops.Wrap, the same constructor the
+// CLI and MCP use — that is where a nil list becomes [] for every
+// transport at once, so this layer no longer carries its own correction.
 func writeJSON(w http.ResponseWriter, status int, data any) {
-	writeEnvelope(w, status, ops.Envelope{Data: data})
+	writeEnvelope(w, status, ops.Wrap(data))
 }
 
 // writeError maps domain errors onto statuses: caller mistakes

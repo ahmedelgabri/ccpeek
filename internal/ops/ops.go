@@ -13,6 +13,8 @@ package ops
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/query"
@@ -34,7 +36,15 @@ type Param struct {
 	// CLI used to special-case one op by name to get its help text right,
 	// which meant the generic builder knew an op — and HTTP and MCP showed
 	// no default at all, the exact drift this registry exists to prevent.
-	Default string
+	// It is typed (not a string) so an integer default reaches an MCP
+	// schema as 200, not "200".
+	Default any
+	// Max is the largest accepted value of an integer parameter (0 = no
+	// ceiling). The query layer ENFORCES it — above the ceiling is
+	// ErrBadRequest, never a silent truncation — and both numbers come
+	// from the same query.Limit, so what a transport advertises is what
+	// the read applies.
+	Max int
 }
 
 // Args carries decoded inputs for an executor.
@@ -61,10 +71,28 @@ func (p Param) FlagName() string {
 	return strings.ReplaceAll(p.Name, "_", "-")
 }
 
+// limitParam declares an op's page-size parameter from the query layer's
+// own policy for that op, so the default and ceiling every transport
+// documents are the ones the read enforces — they were undocumented
+// everywhere and, on four ops, applied by silently truncating the answer.
+func limitParam(noun string, l query.Limit) Param {
+	p := Param{Name: "limit", Type: "integer", Max: l.Max}
+	switch {
+	case l.Default == 0:
+		p.Desc = noun + " (default: all)"
+	case l.Max == 0:
+		p.Default = l.Default
+		p.Desc = fmt.Sprintf("%s (default %d, no maximum)", noun, l.Default)
+	default:
+		p.Default = l.Default
+		p.Desc = fmt.Sprintf("%s (default %d, max %d)", noun, l.Default, l.Max)
+	}
+	return p
+}
+
 // Registry lists every read operation, in presentation order.
 func Registry() []Op {
 	agentParam := Param{Name: "agent", Type: "string", Desc: "Filter by agent slug (claude-code, pi, codex, opencode, cursor)"}
-	limitParam := Param{Name: "limit", Type: "integer", Desc: "Maximum results"}
 	sinceParam := Param{Name: "since", Type: "string", Desc: "Inclusive YYYY-MM-DD lower bound"}
 	untilParam := Param{Name: "until", Type: "string", Desc: "Inclusive YYYY-MM-DD upper bound"}
 
@@ -78,7 +106,7 @@ func Registry() []Op {
 				{Name: "model", Type: "string", Desc: "Filter to sessions that used a model"},
 				sinceParam, untilParam,
 				{Name: "query", Type: "string", Desc: "Substring filter on session title", CLIFlag: "title"},
-				limitParam,
+				limitParam("Maximum results", query.SessionsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
@@ -110,7 +138,7 @@ func Registry() []Op {
 				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
 				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
 				{Name: "from_seq", Type: "integer", Desc: "Start at this entry seq"},
-				limitParam,
+				limitParam("Maximum entries", query.TranscriptLimit),
 				{Name: "full", Type: "boolean", Desc: "Include raw agent payloads"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
@@ -126,11 +154,12 @@ func Registry() []Op {
 			Params: []Param{
 				{
 					Name: "group", Type: "string", Default: "day",
-					Desc: "Group by: day | model | project | agent",
+					Desc: "Group by: day | model | project | agent (default day)",
 				},
 				agentParam,
 				{Name: "model", Type: "string", Desc: "Filter to one model"},
-				sinceParam, untilParam, limitParam,
+				sinceParam, untilParam,
+				limitParam("Maximum groups", query.UsageLimit),
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Usage(ctx, query.UsageFilter{
@@ -146,13 +175,14 @@ func Registry() []Op {
 			Desc: "Full-text search across all indexed sessions and artifacts from every agent — 'have I solved this before?'.",
 			Params: []Param{
 				{Name: "query", Type: "string", Desc: "Search terms", Required: true, Positional: true, Variadic: true},
-				agentParam, limitParam,
+				agentParam,
+				limitParam("Maximum hits", query.SearchLimit),
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Search(ctx, a.Str["query"], query.SearchFilter{
 					Agent: a.Str["agent"], Limit: a.Int["limit"],
 				})
-				return out, len(out) == 0, err
+				return markSnippets(out), len(out) == 0, err
 			},
 		},
 		{
@@ -162,7 +192,8 @@ func Registry() []Op {
 				agentParam,
 				{Name: "project", Type: "string", Desc: "Substring of the session workspace path"},
 				{Name: "query", Type: "string", Desc: "Substring of the command text"},
-				sinceParam, untilParam, limitParam,
+				sinceParam, untilParam,
+				limitParam("Maximum results", query.CommandsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
@@ -181,7 +212,7 @@ func Registry() []Op {
 			Params: []Param{
 				agentParam,
 				{Name: "query", Type: "string", Desc: "Substring of the prompt text", CLIFlag: "q"},
-				limitParam,
+				limitParam("Maximum results", query.HistoryLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
@@ -206,7 +237,7 @@ func Registry() []Op {
 			Desc: "Rolling 5-hour usage windows (how subscription quota limits are experienced), newest first.",
 			Params: []Param{
 				agentParam,
-				{Name: "limit", Type: "integer", Desc: "Maximum windows"},
+				limitParam("Maximum windows", query.BlocksLimit),
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Blocks(ctx, a.Str["agent"], a.Int["limit"])
@@ -238,7 +269,7 @@ func Registry() []Op {
 			Params: []Param{
 				agentParam,
 				{Name: "kind", Type: "string", Desc: "Artifact kind (plan, todo_list, memory, …)"},
-				limitParam,
+				limitParam("Maximum results", query.ArtifactsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
@@ -277,7 +308,7 @@ func Registry() []Op {
 			Params: []Param{
 				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
 				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
-				limitParam,
+				limitParam("Maximum tool calls", query.ToolsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 				{Name: "from_seq", Type: "integer", Desc: "Only calls issued at or after this message seq"},
 				{Name: "to_seq", Type: "integer", Desc: "Only calls issued at or before this message seq (0 = unbounded)"},
@@ -325,15 +356,55 @@ func Registry() []Op {
 const PayloadSchema = "ccpeek/v1"
 
 // Envelope wraps every response. Data is omitted when absent so an error
-// envelope stays minimal; the CLI's list ops substitute an empty slice
-// rather than null before they get here.
+// envelope stays minimal; Wrap substitutes an empty slice for a nil one,
+// so a list op's data is never null.
 type Envelope struct {
 	Schema string `json:"schema"`
 	Data   any    `json:"data,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
 
-// Wrap builds a success envelope.
+// Wrap builds a success envelope. Every transport builds its envelope
+// here, which is what makes the empty-list contract one mechanism rather
+// than three: HTTP corrected nil slices in its own helper while the CLI
+// and MCP emitted "data": null — inconsistently, since whether a query
+// happened to allocate decided it — and `jq '.data[]'` errors on null.
 func Wrap(data any) Envelope {
-	return Envelope{Schema: PayloadSchema, Data: data}
+	return Envelope{Schema: PayloadSchema, Data: emptyNotNull(data)}
+}
+
+// emptyNotNull replaces a nil slice with an empty one of its own type.
+// Reflection because the payloads are twenty-odd element types and a
+// type switch over them would be the drift this package exists to
+// prevent; non-slice payloads pass through untouched.
+func emptyNotNull(data any) any {
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Slice && v.IsNil() {
+		return reflect.MakeSlice(v.Type(), 0, 0).Interface()
+	}
+	return data
+}
+
+// SnippetMarker is what the FTS match delimiters become on the AGENT
+// surface. query.SnippetOpen/Close are control characters (U+0002/U+0003)
+// because indexed content can contain any printable text and the web UI's
+// highlighter splits on them — but a control character reaches a terminal
+// or a model as escape noise. Markdown-strong reads as emphasis to an
+// LLM; a literal ** in the matched text is indistinguishable from a mark,
+// which is acceptable for cosmetic highlighting. Exported so the agent
+// cheatsheet documents the marker that is actually emitted.
+const SnippetMarker = "**"
+
+var snippetMarks = strings.NewReplacer(
+	query.SnippetOpen, SnippetMarker,
+	query.SnippetClose, SnippetMarker,
+)
+
+// markSnippets rewrites hits for the CLI and MCP. HTTP calls the query
+// service directly and keeps the control characters the UI needs.
+func markSnippets(hits []query.SearchHit) []query.SearchHit {
+	for i := range hits {
+		hits[i].Snippet = snippetMarks.Replace(hits[i].Snippet)
+	}
+	return hits
 }

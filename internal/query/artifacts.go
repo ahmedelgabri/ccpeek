@@ -36,7 +36,11 @@ func (s *Service) Artifacts(ctx context.Context, f ArtifactsFilter) ([]ArtifactS
 	if err := checkPaging(f.Limit, f.Offset); err != nil {
 		return nil, err
 	}
-	f.Limit = clampLimit(f.Limit, 100, 0)
+	limit, err := ArtifactsLimit.resolve(f.Limit)
+	if err != nil {
+		return nil, err
+	}
+	f.Limit = limit
 	var where []string
 	var args []any
 	if f.Agent != "" {

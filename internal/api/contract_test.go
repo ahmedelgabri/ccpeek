@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -104,6 +105,57 @@ func TestParamContractsRejectMalformedInput(t *testing.T) {
 	for _, path := range good {
 		if code, body := rawGet(t, h, path); code != 200 {
 			t.Errorf("GET %s = %d, want 200 (%s)", path, code, strings.TrimSpace(body))
+		}
+	}
+}
+
+// TestOverCapLimitsAreRejected: a limit past an op's ceiling is a 400
+// that names the ceiling, not a truncated 200. Capping silently told a
+// caller asking for 2000 transcript entries that the session ended at
+// 1000 — the same answer it would get if that were true.
+func TestOverCapLimitsAreRejected(t *testing.T) {
+	h := emptyHandler(t)
+	overCap := map[string]int{
+		"/api/v1/sessions?limit=501":                           500,
+		"/api/v1/sessions/claude-code/x/transcript?limit=1001": 1000,
+		"/api/v1/search?query=x&limit=101":                     100,
+		"/api/v1/commands?limit=1001":                          1000,
+		"/api/v1/blocks?limit=201":                             200,
+	}
+	for path, max := range overCap {
+		code, body := rawGet(t, h, path)
+		if code != http.StatusBadRequest {
+			t.Errorf("GET %s = %d, want 400 (%s)", path, code, strings.TrimSpace(body))
+			continue
+		}
+		if !strings.Contains(body, strconv.Itoa(max)) {
+			t.Errorf("GET %s: 400 does not name the maximum %d: %s", path, max, strings.TrimSpace(body))
+		}
+	}
+
+	// The ceilings themselves stay valid — the SPA's transcript page size
+	// is exactly the transcript maximum, and its shell-history export
+	// exactly the commands one.
+	for _, path := range []string{
+		"/api/v1/sessions?limit=500",
+		"/api/v1/search?query=x&limit=100",
+		"/api/v1/commands?limit=1000",
+		"/api/v1/commands?format=zsh&limit=1000",
+		"/api/v1/blocks?limit=200",
+	} {
+		if code, body := rawGet(t, h, path); code != 200 {
+			t.Errorf("GET %s = %d, want 200 (%s)", path, code, strings.TrimSpace(body))
+		}
+	}
+	// Uncapped ops keep honoring an explicit large page.
+	for _, path := range []string{
+		"/api/v1/artifacts?limit=5000",
+		"/api/v1/history?limit=5000",
+		"/api/v1/usage?limit=5000",
+		"/api/v1/sessions/claude-code/x/tools?limit=5000",
+	} {
+		if code, body := rawGet(t, h, path); code == http.StatusBadRequest {
+			t.Errorf("GET %s = 400, want the limit honored (%s)", path, strings.TrimSpace(body))
 		}
 	}
 }

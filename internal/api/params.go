@@ -71,13 +71,3 @@ func (p *params) Bool(name string) bool {
 func (p *params) Err() error {
 	return p.err
 }
-
-// orEmpty normalizes list payloads: an absent result encodes as [] on
-// the wire, never null — consumers of the versioned contract must not
-// need a null-vs-empty branch.
-func orEmpty[T any](s []T) []T {
-	if s == nil {
-		return []T{}
-	}
-	return s
-}

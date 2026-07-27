@@ -194,7 +194,7 @@ func TestRouteParamParity(t *testing.T) {
 			t.Errorf("route %s is not in Handler's byPattern table", r.Pattern)
 			continue
 		}
-		accepted := acceptedParams(r, op)
+		accepted := AcceptedParams(r, op)
 		read := paramsReadBy(t, files, method)
 		for _, name := range accepted {
 			if !slices.Contains(read, name) {
@@ -371,7 +371,7 @@ func TestOpRoutesRejectUnknownParams(t *testing.T) {
 		// Declared names are accepted. The value may still be rejected on
 		// its own merits (a malformed date, an unknown group), so only the
 		// unknown-parameter refusal is a failure here.
-		for _, name := range acceptedParams(r, op) {
+		for _, name := range AcceptedParams(r, op) {
 			code, env := get(t, h, path+"?"+name+"=1")
 			if code == http.StatusBadRequest && strings.Contains(env.Error, "unknown parameter") {
 				t.Errorf("GET %s?%s=1 rejects a declared parameter: %s", path, name, env.Error)

@@ -122,7 +122,9 @@ func runScan(cmd *cobra.Command, _ []string) error {
 	}
 
 	if active > 0 {
-		os.Exit(2)
+		// Returned, not os.Exit: the deferred engine close has to run, and
+		// the findings are already reported above.
+		return &exitError{code: exitScanFindings}
 	}
 	return nil
 }

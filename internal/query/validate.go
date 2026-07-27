@@ -48,20 +48,47 @@ func checkPaging(limit, offset int) error {
 	return nil
 }
 
-// clampLimit resolves a caller's page size: zero means "unset" and takes
-// the op's default, anything above the ceiling is capped. Pass max = 0 for
-// an op with no ceiling.
+// Limit is one op's page-size policy: the size applied when the caller
+// omits limit, and the largest limit accepted. Both numbers are declared
+// HERE and read by the ops registry that documents them to every
+// transport, so an advertised bound and an enforced one cannot drift.
+type Limit struct {
+	Default int // applied when limit is unset (0 = unbounded)
+	Max     int // largest accepted limit (0 = no ceiling)
+}
+
+// The per-op limits. They were seven inline pairs of magic numbers at
+// seven call sites: impossible to compare side by side, and invisible to
+// the transports that have to document them.
+var (
+	SessionsLimit   = Limit{Default: 50, Max: 500}
+	TranscriptLimit = Limit{Default: 200, Max: 1000}
+	SearchLimit     = Limit{Default: 20, Max: 100}
+	CommandsLimit   = Limit{Default: 100, Max: 1000}
+	BlocksLimit     = Limit{Default: 24, Max: 200}
+	ArtifactsLimit  = Limit{Default: 100}
+	HistoryLimit    = Limit{Default: 100}
+	// Tools and usage answer in FULL unless the caller bounds them: a
+	// session's tool list and a usage aggregate are bounded by their own
+	// cardinality, and a partial aggregate is a wrong total.
+	ToolsLimit = Limit{}
+	UsageLimit = Limit{}
+)
+
+// resolve turns a caller's limit into the one the query runs. Zero — how
+// every transport spells "unset" — takes the default.
 //
-// The three-line if/if pair was written out at seven call sites with seven
-// different pairs of numbers, which made the ceilings impossible to see
-// side by side — and one of them (Blocks) had already been fixed once for
-// clamping DOWN to the default instead of up to the ceiling.
-func clampLimit(limit, def, max int) int {
+// A limit ABOVE the ceiling is REFUSED, not capped. Silently returning
+// 1000 of the 2000 transcript entries an agent asked for, with a success
+// status and nothing saying otherwise, tells it the session ends there;
+// the error names the ceiling instead, so the caller can page.
+func (l Limit) resolve(limit int) (int, error) {
 	if limit <= 0 {
-		limit = def
+		return l.Default, nil
 	}
-	if max > 0 && limit > max {
-		limit = max
+	if l.Max > 0 && limit > l.Max {
+		return 0, fmt.Errorf("%w: limit=%d exceeds the maximum of %d (omit limit for the default of %d, then page for the rest)",
+			ErrBadRequest, limit, l.Max, l.Default)
 	}
-	return limit
+	return limit, nil
 }

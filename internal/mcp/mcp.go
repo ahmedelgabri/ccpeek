@@ -175,11 +175,16 @@ func buildToolDefs() []map[string]any {
 		props := map[string]any{}
 		var required []string
 		for _, p := range op.Params {
-			prop := map[string]string{"type": p.Type, "description": p.Desc}
-			if p.Default != "" {
-				// Declared once in the registry, so every transport
-				// documents the same default.
+			prop := map[string]any{"type": p.Type, "description": p.Desc}
+			// Declared once in the registry, so every transport documents
+			// the same default and the same ceiling — and both ride typed
+			// JSON Schema keywords, so a client can check a call before
+			// sending it rather than learning the bound from a 400.
+			if p.Default != nil {
 				prop["default"] = p.Default
+			}
+			if p.Max > 0 {
+				prop["maximum"] = p.Max
 			}
 			props[p.Name] = prop
 			if p.Required {

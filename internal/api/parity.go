@@ -105,7 +105,7 @@ func (h *handlers) artifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(list))
+	writeJSON(w, http.StatusOK, list)
 }
 
 // artifactKinds is the browser's kind facet, agent-filtered to match the
@@ -122,7 +122,7 @@ func (h *handlers) artifactKinds(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(out))
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *handlers) artifact(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +175,7 @@ func (h *handlers) scanRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(out))
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *handlers) scanFindings(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +190,7 @@ func (h *handlers) scanFindings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(findings))
+	writeJSON(w, http.StatusOK, findings)
 }
 
 func (h *handlers) scanIgnore(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +225,7 @@ func (h *handlers) blocks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orEmpty(blocks))
+	writeJSON(w, http.StatusOK, blocks)
 }
 
 func (h *handlers) budget(w http.ResponseWriter, r *http.Request) {

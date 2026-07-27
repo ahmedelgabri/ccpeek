@@ -14,29 +14,76 @@ import (
 )
 
 // Exit codes for the agent-facing query surface (docs/v2-plan.md §5.7):
-// 0 results found, 1 error, 2 scan findings (v1 compat, unused here),
-// 3 valid query but no matches — so scripts and agents branch without
-// parsing.
-const exitNoMatches = 3
+// 0 results found, 1 error, 2 scan findings, 3 valid query but no
+// matches — so scripts and agents branch without parsing.
+const (
+	exitScanFindings = 2
+	exitNoMatches    = 3
+)
 
-func emit(data any, empty bool) error {
+// exitError ends a command with a specific process exit code WITHOUT
+// calling os.Exit inside it: os.Exit skips every deferred cleanup the
+// command registered, and the query path defers the store close.
+// ExecuteContext unwraps this after cobra returns, by which point the
+// defers have run. A nil cause means the command already reported
+// everything the caller needs (the JSON envelope is on stdout).
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("exit status %d", e.code)
+	}
+	return e.err.Error()
+}
+
+func (e *exitError) Unwrap() error { return e.err }
+
+func writeEnvelope(env ops.Envelope) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(ops.Wrap(data)); err != nil {
+	return enc.Encode(env)
+}
+
+func emit(data any, empty bool) error {
+	if err := writeEnvelope(ops.Wrap(data)); err != nil {
 		return err
 	}
 	if empty {
-		os.Exit(exitNoMatches)
+		return &exitError{code: exitNoMatches}
 	}
 	return nil
+}
+
+// emitFailure answers a failed query in the SAME versioned envelope a
+// successful one uses, on stdout, and carries the exit code out.
+// `ccpeek query` used to split its contract by outcome: results and
+// empty results were JSON on stdout, while not-found and bad-request
+// were bare stderr text with stdout EMPTY — so a caller parsing stdout
+// got a parse error instead of the documented shape, and Envelope.Error
+// existed but nothing on the CLI ever set it. The human-readable line on
+// stderr stays.
+func emitFailure(err error) error {
+	code := 1
+	if errors.Is(err, query.ErrNotFound) {
+		code = exitNoMatches
+	}
+	if wErr := writeEnvelope(ops.Envelope{Schema: ops.PayloadSchema, Error: err.Error()}); wErr != nil {
+		return wErr
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return &exitError{code: code}
 }
 
 var queryCmd = &cobra.Command{
 	Use:   "query",
 	Short: "Query indexed agent data as JSON (the agent-facing surface)",
-	Long: `Query the ccpeek index directly — no server required. Output is
-versioned JSON ("schema": "ccpeek/v1"). Exit codes: 0 results found,
-1 error, 3 valid query with no matches.`,
+	Long: `Query the ccpeek index directly — no server required. Every outcome
+is versioned JSON on stdout ("schema": "ccpeek/v1"): results and empty
+results as {"data":...}, failures as {"error":"..."}. Exit codes:
+0 results found, 1 error, 3 valid query with no matches.`,
 }
 
 // opCommand builds one `ccpeek query <op>` command from the operation
@@ -70,67 +117,84 @@ func opCommand(op ops.Op) *cobra.Command {
 		Long:  op.Desc,
 		Args:  nargs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+			data, empty, err := runOp(cmd, op, positional, flags, args)
 			if err != nil {
-				return err
-			}
-			defer eng.Close()
-
-			a := ops.Args{
-				Str:  map[string]string{},
-				Int:  map[string]int{},
-				Bool: map[string]bool{},
-			}
-			for i, p := range positional {
-				if p.Variadic {
-					a.Str[p.Name] = strings.Join(args[i:], " ")
-					break
-				}
-				if p.Type == "integer" {
-					v, err := strconv.Atoi(args[i])
-					if err != nil {
-						return fmt.Errorf("argument <%s>: want an integer, got %q", p.FlagName(), args[i])
-					}
-					a.Int[p.Name] = v
-					continue
-				}
-				a.Str[p.Name] = args[i]
-			}
-			for _, p := range flags {
-				switch p.Type {
-				case "string":
-					a.Str[p.Name], _ = cmd.Flags().GetString(p.FlagName())
-				case "integer":
-					a.Int[p.Name], _ = cmd.Flags().GetInt(p.FlagName())
-				case "boolean":
-					a.Bool[p.Name], _ = cmd.Flags().GetBool(p.FlagName())
-				}
-			}
-
-			data, empty, err := op.Run(ctx, eng.query, a)
-			if errors.Is(err, query.ErrNotFound) {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(exitNoMatches)
-			}
-			if err != nil {
-				return err
+				return emitFailure(err)
 			}
 			return emit(data, empty)
 		},
 	}
+	// Flags carry the query layer's real defaults, so --help states what
+	// an omitted flag actually does. Zero keeps meaning "unset" below, so
+	// an explicit --limit 0 and an absent one still agree.
 	for _, p := range flags {
 		switch p.Type {
 		case "string":
-			c.Flags().String(p.FlagName(), p.Default, p.Desc)
+			c.Flags().String(p.FlagName(), stringDefault(p.Default), p.Desc)
 		case "integer":
-			c.Flags().Int(p.FlagName(), 0, p.Desc)
+			c.Flags().Int(p.FlagName(), intDefault(p.Default), p.Desc)
 		case "boolean":
 			c.Flags().Bool(p.FlagName(), false, p.Desc)
 		}
 	}
 	c.Flags().Bool("no-index", false, "Skip the incremental re-index before querying")
 	return c
+}
+
+func stringDefault(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func intDefault(v any) int {
+	n, _ := v.(int)
+	return n
+}
+
+// runOp opens the engine, decodes the CLI arguments into the registry's
+// transport-neutral shape, and runs the op. Every failure returns an
+// error for the caller to render — nothing here exits the process, so
+// the deferred close always runs.
+func runOp(cmd *cobra.Command, op ops.Op, positional, flags []ops.Param, args []string) (any, bool, error) {
+	ctx := cmd.Context()
+	eng, err := openEngine(ctx, cmd, querySkipIndex(cmd), os.Stderr)
+	if err != nil {
+		return nil, false, err
+	}
+	defer eng.Close()
+
+	a := ops.Args{
+		Str:  map[string]string{},
+		Int:  map[string]int{},
+		Bool: map[string]bool{},
+	}
+	for i, p := range positional {
+		if p.Variadic {
+			a.Str[p.Name] = strings.Join(args[i:], " ")
+			break
+		}
+		if p.Type == "integer" {
+			v, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, false, fmt.Errorf("%w: argument <%s>: want an integer, got %q",
+					query.ErrBadRequest, p.FlagName(), args[i])
+			}
+			a.Int[p.Name] = v
+			continue
+		}
+		a.Str[p.Name] = args[i]
+	}
+	for _, p := range flags {
+		switch p.Type {
+		case "string":
+			a.Str[p.Name], _ = cmd.Flags().GetString(p.FlagName())
+		case "integer":
+			a.Int[p.Name], _ = cmd.Flags().GetInt(p.FlagName())
+		case "boolean":
+			a.Bool[p.Name], _ = cmd.Flags().GetBool(p.FlagName())
+		}
+	}
+	return op.Run(ctx, eng.query, a)
 }
 
 func firstSentence(s string) string {
