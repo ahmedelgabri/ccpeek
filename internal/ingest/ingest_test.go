@@ -831,6 +831,92 @@ func TestResolversSkipUnchangedPasses(t *testing.T) {
 	}
 }
 
+// A parked link is aged only by passes that actually ingested something.
+// Watch mode opens a pass per debounce — a formatter run, an editor swap
+// file — and ageing on every one of them turned "five attempts" into a few
+// minutes of wall clock, permanently dropping links whose endpoint was
+// merely late (a session restored from a backup an hour on). The retries
+// themselves must keep happening, and the telemetry must keep counting.
+func TestNoChangePassesDoNotAgeParkedLinks(t *testing.T) {
+	runner, store := newRunner(t)
+	ctx := context.Background()
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(ctx, opts); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Park a link on a session that has not been indexed yet.
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artID, err := w.UpsertArtifact(canon.Artifact{
+		Agent: claude.Slug, Kind: canon.ArtifactTaskGroup, Name: "parked-group",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.LinkArtifact(artID, canon.ArtifactLink{
+		Agent: claude.Slug, SessionExternalID: "not-indexed-yet",
+		Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	attempts := func() int {
+		return queryInt(t, store, `SELECT COALESCE(MAX(attempts), -1) FROM pending_artifact_links`)
+	}
+	if got := attempts(); got != 0 {
+		t.Fatalf("attempts = %d on a freshly parked link", got)
+	}
+
+	for i := range 3 {
+		rep, err := runner.Run(ctx, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.FilesChanged != 0 {
+			t.Fatalf("pass %d changed %d files, want a no-op pass", i+1, rep.FilesChanged)
+		}
+		if rep.LinksPending != 1 {
+			t.Errorf("pass %d reported %d pending links, want 1 — the retry must still run",
+				i+1, rep.LinksPending)
+		}
+	}
+	if got := attempts(); got != 0 {
+		t.Fatalf("attempts = %d after 3 no-change passes, want 0", got)
+	}
+
+	// A pass that ingests something is evidence the endpoint is absent
+	// rather than late, so it does age the link.
+	target := filepath.Join(tmp, "claude-code", "plans", "rate-limit-plan.md")
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := runner.Run(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.FilesChanged == 0 {
+		t.Fatal("precondition: the edited pass changed nothing")
+	}
+	if got := attempts(); got != 1 {
+		t.Errorf("attempts = %d after one changed pass, want 1", got)
+	}
+}
+
 // addRecursive reports registration failures instead of dropping them —
 // on Linux the per-user inotify limit is reachable by a large projects
 // tree, and silently losing those watches left the user with "watch mode

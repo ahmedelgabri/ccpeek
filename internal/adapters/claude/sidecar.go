@@ -43,9 +43,11 @@ var todoFileRe = regexp.MustCompile(`^([0-9a-f-]{36})-agent-`)
 // directories are NAMED by the session that produced them, so the
 // directory name is the link target — but only when it actually looks
 // like one. Emitting a link for any directory name parked a row in
-// pending_artifact_links that could never resolve, and nothing ages those
-// out: they were re-scanned by every ResolvePending pass and inflated the
-// unresolved_links figure `ccpeek doctor` presents as a health signal.
+// pending_artifact_links that could never resolve: it was re-scanned by
+// every ResolvePending pass and inflated the unresolved_links figure
+// `ccpeek doctor` presents as a health signal until the attempt limit
+// finally dropped it — several data-changing passes later, and never at
+// all on a corpus that had stopped changing.
 var sessionUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // classify determines what a source path is, relative to its root.
@@ -227,9 +229,13 @@ func parseTodo(src agent.SourceRef, sink agent.RecordSink) error {
 			SourcePath: src.Path, Detail: fmt.Sprintf("invalid todo JSON: %v", err),
 		})
 	}
-	if len(items) == 0 {
-		return nil // empty todo lists are noise, matching v1
-	}
+	// An empty list is emitted, not skipped. TodoWrite routinely clears a
+	// list once the work is done, and returning early here left the LAST
+	// non-empty version standing in artifacts.content forever: the file had
+	// changed, so the upsert that would have replaced it never ran, and the
+	// UI and search kept serving items the agent had already ticked off.
+	// The artifact now reads as the empty list the file actually holds
+	// (v1 skipped these outright, which is where the staleness came from).
 	name := filepath.Base(src.Path)
 	if err := sink.Artifact(canon.Artifact{
 		Agent:      Slug,
@@ -269,7 +275,9 @@ func parseTaskDir(src agent.SourceRef, sink agent.RecordSink) error {
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", src.Path, err)
 	}
-	var items []json.RawMessage
+	// Non-nil so an emptied directory marshals as "items": [] rather than
+	// "items": null.
+	items := []json.RawMessage{}
 	var texts []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -296,9 +304,11 @@ func parseTaskDir(src agent.SourceRef, sink agent.RecordSink) error {
 		items = append(items, json.RawMessage(data))
 		texts = append(texts, strings.TrimSpace(item.Subject+" "+item.Description))
 	}
-	if len(items) == 0 {
-		return nil
-	}
+	// Emitted even when nothing parsed, for the same reason as todo lists:
+	// a directory whose items were removed must REPLACE its artifact, not
+	// leave the last populated version behind. (Discovery still skips
+	// directories holding nothing but .lock/.highwatermark bookkeeping, so
+	// this covers the emptied-but-still-discovered shape.)
 	dirName := filepath.Base(src.Path)
 	meta, _ := json.Marshal(map[string]any{"items": items})
 	if err := sink.Artifact(canon.Artifact{
@@ -338,7 +348,8 @@ func parseFileHistoryDir(src agent.SourceRef, sink agent.RecordSink) error {
 		Version string `json:"version"`
 		Content string `json:"content"`
 	}
-	var versions []version
+	// Non-nil so an emptied directory marshals as "versions": [].
+	versions := []version{}
 	for _, e := range entries {
 		m := fileVersionRe.FindStringSubmatch(e.Name())
 		if e.IsDir() || m == nil {
@@ -350,9 +361,9 @@ func parseFileHistoryDir(src agent.SourceRef, sink agent.RecordSink) error {
 		}
 		versions = append(versions, version{Hash: m[1], Version: m[2], Content: string(data)})
 	}
-	if len(versions) == 0 {
-		return nil
-	}
+	// Emitted even when empty: the versions live in metadata, so a pruned
+	// history directory that kept its old artifact would show file contents
+	// that no longer exist anywhere.
 	dirName := filepath.Base(src.Path)
 	meta, _ := json.Marshal(map[string]any{"versions": versions})
 	if err := sink.Artifact(canon.Artifact{

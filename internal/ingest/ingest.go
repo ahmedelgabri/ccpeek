@@ -187,7 +187,15 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		}
 	}
 
-	if _, pending, err := r.store.ResolvePending(ctx); err != nil {
+	// Parked links are always retried — a pass that changed nothing still
+	// reports how many are outstanding — but only a pass that INGESTED
+	// something is allowed to age them towards being dropped. Prune counts
+	// as changed (it is folded into FilesChanged above): it can delete the
+	// very endpoint a link was waiting for. Watch mode fires a pass per
+	// debounce, so ageing on every call made the attempt limit a measure of
+	// elapsed time rather than of ingest activity.
+	changed := report.FilesChanged > 0
+	if _, pending, err := r.store.ResolvePending(ctx, changed); err != nil {
 		return nil, r.fail(ctx, report, started, err)
 	} else {
 		report.LinksPending = pending

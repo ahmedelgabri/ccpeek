@@ -571,8 +571,10 @@ func (w *Writer) sessionID(agent canon.AgentSlug, externalID string) (int64, err
 	return id, nil
 }
 
-// pendingLinkAttemptLimit is how many resolution passes a parked link may
-// survive before it is dropped as unresolvable. Links waiting on a
+// pendingLinkAttemptLimit is how many DATA-CHANGING ingest passes a parked
+// link may survive before it is dropped as unresolvable (see
+// ResolvePending's ageAttempts — a pass that indexed nothing cannot count
+// against it). Links waiting on a
 // not-yet-ingested endpoint resolve on the pass that indexes it; a link
 // still parked after this many passes is pointing at something that does
 // not exist (a task directory that is not a session id, a relation to a
@@ -582,10 +584,18 @@ const pendingLinkAttemptLimit = 5
 
 // ResolvePending links parked relations and artifact links whose endpoint
 // sessions have since been ingested. Called once at the end of each ingest
-// run; rows that still don't resolve have their attempt counter bumped and
-// are dropped once it passes pendingLinkAttemptLimit. What remains is
-// counted as unresolved_links in run telemetry.
-func (s *Store) ResolvePending(ctx context.Context) (resolved, remaining int, err error) {
+// run. What remains is counted as unresolved_links in run telemetry.
+//
+// ageAttempts says whether this pass may count AGAINST the parked rows.
+// Only a pass that actually ingested something can turn a parked link into
+// a resolved one, so only such a pass is evidence that the endpoint is
+// absent rather than late. Ageing on every call made the limit a function
+// of wall-clock activity instead of ingest activity: `ccpeek --watch`
+// fires a pass per debounce, most of which change nothing relevant, so
+// five "attempts" could elapse in minutes and permanently drop a link
+// whose endpoint arrives later (a Pi parentSession restored from a backup
+// an hour on, a transcript copied in after its todo file).
+func (s *Store) ResolvePending(ctx context.Context, ageAttempts bool) (resolved, remaining int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
@@ -635,19 +645,21 @@ func (s *Store) ResolvePending(ctx context.Context) (resolved, remaining int, er
 		return 0, 0, fmt.Errorf("pruning resolved artifact links: %w", err)
 	}
 
-	// Anything still parked has now failed a pass. Bump its counter and
-	// drop what has failed too many — the endpoint is not late, it is
-	// absent. (Written out per table rather than looped: the loop it
-	// replaced decided whether to bind an argument by testing whether the
-	// statement text started with "DELETE".)
-	for _, table := range []string{"pending_relations", "pending_artifact_links"} {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE `+table+` SET attempts = attempts + 1`); err != nil {
-			return 0, 0, fmt.Errorf("ageing %s: %w", table, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM `+table+` WHERE attempts > ?`, pendingLinkAttemptLimit); err != nil {
-			return 0, 0, fmt.Errorf("pruning %s: %w", table, err)
+	// Anything still parked has now failed a pass that COULD have resolved
+	// it. Bump its counter and drop what has failed too many — the endpoint
+	// is not late, it is absent. (Written out per table rather than looped:
+	// the loop it replaced decided whether to bind an argument by testing
+	// whether the statement text started with "DELETE".)
+	if ageAttempts {
+		for _, table := range []string{"pending_relations", "pending_artifact_links"} {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE `+table+` SET attempts = attempts + 1`); err != nil {
+				return 0, 0, fmt.Errorf("ageing %s: %w", table, err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM `+table+` WHERE attempts > ?`, pendingLinkAttemptLimit); err != nil {
+				return 0, 0, fmt.Errorf("pruning %s: %w", table, err)
+			}
 		}
 	}
 
@@ -688,6 +700,29 @@ func boolInt(b bool) int {
 // exists on disk (v1's --prune semantics). exists is injectable for tests.
 // Imported-v1 rows are exempt: their sources were already gone at import
 // time — that retention is the point.
+//
+// KNOWN HAZARD — usage attached to a deleted duplicate. InsertMessage
+// dedupes usage agent-wide by (content_id, request_id), so when a resumed
+// or forked transcript repeats an earlier session's assistant turns, the
+// single message_usage row lands on whichever copy was INGESTED FIRST,
+// while the other copies keep their message rows and carry no usage. If
+// that first copy's file is the one that later disappears, this prune
+// deletes its session, messages cascade, and message_usage cascades with
+// them (message_id REFERENCES messages(id) ON DELETE CASCADE) — so tokens
+// for turns that still exist verbatim in a surviving session drop out of
+// the rollups and out of every cost figure. The user sees a session whose
+// content is intact and whose cost fell.
+//
+// Re-homing those rows to a surviving copy before the cascade is the fix,
+// and it is deliberately NOT attempted here: message_usage is keyed by
+// message_id, so a target must be a same-content_id message that has no
+// usage row of its own (a copy sharing content_id under a DIFFERENT
+// request_id has one, and moving onto it would violate the primary key);
+// and with several stale paths in one run a chosen survivor can itself be
+// deleted by a later path, so target selection depends on processing
+// order. Getting either wrong silently misattributes cost, which is the
+// exact failure the dedupe exists to prevent. Retention (the default: no
+// --prune) does not have this problem.
 func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string) bool) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path FROM source_files`)
 	if err != nil {

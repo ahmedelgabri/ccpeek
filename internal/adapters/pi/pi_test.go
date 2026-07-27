@@ -209,3 +209,35 @@ func TestParseToolCalls(t *testing.T) {
 		t.Errorf("edit result = %+v, want error (isError:true)", r)
 	}
 }
+
+// Pi spells a tool's outcome role "toolResult", which is not in canon's
+// vocabulary (user/assistant/system/tool). Stored verbatim it left a value
+// no role-keyed surface knows about — filters and rendering registers
+// simply skipped Pi's tool results. The raw payload keeps Pi's spelling.
+func TestToolResultRoleNormalized(t *testing.T) {
+	sink := parseFixture(t, "2026-07-01T10-00-00_"+mainSession+".jsonl")
+
+	vocabulary := map[canon.Role]bool{
+		canon.RoleUser: true, canon.RoleAssistant: true,
+		canon.RoleSystem: true, canon.RoleTool: true,
+	}
+	var toolRoled int
+	for _, m := range sink.Messages {
+		if !vocabulary[m.Role] {
+			t.Errorf("entry %s carries out-of-vocabulary role %q", m.ExternalID, m.Role)
+		}
+		if m.Role != canon.RoleTool {
+			continue
+		}
+		toolRoled++
+		// The agent's own spelling survives where lossless rendering needs
+		// it: in the raw payload, not in the canonical role.
+		if !strings.Contains(string(m.Content), `"role":"toolResult"`) {
+			t.Errorf("entry %s lost Pi's raw role in Content", m.ExternalID)
+		}
+	}
+	// The fixture answers both tool calls.
+	if toolRoled != 2 {
+		t.Errorf("tool-roled messages = %d, want 2", toolRoled)
+	}
+}

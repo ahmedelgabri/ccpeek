@@ -162,7 +162,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		messageCount int
 		toolCount    int
 		currentModel string
-		prevTotal    *tokenUsage
+		tokens       tokenState
 		pendingAsst  *canon.Message
 		emitted      bool
 	)
@@ -322,7 +322,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			if json.Unmarshal(ev.Info, &info) != nil {
 				return nil
 			}
-			delta := perTurnUsage(info, &prevTotal)
+			delta := perTurnUsage(info, &tokens)
 			if delta == nil {
 				return nil
 			}
@@ -374,23 +374,49 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	return sink.Session(sess)
 }
 
+// tokenState is one rollout's token_count bookkeeping: the last cumulative
+// total seen (the delta path's baseline) and the last per-turn usage
+// actually emitted (what makes a repeat recognizable).
+type tokenState struct {
+	total *tokenUsage
+	last  *tokenUsage
+}
+
 // perTurnUsage recovers this turn's usage: last_token_usage when the CLI
 // provides it, else the delta from the previous cumulative total. A total
 // smaller than the previous one means the counter reset (new sub-session);
-// treat it as absolute.
-func perTurnUsage(info tokenCountInfo, prev **tokenUsage) *tokenUsage {
+// treat it as absolute. It returns nil when the event carries no new
+// tokens.
+//
+// A token_count event whose payload REPEATS the one before it — the same
+// last_token_usage beside a cumulative total that has not advanced — is one
+// turn emitted twice, not two turns that happened to cost the same. Codex
+// rows carry neither a content id nor a request id, so the store's
+// (content_id, request_id) usage dedupe cannot see them and the tokens
+// would be recorded, and billed, twice. The delta path never had this
+// problem: a total that has not moved yields a zero delta. The cumulative
+// total is what distinguishes the two cases, which is why it, and not the
+// per-turn figure alone, decides.
+func perTurnUsage(info tokenCountInfo, st *tokenState) *tokenUsage {
 	if info.Last != nil {
+		if st.last != nil && *st.last == *info.Last && sameUsage(st.total, info.Total) {
+			return nil
+		}
+		st.last = info.Last
 		if info.Total != nil {
-			*prev = info.Total
+			st.total = info.Total
 		}
 		return info.Last
 	}
+	// An event without last_token_usage breaks any run of repeats: a later
+	// identical Last is a genuinely new turn, not a duplicate of this one.
+	st.last = nil
 	if info.Total == nil {
 		return nil
 	}
 	cur := info.Total
-	p := *prev
-	*prev = cur
+	p := st.total
+	st.total = cur
 	if p == nil || cur.TotalTokens < p.TotalTokens {
 		return cur
 	}
@@ -401,6 +427,16 @@ func perTurnUsage(info tokenCountInfo, prev **tokenUsage) *tokenUsage {
 		ReasoningOutputTokens: cur.ReasoningOutputTokens - p.ReasoningOutputTokens,
 		TotalTokens:           cur.TotalTokens - p.TotalTokens,
 	}
+}
+
+// sameUsage compares two optional payloads, treating "both absent" as
+// equal — a rollout that reports no cumulative total at all still has its
+// consecutive identical per-turn figures collapsed.
+func sameUsage(a, b *tokenUsage) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func itemText(item responseItem) string {

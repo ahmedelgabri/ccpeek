@@ -132,6 +132,79 @@ func TestDecodeProjectDir(t *testing.T) {
 	}
 }
 
+// A sidecar whose list goes to zero must still emit — TodoWrite empties a
+// todo file as the routine end of a task, and skipping the emit left the
+// last populated version standing in artifacts.content: the file had
+// changed, so the upsert that would have replaced it never ran, and the UI
+// and search kept serving finished items until the file was deleted AND
+// --prune ran.
+func TestEmptiedSidecarsStillEmitArtifacts(t *testing.T) {
+	root := t.TempDir()
+	mkfile := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const uuid = "12345678-aaaa-bbbb-cccc-1234567890ab"
+	// The emptied shapes: a cleared todo list, a task directory whose items
+	// are gone (a non-JSON file keeps it discoverable), and a file-history
+	// directory left without any name@vN entries.
+	mkfile("todos/"+uuid+"-agent-99998888-aaaa-bbbb-cccc-777766665555.json", `[]`)
+	mkfile("tasks/"+uuid+"/.lock", "")
+	mkfile("tasks/"+uuid+"/notes.txt", "not an item")
+	mkfile("file-history/"+uuid+"/README", "not a version")
+
+	refs, err := New().Discover(context.Background(), agent.Root{Agent: Slug, Path: root})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	sink := &agenttest.Sink{}
+	for _, ref := range refs {
+		if err := New().Parse(context.Background(), ref, sink); err != nil {
+			t.Fatalf("Parse(%s): %v", ref.Path, err)
+		}
+	}
+
+	byKind := map[canon.ArtifactKind]canon.Artifact{}
+	for _, a := range sink.Artifacts {
+		byKind[a.Kind] = a
+	}
+	for _, kind := range []canon.ArtifactKind{
+		canon.ArtifactTodoList, canon.ArtifactTaskGroup, canon.ArtifactFileHistory,
+	} {
+		a, ok := byKind[kind]
+		if !ok {
+			t.Errorf("%s emitted no artifact for its emptied source — the stale one survives", kind)
+			continue
+		}
+		if a.Content != "" {
+			t.Errorf("%s content = %q, want empty", kind, a.Content)
+		}
+	}
+	// The empty state must be legible as an empty LIST, not as a missing
+	// payload: the browser renders these from metadata.
+	if got := string(byKind[canon.ArtifactTodoList].Metadata); got != `[]` {
+		t.Errorf("todo metadata = %q, want []", got)
+	}
+	if got := string(byKind[canon.ArtifactTaskGroup].Metadata); got != `{"items":[]}` {
+		t.Errorf("task metadata = %q, want an empty items list", got)
+	}
+	if got := string(byKind[canon.ArtifactFileHistory].Metadata); got != `{"versions":[]}` {
+		t.Errorf("file-history metadata = %q, want an empty versions list", got)
+	}
+
+	// Provenance still holds — the artifact is empty, not orphaned.
+	if len(sink.ArtifactLinks) != 3 {
+		t.Errorf("links = %d, want 3 (one per emptied sidecar): %+v",
+			len(sink.ArtifactLinks), sink.ArtifactLinks)
+	}
+}
+
 // writeHistory builds a history.jsonl inside a throwaway root and returns
 // a SourceRef for it.
 func writeHistory(t *testing.T, lines ...string) (agent.SourceRef, string) {

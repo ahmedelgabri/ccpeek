@@ -180,6 +180,20 @@ func normalizeTool(name string) canon.ToolKind {
 	}
 }
 
+// normalizeRole maps Pi's message roles onto canon's closed vocabulary
+// (user/assistant/system/tool). Pi delivers a tool's outcome as a message
+// with role "toolResult"; storing that string verbatim put a value outside
+// the vocabulary in messages.role, so every role-keyed surface — the
+// transcript's rendering register, the role filters, anything grouping by
+// author — simply missed Pi's tool results. The raw payload in
+// Message.Content keeps the original spelling either way.
+func normalizeRole(role string) canon.Role {
+	if role == "toolResult" {
+		return canon.RoleTool
+	}
+	return canon.Role(role)
+}
+
 // piToolArgs is the subset of a toolCall's arguments the canonical record
 // keeps beside the verbatim JSON. Pi spells the edit payload oldText /
 // newText where Claude spells it old_string / new_string — normalizing
@@ -378,10 +392,20 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 		}
 		dec := decodedMessage{pm: pm, blocks: piBlocks(pm.Content), ok: true}
 		base.Kind = canon.KindMessage
-		base.Role = canon.Role(pm.Role)
+		base.Role = normalizeRole(pm.Role)
 		base.Content = e.Message
 		base.Text = piText(pm.Content, dec.blocks)
 		if pm.Usage != nil {
+			// No RequestID, and no ContentID either: Pi's format carries
+			// neither, so these rows bypass the store's (content_id,
+			// request_id) usage dedupe. That is SAFE here and the reason is
+			// structural, not luck — Pi branches in place, so a branch is
+			// new entries with new ids in the SAME file, and a fork is a new
+			// session file that references its parent by header
+			// parentSession WITHOUT copying the parent's entries. Nothing
+			// replicates a usage-bearing entry, so nothing can double-count
+			// it. A future Pi that starts replaying parent entries into a
+			// fork would need a dedupe key invented here first.
 			usage := &canon.Usage{
 				InputTokens:      pm.Usage.Input,
 				OutputTokens:     pm.Usage.Output,

@@ -192,7 +192,7 @@ func TestLinkArtifactResolvedAndPending(t *testing.T) {
 	if err := w2.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	resolvedN, remaining, err := s.ResolvePending(context.Background())
+	resolvedN, remaining, err := s.ResolvePending(context.Background(), true)
 	if err != nil {
 		t.Fatalf("ResolvePending: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestSessionRelationPendingLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvedN, remaining, err := s.ResolvePending(context.Background())
+	resolvedN, remaining, err := s.ResolvePending(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,6 +444,66 @@ func TestPruneKeepsImportedRows(t *testing.T) {
 	}
 }
 
+// An artifact re-emitted with EMPTY content must replace what is stored —
+// content, metadata, and search document alike. This is the store half of
+// the emptied-sidecar fix: the adapter emits the empty state (a todo list
+// TodoWrite has cleared), and the upsert is what has to make it stick
+// rather than leaving the last populated version to be served forever.
+func TestEmptyArtifactContentReplacesStoredContent(t *testing.T) {
+	s, _ := openTemp(t)
+	const name = "sess-a-agent-xyz.json"
+
+	w := beginWrite(t, s)
+	id, _, err := w.WriteArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactTodoList, Name: name,
+		Content:  "ship the parser\nwrite the tests",
+		Metadata: []byte(`[{"content":"ship the parser"}]`),
+	}, "h1")
+	if err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM search_docs WHERE artifact_id = ?`, id); n != 1 {
+		t.Fatalf("search docs = %d, want the populated list indexed", n)
+	}
+
+	w = beginWrite(t, s)
+	id2, _, err := w.WriteArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactTodoList, Name: name,
+		Content: "", Metadata: []byte(`[]`),
+	}, "h2")
+	if err != nil {
+		t.Fatalf("emptied write: %v", err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if id2 != id {
+		t.Fatalf("row id changed on emptied upsert: %d → %d", id, id2)
+	}
+
+	// Still in the archive, now reading as the empty list it is.
+	if n := count(t, s, `SELECT COUNT(*) FROM artifacts`); n != 1 {
+		t.Fatalf("artifacts = %d, want the row kept", n)
+	}
+	var content, meta string
+	if err := s.db.QueryRow(
+		`SELECT content, metadata_json FROM artifacts WHERE id = ?`, id).
+		Scan(&content, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if content != "" || meta != `[]` {
+		t.Errorf("stored content=%q metadata=%q, want the emptied state", content, meta)
+	}
+	// The stale text must leave the index too, or search keeps answering
+	// with items the agent already finished.
+	if n := count(t, s, `SELECT COUNT(*) FROM search_docs WHERE artifact_id = ?`, id); n != 0 {
+		t.Errorf("search docs = %d, want the stale document cleared", n)
+	}
+}
+
 // A parked link waiting on a session that is simply not indexed YET must
 // survive until it resolves. One pointing at something that will never
 // exist must not survive forever: it grew the table without bound and
@@ -484,7 +544,7 @@ func TestPendingLinksAgeOutButLateArrivalsStillResolve(t *testing.T) {
 	// Two passes: both links are still parked, and the late session has
 	// not arrived yet.
 	for i := range 2 {
-		if _, remaining, err := s.ResolvePending(ctx); err != nil {
+		if _, remaining, err := s.ResolvePending(ctx, true); err != nil {
 			t.Fatal(err)
 		} else if remaining != 2 {
 			t.Fatalf("after pass %d remaining = %d, want 2", i+1, remaining)
@@ -500,7 +560,7 @@ func TestPendingLinksAgeOutButLateArrivalsStillResolve(t *testing.T) {
 	if err := w.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	resolved, remaining, err := s.ResolvePending(ctx)
+	resolved, remaining, err := s.ResolvePending(ctx, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +576,7 @@ func TestPendingLinksAgeOutButLateArrivalsStillResolve(t *testing.T) {
 
 	// Keep going: the impossible link is dropped once it passes the limit.
 	for range pendingLinkAttemptLimit + 1 {
-		if _, _, err := s.ResolvePending(ctx); err != nil {
+		if _, _, err := s.ResolvePending(ctx, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -526,6 +586,113 @@ func TestPendingLinksAgeOutButLateArrivalsStillResolve(t *testing.T) {
 	// The resolved link is untouched by the ageing.
 	if n := count(t, s, `SELECT COUNT(*) FROM artifact_sessions`); n != 1 {
 		t.Errorf("artifact_sessions = %d after ageing, want 1", n)
+	}
+}
+
+// Passes that ingested nothing must not spend a parked link's attempts.
+// Watch mode fires a pass per debounce — a formatter touching an unrelated
+// file, an editor writing a swap file — and ageing on every one of them
+// made "five attempts" mean minutes of wall clock, dropping links whose
+// endpoint was merely late (a session restored from a backup an hour on).
+func TestNoChangeRunsDoNotAgePendingLinks(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+
+	w := beginWrite(t, s)
+	artID, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactTaskGroup, Name: "tasks",
+		SourcePath: "/roots/claude/tasks/x",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.LinkArtifact(artID, canon.ArtifactLink{
+		Agent: "claude-code", SessionExternalID: "arrives-much-later",
+		Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	attempts := func() int {
+		return count(t, s, `SELECT COALESCE(MAX(attempts), -1) FROM pending_artifact_links`)
+	}
+	if got := attempts(); got != 0 {
+		t.Fatalf("attempts = %d on a freshly parked link, want 0", got)
+	}
+
+	// Far more no-change passes than the limit allows.
+	for range pendingLinkAttemptLimit * 3 {
+		if _, remaining, err := s.ResolvePending(ctx, false); err != nil {
+			t.Fatal(err)
+		} else if remaining != 1 {
+			t.Fatalf("remaining = %d, want the link still parked", remaining)
+		}
+	}
+	if got := attempts(); got != 0 {
+		t.Fatalf("attempts = %d after %d no-change passes, want 0",
+			got, pendingLinkAttemptLimit*3)
+	}
+
+	// The session finally lands — the link is still there to resolve.
+	w = beginWrite(t, s)
+	if _, err := w.UpsertSession(testSession("arrives-much-later"), "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if resolved, _, err := s.ResolvePending(ctx, true); err != nil {
+		t.Fatal(err)
+	} else if resolved != 1 {
+		t.Fatalf("resolved = %d, want the late arrival linked", resolved)
+	}
+}
+
+// Runs that DID change something still age a link out at the limit — the
+// no-change exemption must not turn the limit off.
+func TestChangingRunsStillAgePendingLinks(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+
+	w := beginWrite(t, s)
+	artID, err := w.UpsertArtifact(canon.Artifact{
+		Agent: "claude-code", Kind: canon.ArtifactTaskGroup, Name: "tasks",
+		SourcePath: "/roots/claude/tasks/x",
+	}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.LinkArtifact(artID, canon.ArtifactLink{
+		Agent: "claude-code", SessionExternalID: "never-exists",
+		Relation: canon.LinkProducedBy, Evidence: canon.EvidenceIDMatch,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Interleaving no-change passes must not shorten NOR extend the count:
+	// only the ageing ones advance it.
+	for range pendingLinkAttemptLimit {
+		if _, _, err := s.ResolvePending(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.ResolvePending(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM pending_artifact_links`); n != 1 {
+		t.Fatalf("link dropped after exactly the limit (%d rows), want it to survive", n)
+	}
+	if _, _, err := s.ResolvePending(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM pending_artifact_links`); n != 0 {
+		t.Errorf("unresolvable link survived past the limit (%d rows left)", n)
 	}
 }
 
@@ -553,7 +720,7 @@ func TestPendingRelationsAgeOut(t *testing.T) {
 	}
 
 	for range pendingLinkAttemptLimit + 1 {
-		if _, _, err := s.ResolvePending(ctx); err != nil {
+		if _, _, err := s.ResolvePending(ctx, true); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -57,6 +57,18 @@ func AutoCost(p Pricer, model string, in, out, cacheRead, cacheWrite int64) (cos
 // computed from tokens against the pricing table. Groups whose model the
 // table can't price carry priced=0 so the UI/CLI can surface "unpriced
 // tokens" instead of a silent $0.
+//
+// SCOPE, stated plainly because the design notes read otherwise: this is a
+// FULL rebuild — both rollup tables are emptied and the whole of
+// message_usage is re-aggregated. There is no dirty-domain or dirty-session
+// scoping anywhere in this path, and the caller's only economy is skipping
+// the call entirely on passes that touched no sessions or messages
+// (ingest.Runner.Run). The cost is therefore one four-way join over every
+// usage row per data-changing pass, which BenchmarkRegenerateRollups puts
+// at ~440ms for 100k rows. Scoping it would mean carrying the dirty
+// (day, agent, workspace, model) tuples out of the ingest pass and
+// reconciling deletions against rollup_session_days as well; nothing here
+// does that today.
 func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

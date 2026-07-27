@@ -33,7 +33,16 @@ func (*Adapter) LinkRules() []canon.LinkRule {
 				if json.Unmarshal([]byte(c.InputJSON), &in) != nil {
 					return "", false
 				}
-				return planKey(in.Plan)
+				// The rule engine reads the artifact side out of
+				// artifacts.content, which the store bounds at
+				// canon.ArtifactContentLimit and stamps with a truncation
+				// marker (db.Writer.WriteArtifact). The tool input is stored
+				// whole, so an over-limit plan compared two different
+				// strings and could never link — the one shape where the
+				// content IS the provenance and there is nothing else to
+				// fall back on. Reduce both sides the same way.
+				plan, _ := canon.TruncateArtifactContent(in.Plan)
+				return planKey(plan)
 			},
 		},
 		{

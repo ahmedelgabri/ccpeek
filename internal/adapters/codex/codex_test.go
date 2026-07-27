@@ -2,7 +2,9 @@ package codex
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -159,10 +161,110 @@ func TestArgvRendersAsACommandLine(t *testing.T) {
 }
 
 func TestCounterResetTreatedAsAbsolute(t *testing.T) {
-	prev := &tokenUsage{InputTokens: 10000, TotalTokens: 12000}
-	p := prev
-	got := perTurnUsage(tokenCountInfo{Total: &tokenUsage{InputTokens: 500, TotalTokens: 600}}, &p)
+	st := tokenState{total: &tokenUsage{InputTokens: 10000, TotalTokens: 12000}}
+	got := perTurnUsage(tokenCountInfo{Total: &tokenUsage{InputTokens: 500, TotalTokens: 600}}, &st)
 	if got.InputTokens != 500 {
 		t.Errorf("reset delta = %+v, want absolute values", got)
 	}
+}
+
+// writeRollout builds a rollout JSONL inside a throwaway CODEX_HOME and
+// returns its SourceRef.
+func writeRollout(t *testing.T, lines ...string) agent.SourceRef {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "2026", "07", "06")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-"+sessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: root},
+		Path: path, Kind: agent.SourceFile,
+	}
+}
+
+func tokenCountLine(ts string, total, last string) string {
+	info := `{"total_token_usage":` + total + `,"last_token_usage":` + last + `}`
+	return `{"timestamp":"` + ts + `","type":"event_msg","payload":` +
+		`{"type":"token_count","info":` + info + `}}`
+}
+
+func sessionUsage(t *testing.T, src agent.SourceRef) []*canon.Usage {
+	t.Helper()
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var out []*canon.Usage
+	for _, m := range sink.Messages {
+		if m.Usage != nil {
+			out = append(out, m.Usage)
+		}
+	}
+	return out
+}
+
+// A token_count event that repeats the previous one — same
+// last_token_usage, cumulative total unmoved — is one turn emitted twice.
+// Codex rows carry no content id and no request id, so the store's usage
+// dedupe cannot catch it and the tokens land in the rollups twice. The
+// cumulative total is what tells a repeat apart from a second turn that
+// happened to cost the same.
+func TestRepeatedLastTokenUsageCountsOnce(t *testing.T) {
+	const (
+		meta  = `{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"` + sessionID + `","cwd":"/home/u/demo/api"}}`
+		turn1 = `{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":200,"total_tokens":1200}`
+		// Second turn: the SAME per-turn figures, but the cumulative total
+		// has advanced by exactly that much — a real turn, not a repeat.
+		cum2 = `{"input_tokens":2000,"cached_input_tokens":0,"output_tokens":400,"total_tokens":2400}`
+	)
+
+	t.Run("duplicate emission suppressed", func(t *testing.T) {
+		src := writeRollout(t, meta,
+			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
+			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
+		)
+		usages := sessionUsage(t, src)
+		if len(usages) != 1 {
+			t.Fatalf("usage entries = %d, want 1 — the turn was counted twice", len(usages))
+		}
+		if usages[0].InputTokens != 1000 || usages[0].OutputTokens != 200 {
+			t.Errorf("usage = %+v", usages[0])
+		}
+	})
+
+	t.Run("identical turn with an advanced total still counts", func(t *testing.T) {
+		src := writeRollout(t, meta,
+			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
+			tokenCountLine("2026-07-06T09:00:20.000Z", cum2, turn1),
+		)
+		usages := sessionUsage(t, src)
+		if len(usages) != 2 {
+			t.Fatalf("usage entries = %d, want 2 — a second real turn was swallowed", len(usages))
+		}
+		var out int64
+		for _, u := range usages {
+			out += u.OutputTokens
+		}
+		if out != 400 {
+			t.Errorf("output tokens = %d, want 400 (the cumulative total)", out)
+		}
+	})
+
+	t.Run("a delta-only count breaks the run of repeats", func(t *testing.T) {
+		// No last_token_usage in the middle event: the identical Last that
+		// follows is a new turn, not a repeat of the first.
+		src := writeRollout(t, meta,
+			tokenCountLine("2026-07-06T09:00:10.000Z", turn1, turn1),
+			`{"timestamp":"2026-07-06T09:00:15.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":`+cum2+`}}}`,
+			tokenCountLine("2026-07-06T09:00:20.000Z", cum2, turn1),
+		)
+		if usages := sessionUsage(t, src); len(usages) != 3 {
+			t.Fatalf("usage entries = %d, want 3", len(usages))
+		}
+	})
 }

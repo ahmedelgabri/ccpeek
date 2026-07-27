@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +83,20 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			}
 			dbPath := filepath.Join(chatsDir, ws.Name(), sess.Name(), "store.db")
 			if fi, err := os.Stat(dbPath); err == nil && !fi.IsDir() {
-				refs = append(refs, agent.SourceRef{Root: root, Path: dbPath, Kind: agent.SourceDatabase})
+				refs = append(refs, agent.SourceRef{
+					Root: root, Path: dbPath, Kind: agent.SourceDatabase,
+					// A live cursor-agent runs the store in WAL mode, so a
+					// committed message can sit entirely in store.db-wal
+					// while store.db's size, mtime, and bytes are unmoved:
+					// without the companion, new messages stayed invisible
+					// until something checkpointed. Parse reads THROUGH the
+					// wal, so the recorded content hash has to describe the
+					// wal too or it does not describe what was parsed. An
+					// absent wal (checkpointed, or a store never opened
+					// since) folds in as the "absent" marker, so it costs
+					// nothing when the file is not there.
+					CompanionPaths: []string{dbPath + "-wal"},
+				})
 			}
 		}
 	}
@@ -203,7 +217,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	if len(msgs) == 0 {
 		return nil
 	}
-	sort.Slice(msgs, func(i, j int) bool { return msgs[i].id < msgs[j].id })
+	sort.Slice(msgs, func(i, j int) bool { return lessBlobID(msgs[i].id, msgs[j].id) })
 
 	for _, b := range msgs {
 		ts := time.UnixMilli(b.msg.Timestamp).UTC()
@@ -254,6 +268,25 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		}
 	}
 	return nil
+}
+
+// lessBlobID orders blob ids the way the store means them, not the way Go
+// compares strings. `SELECT ... ORDER BY id` already sorts numerically when
+// the column has INTEGER affinity, but the ids are scanned as strings and
+// re-sorted here — and a plain string compare puts 10 and 11 before 2, so a
+// store with more than nine blobs got its seq, title, and created_at from a
+// shuffled transcript. Numeric when BOTH sides are integers, lexicographic
+// otherwise (uuid-shaped ids, mixed stores), which keeps the order total.
+func lessBlobID(a, b string) bool {
+	na, erra := strconv.ParseInt(a, 10, 64)
+	nb, errb := strconv.ParseInt(b, 10, 64)
+	if erra == nil && errb == nil {
+		if na != nb {
+			return na < nb
+		}
+		return a < b // same value, different spelling ("07" vs "7")
+	}
+	return a < b
 }
 
 func decodeHexJSON(hexStr string, v any) error {
