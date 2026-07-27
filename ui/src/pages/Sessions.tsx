@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LoadMore, usePagedList } from "../paged";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
@@ -14,6 +14,7 @@ import {
 import { fullWhen, localDay, localTime } from "../time";
 import {
   AgentChip,
+  dropEmpty,
   EmptyNote,
   FilterBar,
   groupRuns,
@@ -24,7 +25,8 @@ import {
   PageHeader,
   SectionHeading,
   SkeletonRows,
-  useDebounced,
+  useSlashFocus,
+  useUrlText,
 } from "../ui";
 
 const PAGE = 100;
@@ -41,35 +43,24 @@ export function SessionsPage() {
   const since = search.since ?? "";
   const until = search.until ?? "";
 
-  // The title box is local state so typing stays responsive, and only the
-  // settled value reaches the URL and the query — it used to issue one
-  // request and one history entry per keystroke. The URL write has to be
-  // debounced too: writing it on every keystroke re-rendered the whole
-  // loaded list (hundreds of rows, regrouped by day) and wrote a history
-  // entry per character, which is exactly what the comment promised it
-  // did not do.
-  const [titleInput, setTitleInput] = useState(search.q ?? "");
-  const q = useDebounced(titleInput, 250);
-  useEffect(() => {
-    if ((search.q ?? "") !== q) setFilter({ q });
-    // setFilter is derived from navigate and stable enough; re-running on
-    // every render would fight the user's typing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  // The URL is the filter. The box is local so typing stays responsive and
+  // only the settled value is pushed — one request and one history write
+  // per pause, not per keystroke — but what the list queries is the URL's
+  // q, and an external navigation (the sidebar's Sessions link, a heatmap
+  // day, the back button) resets the box. Keying the query off the
+  // debounced local value instead left the two disagreeing: the address
+  // bar said "all sessions" while the list stayed narrowed by text no
+  // longer on screen.
+  const q = search.q ?? "";
+  const [titleInput, setTitleInput] = useUrlText(q, (v) => setFilter({ q: v }));
+  const titleBox = useRef<HTMLInputElement>(null);
+  useSlashFocus(titleBox);
   const [dense, setDense] = useState(false);
 
   const setFilter = (patch: Record<string, string>) =>
     void navigate({
-      search: (prev: Record<string, string | undefined>) => {
-        const merged: Record<string, string | undefined> = {
-          ...prev,
-          ...patch,
-        };
-        for (const k of Object.keys(merged)) {
-          if (!merged[k]) delete merged[k];
-        }
-        return merged;
-      },
+      search: (prev: Record<string, string | undefined>) =>
+        dropEmpty(prev, patch),
       replace: true,
     });
 
@@ -141,10 +132,12 @@ export function SessionsPage() {
           onModel={(v) => setFilter({ model: v })}
         >
           <input
+            ref={titleBox}
             value={titleInput}
             onChange={(e) => setTitleInput(e.target.value)}
             placeholder="Filter by title…"
             aria-label="Filter by title"
+            title="Press / to focus"
             className={`w-56 ${inputCls}`}
           />
           <button

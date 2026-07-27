@@ -59,6 +59,12 @@ export function Palette() {
     setOpen(false);
     setMode("jump");
   };
+  // The key handler is registered once, so it reads `open` through a ref
+  // rather than a closure that would be stale after the first render.
+  const isOpen = useRef(false);
+  useEffect(() => {
+    isOpen.current = open;
+  }, [open]);
 
   useEffect(() => {
     // An explicit query (the /search doorway, a v1 bookmark) opens straight
@@ -75,8 +81,15 @@ export function Palette() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setOpen((v) => !v);
-        setCursor(0);
+        // Closing goes through close(), like every other way out. Toggling
+        // `open` alone left the mode behind, so the next ⌘K reopened into
+        // whatever search the last visit had ended in — the palette is a
+        // jump list first, and it has to open as one every time.
+        if (isOpen.current) close();
+        else {
+          setOpen(true);
+          setCursor(0);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -109,6 +122,8 @@ export function Palette() {
   }, [open, mode]);
 
   const searching = mode === "search" && debouncedQ.trim().length >= 2;
+  // The box is ahead of the query while the debounce runs.
+  const settling = q.trim() !== debouncedQ.trim();
   // The agent filter narrows on the SERVER: filtering the global top-N
   // client-side hid valid matches behind "No matches".
   const hits = useQuery({
@@ -304,13 +319,17 @@ export function Palette() {
               </ul>
             </li>
           ))}
+          {/* The verdict is about the query that actually RAN. Reading the
+              immediate box while the query waited on its debounce flashed
+              "No matches for X" for 200ms before the search had been made —
+              a wrong answer, and the one the eye lands on. */}
           {mode === "search" && items.length === 0 && (
             <li className="px-4 py-3 text-sm text-ink-dim">
               {q.trim().length < 2
                 ? "Keep typing — search needs two characters."
-                : hits.isFetching
+                : settling || hits.isFetching
                   ? "Searching…"
-                  : `No matches for “${q.trim()}”.`}
+                  : `No matches for “${debouncedQ.trim()}”.`}
             </li>
           )}
         </ul>
@@ -321,7 +340,7 @@ export function Palette() {
           <span>esc {mode === "search" ? "back" : "close"}</span>
           {searching && (
             <span className="ml-auto tabular-nums">
-              {hits.isFetching
+              {settling || hits.isFetching
                 ? "searching…"
                 : `${(hits.data ?? []).length} matches`}
             </span>

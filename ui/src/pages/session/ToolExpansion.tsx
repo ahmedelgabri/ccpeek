@@ -1,6 +1,8 @@
+import { useRef } from "react";
 import { LoadError } from "../../ui";
 import { useQuery } from "@tanstack/react-query";
 import { DiffView } from "../../Diff";
+import { useHighlight } from "../../highlight";
 import { api } from "../../api";
 
 // ToolExpansion mounts only when a chip or row is opened: opening is
@@ -19,6 +21,13 @@ export function ToolExpansion({
     queryKey: ["tooldetail", agent, sessionId, seq],
     queryFn: () => api.sessionToolDetail(agent, sessionId, seq),
   });
+  // The payload highlights ITSELF, keyed on the answer that arrives. Its
+  // three hosts — the transcript's chips, the tools grid, the files tab —
+  // each ran (or did not run) their own pass over a container, and none of
+  // them could have known when this fetch resolved, so a shell command
+  // opened in the tools or files tab stayed unstyled.
+  const body = useRef<HTMLDivElement>(null);
+  useHighlight(body, [q.data]);
   if (q.isLoading)
     return <p className="font-mono text-meta text-ink-dim">Loading…</p>;
   const d = q.data;
@@ -27,17 +36,19 @@ export function ToolExpansion({
     return <DiffView old={d.old ?? ""} new={d.new ?? ""} />;
   }
   return (
-    <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-meta leading-relaxed">
-      <code
-        className={
-          d.kind === "shell"
-            ? "language-bash block whitespace-pre-wrap"
-            : "block whitespace-pre-wrap"
-        }
-      >
-        {d.detail}
-      </code>
-    </pre>
+    <div ref={body}>
+      <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-meta leading-relaxed">
+        <code
+          className={
+            d.kind === "shell"
+              ? "language-bash block whitespace-pre-wrap"
+              : "block whitespace-pre-wrap"
+          }
+        >
+          {d.detail}
+        </code>
+      </pre>
+    </div>
   );
 }
 // JumpButton links a tool call / file change back to the message that

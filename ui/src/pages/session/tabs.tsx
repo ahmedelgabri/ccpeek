@@ -1,7 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, type KeyboardEvent } from "react";
 import { WindowedList } from "../../windowed";
 import { Link } from "@tanstack/react-router";
-import { useHighlight } from "../../highlight";
 import {
   clipCommand,
   clipPath,
@@ -18,8 +17,20 @@ import {
   kindLabel,
   Panel,
   toolColor,
+  useToggleSet,
 } from "../../ui";
+
 import { JumpButton, ToolExpansion } from "./ToolExpansion";
+
+// Enter and space open a disclosure that is not a <button> — the tool
+// rows, which cannot BE buttons because each contains its own controls.
+// The target check leaves those inner controls their own keys.
+function onDisclosureKey(e: KeyboardEvent<HTMLElement>, toggle: () => void) {
+  if (e.target !== e.currentTarget) return;
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  toggle();
+}
 
 export function CommandsTab({
   commands,
@@ -28,20 +39,21 @@ export function CommandsTab({
   commands: ToolCallRow[];
   onJump: (seq: number) => void;
 }) {
-  const container = useRef<HTMLDivElement>(null);
-  useHighlight(container, [commands]);
   if (commands.length === 0)
     return <EmptyNote>No shell commands in this session.</EmptyNote>;
   return (
-    <div
-      ref={container}
-      className="overflow-hidden rounded-md border border-edge"
-    >
+    <div className="overflow-hidden rounded-md border border-edge">
+      {/* Highlighting follows the WINDOW, not the command list. Rows mount
+          lazily, so a pass keyed on the full list ran once against the
+          first screenful and left every command below the fold unstyled —
+          the global Commands page has always keyed its pass on the visible
+          slice. */}
       <WindowedList
         items={commands}
         getKey={(c) => c.seq}
         estimateSize={38}
         className="bg-surface-1"
+        highlight
       >
         {(c) => (
           <div className="flex items-start gap-3 border-b border-edge bg-surface-1 px-3 py-2">
@@ -83,6 +95,11 @@ export function ToolsTab({
       (a, b) => b.count - a.count,
     );
   }, [tools]);
+  // Which rows are expanded, held HERE rather than in the row: rows are
+  // virtualized, and state inside one is thrown away the moment it scrolls
+  // out of the window — an open diff closed itself and refetched on the way
+  // back.
+  const [open, toggle] = useToggleSet<number>();
   if (tools.length === 0) return <EmptyNote>No tool calls recorded.</EmptyNote>;
   return (
     <div className="space-y-3">
@@ -132,6 +149,8 @@ export function ToolsTab({
               agent={agent}
               sessionId={sessionId}
               t={t}
+              open={open.has(t.seq)}
+              onToggle={() => toggle(t.seq)}
               onJump={onJump}
             />
           )}
@@ -150,20 +169,34 @@ function ToolRow({
   agent,
   sessionId,
   t,
+  open,
+  onToggle,
   onJump,
 }: {
   agent: string;
   sessionId: string;
   t: ToolCallRow;
+  open: boolean;
+  onToggle: () => void;
   onJump: (seq: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const hasDiff = t.kind === "file_edit" || t.kind === "file_write";
   return (
     <div className="border-b border-edge">
+      {/* Focusable and operable from the keyboard when it opens something:
+          the row cannot be a <button> (it holds the jump control), so it
+          takes the tab stop and the enter/space keys itself. */}
       <div
         role="row"
-        onClick={hasDiff ? () => setOpen((v) => !v) : undefined}
+        {...(hasDiff
+          ? {
+              tabIndex: 0,
+              "aria-expanded": open,
+              onClick: onToggle,
+              onKeyDown: (e: KeyboardEvent<HTMLElement>) =>
+                onDisclosureKey(e, onToggle),
+            }
+          : {})}
         className={`${TOOL_COLUMNS} ${hasDiff ? "cursor-pointer hover:bg-surface-2/40" : ""}`}
       >
         <span
@@ -261,6 +294,8 @@ export function FilesTab({
   files: FileGroup[];
   onJump: (seq: number) => void;
 }) {
+  // Keyed by path, and owned by the list — see ToolsTab.
+  const [open, toggle] = useToggleSet<string>();
   if (files.length === 0)
     return <EmptyNote>No files touched in this session.</EmptyNote>;
   return (
@@ -272,7 +307,14 @@ export function FilesTab({
         className="bg-surface-1"
       >
         {(f) => (
-          <FileRow agent={agent} sessionId={sessionId} f={f} onJump={onJump} />
+          <FileRow
+            agent={agent}
+            sessionId={sessionId}
+            f={f}
+            open={open.has(f.path)}
+            onToggle={() => toggle(f.path)}
+            onJump={onJump}
+          />
         )}
       </WindowedList>
     </div>
@@ -283,45 +325,65 @@ function FileRow({
   agent,
   sessionId,
   f,
+  open,
+  onToggle,
   onJump,
 }: {
   agent: string;
   sessionId: string;
   f: FileGroup;
+  open: boolean;
+  onToggle: () => void;
   onJump: (seq: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const diffs = f.changes;
   const edits = countKind(f, "file_edit");
   const writes = countKind(f, "file_write");
+  const summary = (
+    <>
+      {diffs.length > 0 && (
+        <span className="shrink-0 font-mono text-meta text-accent">
+          {open ? "▾" : "▸"}
+        </span>
+      )}
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-xs"
+        title={f.path}
+      >
+        {shortPath(f.path)}
+      </span>
+      <span className="ml-auto flex shrink-0 gap-2 font-mono text-micro text-ink-faint tabular-nums">
+        {edits > 0 && (
+          <span className="text-warn">{plural(edits, "edit")}</span>
+        )}
+        {writes > 0 && (
+          <span className="text-ok">{plural(writes, "write")}</span>
+        )}
+        {f.reads > 0 && <span>{plural(f.reads, "read")}</span>}
+      </span>
+    </>
+  );
   return (
     <div className="border-b border-edge bg-surface-1">
-      <div
-        onClick={diffs.length > 0 ? () => setOpen((v) => !v) : undefined}
-        className={`flex items-baseline gap-3 px-3 py-1.5 ${
-          diffs.length > 0 ? "cursor-pointer hover:bg-surface-2/40" : ""
-        }`}
-      >
-        {diffs.length > 0 && (
-          <span className="shrink-0 font-mono text-meta text-accent">
-            {open ? "▾" : "▸"}
-          </span>
+      {/* When there are diffs to reveal, the summary IS the control — a
+          real button, so it is reachable by tab and announces its state.
+          The copy control stays outside it: a button inside a button is
+          neither valid nor operable. */}
+      <div className="flex items-baseline gap-3 pr-3">
+        {diffs.length > 0 ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="flex min-w-0 flex-1 items-baseline gap-3 py-1.5 pl-3 text-left transition-colors hover:bg-surface-2/40"
+          >
+            {summary}
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-baseline gap-3 py-1.5 pl-3">
+            {summary}
+          </div>
         )}
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-xs"
-          title={f.path}
-        >
-          {shortPath(f.path)}
-        </span>
-        <span className="ml-auto flex shrink-0 gap-2 font-mono text-micro text-ink-faint tabular-nums">
-          {edits > 0 && (
-            <span className="text-warn">{plural(edits, "edit")}</span>
-          )}
-          {writes > 0 && (
-            <span className="text-ok">{plural(writes, "write")}</span>
-          )}
-          {f.reads > 0 && <span>{plural(f.reads, "read")}</span>}
-        </span>
         <CopyButton text={f.path} />
       </div>
       {open && (

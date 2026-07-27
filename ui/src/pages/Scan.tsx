@@ -56,6 +56,12 @@ export function ScanPage() {
   // dozens to hundreds of occurrences. One mutation per finding meant that
   // many concurrent POSTs, each invalidating the complete unpaged findings
   // list as it resolved. One await-all, one invalidation.
+  //
+  // Failure is VISIBLE. A rejected write used to do nothing at all: the row
+  // simply did not change, which is indistinguishable from a click that
+  // missed. And because the batch fails fast, a partial write is possible —
+  // so the findings are re-read whether the call succeeded or not, and the
+  // list always shows what the server actually stored.
   const toggle = useMutation({
     mutationFn: async ({
       ids,
@@ -66,7 +72,7 @@ export function ScanPage() {
     }) => {
       await Promise.all(ids.map((id) => parityApi.scanIgnore(id, ignored)));
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["scan"] }),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["scan"] }),
   });
 
   const loadError = error ?? rulesQuery.error;
@@ -134,6 +140,29 @@ export function ScanPage() {
 
       {loadError && <LoadError error={loadError} />}
 
+      {toggle.isError && (
+        <div
+          role="alert"
+          className="mb-3 flex flex-wrap items-baseline gap-2 rounded-md border border-warn/50 bg-warn/10 px-3 py-2 text-sm text-warn"
+        >
+          <span>
+            Could not {toggle.variables?.ignored ? "ignore" : "restore"}{" "}
+            {plural(toggle.variables?.ids.length ?? 0, "finding")}:{" "}
+            {String(toggle.error)}
+          </span>
+          <span className="font-mono text-meta text-ink-faint">
+            the rows below show what is stored
+          </span>
+          <button
+            type="button"
+            onClick={() => toggle.reset()}
+            className="ml-auto font-mono text-meta text-ink-faint hover:text-ink"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
       {/* The verdict, stated once and plainly. A page of rows never said
           whether the answer was "you are fine" or "you have a problem". */}
       {!loadError && (
@@ -174,6 +203,7 @@ export function ScanPage() {
           <RuleGroup
             key={g.ruleId}
             group={g}
+            pending={toggle.isPending}
             onToggle={(ids, ignore) => toggle.mutate({ ids, ignored: ignore })}
           />
         ))}
@@ -189,9 +219,13 @@ type Group = ScanRule & { items: ScanFinding[] };
 
 function RuleGroup({
   group,
+  pending,
   onToggle,
 }: {
   group: Group;
+  /** A write is in flight — the buttons stand down until it settles, so a
+   *  second click cannot race the first. */
+  pending: boolean;
   onToggle: (ids: number[], ignored: boolean) => void;
 }) {
   // Big groups start closed: the point of grouping is that you decide per
@@ -232,6 +266,7 @@ function RuleGroup({
             forty times, one row at a time, was the actual cost of a flat
             list. */}
         <GhostButton
+          disabled={pending}
           onClick={() =>
             onToggle(
               group.items
@@ -270,6 +305,7 @@ function RuleGroup({
                 {fmtWhen(f.scannedAt)}
               </span>
               <GhostButton
+                disabled={pending}
                 onClick={() => onToggle([f.id], !f.ignored)}
                 aria-label={`${f.ignored ? "Unignore" : "Ignore"} ${f.ruleId} finding in ${f.naturalKey}`}
                 aria-pressed={f.ignored}

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef } from "react";
 import { LoadMore, usePagedList } from "../paged";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { api, shortPath, type CommandRow } from "../api";
 import { fmtWhen, fullWhen } from "../time";
 import { useHighlight } from "../highlight";
@@ -8,6 +8,7 @@ import { useRowWindow } from "../windowed";
 import {
   AgentDot,
   CopyButton,
+  dropEmpty,
   EmptyNote,
   FilterBar,
   inputCls,
@@ -15,7 +16,8 @@ import {
   Loading,
   PageHeader,
   SkeletonRows,
-  useDebounced,
+  useSlashFocus,
+  useUrlText,
 } from "../ui";
 
 const FORMATS = ["zsh", "bash", "fish", "plain"] as const;
@@ -25,13 +27,29 @@ const PAGE = 100;
 // first, each row linking back to its session — plus one-click export
 // into real shell history files (same formats as `ccpeek export`).
 export function CommandsPage() {
-  const [qInput, setQInput] = useState("");
-  // Settled before it reaches the query: the filter used to fire one
-  // full-text request per keystroke.
-  const q = useDebounced(qInput, 250);
-  const [agent, setAgent] = useState("");
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
+  // Filters live in the URL, like every other data view: a narrowed
+  // command list is a link you can send or bookmark, and the back button
+  // walks back through the narrowing. They used to be component state, so
+  // the one thing you could not do with a filtered view was keep it.
+  const search = useSearch({ from: "/commands" });
+  const navigate = useNavigate({ from: "/commands" });
+  const q = search.q ?? "";
+  const agent = search.agent ?? "";
+  const since = search.since ?? "";
+  const until = search.until ?? "";
+
+  const setFilter = (patch: Record<string, string>) =>
+    void navigate({
+      search: (prev: Record<string, string | undefined>) =>
+        dropEmpty(prev, patch),
+      replace: true,
+    });
+
+  // Settled before it reaches the URL and the query: the filter used to
+  // fire one full-text request per keystroke.
+  const [qInput, setQInput] = useUrlText(q, (v) => setFilter({ q: v }));
+  const filterBox = useRef<HTMLInputElement>(null);
+  useSlashFocus(filterBox);
 
   // Offset pages of a fixed size: a growing single limit would silently
   // stop at the server's cap and hide everything past it.
@@ -65,8 +83,11 @@ export function CommandsPage() {
   >(rows, (c, i) => `${c.sessionId}-${c.at}-${i}`, 76);
   useHighlight(listRef, [virtualItems]);
 
+  // No limit: the export endpoint pages to completion server-side, and a
+  // shell history file that stops at a thousand commands is not the user's
+  // history — it is the first page of it, silently.
   const exportURL = (format: string) => {
-    const p = new URLSearchParams({ format, limit: "1000" });
+    const p = new URLSearchParams({ format });
     if (q) p.set("query", q);
     if (agent) p.set("agent", agent);
     if (since) p.set("since", since);
@@ -80,18 +101,17 @@ export function CommandsPage() {
         <FilterBar
           since={since}
           until={until}
-          onRange={(sv, uv) => {
-            setSince(sv);
-            setUntil(uv);
-          }}
+          onRange={(sv, uv) => setFilter({ since: sv, until: uv })}
           agent={agent}
-          onAgent={setAgent}
+          onAgent={(v) => setFilter({ agent: v })}
         >
           <input
+            ref={filterBox}
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
             placeholder="Filter commands…"
             aria-label="Filter commands"
+            title="Press / to focus"
             className={`w-64 ${inputCls}`}
           />
           <details className="relative">
@@ -110,7 +130,7 @@ export function CommandsPage() {
                 </a>
               ))}
               <div className="border-t border-edge px-3 py-1.5 text-micro text-ink-faint">
-                current filters, ≤1000
+                every command matching the current filters
               </div>
             </div>
           </details>

@@ -107,12 +107,27 @@ export function ArtifactDetailPage() {
       {a.kind === "usage_report" ? (
         // Agent-produced HTML renders isolated in a sandboxed iframe (no
         // same-origin access), exactly like v1 hosted the usage report.
-        <iframe
-          src={rawURL}
-          sandbox="allow-scripts"
-          title={`${a.name} (usage report)`}
-          className="h-[75vh] w-full rounded-md border border-edge bg-white"
-        />
+        //
+        // The canvas behind it is DELIBERATELY light: these reports carry
+        // their own stylesheets, written for a white page and usually
+        // setting dark text on no background at all — so an app-colored
+        // surface underneath would render them dark-on-dark. It follows the
+        // theme only as far as it can: a flat #fff sheet glares out of a
+        // dark page, so dark mode gets a dimmed off-white that the report's
+        // own colors still read against.
+        <figure>
+          <iframe
+            src={rawURL}
+            sandbox="allow-scripts"
+            title={`${a.name} (usage report)`}
+            style={{ background: "light-dark(#ffffff, #e8e6e1)" }}
+            className="h-[75vh] w-full rounded-md border border-edge"
+          />
+          <figcaption className="mt-1.5 font-mono text-micro text-ink-faint">
+            The agent's own HTML report, sandboxed and rendered on a light
+            canvas it was written for.
+          </figcaption>
+        </figure>
       ) : a.contentHTML ? (
         <div
           ref={body}

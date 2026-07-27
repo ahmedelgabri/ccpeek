@@ -25,6 +25,22 @@ export function setThemePref(pref: ThemePref) {
   window.dispatchEvent(new Event("ccpeek-themechange"));
 }
 
+// useThemePref is the toggle's state, shared rather than copied: the app
+// renders TWO theme toggles (the sidebar rail and the mobile menu), and
+// with a useState each, flipping one left the other's glyph and label
+// describing the theme from before the click. Both now read the same
+// stored preference and re-render on the change event setThemePref
+// dispatches — including the one their sibling dispatched.
+export function useThemePref(): [ThemePref, (pref: ThemePref) => void] {
+  const [pref, setPref] = useState<ThemePref>(getThemePref);
+  useEffect(() => {
+    const update = () => setPref(getThemePref());
+    window.addEventListener("ccpeek-themechange", update);
+    return () => window.removeEventListener("ccpeek-themechange", update);
+  }, []);
+  return [pref, setThemePref];
+}
+
 function resolve(pref: ThemePref): "light" | "dark" {
   if (pref !== "system") return pref;
   return window.matchMedia("(prefers-color-scheme: dark)").matches

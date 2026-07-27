@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useHighlight } from "../../highlight";
 import { useRowWindow } from "../../windowed";
 import {
@@ -12,12 +19,14 @@ import { fullWhen, localClock } from "../../time";
 import type { TranscriptWindow } from "./useSessionData";
 import {
   EmptyNote,
+  LoadError,
   PALETTE_KEY,
   Segmented,
   SkeletonRows,
   openPalette,
   toolColor,
   useDebounced,
+  useSlashFocus,
   useToggleSet,
 } from "../../ui";
 import { ToolExpansion } from "./ToolExpansion";
@@ -46,6 +55,7 @@ export function Transcript({
     chipRows: tools,
     focusSeq,
     loading,
+    error,
     hasMore,
     loadingMore,
     loadMore: onLoadMore,
@@ -59,9 +69,17 @@ export function Transcript({
   const [lens, setLens] = useState<Lens>("all");
   const [find, setFind] = useState("");
   const [copiedSeq, setCopiedSeq] = useState<number | null>(null);
+  const findBox = useRef<HTMLInputElement>(null);
+  useSlashFocus(findBox);
   // Meta entries (toolResult, system, …) render as one-line excerpts;
   // clicking reveals the full stored text.
   const [openMeta, toggleMeta] = useToggleSet<number>();
+  // Which tool chips are expanded, keyed by call seq. This lives at the
+  // LIST level, not inside the row: rows are virtualized, so state held in
+  // one unmounts the moment the reader scrolls it off screen — an opened
+  // diff collapsed itself behind their back and re-fetched its payload on
+  // the way back up.
+  const [openTools, toggleTool] = useToggleSet<number>();
   const container = useRef<HTMLDivElement>(null);
   const depths = useMemo(() => computeDepths(msgs), [msgs]);
   const toolsByMsg = useMemo(() => {
@@ -139,6 +157,17 @@ export function Transcript({
     virtualItems[virtualItems.length - 1]?.key,
   ]);
 
+  // Scroll-spy state, declared before the scrolls that have to silence it.
+  // `userScrolled` gates the spy on a real reader gesture so a fresh page
+  // load never injects ?seq=0; `spyResumeAt` is the quiet window around a
+  // scroll WE caused — a deep link, a permalink, a scrubber jump — during
+  // which the resulting scroll events are ours, not the reader's.
+  const userScrolled = useRef(false);
+  const spyResumeAt = useRef(0);
+  const quietSpy = (ms = 800) => {
+    spyResumeAt.current = Date.now() + ms;
+  };
+
   // Deep link (?seq=N): scroll the target into view once, when it first
   // lands in the loaded window. A ref (not state) gates it so later page
   // loads don't yank the reader back to the anchor. focusDone also unlocks
@@ -155,8 +184,15 @@ export function Transcript({
     if (focusSeq === undefined || focusDone) return;
     const idx = visible.findIndex((m) => m.seq === focusSeq);
     if (idx < 0) return;
+    // Programmatic: the scroll this fires must not be read back as the
+    // reader moving, or the spy below immediately rewrites ?seq to whatever
+    // ends up at the top of the viewport — destroying the very permalink
+    // that was just opened.
+    quietSpy();
     virtualizer.scrollToIndex(idx, { align: "center" });
     setFocusDone(true);
+    // quietSpy only touches a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusSeq, focusDone, visible, virtualizer]);
 
   // Prepending older messages grows the document above the viewport, which
@@ -195,17 +231,14 @@ export function Transcript({
   }, [hasOlder, loadingOlder, focusDone, rangeStart, onLoadOlder]);
 
   // Scroll-spy: keep the URL pointed at the topmost message in view so the
-  // address bar is always a shareable link to the reader's spot. Gated on a
-  // real scroll so a fresh page load doesn't inject ?seq=0; the target of a
-  // deep link already sits in the URL until then. A thin band at the top of
-  // the viewport marks the "current" row.
-  const userScrolled = useRef(false);
-  // A permalink click pins the URL to that message; scroll-spy stays quiet
-  // for a beat afterwards so a layout settle doesn't overwrite it. Real
-  // scrolling resumes tracking.
-  const spyResumeAt = useRef(0);
+  // address bar is always a shareable link to the reader's spot. During a
+  // quiet window the scroll is one we caused, so neither half of the spy
+  // engages — the flag stays down and no URL is written. (The write itself
+  // is throttled in useTranscriptWindow: one replaceState per topmost row
+  // walks straight into Safari's rate limit on a fast scroll.)
   useEffect(() => {
     const onScroll = () => {
+      if (Date.now() < spyResumeAt.current) return;
       userScrolled.current = true;
     };
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -219,7 +252,7 @@ export function Transcript({
   }, [rangeStart, visible, onScrollSeq]);
 
   const copyPermalink = (seq: number) => {
-    spyResumeAt.current = Date.now() + 800;
+    quietSpy();
     onPermalink(seq);
     setCopiedSeq(seq);
     window.setTimeout(
@@ -240,10 +273,12 @@ export function Transcript({
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input
+            ref={findBox}
             value={find}
             onChange={(e) => setFind(e.target.value)}
             placeholder="Find in transcript…"
             aria-label="Find in loaded transcript"
+            title="Press / to focus"
             className="w-44 rounded-md border border-edge bg-surface-1 px-2 py-1 font-mono text-xs placeholder:text-ink-faint"
           />
           <Segmented
@@ -274,9 +309,13 @@ export function Transcript({
       {needle && (
         <p className="mb-2 font-mono text-micro text-ink-faint">
           Searching the {fmtCount(msgs.length)} loaded messages. Use{" "}
+          {/* The needle travels. The escape hatch used to open an empty
+              palette, so taking it meant typing the same query a second
+              time — the /search doorway has carried its query for as long
+              as it has existed. */}
           <button
             type="button"
-            onClick={() => openPalette()}
+            onClick={() => openPalette(find.trim())}
             className="text-accent hover:underline"
           >
             {PALETTE_KEY} search
@@ -351,12 +390,27 @@ export function Transcript({
                     m.isSidechain && treeView ? "border-dashed" : ""
                   }`}
                 >
+                  {/* An expandable meta line is a disclosure control, so it
+                      carries the semantics of one: reachable by tab, opened
+                      with enter or space, and announced as expanded or
+                      collapsed. It was a mouse-only <div>. The permalink
+                      button inside it keeps its own keys — hence the
+                      target check. */}
                   <div
-                    onClick={
-                      isMeta && m.text.trim() !== ""
-                        ? () => toggleMeta(m.seq)
-                        : undefined
-                    }
+                    {...(isMeta && m.text.trim() !== ""
+                      ? {
+                          role: "button",
+                          tabIndex: 0,
+                          "aria-expanded": openMeta.has(m.seq),
+                          onClick: () => toggleMeta(m.seq),
+                          onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key !== "Enter" && e.key !== " ") return;
+                            e.preventDefault();
+                            toggleMeta(m.seq);
+                          },
+                        }
+                      : {})}
                     className={`flex min-w-0 gap-2 font-mono text-meta text-ink-faint ${isMeta ? "" : "mb-1"} ${
                       isMeta && m.text.trim() !== ""
                         ? "cursor-pointer hover:text-ink-dim"
@@ -442,6 +496,8 @@ export function Transcript({
                       agent={agent}
                       sessionId={sessionId}
                       tools={msgTools}
+                      open={openTools}
+                      onToggle={toggleTool}
                       className={m.text.trim() !== "" ? "mt-2" : ""}
                     />
                   )}
@@ -455,7 +511,10 @@ export function Transcript({
           toolsByMsg={toolsByMsg}
           rangeStart={rangeStart}
           rangeEnd={rangeEnd}
-          onJump={(i) => virtualizer.scrollToIndex(i, { align: "center" })}
+          onJump={(i) => {
+            quietSpy();
+            virtualizer.scrollToIndex(i, { align: "center" });
+          }}
         />
       </div>
       {hasMore && (
@@ -472,7 +531,9 @@ export function Transcript({
         </div>
       )}
       {loading && msgs.length === 0 && <SkeletonRows rows={6} />}
-      {!loading && msgs.length === 0 && (
+      {/* A failed transcript load is not an empty session. */}
+      {error != null && <LoadError error={error} />}
+      {!loading && !error && msgs.length === 0 && (
         <EmptyNote>No transcript entries.</EmptyNote>
       )}
     </div>
@@ -481,19 +542,25 @@ export function Transcript({
 // MessageTools renders a message's tool calls as kind-colored chips;
 // expandable chips fetch their full payload (diff excerpts, complete
 // command) only when opened — chip rows never carry them.
+//
+// Expansion state is owned by the transcript and passed in: this component
+// mounts inside a virtualized row, so anything it held itself would be
+// discarded the moment the row scrolled out of the window.
 function MessageTools({
   agent,
   sessionId,
   tools,
+  open,
+  onToggle,
   className = "",
 }: {
   agent: string;
   sessionId: string;
   tools: ToolCallRow[];
+  open: ReadonlySet<number>;
+  onToggle: (seq: number) => void;
   className?: string;
 }) {
-  const [open, toggle] = useToggleSet<number>();
-
   return (
     <div className={className}>
       <div className="flex flex-wrap gap-1.5">
@@ -510,7 +577,8 @@ function MessageTools({
           return (
             <button
               key={t.seq}
-              onClick={expandable ? () => toggle(t.seq) : undefined}
+              onClick={expandable ? () => onToggle(t.seq) : undefined}
+              aria-expanded={expandable ? isOpen : undefined}
               title={t.detail}
               className={`inline-flex max-w-full items-baseline gap-1.5 rounded border px-1.5 py-0.5 font-mono text-meta ${
                 isOpen

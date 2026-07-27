@@ -18,12 +18,22 @@ const TRANSCRIPT_PAGE = 1000;
 // isn't flush against the top and there is context to scroll up into.
 const ANCHOR_LEAD = 100;
 
+// Scroll-spy write interval. history.replaceState is rate limited — Safari
+// throws once a page exceeds roughly a hundred calls in thirty seconds —
+// and a fast scroll through a long transcript changes the topmost row far
+// more often than that. The URL only has to be right where the reader
+// STOPS, so writes coalesce and the last one always lands.
+const SPY_WRITE_MS = 300;
+
 export interface TranscriptWindow {
   msgs: TranscriptMessage[];
   focusSeq: number | undefined;
   /** Compact tool chips covering exactly the loaded transcript range. */
   chipRows: ToolCallRow[];
   loading: boolean;
+  /** The transcript request failed — distinct from a session with no
+   *  entries, which the reader must not be told they have. */
+  error: unknown;
   hasMore: boolean;
   loadingMore: boolean;
   loadMore: () => void;
@@ -61,6 +71,9 @@ export function useTranscriptWindow(
   );
   const [focusSeq, setFocusSeq] = useState(searchSeq);
   const lastSeqInURL = useRef<number | undefined>(searchSeq);
+  // The scroll-spy's queued write (see trackSeq below).
+  const pendingSeq = useRef<number | undefined>(undefined);
+  const spyTimer = useRef<number | undefined>(undefined);
 
   const transcript = useInfiniteQuery({
     // The anchor is in the query key so a far jump loads the page AROUND
@@ -116,6 +129,14 @@ export function useTranscriptWindow(
     );
     setFocusSeq(searchSeq);
     lastSeqInURL.current = searchSeq;
+    // A queued scroll-spy write belongs to the session that left the
+    // screen; landing it here would point the new URL at the old session's
+    // message.
+    if (spyTimer.current !== undefined) {
+      window.clearTimeout(spyTimer.current);
+      spyTimer.current = undefined;
+    }
+    pendingSeq.current = undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -153,12 +174,40 @@ export function useTranscriptWindow(
     },
     [navigate],
   );
+
+  // The spy's writes are throttled with a trailing edge: the reader's
+  // scroll is continuous, the address bar only has to be correct once they
+  // settle. A permalink click is the reader asking for a specific link, so
+  // it writes at once and cancels whatever the spy had queued behind it.
+  useEffect(
+    () => () => {
+      if (spyTimer.current !== undefined) window.clearTimeout(spyTimer.current);
+    },
+    [],
+  );
   const trackSeq = useCallback(
-    (seq: number) => putSeqInURL(seq),
+    (seq: number) => {
+      if (lastSeqInURL.current === seq) return;
+      pendingSeq.current = seq;
+      if (spyTimer.current !== undefined) return;
+      spyTimer.current = window.setTimeout(() => {
+        spyTimer.current = undefined;
+        const next = pendingSeq.current;
+        pendingSeq.current = undefined;
+        if (next !== undefined) putSeqInURL(next);
+      }, SPY_WRITE_MS);
+    },
     [putSeqInURL],
   );
   const copyPermalink = useCallback(
-    (seq: number) => putSeqInURL(seq, true),
+    (seq: number) => {
+      if (spyTimer.current !== undefined) {
+        window.clearTimeout(spyTimer.current);
+        spyTimer.current = undefined;
+      }
+      pendingSeq.current = undefined;
+      putSeqInURL(seq, true);
+    },
     [putSeqInURL],
   );
   const jumpToSeq = useCallback(
@@ -188,6 +237,7 @@ export function useTranscriptWindow(
     focusSeq,
     chipRows: chips.data ?? [],
     loading: transcript.isLoading,
+    error: transcript.error,
     hasMore: transcript.hasNextPage,
     loadingMore: transcript.isFetchingNextPage,
     loadMore: () => void transcript.fetchNextPage(),
@@ -208,7 +258,12 @@ export function useSessionTools(
   agent: string,
   sessionId: string,
   wanted: boolean,
-): { rows: ToolCallRow[]; loading: boolean; requested: boolean } {
+): {
+  rows: ToolCallRow[];
+  loading: boolean;
+  error: unknown;
+  requested: boolean;
+} {
   const [requested, setRequested] = useState(wanted);
   useEffect(() => {
     if (wanted) setRequested(true);
@@ -231,7 +286,9 @@ export function useSessionTools(
 
   return {
     rows: tools.rows,
-    loading: requested && (tools.isLoading || hasNextPage),
+    loading: requested && !tools.error && (tools.isLoading || hasNextPage),
+    // A failed tool fetch must not read as "no tool calls recorded".
+    error: tools.error,
     // Whether the rows exist YET is a fact the tab bar needs: a count of
     // zero before the fetch has been asked for is not a count, it is a
     // wrong answer.

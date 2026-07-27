@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type FocusEvent,
   type MouseEvent,
+  type RefObject,
 } from "react";
 import { Link } from "@tanstack/react-router";
 import { AGENT_COLOR, fmtCost, type Budget } from "./api";
@@ -262,7 +263,7 @@ export function GhostButton({
     <button
       type="button"
       {...props}
-      className="shrink-0 rounded-md border border-edge px-2 py-0.5 font-mono text-meta text-ink-dim transition-colors hover:border-edge-strong hover:text-ink"
+      className="shrink-0 rounded-md border border-edge px-2 py-0.5 font-mono text-meta text-ink-dim transition-colors hover:border-edge-strong hover:text-ink disabled:opacity-40"
     >
       {children}
     </button>
@@ -431,6 +432,88 @@ export function useDebounced<T>(value: T, ms = 250): T {
     return () => window.clearTimeout(t);
   }, [value, ms]);
   return settled;
+}
+
+/** dropEmpty merges a filter patch into a route's search object and drops
+ *  everything blank, so a cleared filter leaves no `?agent=` behind and
+ *  every filtered view is the shortest URL that describes it. Sessions,
+ *  Commands and Usage all patch their search the same way; the rule about
+ *  what an empty value means lives here rather than in each of them. */
+export function dropEmpty(
+  prev: Record<string, string | undefined>,
+  patch: Record<string, string>,
+): Record<string, string | undefined> {
+  const merged: Record<string, string | undefined> = { ...prev, ...patch };
+  for (const k of Object.keys(merged)) {
+    if (!merged[k]) delete merged[k];
+  }
+  return merged;
+}
+
+/** useUrlText drives a text filter whose value lives in the URL.
+ *
+ *  Typing stays local and responsive, and only the settled value is pushed
+ *  — but the URL is the authority in the other direction too: any external
+ *  navigation (the sidebar's Sessions link, a heatmap day, the browser's
+ *  back button) overwrites the box. Syncing on the DEBOUNCED value alone
+ *  left the two out of step — the address bar said "no filter" while the
+ *  list stayed narrowed by text the user could no longer see. */
+export function useUrlText(
+  urlValue: string,
+  push: (value: string) => void,
+  ms = 250,
+): [string, (value: string) => void] {
+  const [input, setInput] = useState(urlValue);
+  const settled = useDebounced(input, ms);
+  // The last value the two sides agreed on, so a change can be attributed
+  // to the typist or to the URL.
+  const agreed = useRef(urlValue);
+  useEffect(() => {
+    if (urlValue !== agreed.current) {
+      agreed.current = urlValue;
+      setInput(urlValue);
+    }
+  }, [urlValue]);
+  useEffect(() => {
+    if (settled === agreed.current) return;
+    agreed.current = settled;
+    push(settled);
+    // `push` is rebuilt every render (it closes over navigate); the settled
+    // value is the trigger, and re-running on push identity would fight the
+    // user's typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled]);
+  return [input, setInput];
+}
+
+/** useSlashFocus points the `/` key at a page's primary filter box — the
+ *  one gesture every list-shaped tool shares. It stands down inside any
+ *  typing context (including the palette), so `/` remains an ordinary
+ *  character wherever one is being typed. */
+export function useSlashFocus(ref: RefObject<HTMLInputElement | null>) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        (target?.tagName &&
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      ) {
+        return;
+      }
+      // Nor while the palette is up: pulling focus to a box behind a modal
+      // is a worse answer than doing nothing.
+      if (document.querySelector('[role="dialog"]')) return;
+      const el = ref.current;
+      if (!el) return;
+      e.preventDefault();
+      el.focus();
+      el.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ref]);
 }
 
 // LoadError is the query-failure line. It carries role="alert" so a failed

@@ -13,6 +13,7 @@ import {
   type DayActivity,
 } from "../api";
 import { fmtWhen, fullWhen } from "../time";
+import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
   AgentDot,
@@ -21,6 +22,7 @@ import {
   Code,
   EmptyNote,
   KindBars,
+  LoadError,
   Loading,
   Money,
   PageHeader,
@@ -64,7 +66,18 @@ export function OverviewPage() {
         <SkeletonRows rows={8} />
       </Loading>
     );
-  if (!st) return <EmptyNote>No data indexed yet.</EmptyNote>;
+  // Nothing to show is either a failure or an empty archive, and the page
+  // used to call it the second one either way — so a transient 500 during
+  // a heavy ingest pass told the user their entire history was gone, and
+  // gave them nothing to act on. (A failed REFETCH keeps the figures it
+  // already has on screen; there is nothing to warn about while the
+  // numbers are still there.)
+  if (!st)
+    return stats.error ? (
+      <ErrorPanel error={stats.error} scope="the overview" />
+    ) : (
+      <EmptyNote>No data indexed yet.</EmptyNote>
+    );
 
   // Nothing indexed at all is a first run, not an empty dashboard. Six
   // zero counters and an empty grid told the user nothing about WHY, and
@@ -72,7 +85,7 @@ export function OverviewPage() {
   // detection has failed and they need to know it.
   if (st.sessions === 0) return <FirstRun />;
 
-  const last30 = (st.activity ?? []).slice(-30);
+  const last30 = lastDays(st.activity ?? [], 30);
 
   return (
     <div className="space-y-4">
@@ -136,13 +149,23 @@ export function OverviewPage() {
         >
           <Heatmap days={st.activity ?? []} />
         </Panel>
-        <BudgetPace className="xl:col-span-2" budget={budget.data} />
+        <BudgetPace
+          className="xl:col-span-2"
+          budget={budget.data}
+          error={budget.error}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
         <Panel label="Latest sessions" className="xl:col-span-3">
           {(recent.data ?? []).length === 0 ? (
-            <EmptyNote>No sessions yet.</EmptyNote>
+            recent.error ? (
+              <div className="px-3 py-3">
+                <LoadError error={recent.error} />
+              </div>
+            ) : (
+              <EmptyNote>No sessions yet.</EmptyNote>
+            )
           ) : (
             <ul className="divide-y divide-edge">
               {(recent.data ?? []).map((s) => (
@@ -172,10 +195,7 @@ export function OverviewPage() {
                       />
                     </div>
                     <div className="mt-0.5 flex min-w-0 gap-3 font-mono text-meta text-ink-faint">
-                      <span
-                        title={fullWhen(s.modifiedAt)}
-                        className="shrink-0"
-                      >
+                      <span title={fullWhen(s.modifiedAt)} className="shrink-0">
                         {fmtWhen(s.modifiedAt)}
                       </span>
                       <span className="min-w-0 flex-1 truncate">
@@ -241,6 +261,7 @@ export function OverviewPage() {
             <WorkspacesByCost
               rows={byProject.data ?? []}
               loading={byProject.isLoading}
+              error={byProject.error}
             />
           </Panel>
 
@@ -286,6 +307,30 @@ export function OverviewPage() {
   );
 }
 
+// lastDays zero-fills a run of days back from today (UTC, the calendar the
+// API's activity days are keyed by), so a series of N points is genuinely
+// the last N days.
+//
+// The tiles used to spark `activity.slice(-30)`, and the server only sends
+// rows for days that HAVE sessions — so thirty scattered working days
+// across a year rendered as thirty adjacent points, drawing a dense recent
+// trend out of a sparse one. Idle days are part of the trend.
+function lastDays(days: DayActivity[], n: number): DayActivity[] {
+  const byDay = new Map(days.map((d) => [d.day, d]));
+  const now = new Date();
+  const todayUTC = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  return Array.from({ length: n }, (_, i) => {
+    const day = new Date(todayUTC - (n - 1 - i) * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
+    return byDay.get(day) ?? { day, sessions: 0, costUSD: 0 };
+  });
+}
+
 // FirstRun replaces the dashboard when the index is empty: it says where
 // ccpeek looked and what to do about it, instead of showing six zeroes.
 function FirstRun() {
@@ -324,12 +369,24 @@ function FirstRun() {
 // cannot: it compares spend against the share of the month elapsed.
 function BudgetPace({
   budget,
+  error,
   className = "",
 }: {
   budget: import("../api").Budget | undefined;
+  error?: unknown;
   className?: string;
 }) {
-  if (!budget) return null;
+  // A budget that failed to load says so. The panel used to vanish
+  // entirely, which reads as "no budget feature here" rather than "this
+  // one request failed".
+  if (!budget)
+    return error ? (
+      <Panel label="Spend this month" className={className}>
+        <div className="px-3 py-3">
+          <LoadError error={error} />
+        </div>
+      </Panel>
+    ) : null;
   // The projection and its verdict come from the query layer, so `ccpeek
   // query budget` and the MCP tool answer "am I on track" too — this used
   // to be month arithmetic living in a React component.
@@ -393,15 +450,26 @@ function BudgetPace({
 function WorkspacesByCost({
   rows,
   loading,
+  error,
 }: {
   rows: import("../api").UsageRow[];
   loading: boolean;
+  error?: unknown;
 }) {
   if (loading)
     return <p className="px-3 py-3 text-meta text-ink-faint">Loading…</p>;
   // Server order is already cost desc; only the blank bucket is dropped.
   const top = rows.filter((r) => r.group).slice(0, 8);
-  if (top.length === 0) return <EmptyNote>No workspaces recorded.</EmptyNote>;
+  // "No workspaces recorded" is a claim about the archive, so it is only
+  // made when the archive actually answered.
+  if (top.length === 0)
+    return error ? (
+      <div className="px-3 py-3">
+        <LoadError error={error} />
+      </div>
+    ) : (
+      <EmptyNote>No workspaces recorded.</EmptyNote>
+    );
   const max = Math.max(...top.map((r) => r.costUSD), Number.EPSILON);
   return (
     <ul className="divide-y divide-edge">

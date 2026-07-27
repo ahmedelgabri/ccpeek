@@ -152,7 +152,15 @@ export function ArtifactsPage() {
                   onSelect={() => setFilter({ kind: kind === k ? "" : k })}
                 />
               ))}
-              {kinds.length === 0 && !facets.isLoading && (
+              {/* A failed facet count is not a count of zero. The rail used
+                  to claim "none indexed" on any error, telling the reader
+                  their corpus was empty when one request had failed. */}
+              {facets.error && (
+                <li className="px-3 py-3">
+                  <LoadError error={facets.error} compact />
+                </li>
+              )}
+              {kinds.length === 0 && !facets.isLoading && !facets.error && (
                 <li className="px-3 py-4 text-center text-meta text-ink-faint">
                   none indexed
                 </li>

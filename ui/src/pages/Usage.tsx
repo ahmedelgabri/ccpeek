@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
   fmtCost,
@@ -16,6 +16,7 @@ import {
 import {
   BudgetMeter,
   budgetVerdict,
+  dropEmpty,
   EmptyNote,
   FilterBar,
   LoadError,
@@ -35,6 +36,10 @@ const CostTimeline = lazy(() =>
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 type Group = (typeof GROUPS)[number];
+
+// A ?group= from the URL is any string until proven otherwise.
+const isGroup = (v: string | undefined): v is Group =>
+  GROUPS.some((g) => g === v);
 
 // pivotSearch builds the /sessions filter for a usage row: the row's own
 // dimension plus every filter already active on this page, so drilling
@@ -125,12 +130,28 @@ const SORT_VALUE: Record<
 // single-category cases rendered a 270px panel to show one number that
 // was already in the row below.
 export function UsagePage() {
-  const [group, setGroup] = useState<Group>("day");
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
-  const [agent, setAgent] = useState("");
-  const [model, setModel] = useState("");
+  // Grouping and filters live in the URL: "our Codex spend last month,
+  // grouped by project" is a view worth sending to somebody, and it was
+  // the one data view whose state could not leave the tab. The pivot links
+  // OUT of the table already produced URL-encoded /sessions views; this is
+  // the same promise kept on the way in.
+  const search = useSearch({ from: "/usage" });
+  const navigate = useNavigate({ from: "/usage" });
+  const group: Group = isGroup(search.group) ? search.group : "day";
+  const since = search.since ?? "";
+  const until = search.until ?? "";
+  const agent = search.agent ?? "";
+  const model = search.model ?? "";
   const isBlocks = group === "blocks";
+
+  const setFilter = (patch: Record<string, string>) =>
+    void navigate({
+      search: (prev: Record<string, string | undefined>) =>
+        dropEmpty(prev, patch),
+      replace: true,
+    });
+  // "day" is the default and stays out of the URL.
+  const setGroup = (g: Group) => setFilter({ group: g === "day" ? "" : g });
 
   // No limit: usage is an aggregate surface and the server returns all
   // groups by default, so the page total, charts, and CSV are complete
@@ -199,16 +220,13 @@ export function UsagePage() {
           onRange={
             isBlocks
               ? undefined
-              : (sv, uv) => {
-                  setSince(sv);
-                  setUntil(uv);
-                }
+              : (sv, uv) => setFilter({ since: sv, until: uv })
           }
           agent={agent}
-          onAgent={setAgent}
+          onAgent={(v) => setFilter({ agent: v })}
           model={isBlocks ? undefined : model}
           models={isBlocks ? undefined : models}
-          onModel={isBlocks ? undefined : setModel}
+          onModel={isBlocks ? undefined : (v) => setFilter({ model: v })}
         />
       </PageHeader>
 
@@ -244,7 +262,11 @@ export function UsagePage() {
         }
       >
         {isBlocks ? (
-          <BlocksTable blocks={blockRows} loading={blocks.isLoading} />
+          <BlocksTable
+            blocks={blockRows}
+            loading={blocks.isLoading}
+            error={blocks.error}
+          />
         ) : (
           <>
             {error && (
@@ -598,14 +620,24 @@ const BLOCK_SORT_VALUE: Record<
 function BlocksTable({
   blocks,
   loading,
+  error,
 }: {
   blocks: import("../api").BlockRow[];
   loading: boolean;
+  error?: unknown;
 }) {
   const { sorted, sort, toggleSort } = useSorted(blocks, BLOCK_SORT_VALUE);
 
   if (loading) return <SkeletonRows rows={5} />;
-  if (blocks.length === 0) return <EmptyNote>No usage recorded yet.</EmptyNote>;
+  // A failed window rollup is not a quiet month.
+  if (blocks.length === 0)
+    return error ? (
+      <div className="px-3 py-3">
+        <LoadError error={error} />
+      </div>
+    ) : (
+      <EmptyNote>No usage recorded yet.</EmptyNote>
+    );
   const maxTokens = Math.max(...blocks.map((b) => totalTokens(b.tokens)), 1);
   return (
     <div className="overflow-x-auto">

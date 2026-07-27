@@ -21,7 +21,7 @@ import { ComparePage } from "./pages/Compare";
 import { Palette } from "./Palette";
 import { NAV } from "./nav";
 import { ErrorBoundary, ErrorPanel } from "./ErrorState";
-import { getThemePref, setThemePref, type ThemePref } from "./theme";
+import { useThemePref, type ThemePref } from "./theme";
 import { PALETTE_KEY, openPalette } from "./ui";
 import { useEffect } from "react";
 
@@ -41,17 +41,46 @@ function IndexingBanner() {
           indexing?: boolean;
           progress?: { agent: string; seen: number; changed: number };
           v1Import?: { state: string; error?: string };
+          bootstrap?: { state: string; error?: string };
         };
       } = await res.json();
       return body.data ?? {};
     },
-    refetchInterval: (query) => (query.state.data?.indexing ? 1500 : false),
+    // Poll only while progress can actually arrive: a failed pass holds
+    // indexing=true until a restart, and 1.5s polls against that state
+    // would spin forever for no news.
+    refetchInterval: (query) =>
+      query.state.data?.indexing &&
+      query.state.data?.bootstrap?.state !== "failed"
+        ? 1500
+        : false,
   });
   const importFailed = data?.v1Import?.state === "failed";
+  // indexing stays true after a FAILED pass (readiness is held), but no
+  // progress is coming until a restart retries it — an indefinite
+  // "indexing…" banner would be a lie.
+  const indexFailed = data?.bootstrap?.state === "failed";
   if (!data?.indexing && !importFailed) return null;
   const p = data?.progress;
   return (
     <>
+      {indexFailed && (
+        <div className="mb-6 flex items-baseline gap-3 rounded-md border border-red-500/50 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full bg-red-500" />
+          <span>
+            Indexing failed — showing what was indexed before the error.
+            Restart ccpeek to retry the pass.
+          </span>
+          {data?.bootstrap?.error && (
+            <span
+              className="ml-auto max-w-96 shrink-0 truncate font-mono text-xs text-ink-faint"
+              title={data.bootstrap.error}
+            >
+              {data.bootstrap.error}
+            </span>
+          )}
+        </div>
+      )}
       {importFailed && (
         <div className="mb-6 flex items-baseline gap-3 rounded-md border border-red-500/50 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
           <span className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full bg-red-500" />
@@ -70,7 +99,7 @@ function IndexingBanner() {
           )}
         </div>
       )}
-      {data?.indexing && (
+      {data?.indexing && !indexFailed && (
         <div className="mb-6 flex items-baseline gap-3 rounded-md border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
           <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse self-center rounded-full bg-accent" />
           <span>
@@ -99,14 +128,12 @@ const THEME_GLYPH: Record<ThemePref, string> = {
 };
 
 function ThemeToggle() {
-  const [pref, setPref] = useState<ThemePref>(getThemePref);
+  // Shared state, not a copy per instance — see useThemePref.
+  const [pref, setPref] = useThemePref();
   const next = THEME_ORDER[(THEME_ORDER.indexOf(pref) + 1) % 3];
   return (
     <button
-      onClick={() => {
-        setThemePref(next);
-        setPref(next);
-      }}
+      onClick={() => setPref(next)}
       className="microlabel flex items-center gap-2 transition-colors hover:text-ink"
       title={`Theme: ${pref} — click for ${next}`}
     >
@@ -311,15 +338,26 @@ const routeTree = rootRoute.addChildren([
       return out;
     },
   }),
+  // Commands and Usage keep their filters in the URL for the same reason
+  // Sessions does: every filtered view is a deep link (docs/v2-plan.md
+  // §5.2). They were the two views holding filter state privately, so the
+  // one thing you could not do with a narrowed cost table or a filtered
+  // command list was send it to somebody — or reach it again with the back
+  // button.
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/commands",
     component: CommandsPage,
+    validateSearch: (s: Record<string, unknown>) =>
+      pickStrings(s, ["agent", "q", "since", "until"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/usage",
     component: UsagePage,
+    // "day" is the default grouping and stays out of the URL.
+    validateSearch: (s: Record<string, unknown>) =>
+      pickStrings(s, ["group", "agent", "model", "since", "until"]),
   }),
   // /search has no page of its own any more — searching is the palette,
   // reachable from every view. The ROUTE survives because the v1
@@ -366,6 +404,13 @@ const routeTree = rootRoute.addChildren([
 
 export const router = createRouter({
   routeTree,
+  // Coming BACK to a list returns the reader to where they were in it,
+  // rather than to the top of a thousand rows they have already scrolled
+  // past. The windowed pages restore approximately at first — heights are
+  // re-estimated on mount and settle as rows measure — and exactly once the
+  // rows are back. It never fights the transcript: the scroll-spy's ?seq
+  // writes navigate with resetScroll:false, which this leaves alone.
+  scrollRestoration: true,
   // A route that throws during load or render degrades to a message
   // rather than unmounting the app; an unknown path says so instead of
   // rendering nothing.

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Link,
@@ -10,6 +10,7 @@ import { api, fmtCount, fmtTokens, shortPath } from "../api";
 import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
+  LoadError,
   Loading,
   Money,
   Panel,
@@ -55,6 +56,7 @@ export function SessionDetailPage() {
   const {
     rows: toolRows,
     loading: toolsLoading,
+    error: toolsError,
     requested: toolsRequested,
   } = useSessionTools(
     agent,
@@ -99,7 +101,21 @@ export function SessionDetailPage() {
   // tool-derived counts are withheld until the rows have actually loaded —
   // they load lazily, so rendering the not-yet-known value would label a
   // session with eight tool calls "tools 0".
-  const toolCountsKnown = toolsRequested && !toolsLoading;
+  const toolCountsKnown = toolsRequested && !toolsLoading && !toolsError;
+  // The three tool-fed tabs share one gate: skeleton while the rows load,
+  // the failure when there was one, the tab itself otherwise. Rows that
+  // did arrive before the failure are still shown — but their tab's
+  // "nothing here" note is not, because that is not what happened.
+  const toolPanel = (body: ReactNode) => {
+    if (toolsLoading) return <SkeletonRows rows={4} />;
+    if (toolsError == null) return body;
+    return (
+      <div className="space-y-3">
+        <LoadError error={toolsError} />
+        {toolRows.length > 0 && body}
+      </div>
+    );
+  };
   const counts: Record<Tab, number | null> = {
     transcript: null,
     commands: toolCountsKnown ? commands.length : null,
@@ -199,9 +215,16 @@ export function SessionDetailPage() {
           label="Session facet"
           variant="tab"
           value={tab}
+          // ?seq travels with the tab. Replacing the whole search object
+          // dropped it, so opening the files tab from a permalink and
+          // coming back landed at the top of the session — the message the
+          // link was FOR was gone from the URL.
           onChange={(t) =>
             void navigate({
-              search: t === "transcript" ? {} : { tab: t },
+              search: (prev: { tab?: string; seq?: number }) => ({
+                ...prev,
+                tab: t === "transcript" ? undefined : t,
+              }),
               replace: true,
             })
           }
@@ -222,34 +245,30 @@ export function SessionDetailPage() {
           transcript={win}
         />
       )}
+      {/* Loading, failed, and empty are three different answers. A failed
+          tool fetch used to reach the tabs as an empty row set, which they
+          reported as "No tool calls recorded" — the archive blamed for the
+          request. */}
       {tab === "commands" &&
-        (toolsLoading ? (
-          <SkeletonRows rows={4} />
-        ) : (
-          <CommandsTab commands={commands} onJump={win.jumpToSeq} />
-        ))}
+        toolPanel(<CommandsTab commands={commands} onJump={win.jumpToSeq} />)}
       {tab === "tools" &&
-        (toolsLoading ? (
-          <SkeletonRows rows={4} />
-        ) : (
+        toolPanel(
           <ToolsTab
             agent={agent}
             sessionId={sessionId}
             tools={toolRows}
             onJump={win.jumpToSeq}
-          />
-        ))}
+          />,
+        )}
       {tab === "files" &&
-        (toolsLoading ? (
-          <SkeletonRows rows={4} />
-        ) : (
+        toolPanel(
           <FilesTab
             agent={agent}
             sessionId={sessionId}
             files={files}
             onJump={win.jumpToSeq}
-          />
-        ))}
+          />,
+        )}
       {tab === "artifacts" && (
         <ArtifactsTab agent={s.agent} artifacts={s.artifacts ?? []} />
       )}

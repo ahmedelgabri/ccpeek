@@ -273,7 +273,14 @@ function SessionPicker({
       >
         {list.length === 0 && (
           <li className="px-3 py-4 text-center text-sm text-ink-dim">
-            {sessions.isLoading ? "Loading…" : "No sessions match."}
+            {/* A failed lookup is not an empty archive. */}
+            {sessions.isLoading ? (
+              "Loading…"
+            ) : sessions.error ? (
+              <LoadError error={sessions.error} compact />
+            ) : (
+              "No sessions match."
+            )}
           </li>
         )}
         {list.map((s) => {
