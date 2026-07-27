@@ -59,10 +59,11 @@ func storeDBPath(dataFile string) string {
 // background (the serving path, so the UI is reachable immediately).
 //
 // First-run contract (docs/v2-plan.md §8.1): when the database does not
-// exist yet, bootstrap runs a full ingest of all detected agent roots and
-// — if a legacy v1 database is present — imports its orphaned rows and
-// user state. Zero flags, zero prompts. tweak, when non-nil, adjusts the
-// pipeline options (rebuild/prune/progress) before the run.
+// exist yet, bootstrap runs a full ingest of all detected agent roots
+// and THEN — if a legacy v1 database is present — imports the rows that
+// ingest cannot re-derive, plus user state. Zero flags, zero prompts.
+// tweak, when non-nil, adjusts the pipeline options
+// (rebuild/prune/progress) before the run.
 func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool, logw io.Writer, tweak ...func(*ingest.Options)) (*engine, func(context.Context) error, error) {
 	dataFile, _ := cmd.Flags().GetString("data-file")
 
@@ -97,15 +98,15 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 		runner:  runner,
 	}
 
-	// The v1 import retries on EVERY engine open, not only when indexing
-	// runs. It is keyed on its own meta and is a no-op once it has
-	// succeeded (or established there is no legacy database), so the cost
-	// is one meta read — and hanging it off bootstrap meant the documented
-	// "retried on every start until it succeeds" contract silently did not
-	// hold for anyone who runs --skip-index.
-	maybeImportV1(ctx, store, dataFile, logw)
-
+	// bootstrap owns the v1 import — it has to run AFTER the ingest pass,
+	// and off the path that binds the port. bootstrap is nil on THIS path,
+	// so it is also the only place the documented "retried on every start
+	// until it succeeds" contract can hold for anyone who runs
+	// --skip-index. The import is keyed on its own meta and is a no-op
+	// once it has succeeded (or established there is no legacy database),
+	// so the usual cost is one meta read.
 	if skipIndex && !firstRun {
+		maybeImportV1(ctx, store, dataFile, logw)
 		return eng, nil, nil
 	}
 	if skipIndex && firstRun {
@@ -137,11 +138,23 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skipIndex bool,
 				report.Artifacts, report.Duration.Round(time.Millisecond))
 		}
 
-		// Retried here too: a first run indexes before the import, and a
-		// legacy database that appeared since the engine opened (or an
-		// import that failed above) gets its next attempt without waiting
-		// for a restart.
-		maybeImportV1(ctx, store, dataFile, logw)
+		// AFTER the pass, never before it. The importer only adds what v2
+		// does not already hold, and every one of those checks answers
+		// "no" against an empty first-run store: importing first turns the
+		// whole v1 database into orphans, doubling the work and — for
+		// retained history rows — handing them to the live history.jsonl
+		// parse to delete. Running here also keeps the import off the path
+		// that binds the port (root.go and mcp.go run bootstrap in the
+		// background) and picks up a legacy database that appeared since
+		// the engine opened.
+		if rep := maybeImportV1(ctx, store, dataFile, logw); rep != nil && rep.OrphanSessions > 0 {
+			// The pass regenerated the derived facets before these sessions
+			// existed; without a rebuild they stay outside every workspace
+			// until some later pass happens to change something.
+			if err := store.RegenerateWorkspaces(ctx); err != nil {
+				fmt.Fprintf(logw, "WARNING: regenerating workspaces after the v1 import: %v\n", err)
+			}
+		}
 		if firstRun {
 			_ = store.SetMeta(ctx, "migrated_at", time.Now().UTC().Format(time.RFC3339))
 		}
@@ -160,29 +173,33 @@ const (
 )
 
 // maybeImportV1 runs the v1 import unless a previous attempt succeeded
-// or established there is no legacy database. The state is deliberately
-// separate from migrated_at (the bootstrap marker): a failed import
-// must not look done just because the engine came up — it is retried on
-// every indexing start until it succeeds, and databases stamped before
-// this split get one idempotent re-import. Failure never bricks the
-// engine; it is recorded for /api/v1/health and the UI, and
-// `ccpeek migrate` re-runs the import with a non-zero exit on error.
-func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) {
+// or established there is no legacy database, and reports what came over
+// (nil when nothing ran). The state is deliberately separate from
+// migrated_at (the bootstrap marker): a failed import must not look done
+// just because the engine came up — it is retried on every start until
+// it succeeds, and databases stamped before this split get one
+// idempotent re-import. Failure never bricks the engine; it is recorded
+// for /api/v1/health and the UI, and `ccpeek migrate` re-runs the import
+// with a non-zero exit on error.
+func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) *migrate.Report {
 	state, _, err := store.GetMeta(ctx, "v1_import_state")
 	if err == nil && (state == v1ImportSuccess || state == v1ImportNoLegacyDB) {
-		return
+		return nil
 	}
 	present, err := checkV1Source(ctx, store, dataFile)
 	if err != nil {
 		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
-		return
+		return nil
 	}
 	if !present {
-		return
+		return nil
 	}
-	if _, err := runV1Import(ctx, store, dataFile, logw); err != nil {
+	rep, err := runV1Import(ctx, store, dataFile, logw)
+	if err != nil {
 		fmt.Fprintf(logw, "WARNING: v1 import failed (kept visible in /api/v1/health; retried next start; `ccpeek migrate` re-runs it loudly): %v\n", err)
+		return nil
 	}
+	return rep
 }
 
 // checkV1Source records the terminal meta state for a legacy database

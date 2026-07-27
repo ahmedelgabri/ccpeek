@@ -3,12 +3,15 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/migrate"
 	"github.com/spf13/cobra"
 )
 
@@ -391,6 +394,261 @@ func TestDataFileIsolation(t *testing.T) {
 	defer engB.Close()
 	if v, ok, _ := engB.store.GetMeta(ctx, "profile"); ok {
 		t.Errorf("profile B sees profile A's data (%q): stores alias", v)
+	}
+}
+
+// pinRoots points every agent but Claude Code at an empty directory, so
+// no test can ingest the developer's real data. Claude Code is pinned by
+// the returned command's --claude-dir.
+func pinRoots(t *testing.T, dataFile, claudeDir string) *cobra.Command {
+	t.Helper()
+	emptyRoot := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", emptyRoot)
+	t.Setenv("CODEX_HOME", emptyRoot)
+	t.Setenv("OPENCODE_DATA_DIR", emptyRoot)
+	t.Setenv("CCPEEK_CURSOR_DIR", emptyRoot)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
+	if err := cmd.Flags().Set("claude-dir", claudeDir); err != nil {
+		t.Fatal(err)
+	}
+	return cmd
+}
+
+// writeHistoryFile writes a Claude Code history.jsonl holding exactly the
+// given prompts.
+func writeHistoryFile(t *testing.T, root string, entries ...v1HistoryRow) {
+	t.Helper()
+	body := ""
+	for _, e := range entries {
+		body += `{"display":` + strconv.Quote(e.display) +
+			`,"timestamp":` + strconv.FormatInt(e.ts, 10) + "}\n"
+	}
+	if err := os.WriteFile(filepath.Join(root, "history.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeClaudeSession writes a minimal transcript under a Claude Code
+// root's projects/ tree, the shape the adapter discovers and parses.
+func writeClaudeSession(t *testing.T, root, sessionID, prompt string) string {
+	t.Helper()
+	dir := filepath.Join(root, "projects", "-home-u-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, sessionID+".jsonl")
+	body := `{"parentUuid":null,"isSidechain":false,"userType":"external","cwd":"/home/u/proj","sessionId":"` +
+		sessionID + `","version":"2.1.0","gitBranch":"main","type":"user","message":{"role":"user","content":` +
+		strconv.Quote(prompt) + `},"uuid":"u-1","timestamp":"2026-07-01T10:00:00.000Z"}
+{"parentUuid":"u-1","isSidechain":false,"userType":"external","cwd":"/home/u/proj","sessionId":"` +
+		sessionID + `","version":"2.1.0","gitBranch":"main","type":"assistant","requestId":"req-1","message":{"id":"msg-1","type":"message","role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"on it"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":4}},"uuid":"a-1","timestamp":"2026-07-01T10:00:05.000Z"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+type v1HistoryRow struct {
+	display string
+	ts      int64
+}
+
+// v1Skeleton is the minimum every v1 vintage has: the sessions/messages
+// pair ImportV1 recognises a v1 database by, and the projects table its
+// session query joins.
+const v1Skeleton = `
+	CREATE TABLE projects (id INTEGER PRIMARY KEY, dir_name TEXT,
+		display_name TEXT, canonical_path TEXT);
+	CREATE TABLE sessions (
+		id INTEGER PRIMARY KEY, session_id TEXT, project_id INTEGER,
+		first_prompt TEXT, message_count INTEGER, created_at TEXT,
+		modified_at TEXT, git_branch TEXT, project_path TEXT,
+		source_path TEXT);
+	CREATE TABLE messages (
+		id INTEGER PRIMARY KEY, session_id INTEGER, seq INTEGER, type TEXT,
+		role TEXT, timestamp TEXT, uuid TEXT, content TEXT, cwd TEXT,
+		git_branch TEXT);`
+
+// seedV1HistoryDB writes a v1 database holding nothing but prompt
+// history, every row carrying sourcePath — which on a same-machine
+// upgrade is the live history.jsonl v1 read them from.
+func seedV1HistoryDB(t *testing.T, path, sourcePath string, entries ...v1HistoryRow) {
+	t.Helper()
+	v1, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v1.Close()
+	if _, err := v1.Exec(v1Skeleton + `
+		CREATE TABLE history (id INTEGER PRIMARY KEY, source_id INTEGER,
+			display TEXT, timestamp INTEGER, project TEXT, source_path TEXT);`); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if _, err := v1.Exec(`INSERT INTO history (display, timestamp, source_path)
+			VALUES (?, ?, ?)`, e.display, e.ts, sourcePath); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// importReport reads back the report the bootstrap import recorded.
+func importReport(t *testing.T, eng *engine) migrate.Report {
+	t.Helper()
+	raw, ok, err := eng.store.GetMeta(context.Background(), "v1_import_report")
+	if err != nil || !ok {
+		t.Fatalf("v1_import_report meta missing (ok=%v err=%v)", ok, err)
+	}
+	var rep migrate.Report
+	if err := json.Unmarshal([]byte(raw), &rep); err != nil {
+		t.Fatalf("decoding v1_import_report %q: %v", raw, err)
+	}
+	return rep
+}
+
+// Retained history entries — prompts v1 kept after the live history.jsonl
+// stopped listing them — are the whole point of importing history, and on
+// the ordinary same-machine upgrade v1 recorded them under the path that
+// IS that live file. Importing them under that path fed them straight to
+// the next parse of it, which deletes a source's rows before re-inserting
+// the file's current contents; with v1_import_state=success they never
+// came back.
+func TestV1RetainedHistorySurvivesLiveIngest(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dataFile := filepath.Join(dir, "ccpeek.db")
+	claudeRoot := t.TempDir()
+	livePath := filepath.Join(claudeRoot, "history.jsonl")
+
+	live := v1HistoryRow{"still in the file", 1751364000000}
+	retained := v1HistoryRow{"rotated out of the file", 1740000000000}
+	writeHistoryFile(t, claudeRoot, live)
+	// v1 read both from the live file and kept the one the file dropped.
+	seedV1HistoryDB(t, dataFile, livePath, live, retained)
+
+	cmd := pinRoots(t, dataFile, claudeRoot)
+	count := func(eng *engine, display string) int {
+		t.Helper()
+		var n int
+		if err := eng.store.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM history WHERE display = ?`, display).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ingest ran first, so the entry the live file still holds was already
+	// in v2 and the import skipped it: only the retained one is new.
+	if rep := importReport(t, eng); rep.HistoryEntries != 1 {
+		t.Errorf("imported history entries = %d, want 1 (the live entry is ingest's)", rep.HistoryEntries)
+	}
+	if n := count(eng, retained.display); n != 1 {
+		t.Fatalf("retained entry after first run = %d, want 1", n)
+	}
+	if n := count(eng, live.display); n != 1 {
+		t.Errorf("live entry after first run = %d, want 1", n)
+	}
+	eng.Close()
+
+	// The live file changes, so the next pass re-parses it — clearing that
+	// source's rows before re-inserting. The retained entry is not that
+	// source's and must survive.
+	appended := v1HistoryRow{"typed after the upgrade", 1751450400000}
+	writeHistoryFile(t, claudeRoot, live, appended)
+
+	eng2, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng2.Close()
+	if n := count(eng2, retained.display); n != 1 {
+		t.Errorf("retained entry after the second pass = %d, want 1 (the re-parse deleted the imported rescue)", n)
+	}
+	if n := count(eng2, live.display); n != 1 {
+		t.Errorf("live entry after the second pass = %d, want 1 (duplicated)", n)
+	}
+	if n := count(eng2, appended.display); n != 1 {
+		t.Errorf("appended entry = %d, want 1", n)
+	}
+}
+
+// TestFirstRunIndexesBeforeImportingV1 pins the bootstrap order. Every
+// importer skip test asks whether v2 ALREADY HOLDS a row, and against an
+// empty first-run store they all answer no — so importing before the
+// ingest pass turns the entire v1 database into "orphans", doubling the
+// first run's work and letting v1's lossier copies of live sessions in.
+func TestFirstRunIndexesBeforeImportingV1(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dataFile := filepath.Join(dir, "ccpeek.db")
+	claudeRoot := t.TempDir()
+
+	const liveID = "11111111-aaaa-bbbb-cccc-111111111111"
+	livePath := writeClaudeSession(t, claudeRoot, liveID, "index me from disk")
+
+	v1, err := sql.Open("sqlite", "file:"+dataFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v1.Exec(v1Skeleton); err != nil {
+		t.Fatal(err)
+	}
+	// One session the pipeline indexes from disk, one whose source is gone.
+	if _, err := v1.Exec(`INSERT INTO sessions
+		(id, session_id, first_prompt, created_at, modified_at, project_path, source_path)
+		VALUES (1, ?, 'v1 copy', '2026-06-01T10:00:00Z', '2026-06-01T11:00:00Z', '/home/u/proj', ?)`,
+		liveID, livePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v1.Exec(`INSERT INTO sessions
+		(id, session_id, first_prompt, created_at, modified_at, project_path, source_path)
+		VALUES (2, 'ghost-session', 'lost to time', '2026-05-01T10:00:00Z', '2026-05-01T12:00:00Z', '/home/u/proj', '/gone/ghost.jsonl')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v1.Exec(`INSERT INTO messages (session_id, seq, type, role, timestamp, uuid, content)
+		VALUES (1, 0, 'user', 'user', '2026-06-01T10:00:00Z', 'v1-1', '{"role":"user","content":"v1 copy"}')`); err != nil {
+		t.Fatal(err)
+	}
+	v1.Close()
+
+	cmd := pinRoots(t, dataFile, claudeRoot)
+	eng, err := openEngine(ctx, cmd, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	if rep := importReport(t, eng); rep.OrphanSessions != 1 || rep.OrphanMessages != 0 {
+		t.Errorf("import report = %d orphan sessions / %d messages, want 1/0: the indexed session is not an orphan",
+			rep.OrphanSessions, rep.OrphanMessages)
+	}
+	var origin string
+	if err := eng.store.DB().QueryRowContext(ctx,
+		`SELECT origin FROM sessions WHERE external_id = ?`, liveID).Scan(&origin); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "ingest" {
+		t.Errorf("indexed session origin = %q, want ingest", origin)
+	}
+	// The rescued session's workspace membership is rebuilt after the
+	// import, which lands past the pass that regenerates the facet.
+	var n int
+	if err := eng.store.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM session_workspaces sw
+		JOIN sessions s ON s.id = sw.session_id
+		WHERE s.external_id = 'ghost-session'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("imported session's workspace links = %d, want 1", n)
 	}
 }
 

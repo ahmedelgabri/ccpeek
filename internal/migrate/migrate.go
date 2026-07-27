@@ -376,28 +376,34 @@ func importLegacyCommands(ctx context.Context, v1 *sql.DB, sch v1Schema, w *db.W
 
 // importHistory copies prompt-history rows whose entries v2 does not
 // already hold (the live history.jsonl re-ingests natively; v1 retains
-// entries from files that are gone). The v1 source path is preserved so
-// the history replacement logic never collides with live sources.
+// entries the file itself no longer has).
+//
+// Imported rows carry the sentinel source path "imported-v1", never v1's
+// own. On the ordinary same-machine upgrade v1's source_path IS the live
+// ~/.claude/history.jsonl, and every parse of that file deletes the
+// rows recorded under it before re-inserting the file's current contents
+// — so preserving the path handed the retained entries this import
+// exists to rescue straight to the next ingest pass, permanently
+// (v1_import_state=success means it never re-runs).
 func importHistory(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schema, report *Report) error {
 	if !sch.table("history") {
 		return nil // this vintage predates prompt-history retention
 	}
-	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`
-		SELECT COALESCE(display, ''), COALESCE(timestamp, 0), %s
-		FROM history WHERE display <> ''`,
-		sch.sel("history", "", "source_path")))
+	rows, err := v1.QueryContext(ctx, `
+		SELECT COALESCE(display, ''), COALESCE(timestamp, 0)
+		FROM history WHERE display <> ''`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	type v1History struct {
-		display, sourcePath string
-		ts                  int64
+		display string
+		ts      int64
 	}
 	var entries []v1History
 	for rows.Next() {
 		var h v1History
-		if err := rows.Scan(&h.display, &h.ts, &h.sourcePath); err != nil {
+		if err := rows.Scan(&h.display, &h.ts); err != nil {
 			return err
 		}
 		entries = append(entries, h)
@@ -433,15 +439,11 @@ func importHistory(ctx context.Context, store *db.Store, v1 *sql.DB, sch v1Schem
 		if err == nil {
 			continue // v2 already has this entry (re-ingested or re-imported)
 		}
-		src := h.sourcePath
-		if src == "" {
-			src = "imported-v1"
-		}
 		if err := w.InsertHistory(canon.HistoryEntry{
 			Agent:     claudeSlug,
 			Display:   h.display,
 			Timestamp: time.UnixMilli(h.ts),
-		}, src); err != nil {
+		}, "imported-v1"); err != nil {
 			return err
 		}
 		report.HistoryEntries++

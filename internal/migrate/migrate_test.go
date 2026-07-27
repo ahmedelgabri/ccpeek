@@ -174,8 +174,10 @@ func TestImportV1(t *testing.T) {
 	if n := q(`SELECT COUNT(*) FROM tool_calls WHERE kind = 'subagent' AND name = 'Task'`); n != 1 {
 		t.Errorf("imported tool calls = %d, want 1 subagent", n)
 	}
-	// The retained history entry landed with provenance.
-	if n := q(`SELECT COUNT(*) FROM history WHERE source_path = '/gone/history.jsonl'`); n != 1 {
+	// The retained history entry landed under the sentinel source path,
+	// not v1's: only a path no live source can carry survives the
+	// delete-then-reinsert every history re-parse performs.
+	if n := q(`SELECT COUNT(*) FROM history WHERE source_path = 'imported-v1'`); n != 1 {
 		t.Errorf("imported history = %d, want 1", n)
 	}
 	// The todo list rebuilt with structured metadata and a parked link
@@ -251,6 +253,79 @@ func TestImportV1(t *testing.T) {
 		t.Errorf("annotations after re-import = %d, want 2 (no duplicates)", n)
 	}
 	_ = report2
+}
+
+// Imported history must never carry a source path a live parse can
+// clear. On a same-machine upgrade v1's history.source_path IS the live
+// ~/.claude/history.jsonl, and every parse of that file deletes the rows
+// recorded under it before re-inserting the file's current contents — so
+// preserving v1's path deleted the retained entries the import exists to
+// rescue, permanently.
+func TestImportV1HistoryEscapesLiveSourceReplacement(t *testing.T) {
+	ctx := context.Background()
+
+	// The live file itself, still on disk, exactly as an upgrade finds it.
+	livePath := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(livePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v1Path := filepath.Join(t.TempDir(), "ccpeek.db")
+	v1, err := sql.Open("sqlite", "file:"+v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v1.Exec(`
+		CREATE TABLE projects (id INTEGER PRIMARY KEY, dir_name TEXT,
+			display_name TEXT, canonical_path TEXT);
+		CREATE TABLE sessions (id INTEGER PRIMARY KEY, session_id TEXT,
+			project_id INTEGER, first_prompt TEXT, created_at TEXT,
+			modified_at TEXT, git_branch TEXT, project_path TEXT, source_path TEXT);
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id INTEGER,
+			seq INTEGER, type TEXT, role TEXT, timestamp TEXT, uuid TEXT,
+			content TEXT, cwd TEXT);
+		CREATE TABLE history (id INTEGER PRIMARY KEY, source_id INTEGER,
+			display TEXT, timestamp INTEGER, project TEXT, source_path TEXT);`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v1.Exec(`INSERT INTO history (display, timestamp, source_path)
+		VALUES ('rotated out of the file', 1746093600000, ?)`, livePath); err != nil {
+		t.Fatal(err)
+	}
+	v1.Close()
+
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	report, err := ImportV1(ctx, store, v1Path)
+	if err != nil {
+		t.Fatalf("ImportV1: %v", err)
+	}
+	if report.HistoryEntries != 1 {
+		t.Fatalf("imported history entries = %d, want 1", report.HistoryEntries)
+	}
+
+	// What the next ingest pass over the live file does first.
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ClearHistorySource("claude-code", livePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM history WHERE display = 'rotated out of the file'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("retained entry after a live re-parse = %d, want 1", n)
+	}
 }
 
 // TestImportV1IgnoreTranslation proves the full v1→v2 ignore mapping:
