@@ -6,12 +6,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/api"
@@ -62,16 +60,26 @@ func init() {
 		"v2 re-indexes on filesystem events; the interval is ignored")
 }
 
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+// ExecuteContext runs the CLI under ctx, which every command reaches
+// through cmd.Context(). main wires signal cancellation into it: ONE
+// source of signal context for the whole binary, so a command's own
+// shutdown path (the HTTP server's graceful stop, the MCP server's
+// background indexing) cannot double-register handlers and disagree
+// about who cancels what.
+func ExecuteContext(ctx context.Context) {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	// Cancellation arrives from ExecuteContext, not from a handler
+	// installed here. The nil guard is for tests that call run directly.
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	port, _ := cmd.Flags().GetInt("port")
 	claudeDir, _ := cmd.Flags().GetString("claude-dir")
@@ -175,41 +183,17 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// runScan reports rather than fails: on the serving path a scan
-	// problem must not take the server down. The mutex serializes the
-	// bootstrap scan with watch-triggered rescans — the scanner's
-	// per-entity state updates must not interleave.
+	// The mutex serializes the bootstrap scan with watch-triggered
+	// rescans — the scanner's per-entity state updates must not
+	// interleave.
 	var scanMu sync.Mutex
 	runScan := func(ctx context.Context, ingestReport *ingest.Report) error {
-		if skipScan || ingestReport == nil || ingestReport.FilesChanged == 0 {
+		if skipScan {
 			return nil
 		}
 		scanMu.Lock()
 		defer scanMu.Unlock()
-		logf("Scanning for secrets...\n")
-		scanner, err := secrets.New(eng.store)
-		if err != nil {
-			return fmt.Errorf("initializing scanner: %w", err)
-		}
-		findings, report, err := scanner.Run(ctx)
-		if err != nil {
-			return fmt.Errorf("scan failed: %w", err)
-		}
-		logf("  Scanned %d changed session(s), %d changed artifact(s)\n",
-			report.SessionsScanned, report.ArtifactsScanned)
-		active := 0
-		for _, f := range findings {
-			if !f.Ignored {
-				active++
-			}
-		}
-		if active == 0 {
-			logf("  %sNo secrets detected.%s\n", colorGreen, colorReset)
-		} else {
-			logf("  %s%sWARNING%s %s%d potential secret(s) found. Run `ccpeek scan` for details.%s\n",
-				colorBold, colorYellow, colorReset, colorYellow, active, colorReset)
-		}
-		return nil
+		return scanChanged(ctx, eng, ingestReport, logf)
 	}
 
 	if indexOnly {
@@ -300,6 +284,42 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, events, ready.Load, readProgress, readV1Import)))
+}
+
+// scanChanged scans what an ingest pass changed and reports through
+// logf. Both serving paths use it — HTTP and MCP index the same store
+// with the same passes, and a second copy of this would drift.
+//
+// It returns errors rather than exiting: on a serving path a scan
+// problem must not take the server down.
+func scanChanged(ctx context.Context, eng *engine, ingestReport *ingest.Report, logf func(string, ...any)) error {
+	if ingestReport == nil || ingestReport.FilesChanged == 0 {
+		return nil
+	}
+	logf("Scanning for secrets...\n")
+	scanner, err := secrets.New(eng.store)
+	if err != nil {
+		return fmt.Errorf("initializing scanner: %w", err)
+	}
+	findings, report, err := scanner.Run(ctx)
+	if err != nil {
+		return fmt.Errorf("scan failed: %w", err)
+	}
+	logf("  Scanned %d changed session(s), %d changed artifact(s)\n",
+		report.SessionsScanned, report.ArtifactsScanned)
+	active := 0
+	for _, f := range findings {
+		if !f.Ignored {
+			active++
+		}
+	}
+	if active == 0 {
+		logf("  %sNo secrets detected.%s\n", colorGreen, colorReset)
+	} else {
+		logf("  %s%sWARNING%s %s%d potential secret(s) found. Run `ccpeek scan` for details.%s\n",
+			colorBold, colorYellow, colorReset, colorYellow, active, colorReset)
+	}
+	return nil
 }
 
 // newProgressLogger prints ingest progress to w: one line per discovered
