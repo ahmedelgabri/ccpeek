@@ -80,9 +80,8 @@ ccpeek --index-only
 ```
 
 The server reads each agent's data from its default root (for Claude Code,
-`~/.claude`), writes an index to `~/.local/share/ccpeek/ccpeek2.db`
-(respects `$XDG_DATA_HOME`), and serves the web UI at
-`http://localhost:3000`.
+`~/.claude`), writes an index to `$XDG_DATA_HOME/ccpeek/ccpeek2.db`, and
+serves the web UI at `http://localhost:3000`.
 
 The port binds immediately; indexing runs behind it with progress on
 stderr, and the UI fills in live as data lands (`/api/v1/ready` answers
@@ -96,7 +95,7 @@ them, so warm startups stay fast even on multi-GB histories.
 | --------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `-p`, `--port`  | `3000`                             | Server port                                                                                                           |
 | `--claude-dir`  | `~/.claude`                        | Source directory (Claude data)                                                                                        |
-| `--data-file`   | `~/.local/share/ccpeek/ccpeek2.db` | Database location — the index is derived from this path. A legacy database here is imported once; see the [FAQ](#faq) |
+| `--data-file`   | `$XDG_DATA_HOME/ccpeek/ccpeek2.db` | Database location — the index is derived from this path. A legacy database here is imported once; see the [FAQ](#faq) |
 | `--skip-index`  | `false`                            | Skip indexing, serve existing data                                                                                    |
 | `--index-only`  | `false`                            | Index and exit                                                                                                        |
 | `-o`, `--open`  | `false`                            | Open browser after starting                                                                                           |
@@ -263,8 +262,8 @@ session-centric equivalent.
 
 ### Where is the database stored, and what is `--data-file`?
 
-The index lives at `~/.local/share/ccpeek/ccpeek2.db` (respecting
-`$XDG_DATA_HOME`). `--data-file` names the legacy database path; the
+The index lives at `$XDG_DATA_HOME/ccpeek/ccpeek2.db`. `--data-file`
+names the legacy database path; the
 current index is derived from it as a sibling (`ccpeek.db` →
 `ccpeek2.db`, `x.db` → `x.v2.db`). A legacy file at that path is
 imported once (read-only); don't point `--data-file` at a current
