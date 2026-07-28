@@ -191,7 +191,7 @@ function NavLinks({
               "border-l-2 border-transparent text-ink-dim hover:bg-surface-2/40 hover:text-ink",
           }}
           activeOptions={{ exact: n.exact ?? false }}
-          className={`rounded-r py-1.5 font-mono text-data transition-colors ${
+          className={`rounded-r py-1.5 font-sans text-data transition-colors ${
             collapsed ? "px-0 text-center" : "px-3"
           }`}
         >

@@ -2,8 +2,13 @@
 
 /* Instrument-panel tokens: ink surfaces, hairline edges, one phosphor
    accent, and the validated per-agent palette (worst adjacent CVD ΔE
-   15.7 on surface-1; see CostTimeline). IBM Plex carries the industrial
-   voice — Mono for data, Sans for prose.
+   15.7 on surface-1; see CostTimeline). Mono carries data, Sans prose.
+
+   No font ships in the binary: the stacks name preferred faces (Plex
+   first) that render only where locally installed, then fall through
+   other common developer fonts to the system UI faces. Nothing in the
+   layout depends on a particular face's metrics — tabular-nums is the
+   only figure-alignment assumption, and every listed mono supports it.
 
    Every color is a light-dark() pair: the resolved value follows the
    root's color-scheme, which defaults to the system preference and is
@@ -11,8 +16,13 @@
    values keep each token's hue and role, darkened to hold ≥4.5:1 as
    text on the light card surface. */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  --font-sans:
+    "IBM Plex Sans", "Inter", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-mono:
+    "PragmataPro Mono Liga", "IBM Plex Mono", "Berkeley Mono",
+    "JetBrains Mono", "Cascadia Code", ui-monospace, "SF Mono", "Menlo",
+    "Consolas", monospace;
 
   /* The type scale. Five named steps replace the nine ad-hoc sizes the
      UI had grown (text-xs/sm plus one-off text-[9px]/[10px]/[11px]/[13px]
