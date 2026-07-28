@@ -6,12 +6,8 @@ Explore your coding-agent history. A local web app that indexes
 session-centric database — conversations, plans, todos, tasks, shell
 snapshots, file history, paste cache, memories, and commands — with real
 token usage and estimated cost, plus an agent-facing query surface
-(`ccpeek query`, `/api/v1`, `ccpeek mcp`) and live updates.
-
-> **v2.** The engine and UI described above are the v2 cutover
-> (session-centric, multi-agent). Everything initializes automatically on
-> first run and your v1 database is never modified — see
-> [docs/v2-plan.md](docs/v2-plan.md) and the [v2 section](#v2) below.
+(`ccpeek query`, `/api/v1`, `ccpeek mcp`) and live updates. Everything
+stays on this machine.
 
 https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
 
@@ -88,24 +84,27 @@ The server reads each agent's data from its default root (for Claude Code,
 (respects `$XDG_DATA_HOME`), and serves the web UI at
 `http://localhost:3000`.
 
+The port binds immediately; indexing runs behind it with progress on
+stderr, and the UI fills in live as data lands (`/api/v1/ready` answers
+200 once the first pass completes). After the first full build,
+unchanged files are skipped via a size+mtime check without re-reading
+them, so warm startups stay fast even on multi-GB histories.
+
 ### Flags
 
-| Flag            | Default                           | Description                                                                                                                                                                                     |
-| --------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-p`, `--port`  | `3000`                            | Server port                                                                                                                                                                                     |
-| `--claude-dir`  | `~/.claude`                       | Source directory (Claude data)                                                                                                                                                                  |
-| `--data-file`   | `~/.local/share/ccpeek/ccpeek.db` | Path of the LEGACY v1 database (imported if present). The v2 index lives at a sibling derived from this name (`ccpeek.db` → `ccpeek2.db`, `x.db` → `x.v2.db`) — do not point this at a v2 index |
-| `--skip-index`  | `false`                           | Skip indexing, serve existing data                                                                                                                                                              |
-| `--index-only`  | `false`                           | Index and exit                                                                                                                                                                                  |
-| `-o`, `--open`  | `false`                           | Open browser after starting                                                                                                                                                                     |
-| `-w`, `--watch` | `false`                           | Re-index while serving, on filesystem changes                                                                                                                                                   |
-| `--rebuild`     | `false`                           | Force full rebuild (drop all data and re-index)                                                                                                                                                 |
-| `--prune`       | `false`                           | Remove data from source files that no longer exist                                                                                                                                              |
-| `--skip-scan`   | `false`                           | Skip secret scanning after indexing                                                                                                                                                             |
-| `-q`, `--quiet` | `false`                           | Suppress informational output                                                                                                                                                                   |
-
-`--watch-interval` is accepted for v1 compatibility and ignored: v2
-re-indexes on filesystem events rather than on a timer.
+| Flag            | Default                            | Description                                                                                                           |
+| --------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `-p`, `--port`  | `3000`                             | Server port                                                                                                           |
+| `--claude-dir`  | `~/.claude`                        | Source directory (Claude data)                                                                                        |
+| `--data-file`   | `~/.local/share/ccpeek/ccpeek2.db` | Database location — the index is derived from this path. A legacy database here is imported once; see the [FAQ](#faq) |
+| `--skip-index`  | `false`                            | Skip indexing, serve existing data                                                                                    |
+| `--index-only`  | `false`                            | Index and exit                                                                                                        |
+| `-o`, `--open`  | `false`                            | Open browser after starting                                                                                           |
+| `-w`, `--watch` | `false`                            | Re-index while serving, on filesystem changes                                                                         |
+| `--rebuild`     | `false`                            | Force full rebuild (drop all data and re-index)                                                                       |
+| `--prune`       | `false`                            | Remove data from source files that no longer exist                                                                    |
+| `--skip-scan`   | `false`                            | Skip secret scanning after indexing                                                                                   |
+| `-q`, `--quiet` | `false`                            | Suppress informational output                                                                                         |
 
 ### Shell completions
 
@@ -175,25 +174,11 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 | OpenCode    | supported        | ✓        | ✓          | ✓          | Reported costs preferred; additive reasoning folded into billable output                                                              |
 | Cursor      | **experimental** | ✓        | ✓          | —          | Schema derived from fixtures, not yet validated against a real `store.db`; no tool extraction. Expect gaps until real-data validation |
 
-## v2
+## Agent-facing surface
 
-The v2 engine indexes every supported agent into one session-centric
-database (`ccpeek2.db`, alongside the v1 file) with real token usage and
-estimated cost. It initializes automatically on first use: full ingest of
-detected agent roots plus import of v1-only data (sessions whose source
-files were deleted, scan-ignore flags). Rollback is running the old
-version — the v1 database is opened read-only and never modified.
-
-The web UI serves at `/` with the JSON API at `/api/v1`. Every v1 URL
-(`/projects/…`, `/plans/`, `/commands/`, session bookmarks, the `/v2/`
-preview mount) permanently redirects to its session-centric equivalent.
-
-The server binds its port immediately; indexing runs behind it with
-progress on stderr, and the UI fills in live as data lands
-(`/api/v1/ready` answers 200 once the first pass completes). After the
-first full build, unchanged files are skipped via a size+mtime check
-without re-reading them, so warm startups are fast even on multi-GB
-histories.
+Every read is available three ways — `ccpeek query` (JSON on the
+command line), `/api/v1` (HTTP), and `ccpeek mcp` (MCP over stdio) —
+generated from one shared definition, so the surfaces never drift.
 
 ```sh
 # Query as JSON (no server needed; exit 3 = valid query, no matches)
@@ -255,3 +240,37 @@ just lint
 # Format
 just format
 ```
+
+## FAQ
+
+### I used ccpeek before — what happens to my old (v1) data?
+
+CCPeek is a session-centric, multi-agent rewrite of the original
+single-agent tool, and it upgrades automatically on first run — no
+steps, no flags. It ingests your detected agent roots into a new index
+(`ccpeek2.db`, written alongside the old `ccpeek.db`) and imports the
+v1-only data that cannot be re-derived from source files: sessions
+whose sources were deleted, and your scan-ignore flags. The v1 database
+is opened read-only and never modified, so rolling back is just running
+the old version. See [docs/v2-plan.md](docs/v2-plan.md) for the full
+design.
+
+### Do my old bookmarks and URLs still work?
+
+Yes. Every legacy URL (`/projects/…`, `/plans/`, `/commands/`, session
+bookmarks, the `/v2/` preview mount) permanently redirects to its
+session-centric equivalent.
+
+### Where is the database stored, and what is `--data-file`?
+
+The index lives at `~/.local/share/ccpeek/ccpeek2.db` (respecting
+`$XDG_DATA_HOME`). `--data-file` names the legacy database path; the
+current index is derived from it as a sibling (`ccpeek.db` →
+`ccpeek2.db`, `x.db` → `x.v2.db`). A legacy file at that path is
+imported once (read-only); don't point `--data-file` at a current
+index.
+
+### Why is `--watch-interval` ignored?
+
+It's accepted for backward compatibility only. ccpeek re-indexes on
+filesystem events (use `--watch`) rather than on a timer.
