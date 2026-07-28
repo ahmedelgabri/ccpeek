@@ -6,7 +6,6 @@ import {
   fmtCost,
   fmtCount,
   fmtTokens,
-  parityApi,
   plural,
   shortPath,
   totalTokens,
@@ -17,8 +16,6 @@ import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
   AgentDot,
-  BudgetMeter,
-  budgetVerdict,
   Code,
   EmptyNote,
   KindBars,
@@ -34,14 +31,13 @@ import {
 } from "../ui";
 
 // Overview is the instrument panel: headline counters, the activity
-// heatmap, spend against budget, and the relation facets (agents,
-// workspaces, latest sessions, latest file edits) — every figure links
-// into its detail view.
+// heatmap, and the relation facets (agents, workspaces, latest sessions,
+// latest file edits) — every figure links into its detail view.
 export function OverviewPage() {
   const stats = useQuery({ queryKey: ["stats"], queryFn: api.stats });
   const recent = useQuery({
     queryKey: ["sessions", "recent"],
-    queryFn: () => api.sessions({ limit: "12" }),
+    queryFn: () => api.sessions({ limit: "18" }),
   });
   // Workspaces ranked by spend, not by session count: "where does the
   // money go" is the question this panel is on the page to answer, and a
@@ -55,8 +51,6 @@ export function OverviewPage() {
     queryKey: ["usage", "project"],
     queryFn: () => api.usage({ group: "project", limit: "9" }),
   });
-  const budget = useQuery({ queryKey: ["budget"], queryFn: parityApi.budget });
-
   const st = stats.data;
   if (stats.isLoading)
     return (
@@ -137,23 +131,13 @@ export function OverviewPage() {
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-5">
-        {/* Labelled UTC because it is: the API's activity days are UTC
-            date strings and the grid's calendar math matches them. Every
-            other time in the UI is local, so the one surface that is not
-            has to say so. */}
-        <Panel
-          label="Activity — sessions per UTC day, last 52 weeks"
-          className="xl:col-span-3"
-        >
-          <Heatmap days={st.activity ?? []} />
-        </Panel>
-        <BudgetPace
-          className="xl:col-span-2"
-          budget={budget.data}
-          error={budget.error}
-        />
-      </div>
+      {/* Labelled UTC because it is: the API's activity days are UTC
+          date strings and the grid's calendar math matches them. Every
+          other time in the UI is local, so the one surface that is not
+          has to say so. */}
+      <Panel label="Activity — sessions per UTC day, last 52 weeks">
+        <Heatmap days={st.activity ?? []} />
+      </Panel>
 
       <div className="grid gap-4 xl:grid-cols-5">
         <Panel label="Latest sessions" className="xl:col-span-3">
@@ -348,87 +332,6 @@ function FirstRun() {
         </div>
       </Panel>
     </div>
-  );
-}
-
-// BudgetPace answers "am I on track", which a bare month-to-date figure
-// cannot: it compares spend against the share of the month elapsed.
-function BudgetPace({
-  budget,
-  error,
-  className = "",
-}: {
-  budget: import("../api").Budget | undefined;
-  error?: unknown;
-  className?: string;
-}) {
-  // A budget that failed to load says so. The panel used to vanish
-  // entirely, which reads as "no budget feature here" rather than "this
-  // one request failed". Still in flight is a different thing again, and
-  // stays silent.
-  if (!budget)
-    return error == null ? null : (
-      <Panel label="Spend this month" className={className}>
-        <EmptyNote error={error} />
-      </Panel>
-    );
-  // The projection and its verdict come from the query layer, so `ccpeek
-  // query budget` and the MCP tool answer "am I on track" too — this used
-  // to be month arithmetic living in a React component.
-  const {
-    spentUSD: spentMonth,
-    monthlyUSD: monthly,
-    month,
-    dayOfMonth,
-    daysInMonth,
-    projectedUSD: projected,
-    pace,
-  } = budget;
-
-  if (monthly <= 0) {
-    return (
-      <Panel label="Spend this month" className={className}>
-        <div className="space-y-2 px-3 py-3">
-          <div className="flex items-baseline gap-2">
-            <Money usd={spentMonth} className="text-xl" />
-            <span className="font-mono text-meta text-ink-faint">
-              day {dayOfMonth} of {daysInMonth}
-            </span>
-          </div>
-          <p className="text-meta text-ink-faint">
-            On this pace, {fmtCost(projected)} by month end.
-          </p>
-          <Link
-            to="/usage"
-            className="inline-block font-mono text-meta text-accent hover:underline"
-          >
-            set a monthly budget →
-          </Link>
-        </div>
-      </Panel>
-    );
-  }
-
-  const warn = pace === "over" || pace === "fast";
-  return (
-    <Panel label={`Budget — ${month || "this month"}`} className={className}>
-      <div className="space-y-2 px-3 py-3">
-        <BudgetMeter
-          budget={budget}
-          label={
-            <>
-              <Money usd={spentMonth} className="text-xl" />
-              <span className="font-mono text-meta text-ink-faint">
-                of {fmtCost(monthly)}
-              </span>
-            </>
-          }
-        />
-        <p className={`text-meta ${warn ? "text-warn" : "text-ink-faint"}`}>
-          {budgetVerdict(budget)}
-        </p>
-      </div>
-    </Panel>
   );
 }
 

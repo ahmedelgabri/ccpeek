@@ -430,17 +430,6 @@ export interface BlockRow {
   active?: boolean;
 }
 
-export interface Budget {
-  monthlyUSD: number;
-  spentUSD: number;
-  month: string;
-  dayOfMonth: number;
-  daysInMonth: number;
-  projectedUSD: number;
-  /** "over" | "fast" | "on-track", absent when no budget is set. */
-  pace?: string;
-}
-
 async function send<T>(
   method: string,
   path: string,
@@ -476,7 +465,4 @@ export const parityApi = {
     send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
   blocks: (limit = 24, agent = "") =>
     get<BlockRow[]>("/blocks", { limit: String(limit), agent }),
-  budget: () => get<Budget>("/budget"),
-  setBudget: (monthlyUSD: number) =>
-    send<Budget>("PUT", "/budget", { monthlyUSD }),
 };

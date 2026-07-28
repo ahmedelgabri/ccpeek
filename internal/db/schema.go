@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 -- Session counts are NOT additive across rollup_usage_daily rows (one
 -- session spanning two models on one day appears in both), so the Usage
 -- op used to recompute them with a full message_usage scan on every
--- call — including every /api/v1/budget read behind the Overview page.
+-- call — including the usage read the Overview page issues on mount.
 -- Regenerating this alongside the rollups turns that into a COUNT over
 -- pre-aggregated rows.
 CREATE TABLE IF NOT EXISTS rollup_session_days (

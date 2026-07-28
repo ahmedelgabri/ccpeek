@@ -11,7 +11,7 @@ import {
   type RefObject,
 } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { AGENT_COLOR, fmtCost, type Budget } from "./api";
+import { AGENT_COLOR, fmtCost } from "./api";
 import { todayUTC, utcDay } from "./time";
 
 // The palette's shortcut is Cmd on Apple platforms and Ctrl everywhere
@@ -118,10 +118,10 @@ export function PageHeader({
 }
 
 // Money renders a cost figure. Cost is deliberately NOT green: green
-// reads as "good", and it collided with the ok/warn semantics the budget
-// banner and scan findings depend on. The number carries itself in
-// tabular mono; warn is reserved for the cases that genuinely warrant
-// attention — an unpriced lower bound, or an exceeded budget.
+// reads as "good", and it collided with the ok/warn semantics the scan
+// findings depend on. The number carries itself in tabular mono; warn is
+// reserved for the cases that genuinely warrant attention — an unpriced
+// lower bound.
 export function Money({
   usd,
   unpriced,
@@ -194,64 +194,6 @@ export function StatTile({
   ) : (
     <div className={cls}>{body}</div>
   );
-}
-
-// BudgetMeter is the spend bar both budget surfaces draw: the share of
-// the target spent, with a tick at the share of the month elapsed —
-// spend past the tick is spend running fast. Overview and Usage each had
-// their own copy, and they disagreed about when to turn amber (one used
-// the server's pace, the other a local 80% rule), so the same month could
-// read as fine on one page and worrying on the other.
-//
-// `label` is the sentence to the left of the percentage; `action` is
-// whatever trails it.
-export function BudgetMeter({
-  budget,
-  label,
-  action,
-}: {
-  budget: Budget;
-  label: ReactNode;
-  action?: ReactNode;
-}) {
-  const pct = Math.min((budget.spentUSD / budget.monthlyUSD) * 100, 100);
-  const elapsed = budget.dayOfMonth / budget.daysInMonth;
-  const warn = budget.pace === "over" || budget.pace === "fast";
-  return (
-    <>
-      <div className="flex items-baseline gap-2">
-        {label}
-        <span className="ml-auto font-mono text-meta text-ink-dim tabular-nums">
-          {pct.toFixed(0)}%
-        </span>
-        {action}
-      </div>
-      <div className="relative h-2 overflow-hidden rounded bg-surface-2">
-        <div
-          className={`h-full ${warn ? "bg-warn" : "bg-ok"}`}
-          style={{ width: `${pct}%` }}
-        />
-        <div
-          aria-hidden
-          className="absolute inset-y-0 w-px bg-ink-dim"
-          style={{ left: `${elapsed * 100}%` }}
-        />
-      </div>
-    </>
-  );
-}
-
-// budgetVerdict states the pace in words, so the bar is never the only
-// thing carrying the meaning.
-export function budgetVerdict(budget: Budget): string {
-  switch (budget.pace) {
-    case "over":
-      return `Over budget by ${fmtCost(budget.spentUSD - budget.monthlyUSD)}.`;
-    case "fast":
-      return `Running fast — ${fmtCost(budget.projectedUSD)} projected by month end.`;
-    default:
-      return `On pace for ${fmtCost(budget.projectedUSD)} by month end.`;
-  }
 }
 
 // GhostButton is the quiet inline action — an outlined chip that only

@@ -68,7 +68,7 @@ func TestArtifactEndpoints(t *testing.T) {
 	}
 }
 
-func TestScanAndBudgetEndpoints(t *testing.T) {
+func TestScanEndpoints(t *testing.T) {
 	h := newHandler(t)
 
 	// No findings yet (scan not run in this fixture ingest).
@@ -77,33 +77,18 @@ func TestScanAndBudgetEndpoints(t *testing.T) {
 		t.Fatalf("scan = %d", code)
 	}
 
-	// Budget round-trip.
-	code, env := post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": 25}`, nil)
-	if code != 200 {
-		t.Fatalf("set budget = %d (%s)", code, env.Error)
-	}
-	code, env = get(t, h, "/api/v1/budget")
-	if code != 200 {
-		t.Fatal(code)
-	}
-	b := env.Data.(map[string]any)
-	if b["monthlyUSD"].(float64) != 25 {
-		t.Errorf("budget = %v", b["monthlyUSD"])
-	}
-	if _, ok := b["spentUSD"]; !ok {
-		t.Error("budget missing spentUSD")
-	}
-
-	// Cross-origin mutation is rejected; loopback origins pass.
-	code, _ = post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": 1}`,
+	// Cross-origin mutation is rejected; loopback origins pass the guard
+	// (the finding id is unknown in this fixture, so the request continues
+	// past the guard to a 404 — the point is only that it is not a 403).
+	code, _ = post(t, h, "/api/v1/scan/1/ignore", `{"ignored": true}`,
 		map[string]string{"Origin": "https://evil.example"})
 	if code != 403 {
-		t.Errorf("cross-origin put = %d, want 403", code)
+		t.Errorf("cross-origin ignore = %d, want 403", code)
 	}
-	code, _ = post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": 30}`,
+	code, _ = post(t, h, "/api/v1/scan/1/ignore", `{"ignored": true}`,
 		map[string]string{"Origin": "http://localhost:3000"})
-	if code != 200 {
-		t.Errorf("loopback-origin put = %d, want 200", code)
+	if code == 403 {
+		t.Errorf("loopback-origin ignore rejected as cross-origin = %d", code)
 	}
 }
 
@@ -283,7 +268,7 @@ func routeHandlerNames(t *testing.T, files []*ast.File) map[string]string {
 }
 
 // handlerMethodName pulls the method out of a table entry, including the
-// wrapped form sameOriginOnly(h.setBudget).
+// wrapped form sameOriginOnly(h.scanIgnore).
 func handlerMethodName(v ast.Expr) string {
 	switch e := v.(type) {
 	case *ast.SelectorExpr:
@@ -556,8 +541,8 @@ func TestCallerFacingErrorsKeepTheirMessage(t *testing.T) {
 func TestMutatingEndpointsBoundAndValidateBodies(t *testing.T) {
 	h := newHandler(t)
 
-	huge := `{"monthlyUSD": 1, "pad": "` + strings.Repeat("x", 64*1024) + `"}`
-	code, _ := post(t, h, "PUT /api/v1/budget", huge, nil)
+	huge := `{"ignored": true, "pad": "` + strings.Repeat("x", 64*1024) + `"}`
+	code, _ := post(t, h, "/api/v1/scan/1/ignore", huge, nil)
 	if code != http.StatusBadRequest {
 		t.Errorf("oversized body = %d, want 400", code)
 	}
@@ -566,22 +551,10 @@ func TestMutatingEndpointsBoundAndValidateBodies(t *testing.T) {
 	// no-op that stores nothing and reports success. (Go matches field
 	// names case-insensitively, so only a genuinely different name is
 	// unknown.)
-	code, env := post(t, h, "PUT /api/v1/budget", `{"monthlyBudget": 25}`, nil)
+	code, env := post(t, h, "/api/v1/scan/1/ignore", `{"ignoredFlag": true}`, nil)
 	if code != http.StatusBadRequest {
 		t.Errorf("unknown field = %d, want 400", code)
-	} else if !strings.Contains(env.Error, "monthlyBudget") {
+	} else if !strings.Contains(env.Error, "ignoredFlag") {
 		t.Errorf("400 does not name the unknown field: %q", env.Error)
-	}
-
-	// Non-finite values are a caller mistake, not a stored budget.
-	code, _ = post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": -1}`, nil)
-	if code != http.StatusBadRequest {
-		t.Errorf("negative budget = %d, want 400", code)
-	}
-
-	// The valid shape still works.
-	code, _ = post(t, h, "PUT /api/v1/budget", `{"monthlyUSD": 25}`, nil)
-	if code != http.StatusOK {
-		t.Errorf("valid budget = %d, want 200", code)
 	}
 }

@@ -30,7 +30,7 @@ Done — engine and agent surface:
 - ✅ SPA (Vite + React + TanStack + Tailwind, embedded via go:embed):
   sessions stream with filters and pagination, session detail (cost
   tiles, relations, artifacts, transcript with sidechains + tree view),
-  usage explorer (groups, 5h blocks, budget banner), search, unified
+  usage explorer (groups, 5h blocks), search, unified
   artifact browser with server-rendered markdown, scan page with ignore
   toggles, session compare, ⌘K palette.
 - ✅ Secret-scan ported to the v2 engine (all agents' transcripts and
@@ -221,7 +221,7 @@ Post-launch sprints (feedback-driven, after v2.0):
   scanning never overlap) and rollups regenerate only on passes that
   changed data (the regeneration itself is a full rebuild — see
   RegenerateRollups' scope note); the ops registry covers every HTTP domain read (tools,
-  artifact, budget added — CLI/MCP gain them by generation) with a
+  artifact added — CLI/MCP gain them by generation) with a
   classified route table enforcing transport parity; and the
   failed→no-legacy-db transition clears the stale import error.
 
@@ -242,7 +242,7 @@ Post-launch sprints (feedback-driven, after v2.0):
   list surface). Dormant slices finished or parked: prompt history is
   queryable via a `history` op on all transports, the dead SQL pricing
   table is removed (schema v8) with runtime pricing refresh honestly
-  parked, the budget is editable from the Usage page, and
+  parked, and
   `ccpeek doctor` prints resolved roots (with mechanism), database
   paths, and migration state read-only.
 
@@ -645,7 +645,7 @@ search_fts   -- ONE fts5 table (text + type/url metadata); every hit resolves
 -- user state (NEVER dropped by rebuild/reset), attached by natural key —
 -- for session-scoped state that's (agent_slug, session external_id)
 user_annotations(id, entity_type, natural_key, kind, value_json, created_at)
-  -- kinds: scan_ignore, pin, note, tag, budget, saved_search
+  -- kinds: scan_ignore, pin, note, tag, saved_search
 scan_findings(..., ignored moves to user_annotations via natural key)
 ```
 

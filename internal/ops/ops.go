@@ -350,15 +350,6 @@ func Registry() []Op {
 				return out, false, err
 			},
 		},
-		{
-			Name:   "budget",
-			Desc:   "The monthly budget setting and current month-to-date spend.",
-			Params: nil,
-			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.GetBudget(ctx)
-				return out, false, err
-			},
-		},
 	}
 }
 

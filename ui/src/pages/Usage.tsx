@@ -1,21 +1,17 @@
 import { lazy, Suspense, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
-  fmtCost,
   fmtCostExact,
   fmtCount,
   fmtTokens,
   parityApi,
   shortPath,
   totalTokens,
-  type Budget,
   type UsageRow,
 } from "../api";
 import {
-  BudgetMeter,
-  budgetVerdict,
   EmptyNote,
   FilterBar,
   LoadError,
@@ -168,11 +164,6 @@ export function UsagePage() {
     queryFn: () => parityApi.blocks(36, agent),
     enabled: isBlocks,
   });
-  const budget = useQuery({
-    queryKey: ["budget"],
-    queryFn: () => parityApi.budget(),
-  });
-
   const rows = useMemo(() => data ?? [], [data]);
 
   // The headline total is the sum of WHAT IS ON SCREEN. It used to come
@@ -223,8 +214,6 @@ export function UsagePage() {
           onModel={isBlocks ? undefined : (v) => setFilter({ model: v })}
         />
       </PageHeader>
-
-      {budget.data && <BudgetBanner budget={budget.data} />}
 
       {/* Blocks are rolling 5-hour windows; a daily timeline says nothing
           about them, and the date filters are hidden there for the same
@@ -292,8 +281,8 @@ export function UsagePage() {
 
 // UsageTable owns the sort and the hover tooltip. Both used to live on
 // the page, so pointing at a cost bar re-rendered the whole surface —
-// the filter bar, the budget banner and the lazily-loaded ECharts
-// timeline — on every mouse move across the table.
+// the filter bar and the lazily-loaded ECharts timeline — on every mouse
+// move across the table.
 function UsageTable({
   rows: unsorted,
   group,
@@ -494,108 +483,6 @@ function SortableTH<K extends string>({
         {active && <span aria-hidden>{sort.desc ? "▼" : "▲"}</span>}
       </button>
     </th>
-  );
-}
-
-// BudgetEditor makes the budget mutation reachable from the product,
-// not just the API: set, change, or clear (0) the monthly figure.
-function BudgetEditor({ monthly }: { monthly: number }) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(String(monthly || ""));
-  const qc = useQueryClient();
-  const save = useMutation({
-    mutationFn: (usd: number) => parityApi.setBudget(usd),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["budget"] });
-      setEditing(false);
-    },
-  });
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          setValue(String(monthly || ""));
-          setEditing(true);
-        }}
-        className="ml-auto shrink-0 font-mono text-meta text-ink-faint hover:text-accent"
-      >
-        {monthly > 0 ? "edit budget" : "set monthly budget"}
-      </button>
-    );
-  }
-  return (
-    <form
-      className="ml-auto flex shrink-0 items-center gap-1.5"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const usd = Number(value);
-        if (!Number.isNaN(usd) && usd >= 0) save.mutate(usd);
-      }}
-    >
-      <span className="font-mono text-meta text-ink-faint">$/month</span>
-      <input
-        autoFocus
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        inputMode="decimal"
-        className="w-20 rounded border border-edge bg-surface-1 px-1.5 py-0.5 text-right font-mono text-xs tabular-nums"
-        aria-label="Monthly budget in USD"
-      />
-      <button
-        type="submit"
-        disabled={save.isPending}
-        className="rounded border border-edge px-1.5 py-0.5 font-mono text-meta text-ink-dim hover:text-ink disabled:opacity-50"
-      >
-        {save.isPending ? "…" : "save"}
-      </button>
-      <button
-        type="button"
-        onClick={() => setEditing(false)}
-        className="font-mono text-meta text-ink-faint hover:text-ink"
-      >
-        cancel
-      </button>
-    </form>
-  );
-}
-
-function BudgetBanner({ budget }: { budget: Budget }) {
-  // No budget configured: a quiet affordance to set one, nothing else.
-  if (budget.monthlyUSD <= 0) {
-    return (
-      <div className="mb-4 flex items-baseline rounded-md border border-edge bg-surface-1 px-4 py-2 text-sm text-ink-dim">
-        <span>No monthly budget set.</span>
-        <BudgetEditor monthly={0} />
-      </div>
-    );
-  }
-  const over = budget.pace === "over";
-  const warn = over || budget.pace === "fast";
-  return (
-    <div
-      className={`mb-4 space-y-1 rounded-md border px-4 py-3 text-sm ${
-        over
-          ? "border-warn bg-warn/10 text-warn"
-          : warn
-            ? "border-warn/40 bg-warn/5"
-            : "border-edge bg-surface-1"
-      }`}
-    >
-      <BudgetMeter
-        budget={budget}
-        label={
-          <span>
-            {budget.month} budget: {fmtCost(budget.spentUSD)} of{" "}
-            {fmtCost(budget.monthlyUSD)}
-          </span>
-        }
-        action={<BudgetEditor monthly={budget.monthlyUSD} />}
-      />
-      <p className={`text-meta ${warn ? "" : "text-ink-faint"}`}>
-        {budgetVerdict(budget)}
-      </p>
-    </div>
   );
 }
 

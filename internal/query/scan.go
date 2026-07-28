@@ -111,7 +111,8 @@ func (s *Service) ScanFindings(ctx context.Context, includeIgnored bool) ([]Scan
 // Only a genuine no-rows lookup is ErrNotFound. Mapping EVERY failure of
 // that lookup to "not found" told the caller its finding id was wrong when
 // the truth was a locked database or a canceled request — a 404 for what is
-// a 500, the same class SetBudget documents just below.
+// a 500. A caller mistake (ErrBadRequest/ErrNotFound) and a store failure
+// are different classes and must reach the transport as different statuses.
 func (s *Service) SetScanIgnore(ctx context.Context, findingID int64, ignored bool) error {
 	var naturalKey, ruleID string
 	var line int

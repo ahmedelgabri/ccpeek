@@ -227,34 +227,3 @@ func (h *handlers) blocks(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, blocks)
 }
-
-func (h *handlers) budget(w http.ResponseWriter, r *http.Request) {
-	b, err := h.svc.GetBudget(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, b)
-}
-
-func (h *handlers) setBudget(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		MonthlyUSD float64 `json:"monthlyUSD"`
-	}
-	if err := decodeBody(w, r, &body); err != nil {
-		writeBadRequest(w, err)
-		return
-	}
-	// writeError, not writeBadRequest: a store failure here is a 500, and
-	// only the validation error inside SetBudget is the caller's fault.
-	if err := h.svc.SetBudget(r.Context(), body.MonthlyUSD); err != nil {
-		writeError(w, err)
-		return
-	}
-	b, err := h.svc.GetBudget(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, b)
-}

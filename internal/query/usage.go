@@ -158,8 +158,8 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 // the previous implementation re-derived the answer from message_usage ⋈
 // messages ⋈ sessions with the day filter written as a substr() over
 // created_at, so no index applied and every Usage call — including the
-// /api/v1/budget read the Overview page issues on mount — paid a full scan
-// of the corpus the rollups exist to avoid.
+// one the Overview page issues on mount — paid a full scan of the corpus
+// the rollups exist to avoid.
 func (s *Service) distinctUsageSessions(ctx context.Context, f UsageFilter) (map[string]int64, error) {
 	// The caller already validated GroupBy through Usage.
 	groupExpr, _, _ := f.group()

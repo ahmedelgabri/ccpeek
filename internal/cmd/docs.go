@@ -31,7 +31,6 @@ var routeNotes = map[string]string{
 	"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw": "stored bytes verbatim",
 	"GET /api/v1/commands":                            "format=zsh|bash|fish|plain streams a shell history file",
 	"POST /api/v1/scan/{id}/ignore":                   `write: {"ignored":true|false}`,
-	"PUT /api/v1/budget":                              `write: {"monthlyUSD":25}`,
 }
 
 // agentCheatsheet renders the document agents read to use ccpeek without
