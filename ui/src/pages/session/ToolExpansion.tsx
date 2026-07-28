@@ -33,7 +33,10 @@ export function ToolExpansion({
   const d = q.data;
   if (!d) return <LoadError error={q.error ?? "not found"} compact />;
   if ((d.kind === "file_edit" || d.kind === "file_write") && (d.old || d.new)) {
-    return <DiffView old={d.old ?? ""} new={d.new ?? ""} />;
+    // For file kinds `detail` is the file path (the server coalesces
+    // command → file_path), which lets the diff renderer infer the
+    // language for syntax highlighting.
+    return <DiffView old={d.old ?? ""} new={d.new ?? ""} path={d.detail} />;
   }
   return (
     <div ref={body}>

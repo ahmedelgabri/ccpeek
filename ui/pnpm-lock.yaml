@@ -13,6 +13,9 @@ importers:
       "@fontsource/ibm-plex-sans":
         specifier: ^5.2.8
         version: 5.2.8
+      "@pierre/diffs":
+        specifier: 1.2.12
+        version: 1.2.12(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       "@shikijs/core":
         specifier: 4.3.1
         version: 4.3.1
@@ -139,6 +142,45 @@ packages:
       {
         integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==,
       }
+
+  "@pierre/diffs@1.2.12":
+    resolution:
+      {
+        integrity: sha512-pY/gmgWL03WnagqCyCnBi3QtRXUv4hCIY6FYqd5b1ZGaoI6a4Bsji8j+yRl2RfzPh/8Hf19rCl1GE80G6a1cLQ==,
+      }
+    peerDependencies:
+      react: ^18.3.1 || ^19.0.0
+      react-dom: ^18.3.1 || ^19.0.0
+
+  "@pierre/theme@1.1.0":
+    resolution:
+      {
+        integrity: sha512-GC2OWTAfTIIWWYhPCygwG8t2EtePQkRfON4MI2rwIkJylmiyqIttJID2dCL8sUD8cNdEvYkEyfEHHKMeCiDLoQ==,
+      }
+    engines: { vscode: ^1.0.0 }
+
+  "@pierre/theming@0.0.2":
+    resolution:
+      {
+        integrity: sha512-QM1M4stXfnzfaE8I8YbjXSApV8c+2dBsXJj8eYg9WTpBR/cTmCZIcfGnN4p13iRrYu2Br/R/OJfEL7uR8Qjctw==,
+      }
+    peerDependencies:
+      "@pierre/theme": ^1.1.0
+      "@shikijs/themes": ^3.0.0 || ^4.0.0
+      react: ^18.3.1 || ^19.0.0
+      react-dom: ^18.3.1 || ^19.0.0
+      shiki: ^3.0.0 || ^4.0.0
+    peerDependenciesMeta:
+      "@pierre/theme":
+        optional: true
+      "@shikijs/themes":
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
+      shiki:
+        optional: true
 
   "@rolldown/binding-android-arm64@1.1.5":
     resolution:
@@ -300,6 +342,13 @@ packages:
       }
     engines: { node: ">=20" }
 
+  "@shikijs/engine-oniguruma@4.3.1":
+    resolution:
+      {
+        integrity: sha512-OXyNMzg0pews+msMj4cHeqT4xiYKKvbnn6VbdAXxfoFl3SSx4fJTc8FadECuc5/H9p3BzhNAoAUXKwAu9rWYhg==,
+      }
+    engines: { node: ">=20" }
+
   "@shikijs/langs@4.3.1":
     resolution:
       {
@@ -311,6 +360,20 @@ packages:
     resolution:
       {
         integrity: sha512-CXQRQOYy1leqQ8ceTeJdmXv/bsUY++6QyLpXJ94LZAAYj5X2SKRdc5ipguv4NPyGVKItB2PPwUpRNe0Sjh5S1A==,
+      }
+    engines: { node: ">=20" }
+
+  "@shikijs/themes@4.3.1":
+    resolution:
+      {
+        integrity: sha512-dgpoJ4WqNi2yTmizQHBJ5zcX6j2lE6icN/0yt4l1kkf16jrY/pwPLoTb1ETsWMz0OBLf9ZNvwmxft+cH+N9qSA==,
+      }
+    engines: { node: ">=20" }
+
+  "@shikijs/transformers@4.3.1":
+    resolution:
+      {
+        integrity: sha512-z6ir0bGDgWcF2FduktEfPgIsdOtIlDiLAjFBgBzE42Q9xHbkkIXZtORHzlLVB71iZP9elEcqKg6keajvOUwE2A==,
       }
     engines: { node: ">=20" }
 
@@ -830,6 +893,13 @@ packages:
         integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==,
       }
 
+  diff@9.0.0:
+    resolution:
+      {
+        integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==,
+      }
+    engines: { node: ">=0.3.1" }
+
   echarts@6.1.0:
     resolution:
       {
@@ -1011,6 +1081,12 @@ packages:
       }
     engines: { node: ">= 12.0.0" }
 
+  lru_map@0.4.1:
+    resolution:
+      {
+        integrity: sha512-I+lBvqMMFfqaV8CJCISjI3wbjmwVu/VyOoU7+qtu9d7ioW5klMgsTTiUOUp+DJvfTTzKXoPbyC6YfgkNcyPSOg==,
+      }
+
   magic-string@0.30.21:
     resolution:
       {
@@ -1161,6 +1237,13 @@ packages:
         integrity: sha512-bSjOuPcwPKLSJNhr9+bZxA20nQxVle5J5MNsYRVE6cIg7KpRLXGupymePavu0jrxlPiPsr4xGZSB8yUY2sH2sw==,
       }
     engines: { node: ">=10" }
+
+  shiki@4.3.1:
+    resolution:
+      {
+        integrity: sha512-oR+qDVi2OjX1tmDpyv+3KviX01KzO6Af+0NNnKnsp9491UEGz2YpxTuJboS/6VhYpTdqzmuJBuiTlrAWWJAssw==,
+      }
+    engines: { node: ">=20" }
 
   source-map-js@1.2.1:
     resolution:
@@ -1384,6 +1467,30 @@ snapshots:
 
   "@oxc-project/types@0.139.0": {}
 
+  "@pierre/diffs@1.2.12(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)":
+    dependencies:
+      "@pierre/theme": 1.1.0
+      "@pierre/theming": 0.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(shiki@4.3.1)
+      "@shikijs/transformers": 4.3.1
+      diff: 9.0.0
+      hast-util-to-html: 9.0.5
+      lru_map: 0.4.1
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      shiki: 4.3.1
+    transitivePeerDependencies:
+      - "@shikijs/themes"
+
+  "@pierre/theme@1.1.0": {}
+
+  "@pierre/theming@0.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(shiki@4.3.1)":
+    optionalDependencies:
+      "@pierre/theme": 1.1.0
+      "@shikijs/themes": 4.3.1
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      shiki: 4.3.1
+
   "@rolldown/binding-android-arm64@1.1.5":
     optional: true
 
@@ -1449,6 +1556,11 @@ snapshots:
       "@shikijs/vscode-textmate": 10.0.2
       oniguruma-to-es: 4.3.6
 
+  "@shikijs/engine-oniguruma@4.3.1":
+    dependencies:
+      "@shikijs/types": 4.3.1
+      "@shikijs/vscode-textmate": 10.0.2
+
   "@shikijs/langs@4.3.1":
     dependencies:
       "@shikijs/types": 4.3.1
@@ -1458,6 +1570,15 @@ snapshots:
       "@shikijs/types": 4.3.1
       "@shikijs/vscode-textmate": 10.0.2
       "@types/hast": 3.0.5
+
+  "@shikijs/themes@4.3.1":
+    dependencies:
+      "@shikijs/types": 4.3.1
+
+  "@shikijs/transformers@4.3.1":
+    dependencies:
+      "@shikijs/core": 4.3.1
+      "@shikijs/types": 4.3.1
 
   "@shikijs/types@4.3.1":
     dependencies:
@@ -1686,6 +1807,8 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
+  diff@9.0.0: {}
+
   echarts@6.1.0:
     dependencies:
       tslib: 2.3.0
@@ -1777,6 +1900,8 @@ snapshots:
       lightningcss-linux-x64-musl: 1.32.0
       lightningcss-win32-arm64-msvc: 1.32.0
       lightningcss-win32-x64-msvc: 1.32.0
+
+  lru_map@0.4.1: {}
 
   magic-string@0.30.21:
     dependencies:
@@ -1878,6 +2003,17 @@ snapshots:
       seroval: 1.5.5
 
   seroval@1.5.5: {}
+
+  shiki@4.3.1:
+    dependencies:
+      "@shikijs/core": 4.3.1
+      "@shikijs/engine-javascript": 4.3.1
+      "@shikijs/engine-oniguruma": 4.3.1
+      "@shikijs/langs": 4.3.1
+      "@shikijs/themes": 4.3.1
+      "@shikijs/types": 4.3.1
+      "@shikijs/vscode-textmate": 10.0.2
+      "@types/hast": 3.0.5
 
   source-map-js@1.2.1: {}
 
