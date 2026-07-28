@@ -151,7 +151,7 @@ export function Transcript({
   const range = virtualizer.range;
   // Highlight re-runs as the mounted window moves — freshly mounted rows
   // need their code blocks processed (already-highlighted ones are
-  // skipped by the :not(.hljs) selector).
+  // skipped by the :not([data-hl]) selector).
   useHighlight(container, [
     msgs,
     virtualItems[0]?.key,

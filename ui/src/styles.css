@@ -198,59 +198,7 @@ body {
   @apply my-3 border-edge;
 }
 
-/* highlight.js token colors mapped onto the app palette (one hardened
-   theme instead of a stock stylesheet that clashes with the surfaces). */
-.hljs {
-  color: var(--color-ink);
-  background: transparent;
-}
-.hljs-comment,
-.hljs-quote {
-  color: var(--color-ink-faint);
-  font-style: italic;
-}
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-tag,
-.hljs-name {
-  color: var(--color-assistant);
-}
-.hljs-string,
-.hljs-regexp,
-.hljs-addition {
-  color: var(--color-ok);
-}
-.hljs-number,
-.hljs-literal,
-.hljs-symbol,
-.hljs-bullet,
-.hljs-meta {
-  color: var(--color-warn);
-}
-.hljs-title,
-.hljs-section,
-.hljs-attr,
-.hljs-attribute,
-.hljs-function {
-  color: var(--color-accent);
-}
-.hljs-built_in,
-.hljs-type,
-.hljs-class {
-  color: var(--color-tool-search);
-}
-.hljs-variable,
-.hljs-template-variable,
-.hljs-subst,
-.hljs-params {
-  color: var(--color-ink);
-}
-.hljs-deletion {
-  color: var(--color-agent-cursor);
-}
-.hljs-emphasis {
-  font-style: italic;
-}
-.hljs-strong {
-  font-weight: 600;
-}
+/* Syntax-highlight token colors need no rules here: the shiki theme in
+   highlight.ts styles tokens inline with the palette's light-dark()
+   variables, which resolve against the active color-scheme like every
+   other use of the tokens. */
