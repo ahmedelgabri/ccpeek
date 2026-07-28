@@ -16,7 +16,7 @@ import type {
 // light-dark() tokens from styles.css — the inline `var()` resolves per
 // element against the active color-scheme, and one theme serves both
 // modes without a dual-theme setup or any shiki-side CSS.
-export const ccpeekTheme: ThemeRegistrationAny = {
+const theme: ThemeRegistrationAny = {
   name: "ccpeek",
   fg: "var(--color-ink)",
   bg: "transparent",
@@ -84,7 +84,7 @@ function loadShiki() {
     import("@shikijs/engine-javascript"),
   ]).then(([core, js]) =>
     core.createHighlighterCore({
-      themes: [ccpeekTheme],
+      themes: [theme],
       langs: [],
       engine: js.createJavaScriptRegexEngine(),
     }),
@@ -97,7 +97,7 @@ function loadShiki() {
 // what shows up in practice: shell commands (every agent), plus the fence
 // labels markdown transcripts and artifacts actually carry.
 type GrammarLoader = () => Promise<{ default: LanguageRegistration[] }>;
-export const GRAMMARS: Record<string, GrammarLoader> = {
+const GRAMMARS: Record<string, GrammarLoader> = {
   bash: () => import("@shikijs/langs/bash"),
   shellsession: () => import("@shikijs/langs/shellsession"),
   javascript: () => import("@shikijs/langs/javascript"),
@@ -148,40 +148,6 @@ const ALIASES: Record<string, string> = {
   kt: "kotlin",
   makefile: "make",
 };
-
-// File extensions that aren't fence labels, mapped onto curated grammar
-// ids. Extensions that double as fence labels (ts, py, rb, …) already
-// resolve through ALIASES.
-const EXT_LANGS: Record<string, string> = {
-  mjs: "javascript",
-  cjs: "javascript",
-  mts: "typescript",
-  cts: "typescript",
-  cc: "cpp",
-  cxx: "cpp",
-  hpp: "cpp",
-  hh: "cpp",
-  h: "c",
-  htm: "html",
-  mk: "make",
-};
-
-/** Maps a file path onto a curated grammar id, or null when the app has
- *  no grammar for it. The diff renderer passes the result straight to
- *  @pierre/diffs as an explicit language override — unknown files render
- *  as plain text, the same contract as every other code block here, and
- *  the library's own filename inference (which reaches into shiki's full
- *  bundle — stubbed out, see ui/vite.config.ts) never runs. */
-export function langForPath(path: string): string | null {
-  const base = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
-  if (base === "makefile" || base === "gnumakefile") return "make";
-  if (base === "dockerfile" || base.startsWith("dockerfile.")) return "docker";
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) return null;
-  const ext = base.slice(dot + 1);
-  const id = EXT_LANGS[ext] ?? ALIASES[ext] ?? ext;
-  return id in GRAMMARS ? id : null;
-}
 
 // One in-flight load per grammar, shared by every concurrent pass.
 const langLoads = new Map<string, Promise<void>>();

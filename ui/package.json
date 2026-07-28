@@ -6,7 +6,6 @@
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
-    "@pierre/diffs": "1.2.12",
     "@shikijs/core": "4.3.1",
     "@shikijs/engine-javascript": "4.3.1",
     "@shikijs/langs": "4.3.1",
