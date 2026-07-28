@@ -205,10 +205,7 @@ func TestRunExportCommandsWritesOldestFirst(t *testing.T) {
 	}
 	// Seeded 2025-01-01 "ls -la", 2025-01-02 "whoami", 2025-01-03 "cargo build".
 	want := []string{"ls -la", "whoami", "cargo build"}
-	var got []string
-	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
-		got = append(got, line)
-	}
+	got := strings.Split(strings.TrimSpace(stdout), "\n")
 	if len(got) != len(want) {
 		t.Fatalf("exported %d lines, want %d:\n%s", len(got), len(want), stdout)
 	}

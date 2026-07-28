@@ -59,7 +59,12 @@ test.describe("SPA", () => {
     await palette.getByLabel("Jump to a page").fill("hello");
     // The typed text carries into search rather than being discarded.
     await palette.getByRole("button", { name: /^Search history for/ }).click();
-    await expect(palette.getByText("Matches")).toBeVisible({ timeout: 10_000 });
+    // Exact: the results group heading is "Matches"; a loose match also
+    // catches the footer's "N matches" count and "No matches for…", so
+    // strict mode sees two elements once results land.
+    await expect(palette.getByText("Matches", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test("commands browser lists shell commands", async ({ page }) => {
