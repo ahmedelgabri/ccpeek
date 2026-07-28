@@ -9,7 +9,7 @@ token usage and estimated cost, plus an agent-facing query surface
 (`ccpeek query`, `/api/v1`, `ccpeek mcp`) and live updates. Everything
 stays on this machine.
 
-https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
+<img width="1728" height="1085" alt="Screenshot 2026-07-28 at 14 38 11" src="https://github.com/user-attachments/assets/734e5f7d-207a-4b60-8df3-b32a49f11349" />
 
 ## Installation
 
