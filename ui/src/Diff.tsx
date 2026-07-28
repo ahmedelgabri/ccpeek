@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import { useHighlight } from "./highlight";
+import { langForPath, useHighlight } from "./highlight";
 
 // Line diff for file changes: an LCS over the old/new excerpts, rendered
 // as classic removed/added rows with line numbers. Payloads are already
@@ -88,9 +88,12 @@ function Gutter({ n }: { n?: number }) {
 // that hid the code inside it while implying a comparison that never
 // happened. Here the content is syntax-highlighted (like every other code
 // block in the app), numbered, and labelled for what it is.
-function NewFileView({ text }: { text: string }) {
+function NewFileView({ text, path }: { text: string; path?: string }) {
   const box = useRef<HTMLDivElement>(null);
-  useHighlight(box, [text]);
+  useHighlight(box, [text, path]);
+  // The file's path is the only language signal a whole-file write has —
+  // there is no fence label to read. Unknown languages stay plaintext.
+  const lang = path ? langForPath(path) : null;
   const lines = text.split("\n");
   const shown = lines.slice(0, MAX_PURE_LINES);
   return (
@@ -109,7 +112,11 @@ function NewFileView({ text }: { text: string }) {
           {shown.map((_, i) => `${i + 1}\n`).join("")}
         </pre>
         <pre className="min-w-0 flex-1 py-2 pr-3 font-mono text-meta leading-relaxed">
-          <code className="block whitespace-pre">{shown.join("\n")}</code>
+          <code
+            className={`block whitespace-pre${lang ? ` language-${lang}` : ""}`}
+          >
+            {shown.join("\n")}
+          </code>
         </pre>
       </div>
       {lines.length > MAX_PURE_LINES && (
@@ -121,7 +128,15 @@ function NewFileView({ text }: { text: string }) {
   );
 }
 
-export function DiffView({ old, new: neu }: { old: string; new: string }) {
+export function DiffView({
+  old,
+  new: neu,
+  path,
+}: {
+  old: string;
+  new: string;
+  path?: string;
+}) {
   // A write with no prior content is a new file, not a diff.
   const isNew = old === "" && neu !== "";
 
@@ -139,7 +154,7 @@ export function DiffView({ old, new: neu }: { old: string; new: string }) {
     () => (isNew ? null : diffLines(old, neu)),
     [isNew, old, neu],
   );
-  if (isNew) return <NewFileView text={neu} />;
+  if (isNew) return <NewFileView text={neu} path={path} />;
   if (!ops)
     return (
       <p className="px-3 py-2 font-mono text-meta text-ink-faint">

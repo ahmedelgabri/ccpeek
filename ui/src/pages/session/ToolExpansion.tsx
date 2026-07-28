@@ -33,7 +33,9 @@ export function ToolExpansion({
   const d = q.data;
   if (!d) return <LoadError error={q.error ?? "not found"} compact />;
   if ((d.kind === "file_edit" || d.kind === "file_write") && (d.old || d.new)) {
-    return <DiffView old={d.old ?? ""} new={d.new ?? ""} />;
+    // For file kinds detail IS the path (the list query coalesces
+    // command → file_path), which is the new-file view's language signal.
+    return <DiffView old={d.old ?? ""} new={d.new ?? ""} path={d.detail} />;
   }
   return (
     <div ref={body}>

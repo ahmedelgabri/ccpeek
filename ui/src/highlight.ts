@@ -149,6 +149,39 @@ const ALIASES: Record<string, string> = {
   makefile: "make",
 };
 
+// Filenames whose language is the name itself, not an extension.
+const BASENAMES: Record<string, string> = {
+  makefile: "make",
+  dockerfile: "docker",
+};
+// Extensions that aren't already grammar ids or ALIASES entries.
+const EXTENSIONS: Record<string, string> = {
+  mjs: "javascript",
+  cjs: "javascript",
+  htm: "html",
+  h: "c",
+  cc: "cpp",
+  hh: "cpp",
+  hpp: "cpp",
+  mk: "make",
+};
+
+/** langForPath maps a file path to a curated grammar id, or null when the
+ *  file's language isn't one this app bundles — the caller then renders
+ *  plaintext, the same policy as an unlabeled fence. Used by surfaces
+ *  that show whole files (new-file writes) where the path is the only
+ *  language signal there is. */
+export function langForPath(path: string): string | null {
+  const base = path.split("/").pop()?.toLowerCase() ?? "";
+  const byName = BASENAMES[base];
+  if (byName) return byName;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const ext = base.slice(dot + 1);
+  const id = EXTENSIONS[ext] ?? ALIASES[ext] ?? ext;
+  return id in GRAMMARS ? id : null;
+}
+
 // One in-flight load per grammar, shared by every concurrent pass.
 const langLoads = new Map<string, Promise<void>>();
 
