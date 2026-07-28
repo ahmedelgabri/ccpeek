@@ -144,3 +144,34 @@ test.describe("accessibility", () => {
     expect(["rgb(122, 162, 247)", "rgb(48, 96, 201)"]).toContain(ring.color);
   });
 });
+
+test.describe("sidebar", () => {
+  // The rail collapses to a slim strip of abbreviations. Nothing may be
+  // lost in the shrink: every link keeps its full accessible name, the
+  // choice survives a reload, and `[` toggles it from the keyboard.
+  test("collapses to a rail, persists, and stays operable", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const aside = page.locator("aside");
+    const sessions = aside.getByRole("link", { name: "Sessions" });
+    await expect(sessions).toHaveText("Sessions");
+
+    await aside.getByRole("button", { name: "Collapse sidebar" }).click();
+    await expect(sessions).toHaveText("Se");
+    await sessions.click();
+    await expect(page).toHaveURL(/\/sessions/);
+
+    await page.reload();
+    const expand = aside.getByRole("button", { name: "Expand sidebar" });
+    await expect(expand).toBeVisible();
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    await expect(sessions).toHaveText("Se");
+
+    await expand.click();
+    await expect(sessions).toHaveText("Sessions");
+
+    await page.keyboard.press("[");
+    await expect(sessions).toHaveText("Se");
+  });
+});

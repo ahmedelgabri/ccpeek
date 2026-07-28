@@ -477,6 +477,23 @@ export function useUrlText(
   return [input, setInput];
 }
 
+// Single-key shortcuts stand down wherever a key is being typed — inputs,
+// textareas, selects, contenteditable — so the key stays an ordinary
+// character there. Nor do they act while the palette (or any dialog) is
+// up: acting on the page behind a modal is a worse answer than doing
+// nothing.
+function inTypingContext(e: KeyboardEvent): boolean {
+  const target = e.target as HTMLElement | null;
+  if (
+    target?.isContentEditable ||
+    (target?.tagName &&
+      ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+  ) {
+    return true;
+  }
+  return document.querySelector('[role="dialog"]') !== null;
+}
+
 /** useSlashFocus points the `/` key at a page's primary filter box — the
  *  one gesture every list-shaped tool shares. It stands down inside any
  *  typing context (including the palette), so `/` remains an ordinary
@@ -485,17 +502,7 @@ export function useSlashFocus(ref: RefObject<HTMLInputElement | null>) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target?.isContentEditable ||
-        (target?.tagName &&
-          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
-      ) {
-        return;
-      }
-      // Nor while the palette is up: pulling focus to a box behind a modal
-      // is a worse answer than doing nothing.
-      if (document.querySelector('[role="dialog"]')) return;
+      if (inTypingContext(e)) return;
       const el = ref.current;
       if (!el) return;
       e.preventDefault();
@@ -505,6 +512,22 @@ export function useSlashFocus(ref: RefObject<HTMLInputElement | null>) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [ref]);
+}
+
+/** useKeyShortcut runs an action on a bare press of `key` — the `[`
+ *  sidebar toggle — under the same rules as `/`: modified presses pass
+ *  through, and typing contexts keep the key to themselves. */
+export function useKeyShortcut(key: string, action: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== key || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (inTypingContext(e)) return;
+      e.preventDefault();
+      action();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [key, action]);
 }
 
 // LoadError is the query-failure line. It carries role="alert" so a failed

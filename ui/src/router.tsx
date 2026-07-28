@@ -7,7 +7,7 @@ import {
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { OverviewPage } from "./pages/Overview";
 import { SessionsPage } from "./pages/Sessions";
@@ -22,7 +22,7 @@ import { Palette } from "./Palette";
 import { NAV } from "./nav";
 import { ErrorBoundary, ErrorPanel } from "./ErrorState";
 import { useThemePref, type ThemePref } from "./theme";
-import { PALETTE_KEY, openPalette } from "./ui";
+import { PALETTE_KEY, isApple, openPalette, useKeyShortcut } from "./ui";
 import { useEffect } from "react";
 
 // The health endpoint's terminal state for a pass that gave up. Both the
@@ -131,25 +131,49 @@ const THEME_GLYPH: Record<ThemePref, string> = {
   dark: "☾",
 };
 
-function ThemeToggle() {
+function ThemeToggle({ compact = false }: { compact?: boolean }) {
   // Shared state, not a copy per instance — see useThemePref.
   const [pref, setPref] = useThemePref();
   const next = THEME_ORDER[(THEME_ORDER.indexOf(pref) + 1) % 3];
+  const label = `Theme: ${pref} — click for ${next}`;
+  // Compact drops the text and leans on the glyph; the accessible name
+  // stays the full label.
   return (
     <button
       onClick={() => setPref(next)}
       className="microlabel flex items-center gap-2 transition-colors hover:text-ink"
-      title={`Theme: ${pref} — click for ${next}`}
+      title={label}
+      aria-label={compact ? label : undefined}
     >
       <span aria-hidden className="text-xs leading-none">
         {THEME_GLYPH[pref]}
       </span>
-      theme · {pref}
+      {!compact && <>theme · {pref}</>}
     </button>
   );
 }
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+// The collapsed rail's short forms, keyed by NAV label. Two characters
+// where one is ambiguous: Sessions/Scan and Commands/Compare share
+// initials. Each link keeps its full label as title and aria-label, so
+// only the visible text shrinks.
+const NAV_ABBR: Record<string, string> = {
+  Overview: "O",
+  Sessions: "Se",
+  Usage: "U",
+  Commands: "Co",
+  Artifacts: "A",
+  Scan: "Sc",
+  Compare: "Cp",
+};
+
+function NavLinks({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}) {
   return (
     <>
       {NAV.map((n) => (
@@ -157,6 +181,8 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
           key={n.to}
           to={n.to}
           onClick={onNavigate}
+          title={collapsed ? n.label : undefined}
+          aria-label={collapsed ? n.label : undefined}
           activeProps={{
             className: "border-l-2 border-accent bg-surface-2/70 text-ink",
           }}
@@ -165,31 +191,91 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
               "border-l-2 border-transparent text-ink-dim hover:bg-surface-2/40 hover:text-ink",
           }}
           activeOptions={{ exact: n.exact ?? false }}
-          className="rounded-r px-3 py-1.5 font-mono text-data transition-colors"
+          className={`rounded-r py-1.5 font-mono text-data transition-colors ${
+            collapsed ? "px-0 text-center" : "px-3"
+          }`}
         >
-          {n.label}
+          {collapsed ? (NAV_ABBR[n.label] ?? n.label.slice(0, 2)) : n.label}
         </Link>
       ))}
     </>
   );
 }
 
-function SidebarFooter() {
+// The sidebar's collapsed state persists in localStorage — read
+// synchronously in the useState initializer (the getThemePref pattern) so
+// the first paint is already the remembered width, and guarded because
+// storage access can throw (blocked third-party storage, private modes).
+const SIDEBAR_KEY = "ccpeek-sidebar";
+
+function getSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+  } catch {
+    return false;
+  }
+}
+
+function storeSidebarCollapsed(collapsed: boolean) {
+  try {
+    if (collapsed) localStorage.setItem(SIDEBAR_KEY, "collapsed");
+    else localStorage.removeItem(SIDEBAR_KEY);
+  } catch {
+    // Unstorable is fine — the toggle still works for the session.
+  }
+}
+
+// The rail is too narrow for "Ctrl K", so the collapsed hint uses the
+// caret notation for Ctrl. Apple platforms keep ⌘K, which already fits.
+const RAIL_PALETTE_KEY = isApple ? "⌘K" : "^K";
+
+function SidebarFooter({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <div className="mt-auto space-y-2 px-4 pb-4">
-      <ThemeToggle />
-      <div className="microlabel flex items-center gap-2">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-ok" />
-        local · 127.0.0.1
-      </div>
+    <div
+      className={`mt-auto space-y-2 pb-4 ${
+        collapsed ? "flex flex-col items-center px-1" : "px-4"
+      }`}
+    >
+      <ThemeToggle compact={collapsed} />
+      {collapsed ? (
+        <span
+          className="inline-block h-1.5 w-1.5 rounded-full bg-ok"
+          title="local · 127.0.0.1"
+        />
+      ) : (
+        <div className="microlabel flex items-center gap-2">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-ok" />
+          local · 127.0.0.1
+        </div>
+      )}
       {/* A real button: the hint used to be an inert <kbd> that looked
           exactly like a control, so clicking it did nothing. */}
       <button
         type="button"
         onClick={() => openPalette()}
+        aria-label="Search"
         className="microlabel rounded border border-edge px-1.5 py-0.5 transition-colors hover:border-edge-strong hover:text-ink"
       >
-        {PALETTE_KEY} search
+        {collapsed ? RAIL_PALETTE_KEY : `${PALETTE_KEY} search`}
+      </button>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="microlabel flex items-center gap-2 transition-colors hover:text-ink"
+      >
+        <span aria-hidden className="text-xs leading-none">
+          {collapsed ? "»" : "«"}
+        </span>
+        {!collapsed && "collapse"}
       </button>
     </div>
   );
@@ -197,24 +283,49 @@ function SidebarFooter() {
 
 function Layout() {
   const [menu, setMenu] = useState(false);
+  // The desktop rail collapses to a slim strip of abbreviations, and the
+  // choice survives restarts. Below md the disclosure menu takes over and
+  // this state simply does not apply.
+  const [collapsed, setCollapsed] = useState(getSidebarCollapsed);
+  const toggleSidebar = useCallback(() => setCollapsed((v) => !v), []);
+  useEffect(() => storeSidebarCollapsed(collapsed), [collapsed]);
+  useKeyShortcut("[", toggleSidebar);
   return (
     <div className="flex min-h-screen">
-      <aside className="fixed inset-y-0 left-0 hidden w-52 flex-col border-r border-edge bg-surface-1/60 md:flex">
-        <Link to="/" className="flex items-baseline gap-0 px-4 pt-5 pb-4">
+      <aside
+        className={`fixed inset-y-0 left-0 hidden flex-col border-r border-edge bg-surface-1/60 md:flex ${
+          collapsed ? "w-12" : "w-52"
+        }`}
+      >
+        <Link
+          to="/"
+          aria-label={collapsed ? "ccpeek" : undefined}
+          title={collapsed ? "ccpeek" : undefined}
+          className={`flex items-baseline gap-0 pt-5 pb-4 ${
+            collapsed ? "justify-center" : "px-4"
+          }`}
+        >
           <span className="font-mono text-lg font-semibold tracking-tight text-accent">
             cc
           </span>
-          <span className="font-mono text-lg font-semibold tracking-tight">
-            peek
-          </span>
+          {!collapsed && (
+            <span className="font-mono text-lg font-semibold tracking-tight">
+              peek
+            </span>
+          )}
         </Link>
-        <nav aria-label="Main" className="flex flex-col gap-0.5 px-2">
-          <NavLinks />
+        <nav
+          aria-label="Main"
+          className={`flex flex-col gap-0.5 ${collapsed ? "px-1" : "px-2"}`}
+        >
+          <NavLinks collapsed={collapsed} />
         </nav>
-        <SidebarFooter />
+        <SidebarFooter collapsed={collapsed} onToggle={toggleSidebar} />
       </aside>
 
-      <div className="min-w-0 flex-1 md:pl-52">
+      <div
+        className={`min-w-0 flex-1 ${collapsed ? "md:pl-12" : "md:pl-52"}`}
+      >
         <div className="mx-auto max-w-[1500px] px-5 py-5">
           {/* Below md the rail becomes a real disclosure menu. The old
               fallback wrapped every link inline around the logo, which
