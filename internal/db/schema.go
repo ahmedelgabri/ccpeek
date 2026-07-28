@@ -10,23 +10,24 @@ import (
 // directly and never replay migrations; existing databases run only the
 // pending entries of migrations. Open-time backfills stay banned.
 //
-// Policy until the v2.0 release: schema changes edit initialSchema
-// directly and bump this constant — no migration entries. A database
-// stamped with an older version refuses to open with instructions to
-// delete it (pre-release builds have no compatibility promise). From the
-// release onward, migrations are mandatory: the store is an archive, not
-// a cache — it retains sessions whose source files were cleaned up
-// (prune is opt-in), v1-imported orphans, and user annotations, none of
-// which a rebuild-from-sources could restore — so every schema change
-// then ships as an entry in migrations, and migrating in place keeps
-// startup instant instead of re-ingesting the corpus.
+// The baseline FROZE at v13 with the v2.0.0 release. Every schema change
+// from here ships as an entry in migrations and bumps this constant —
+// never an edit to initialSchema alone, and never a re-create: the store
+// is an archive, not a cache — it retains sessions whose source files
+// were cleaned up (prune is opt-in), v1-imported orphans, and user
+// annotations, none of which a rebuild-from-sources could restore.
+// Migrating in place also keeps startup instant instead of re-ingesting
+// the corpus. (initialSchema still moves WITH each migration so fresh
+// databases are born at the latest version; the migration entry is what
+// carries existing archives forward.)
 const schemaVersion = 13
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
-// len(migrations) == schemaVersion - baseVersion always holds. Until the
-// v2.0 release it tracks schemaVersion (no upgrade path); at the release
-// it freezes at the released baseline and never moves again.
+// len(migrations) == schemaVersion - baseVersion always holds. It froze
+// at the v2.0.0 baseline (v13) and never moves again; only databases
+// from pre-release builds (stamped below it) are refused with re-create
+// instructions.
 const baseVersion = 13
 
 // Two partial indexes are PINNED with INDEXED BY by the queries they

@@ -246,9 +246,9 @@ Post-launch sprints (feedback-driven, after v2.0):
   `ccpeek doctor` prints resolved roots (with mechanism), database
   paths, and migration state read-only.
 
-**Schema baseline decision:** the migration machinery stays parked until
-this branch lands on main; at that merge the baseline freezes and every
-later schema change ships as a migration. New agents (Gemini CLI,
+**Schema baseline decision:** FROZEN as of the v2.0.0 release (schema
+v13, merged to main). Every later schema change ships as a migration
+entry — see internal/db/schema.go for the policy. New agents (Gemini CLI,
 Droid, Amp, …) land post-launch per §6 as demand shows up.
 
 **Schema policy:** the store is an archive, not a cache — it retains
