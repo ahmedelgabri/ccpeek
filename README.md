@@ -1,8 +1,13 @@
 # CCPeek
 
-Explore your Claude Code history. A local web app that indexes and browses your
-Claude Code conversations, plans, todos, tasks, shell snapshots, file history,
-paste cache, usage data, memories, and commands.
+Explore your coding-agent history. A local web app that indexes
+**Claude Code, Pi, Codex CLI, and OpenCode** sessions (plus
+**Cursor**, experimental — see the capability matrix below) into one
+session-centric database — conversations, plans, todos, tasks, shell
+snapshots, file history, paste cache, memories, and commands — with real
+token usage and estimated cost, plus an agent-facing query surface
+(`ccpeek query`, `/api/v1`, `ccpeek mcp`) and live updates. Everything
+stays on this machine.
 
 https://github.com/user-attachments/assets/906eaae2-628f-49ae-8344-88b855792c30
 
@@ -24,9 +29,9 @@ nix run github:ahmedelgabri/ccpeek
 nix profile install github:ahmedelgabri/ccpeek
 ```
 
-### Go install
+### Build from source (full product)
 
-Requires Go 1.25+, Node.js, and pnpm (for building CSS):
+Requires Go 1.25+, Node.js, and pnpm (for building the web UI):
 
 ```sh
 # Clone and build
@@ -37,6 +42,19 @@ just build
 # Binary is at cmd/ccpeek/ccpeek
 ```
 
+The full product is compiled with the `withui` build tag, which
+enforces the embedded UI's presence at compile time — `just build` (and
+every release path) cannot produce a UI-less binary.
+
+### `go install` (API-only variant)
+
+A plain `go build ./...` or `go install` cannot run the SPA build, so
+it deliberately produces the **API-only variant**: `/api/v1`,
+`ccpeek query`, and `ccpeek mcp` work normally, the server logs a
+warning at startup, and `/` explains what is missing instead of
+rendering a blank page. Use it for headless/agent-only setups; use any
+other installation method for the web UI.
+
 ### Pre-built binaries
 
 Download from [GitHub Releases](https://github.com/ahmedelgabri/ccpeek/releases).
@@ -45,7 +63,7 @@ Archives include shell completions and man pages.
 ## Usage
 
 ```sh
-# Index ~/.claude and start the web UI
+# Index detected agent roots and start the web UI
 ccpeek
 
 # Open browser automatically
@@ -61,24 +79,31 @@ ccpeek --skip-index
 ccpeek --index-only
 ```
 
-The server reads Claude Code data from `~/.claude`, writes an index to
-`~/.local/share/ccpeek/ccpeek.db` (respects `$XDG_DATA_HOME`), and serves the
-web UI at `http://localhost:3000`.
+The server reads each agent's data from its default root (for Claude Code,
+`~/.claude`), writes an index to `$XDG_DATA_HOME/ccpeek/ccpeek2.db`, and
+serves the web UI at `http://localhost:3000`.
+
+The port binds immediately; indexing runs behind it with progress on
+stderr, and the UI fills in live as data lands (`/api/v1/ready` answers
+200 once the first pass completes). After the first full build,
+unchanged files are skipped via a size+mtime check without re-reading
+them, so warm startups stay fast even on multi-GB histories.
 
 ### Flags
 
-| Flag           | Default                           | Description                                        |
-| -------------- | --------------------------------- | -------------------------------------------------- |
-| `-p`, `--port` | `3000`                            | Server port                                        |
-| `--claude-dir` | `~/.claude`                       | Source directory (Claude data)                     |
-| `--data-file`  | `~/.local/share/ccpeek/ccpeek.db` | SQLite database file path                          |
-| `--skip-index` | `false`                           | Skip indexing, serve existing data                 |
-| `--index-only` | `false`                           | Index and exit                                     |
-| `--open`       | `false`                           | Open browser after starting                        |
-| `--watch`      | `false`                           | Re-index periodically while serving                |
-| `--rebuild`    | `false`                           | Force full rebuild (drop all data and re-index)    |
-| `--prune`      | `false`                           | Remove data from source files that no longer exist |
-| `--skip-scan`  | `false`                           | Skip secret scanning after indexing                |
+| Flag            | Default                            | Description                                                                                                           |
+| --------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `-p`, `--port`  | `3000`                             | Server port                                                                                                           |
+| `--claude-dir`  | `~/.claude`                        | Source directory (Claude data)                                                                                        |
+| `--data-file`   | `$XDG_DATA_HOME/ccpeek/ccpeek2.db` | Database location — the index is derived from this path. A legacy database here is imported once; see the [FAQ](#faq) |
+| `--skip-index`  | `false`                            | Skip indexing, serve existing data                                                                                    |
+| `--index-only`  | `false`                            | Index and exit                                                                                                        |
+| `-o`, `--open`  | `false`                            | Open browser after starting                                                                                           |
+| `-w`, `--watch` | `false`                            | Re-index while serving, on filesystem changes                                                                         |
+| `--rebuild`     | `false`                            | Force full rebuild (drop all data and re-index)                                                                       |
+| `--prune`       | `false`                            | Remove data from source files that no longer exist                                                                    |
+| `--skip-scan`   | `false`                            | Skip secret scanning after indexing                                                                                   |
+| `-q`, `--quiet` | `false`                            | Suppress informational output                                                                                         |
 
 ### Shell completions
 
@@ -101,7 +126,8 @@ Homebrew and Nix installations include completions and man pages automatically.
 
 Scan indexed data for leaked secrets, API keys, tokens, and passwords. Uses
 gitleaks detection rules (150+ patterns). Results are stored in the database
-and viewable in the web UI at `/scan/`.
+and viewable in the web UI at `/scan`. The index refreshes incrementally
+before the scan so newly written history is covered (`--no-index` opts out).
 
 ```sh
 ccpeek scan
@@ -109,7 +135,7 @@ ccpeek scan
 
 #### `ccpeek export commands`
 
-Export bash commands extracted from Claude Code sessions in shell history format.
+Export shell commands extracted from indexed agent sessions in shell history format.
 
 ```sh
 # Plain (one command per line)
@@ -124,23 +150,65 @@ ccpeek export commands --format bash >> ~/.bash_history && history -r
 # Append to fish history
 ccpeek export commands --format fish >> ~/.local/share/fish/fish_history
 
-# Filter by project or date range
+# Filter by workspace path or date range
 ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 ```
 
 ## What it indexes
 
-- **Projects** - Conversations grouped by project directory
-- **Plans** - Markdown plan files from Claude sessions
-- **Shell Snapshots** - Shell environment captures
-- **Commands** - Bash commands extracted from sessions
-- **Todos** - Task lists from Claude sessions
-- **Tasks** - Task groups from Claude sessions
-- **File History** - File backups from conversations
-- **Paste Cache** - Pasted content from sessions
-- **Usage Data** - Session usage insights and reports
-- **Memories** - Project-level MEMORY.md context files
+- **Sessions** - Conversations from every supported agent, with tokens and cost
+- **Artifacts** - Plans, todos, tasks, shell snapshots, paste cache, usage
+  data, memories, and file history, linked to their sessions
+- **Commands** - Shell commands extracted from sessions
+- **Usage** - Token/cost rollups by day, model, workspace, and agent
 - **Secret Scan** - Detects leaked secrets across all indexed data
+
+### Agent capability matrix
+
+| Agent       | Status           | Messages | Usage/cost | Tool calls | Notes                                                                                                                                 |
+| ----------- | ---------------- | -------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | supported        | ✓        | ✓          | ✓          | Sessions, all sidecar artifacts, prompt history, incremental tail parsing                                                             |
+| Pi          | supported        | ✓        | ✓          | ✓          | Documented session format; forks/branches; reported costs                                                                             |
+| Codex CLI   | supported        | ✓        | ✓          | ✓          | Cumulative token counts recovered per turn; reasoning is a subset of output                                                           |
+| OpenCode    | supported        | ✓        | ✓          | ✓          | Reported costs preferred; additive reasoning folded into billable output                                                              |
+| Cursor      | **experimental** | ✓        | ✓          | —          | Schema derived from fixtures, not yet validated against a real `store.db`; no tool extraction. Expect gaps until real-data validation |
+
+## Agent-facing surface
+
+Every read is available three ways — `ccpeek query` (JSON on the
+command line), `/api/v1` (HTTP), and `ccpeek mcp` (MCP over stdio) —
+generated from one shared definition, so the surfaces never drift.
+
+```sh
+# Query as JSON (no server needed; exit 3 = valid query, no matches)
+ccpeek query sessions --agent codex --since 2026-07-01
+ccpeek query session claude-code <session-id>
+ccpeek query transcript pi <session-id> --limit 50
+ccpeek query usage --group model
+ccpeek query search "rate limiting"
+
+# Serve the UI + API (--watch adds fsnotify re-indexing + SSE live updates)
+ccpeek --watch
+
+# MCP server over stdio (register: claude mcp add ccpeek -- ccpeek mcp)
+ccpeek mcp
+
+# Secret-scan every agent's history (not just Claude's)
+ccpeek scan
+
+# Shell-history export, ingest diagnostics, agent cheatsheet
+ccpeek export commands --format zsh
+ccpeek ingest --latest
+ccpeek docs --agents
+
+# Install the ccpeek skill into ~/.claude/skills (or --dir for another harness)
+ccpeek skill install
+```
+
+Agent data roots resolve as: explicit config > the agent's own env
+override (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `CODEX_HOME`,
+`OPENCODE_DATA_DIR`; Cursor has none, so ccpeek honors
+`CCPEEK_CURSOR_DIR`) > platform defaults.
 
 ## Development
 
@@ -150,11 +218,11 @@ or install Go 1.25+, Node.js, pnpm, and [just](https://github.com/casey/just) ma
 ```sh
 pnpm install
 
-# Run dev server (builds CSS, opens browser)
+# Run dev server (builds the UI, opens browser)
 just dev
 
-# Watch CSS changes
-just css-watch
+# Vite dev server with HMR against a running ccpeek
+just ui-dev
 
 # Run all tests
 just test
@@ -171,3 +239,37 @@ just lint
 # Format
 just format
 ```
+
+## FAQ
+
+### I used ccpeek before — what happens to my old (v1) data?
+
+CCPeek is a session-centric, multi-agent rewrite of the original
+single-agent tool, and it upgrades automatically on first run — no
+steps, no flags. It ingests your detected agent roots into a new index
+(`ccpeek2.db`, written alongside the old `ccpeek.db`) and imports the
+v1-only data that cannot be re-derived from source files: sessions
+whose sources were deleted, and your scan-ignore flags. The v1 database
+is opened read-only and never modified, so rolling back is just running
+the old version. See [docs/v2-plan.md](docs/v2-plan.md) for the full
+design.
+
+### Do my old bookmarks and URLs still work?
+
+Yes. Every legacy URL (`/projects/…`, `/plans/`, `/commands/`, session
+bookmarks, the `/v2/` preview mount) permanently redirects to its
+session-centric equivalent.
+
+### Where is the database stored, and what is `--data-file`?
+
+The index lives at `$XDG_DATA_HOME/ccpeek/ccpeek2.db`. `--data-file`
+names the legacy database path; the
+current index is derived from it as a sibling (`ccpeek.db` →
+`ccpeek2.db`, `x.db` → `x.v2.db`). A legacy file at that path is
+imported once (read-only); don't point `--data-file` at a current
+index.
+
+### Why is `--watch-interval` ignored?
+
+It's accepted for backward compatibility only. ccpeek re-indexes on
+filesystem events (use `--watch`) rather than on a timer.

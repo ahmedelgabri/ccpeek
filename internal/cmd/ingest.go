@@ -2,21 +2,19 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
-	"github.com/ahmedelgabri/ccpeek/internal/model"
-	"github.com/ahmedelgabri/ccpeek/internal/store"
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
 	Short: "Show ingest/index run history and diagnostics",
-	Long: `Show recent indexing/pruning runs and any diagnostics captured during ingest.
+	Long: `Show recent indexing runs and any diagnostics captured during ingest.
 
 Examples:
   ccpeek ingest
@@ -35,9 +33,11 @@ func init() {
 }
 
 func runIngest(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	dataFile, _ := cmd.Flags().GetString("data-file")
 	format, _ := cmd.Flags().GetString("format")
 	limit, _ := cmd.Flags().GetInt("limit")
 	latest, _ := cmd.Flags().GetBool("latest")
@@ -50,14 +50,16 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--latest and --run-id are mutually exclusive")
 	}
 
-	db, err := store.Open(ctx, dataFile)
+	// Diagnostics inspect past runs; kicking off a new ingest here would
+	// bury the run being investigated.
+	eng, err := openEngine(ctx, cmd, neverIndex(), os.Stderr)
 	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+		return err
 	}
-	defer db.Close()
+	defer eng.Close()
 
 	if latest || runID != 0 {
-		run, issues, err := loadIngestRunDetails(ctx, db, latest, runID)
+		run, err := eng.store.GetRun(ctx, runID)
 		if err != nil {
 			return err
 		}
@@ -65,56 +67,33 @@ func runIngest(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(os.Stderr, "No ingest runs found.")
 			return nil
 		}
+		issues, err := eng.store.ListRunIssues(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("loading ingest issues: %w", err)
+		}
 		if format == "json" {
 			payload := struct {
-				Run    *model.IngestRun    `json:"run"`
-				Issues []model.IngestIssue `json:"issues"`
+				Run    *db.IngestRun    `json:"run"`
+				Issues []db.IngestIssue `json:"issues"`
 			}{Run: run, Issues: issues}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(payload)
+			return emit(payload, false)
 		}
 		printIngestRunDetails(run, issues)
 		return nil
 	}
 
-	runs, err := db.ListIngestRuns(ctx, limit)
+	runs, err := eng.store.ListRuns(ctx, limit)
 	if err != nil {
-		return fmt.Errorf("loading ingest runs: %w", err)
+		return err
 	}
 	if format == "json" {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(runs)
+		return emit(runs, false)
 	}
 	printIngestRunList(runs)
 	return nil
 }
 
-func loadIngestRunDetails(ctx context.Context, db *store.Store, latest bool, runID int64) (*model.IngestRun, []model.IngestIssue, error) {
-	var (
-		run *model.IngestRun
-		err error
-	)
-	if latest {
-		run, err = db.GetLatestIngestRun(ctx)
-	} else {
-		run, err = db.GetIngestRun(ctx, runID)
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("loading ingest run: %w", err)
-	}
-	if run == nil {
-		return nil, nil, nil
-	}
-	issues, err := db.ListIngestIssues(ctx, run.ID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("loading ingest issues: %w", err)
-	}
-	return run, issues, nil
-}
-
-func printIngestRunList(runs []model.IngestRun) {
+func printIngestRunList(runs []db.IngestRun) {
 	if len(runs) == 0 {
 		fmt.Println("No ingest runs recorded yet.")
 		return
@@ -137,18 +116,18 @@ func printIngestRunList(runs []model.IngestRun) {
 	fmt.Println("Use `ccpeek ingest --latest` for the newest run or `ccpeek ingest --run-id <id>` for details.")
 }
 
-func printIngestRunDetails(run *model.IngestRun, issues []model.IngestIssue) {
+func printIngestRunDetails(run *db.IngestRun, issues []db.IngestIssue) {
 	fmt.Printf("Run %d\n", run.ID)
 	fmt.Printf("  Mode:      %s\n", run.Mode)
 	fmt.Printf("  Status:    %s\n", run.Status)
 	fmt.Printf("  Started:   %s\n", run.StartedAt)
 	fmt.Printf("  Finished:  %s\n", run.FinishedAt)
 	fmt.Printf("  Duration:  %dms\n", run.DurationMS)
-	fmt.Printf("  Claude dir: %s\n", run.ClaudeDir)
+	fmt.Printf("  Roots:     %s\n", string(run.Roots))
 	fmt.Printf("  Files:     %d seen, %d changed\n", run.FilesSeen, run.FilesChanged)
 	fmt.Printf("  Indexed:   %d\n", run.RecordsIndexed)
-	fmt.Printf("  Warnings:  %d total (%d skipped files, %d skipped rows, %d parse failures, %d unresolved links)\n",
-		run.WarningCount, run.SkippedFiles, run.SkippedRows, run.ParseFailures, run.UnresolvedLinks)
+	fmt.Printf("  Warnings:  %d total (%d parse failures, %d unresolved links)\n",
+		run.WarningCount, run.ParseFailures, run.UnresolvedLinks)
 	if run.ErrorMessage != "" {
 		fmt.Printf("  Error:     %s\n", run.ErrorMessage)
 	}
@@ -160,17 +139,28 @@ func printIngestRunDetails(run *model.IngestRun, issues []model.IngestIssue) {
 	fmt.Println("\nDiagnostics:")
 	for i, issue := range issues {
 		line := ""
-		if issue.LineNumber > 0 {
-			line = ":" + strconv.Itoa(issue.LineNumber)
+		if issue.Line > 0 {
+			line = ":" + strconv.Itoa(issue.Line)
 		}
-		fmt.Printf("  %d. [%s] %s %s%s\n", i+1, issue.Category, issue.SourceType, issue.SourcePath, line)
+		agent := ""
+		if issue.AgentSlug != "" {
+			agent = issue.AgentSlug + " "
+		}
+		fmt.Printf("  %d. [%s/%s] %s%s%s\n", i+1, issue.Severity, issue.Category, agent, issue.SourcePath, line)
 		fmt.Printf("     %s\n", issue.Detail)
 	}
 }
 
+// trimTimestamp renders an RFC3339 timestamp for the fixed-width run
+// table: seconds precision, and the date-time separator as a space so
+// the column reads as a date and a time.
+//
+// It used to TrimSuffix the "T" off ts[:19] — position 19 lands after
+// the seconds, never on the separator at position 10, so the suffix
+// never matched and every row printed the raw 2026-07-27T10:00:00.
 func trimTimestamp(ts string) string {
-	if len(ts) <= 19 {
-		return ts
+	if len(ts) > 19 {
+		ts = ts[:19]
 	}
-	return strings.TrimSuffix(ts[:19], "T")
+	return strings.Replace(ts, "T", " ", 1)
 }

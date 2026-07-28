@@ -2,75 +2,25 @@ package model
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
+	"io"
 	"strings"
 	"testing"
 )
 
-func TestMessagePayloadIsString(t *testing.T) {
-	// String content
-	msg := MessagePayload{Content: json.RawMessage(`"hello"`)}
-	if !msg.IsString() {
-		t.Error("expected IsString=true for string content")
+// formatCommands writes a whole slice in one call — the shape these
+// format cases are written against. Both exporters stream row by row
+// through WriteCommand now, so the slice form has no caller outside this
+// file and lives here rather than in the package.
+func formatCommands(w io.Writer, commands []CommandEntry, format string) error {
+	if err := ValidateCommandFormat(format); err != nil {
+		return err
 	}
-	if msg.ContentText() != "hello" {
-		t.Errorf("expected ContentText=hello, got %q", msg.ContentText())
+	for _, cmd := range commands {
+		if err := WriteCommand(w, cmd, format); err != nil {
+			return err
+		}
 	}
-
-	// Array content
-	msg2 := MessagePayload{Content: json.RawMessage(`[{"type":"text","text":"hi"}]`)}
-	if msg2.IsString() {
-		t.Error("expected IsString=false for array content")
-	}
-	if msg2.ContentText() != "hi" {
-		t.Errorf("expected ContentText=hi, got %q", msg2.ContentText())
-	}
-
-	blocks := msg2.ContentBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(blocks))
-	}
-	if blocks[0].Type != "text" || blocks[0].Text != "hi" {
-		t.Errorf("unexpected block: %+v", blocks[0])
-	}
-}
-
-func TestToolResultText(t *testing.T) {
-	// String content
-	b := ContentBlock{Content: json.RawMessage(`"some output"`)}
-	if b.ToolResultText() != "some output" {
-		t.Errorf("expected 'some output', got %q", b.ToolResultText())
-	}
-
-	// Array content
-	b2 := ContentBlock{Content: json.RawMessage(`[{"type":"text","text":"line1"},{"type":"text","text":"line2"}]`)}
-	if b2.ToolResultText() != "line1\nline2" {
-		t.Errorf("expected 'line1\\nline2', got %q", b2.ToolResultText())
-	}
-}
-
-func TestParseRealConversation(t *testing.T) {
-	path := os.Getenv("TEST_CONVERSATION_FILE")
-	if path == "" {
-		t.Skip("set TEST_CONVERSATION_FILE to test with real data")
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var msgs []ConversationMessage
-	if err := json.Unmarshal(data, &msgs); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("Parsed %d messages", len(msgs))
-	for i, m := range msgs[:min(5, len(msgs))] {
-		t.Logf("msg[%d] type=%s isString=%v blocks=%d text=%q",
-			i, m.Type, m.Message.IsString(), len(m.Message.ContentBlocks()), truncStr(m.Message.ContentText(), 80))
-	}
+	return nil
 }
 
 func TestFormatCommands(t *testing.T) {
@@ -81,7 +31,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("plain", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "plain")
+		_ = formatCommands(&buf, cmds, "plain")
 		out := buf.String()
 		if !strings.Contains(out, "ls -la\n") {
 			t.Error("plain format missing command")
@@ -93,7 +43,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("bash", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "bash")
+		_ = formatCommands(&buf, cmds, "bash")
 		if !strings.Contains(buf.String(), "ls -la\n") {
 			t.Error("bash format missing command")
 		}
@@ -101,7 +51,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("zsh", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "zsh")
+		_ = formatCommands(&buf, cmds, "zsh")
 		out := buf.String()
 		if !strings.Contains(out, ":0;ls -la") {
 			t.Error("zsh format missing command with timestamp")
@@ -116,7 +66,7 @@ func TestFormatCommands(t *testing.T) {
 			{Command: "git log --shortstat |\nawk '/^ [0-9]/ { f += $1 }'\nEND", Timestamp: "2025-01-15T10:30:00Z"},
 		}
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, multiCmds, "zsh")
+		_ = formatCommands(&buf, multiCmds, "zsh")
 		out := buf.String()
 		// Non-empty continuation lines end with \\
 		if !strings.Contains(out, "\\\\\n") {
@@ -129,7 +79,7 @@ func TestFormatCommands(t *testing.T) {
 			{Command: "echo hello\n\necho world", Timestamp: "2025-01-15T10:30:00Z"},
 		}
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, multiCmds, "zsh")
+		_ = formatCommands(&buf, multiCmds, "zsh")
 		out := buf.String()
 		// "echo hello" (non-empty) → ends with \\
 		// "" (empty) → ends with \
@@ -142,7 +92,7 @@ func TestFormatCommands(t *testing.T) {
 
 	t.Run("fish", func(t *testing.T) {
 		var buf bytes.Buffer
-		_ = FormatCommands(&buf, cmds, "fish")
+		_ = formatCommands(&buf, cmds, "fish")
 		out := buf.String()
 		if !strings.Contains(out, "- cmd: ls -la") {
 			t.Error("fish format missing command")
@@ -151,139 +101,60 @@ func TestFormatCommands(t *testing.T) {
 			t.Error("fish format missing timestamp")
 		}
 	})
-}
 
-func TestSplitSourceID(t *testing.T) {
-	tests := []struct {
-		input    string
-		wantSess string
-		wantTS   string
-	}{
-		{"sess-123@2024-01-15T10:00:00Z", "sess-123", "2024-01-15T10:00:00Z"},
-		{"sess-123", "sess-123", ""},
-		{"", "", ""},
-		{"a@b@c", "a@b", "c"},
-	}
-
-	for _, tt := range tests {
-		sess, ts := splitSourceID(tt.input)
-		if sess != tt.wantSess || ts != tt.wantTS {
-			t.Errorf("splitSourceID(%q) = (%q, %q), want (%q, %q)",
-				tt.input, sess, ts, tt.wantSess, tt.wantTS)
+	// A fish entry is a two-line record: a raw newline inside `- cmd: `
+	// ends the entry early and corrupts the file from that point on (fish
+	// drops everything after the broken record). zsh got an escaper for
+	// exactly this; fish got none, so every multiline command exported
+	// straight through.
+	t.Run("fish_multiline", func(t *testing.T) {
+		multiCmds := []CommandEntry{
+			{Command: "git log --shortstat |\nawk '/^ [0-9]/ { f += $1 }'", Timestamp: "2025-01-15T10:30:00Z"},
 		}
-	}
-}
-
-func TestAnchorize(t *testing.T) {
-	tests := []struct {
-		prefix string
-		value  string
-		want   string
-	}{
-		{"msg", "2024-01-15T10:30:00.123Z", "msg-2024-01-15T10-30-00-123Z"},
-		{"cmd", "2024-01-15T10:30:00Z", "cmd-2024-01-15T10-30-00Z"},
-		{"s", "aaaaaaaa-bbbb", "s-aaaaaaaa-bbbb"},
-	}
-
-	for _, tt := range tests {
-		got := anchorize(tt.prefix, tt.value)
-		if got != tt.want {
-			t.Errorf("anchorize(%q, %q) = %q, want %q", tt.prefix, tt.value, got, tt.want)
+		var buf bytes.Buffer
+		if err := formatCommands(&buf, multiCmds, "fish"); err != nil {
+			t.Fatal(err)
 		}
-	}
-}
+		out := buf.String()
+		want := "- cmd: git log --shortstat |\\nawk '/^ [0-9]/ { f += $1 }'\n  when: 1736937000\n"
+		if out != want {
+			t.Errorf("got %q, want %q", out, want)
+		}
+		// Exactly two lines: the entry and its `when:`.
+		if n := strings.Count(out, "\n"); n != 2 {
+			t.Errorf("multiline command produced %d lines, want a 2-line record: %q", n, out)
+		}
+	})
 
-func TestSourceURL(t *testing.T) {
-	tests := []struct {
-		name    string
-		finding ScanFinding
-		want    string
-	}{
-		{
-			"message with timestamp",
-			ScanFinding{SourceType: "message", SourceID: "sess-123@2024-01-15T10:00:00Z", ProjectDirName: "proj"},
-			"/projects/proj/sess-123/#msg-2024-01-15T10-00-00Z",
-		},
-		{
-			"message without timestamp",
-			ScanFinding{SourceType: "message", SourceID: "sess-123", ProjectDirName: "proj"},
-			"/projects/proj/sess-123/",
-		},
-		{
-			"message missing project",
-			ScanFinding{SourceType: "message", SourceID: "sess-123"},
-			"",
-		},
-		{
-			"command with timestamp",
-			ScanFinding{SourceType: "command", SourceID: "sess-123@2024-01-15T10:00:00Z", ProjectDirName: "proj"},
-			"/projects/proj/sess-123/commands/#cmd-2024-01-15T10-00-00Z",
-		},
-		{
-			"command without timestamp (old format, SourceID used as sessionID)",
-			ScanFinding{SourceType: "command", SourceID: "42", ProjectDirName: "proj", SessionID: "sess-456"},
-			"/projects/proj/42/commands/",
-		},
-		{
-			"command without timestamp or project (fallback to SessionID)",
-			ScanFinding{SourceType: "command", SourceID: "42", SessionID: "sess-456"},
-			"",
-		},
-		{
-			"plan with extension",
-			ScanFinding{SourceType: "plan", SourceID: "my-plan.md"},
-			"/plans/my-plan/",
-		},
-		{
-			"plan without extension",
-			ScanFinding{SourceType: "plan", SourceID: "my-plan"},
-			"/plans/my-plan/",
-		},
-		{
-			"shell_snapshot",
-			ScanFinding{SourceType: "shell_snapshot", SourceID: "snap.sh"},
-			"/shell-snapshots/snap/",
-		},
-		{
-			"paste_cache",
-			ScanFinding{SourceType: "paste_cache", SourceID: "clip.txt"},
-			"/paste-cache/clip/",
-		},
-		{
-			"memory with file",
-			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/MEMORY.md"},
-			"/memories/-Users-demo-proj/MEMORY/",
-		},
-		{
-			"memory with escaped file name",
-			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj/team notes.v2.md"},
-			"/memories/-Users-demo-proj/team%20notes.v2/",
-		},
-		{
-			"memory legacy (no slash)",
-			ScanFinding{SourceType: "memory", SourceID: "-Users-demo-proj"},
-			"/memories/-Users-demo-proj/MEMORY/",
-		},
-		{
-			"unknown type",
-			ScanFinding{SourceType: "unknown"},
-			"",
-		},
-	}
+	// Backslashes double, so a command that literally contains \n stays
+	// distinguishable from one that contains a newline — fish's reader
+	// unescapes both back to what was typed.
+	t.Run("fish_backslashes", func(t *testing.T) {
+		cmds := []CommandEntry{
+			{Command: `printf 'a\nb'`, Timestamp: "2025-01-15T10:30:00Z"},
+			{Command: "printf 'a'\n", Timestamp: "2025-01-15T10:30:00Z"},
+		}
+		var buf bytes.Buffer
+		if err := formatCommands(&buf, cmds, "fish"); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `- cmd: printf 'a\\nb'`) {
+			t.Errorf("literal backslash not doubled: %q", out)
+		}
+		if !strings.Contains(out, `- cmd: printf 'a'\n`+"\n") {
+			t.Errorf("trailing newline not escaped: %q", out)
+		}
+		// Four records' worth of lines for two commands, no more.
+		if n := strings.Count(out, "\n"); n != 4 {
+			t.Errorf("got %d lines for 2 entries, want 4: %q", n, out)
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.finding.SourceURL()
-			if got != tt.want {
-				t.Errorf("SourceURL() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func truncStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	t.Run("invalid_format", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := formatCommands(&buf, cmds, "wat"); err == nil {
+			t.Error("expected unsupported format error")
+		}
+	})
 }

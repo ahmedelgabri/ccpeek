@@ -28,15 +28,52 @@
       }: {
         packages = {
           default = self'.packages.ccpeek;
-          ccpeek = pkgs.buildGoModule {
+
+          # The SPA, built from ui/ and embedded into the Go binary below —
+          # a binary without it serves an empty UI. pnpm dependencies are a
+          # fixed-output derivation; bump its hash when ui/pnpm-lock.yaml
+          # changes.
+          ccpeek-ui = pkgs.stdenv.mkDerivation (finalAttrs: {
+            pname = "ccpeek-ui";
+            version = self'.packages.ccpeek.version;
+
+            src = lib.cleanSource ./ui;
+
+            nativeBuildInputs = with pkgs; [
+              nodejs
+              pnpm_10.configHook
+            ];
+
+            pnpmDeps = pkgs.pnpm_10.fetchDeps {
+              inherit (finalAttrs) pname version src;
+              fetcherVersion = 3;
+              hash = "sha256-Ia1Wq128ZM7rAS3OED69TkjC4vG/k94UNqA5MC8egco=";
+            };
+
+            buildPhase = ''
+              runHook preBuild
+              # The config's outDir points outside ui/ (../internal/webui/dist),
+              # which doesn't exist in this sandbox — override it.
+              pnpm exec vite build --outDir dist --emptyOutDir
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              cp -r dist $out
+              runHook postInstall
+            '';
+          });
+
+          # go_1_25 (1.25.12) matches go.mod's toolchain line; the default
+          # pkgs.go (1.26.4) carries GO-2026-5856 and fails govulncheck.
+          ccpeek = (pkgs.buildGoModule.override {go = pkgs.go_1_25;}) {
             pname = "ccpeek";
-            version = "1.10.0";
+            version = "2.0.0";
 
             src = lib.cleanSource ./.;
 
-            vendorHash = "sha256-8vp/z+7/hZg4lPcyf4G/yZuKDoQTOoxGD1nMpAAkkIU=";
-
-            tags = ["sqlite_fts5"];
+            vendorHash = "sha256-4EnkrZU0jTweP5icq+LfzGN20eKLMls/yk4Qx8cwDNw=";
 
             ldflags = [
               "-s"
@@ -47,13 +84,17 @@
             nativeBuildInputs = with pkgs; [
               installShellFiles
               makeWrapper
-              tailwindcss_4
             ];
 
             subPackages = ["cmd/ccpeek"];
 
+            # Full-product variant: the SPA's presence is enforced at
+            # compile time, so this build fails rather than shipping a
+            # UI-less binary if the ccpeek-ui copy ever breaks.
+            tags = ["withui"];
+
             preBuild = ''
-              tailwindcss --input internal/web/src/app.css --output internal/web/static/style.css --minify
+              cp -r ${self'.packages.ccpeek-ui}/. internal/webui/dist/
             '';
 
             postInstall = ''
@@ -109,7 +150,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            go
+            go_1_25 # 1.25.12, the go.mod toolchain; pkgs.go 1.26.4 fails govulncheck (GO-2026-5856)
             go-tools # includes staticcheck
             gofumpt
             gomodifytags
@@ -122,7 +163,6 @@
             nodejs
             oxlint
             pnpm
-            sqlite # sqlite3 for migration fixture tooling
             tsx
             typescript
           ];

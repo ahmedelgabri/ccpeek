@@ -2,6 +2,7 @@ node_modules/
 test-results/
 cmd/ccpeek/ccpeek
 /ccpeek
-internal/web/static/style.css
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
 result
 .hooks/

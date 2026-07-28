@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/ahmedelgabri/ccpeek/internal/model"
-	"github.com/ahmedelgabri/ccpeek/internal/store"
+	"github.com/ahmedelgabri/ccpeek/internal/ops"
+
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -17,40 +20,37 @@ func seedIngestDB(t *testing.T) string {
 
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	db, err := store.Open(ctx, dataFile)
+	store, err := db.Open(ctx, storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer store.Close()
+	markInitialized(t, store)
 
-	run := &model.IngestRun{
-		Mode:            "incremental",
-		Status:          "partial",
-		ClaudeDir:       "/tmp/.claude",
-		StartedAt:       "2025-01-01T00:00:00Z",
-		FinishedAt:      "2025-01-01T00:00:01Z",
-		DurationMS:      1000,
+	runID, err := store.StartRun(ctx, "incremental", `["/tmp/.claude"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := db.RunCounts{
 		FilesSeen:       10,
 		FilesChanged:    2,
 		RecordsIndexed:  4,
-		SkippedFiles:    1,
-		SkippedRows:     1,
 		ParseFailures:   1,
 		UnresolvedLinks: 1,
 		WarningCount:    2,
 	}
-	issues := []model.IngestIssue{{
-		Severity:   "warning",
-		Category:   "parse_failure",
-		SourceType: "session",
-		SourcePath: "/tmp/.claude/projects/p/s.jsonl",
-		LineNumber: 2,
-		Detail:     "invalid JSON",
-		CreatedAt:  "2025-01-01T00:00:00Z",
-	}}
-	if err := db.SaveIngestRun(ctx, run, issues); err != nil {
+	if err := store.FinishRun(ctx, runID, "partial", time.Now(), counts, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
+	issues := []canon.Issue{{
+		Agent:      "claude-code",
+		Severity:   "warning",
+		Category:   "parse_failure",
+		SourcePath: "/tmp/.claude/projects/p/s.jsonl",
+		Line:       2,
+		Detail:     "invalid JSON",
+	}}
+	if err := store.InsertIssues(ctx, runID, issues); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,6 +60,7 @@ func seedIngestDB(t *testing.T) string {
 func newIngestTestCommand(dataFile string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("data-file", dataFile, "")
+	cmd.Flags().String("claude-dir", "", "")
 	cmd.Flags().String("format", "text", "")
 	cmd.Flags().Int("limit", 10, "")
 	cmd.Flags().Bool("latest", false, "")
@@ -105,18 +106,50 @@ func TestRunIngestLatestJSONShowsDetails(t *testing.T) {
 		t.Fatalf("expected empty stderr, got %q", stderr)
 	}
 
-	var payload struct {
-		Run    *model.IngestRun    `json:"run"`
-		Issues []model.IngestIssue `json:"issues"`
+	// Every JSON surface answers in the versioned envelope — `ccpeek docs`
+	// ships that promise to agents as SKILL.md, and this command used to
+	// be the one that broke it.
+	var env struct {
+		Schema string `json:"schema"`
+		Data   struct {
+			Run    *db.IngestRun    `json:"run"`
+			Issues []db.IngestIssue `json:"issues"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("expected valid json output, got error %v and output %q", err, stdout)
 	}
+	if env.Schema != ops.PayloadSchema {
+		t.Errorf("schema = %q, want %q", env.Schema, ops.PayloadSchema)
+	}
+	payload := env.Data
 	if payload.Run == nil || payload.Run.Status != "partial" {
 		t.Fatalf("expected partial ingest run in payload, got %+v", payload.Run)
 	}
 	if len(payload.Issues) != 1 || payload.Issues[0].Category != "parse_failure" {
 		t.Fatalf("unexpected issues payload: %+v", payload.Issues)
+	}
+}
+
+// The run table's FINISHED column is meant to read as a date and a time,
+// not as a machine timestamp. The old implementation trimmed a "T"
+// suffix off ts[:19] — a position past the seconds, so the separator at
+// index 10 was never touched and the substitution never happened once.
+func TestTrimTimestampSeparatesDateAndTime(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"2026-07-27T10:11:12Z", "2026-07-27 10:11:12"},
+		{"2026-07-27T10:11:12.456789Z", "2026-07-27 10:11:12"},
+		{"2026-07-27T10:11:12", "2026-07-27 10:11:12"},
+		{"", ""},
+		{"not a timestamp", "not a timestamp"},
+	} {
+		if got := trimTimestamp(tt.in); got != tt.want {
+			t.Errorf("trimTimestamp(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	// It has to stay inside the column width the table reserves.
+	if got := trimTimestamp("2026-07-27T10:11:12.456789Z"); len(got) > 20 {
+		t.Errorf("trimTimestamp produced %d chars, wider than the %%-20s column: %q", len(got), got)
 	}
 }
 
@@ -156,11 +189,12 @@ func TestRunIngestRejectsLatestAndRunID(t *testing.T) {
 func TestRunIngestLatestWithNoRunsShowsMessage(t *testing.T) {
 	ctx := context.Background()
 	dataFile := filepath.Join(t.TempDir(), "ccpeek.db")
-	db, err := store.Open(ctx, dataFile)
+	store, err := db.Open(ctx, storeDBPath(dataFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
+	markInitialized(t, store)
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,0 +1,36 @@
+{
+  "id": "msg_002",
+  "sessionID": "ses_oc001",
+  "role": "assistant",
+  "time": {
+    "created": 1751713260000
+  },
+  "providerID": "anthropic",
+  "modelID": "claude-sonnet-5",
+  "cost": 0.0142,
+  "tokens": {
+    "input": 2400,
+    "output": 510,
+    "reasoning": 90,
+    "cache": {
+      "read": 11000,
+      "write": 800
+    }
+  },
+  "parts": [
+    {
+      "type": "text",
+      "text": "Moved the principal into request context; handlers now read it via auth.From(ctx)."
+    },
+    {
+      "type": "tool",
+      "tool": "edit",
+      "state": {
+        "status": "completed",
+        "input": {
+          "filePath": "internal/auth/middleware.go"
+        }
+      }
+    }
+  ]
+}

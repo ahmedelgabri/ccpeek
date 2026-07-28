@@ -1,175 +1,242 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("browse plans", () => {
-  test("lists plans and can view a plan", async ({ page }) => {
-    await page.goto("/plans/");
-    const main = page.locator("main");
-    await expect(main.getByRole("heading", { name: "Plans" })).toBeVisible();
+// Browsing coverage for the unified artifact pages that replaced the v1
+// per-sidecar browsers (plans, todos, snapshots, memories, …).
 
-    // Click on first plan link (scoped to main to avoid nav links)
-    const firstLink = main.locator("a.list-row").first();
-    await firstLink.click();
-
-    // Verify we're on a plan detail page with rendered markdown
-    await expect(main.locator(".prose")).toBeVisible();
-  });
-});
-
-test.describe("browse shell snapshots", () => {
-  test("lists snapshots and can view one", async ({ page }) => {
-    await page.goto("/shell-snapshots/");
-    const main = page.locator("main");
+test.describe("browse artifacts", () => {
+  test("lists artifacts and can view one", async ({ page }) => {
+    await page.goto("/artifacts");
     await expect(
-      main.getByRole("heading", { name: "Shell Snapshots" }),
+      page.getByRole("heading", { name: "Artifacts" }),
     ).toBeVisible();
 
-    const firstLink = main.locator("a.list-row").first();
-    await firstLink.click();
-
-    // Chroma renders code blocks
-    await expect(main.locator("pre")).toBeVisible();
-  });
-});
-
-test.describe("browse todos", () => {
-  test("lists todos with status badges", async ({ page }) => {
-    await page.goto("/todos/");
-    const main = page.locator("main");
-    await expect(main.getByRole("heading", { name: "Todos" })).toBeVisible();
-
-    const firstLink = main.locator("a.list-row").first();
-    await firstLink.click();
-
-    // Verify todo items render
-    await expect(main.locator("ul")).toBeVisible();
-  });
-});
-
-test.describe("browse projects", () => {
-  test("lists projects and can navigate to sessions", async ({ page }) => {
-    await page.goto("/projects/");
-    const main = page.locator("main");
-    await expect(main.getByRole("heading", { name: "Projects" })).toBeVisible();
-
-    // Click on first project
-    const firstProject = main.locator("a.list-row").first();
-    await firstProject.click();
-
-    // Verify sessions heading
-    await expect(main.getByText("sessions").first()).toBeVisible();
+    await page.locator("ul li a").first().click();
+    await expect(page).toHaveURL(/\/artifacts\//);
+    // Detail header shows an agent chip and a human-readable size.
+    await expect(page.getByText(/\d+(?:\.\d+)? (?:B|KB|MB)/)).toBeVisible();
   });
 
-  test("can view a conversation", async ({ page }) => {
-    await page.goto("/projects/");
-    const main = page.locator("main");
+  test("kind filter narrows the list to plans", async ({ page }) => {
+    await page.goto("/artifacts");
+    await page.getByRole("button", { name: /^plan\b/ }).click();
 
-    // Navigate to first project
-    await main.locator("a.list-row").first().click();
-
-    // Click on a session link (contains "msgs" text)
-    const sessionRow = main
-      .locator(".list-row")
-      .filter({ hasText: "msgs" })
-      .first();
-    await sessionRow.locator("a.flex-1").click();
-
-    // Verify conversation page loaded with message count
-    await expect(main.getByText(/\d+ messages/).first()).toBeVisible();
+    // The kind is a group heading now, not a badge repeated on every row.
+    await expect(page.getByRole("heading", { name: /^plan/ })).toBeVisible();
+    await expect(page.locator("section ul li a").first()).toBeVisible();
   });
-});
 
-test.describe("browse file history", () => {
-  test("lists file history entries", async ({ page }) => {
-    await page.goto("/file-history/");
-    const main = page.locator("main");
-    await expect(
-      main.getByRole("heading", { name: "File History" }),
-    ).toBeVisible();
-
-    const firstLink = main.locator("a.list-row").first();
-    await expect(firstLink).toBeVisible();
-  });
-});
-
-test.describe("browse conversations", () => {
-  test("can navigate conversation tabs", async ({ page }) => {
-    // Navigate directly to a session known to have commands, todos, file history, and code
+  test("memory cross-links resolve to sibling artifacts", async ({ page }) => {
+    // Memory files link to siblings with relative markdown links; the
+    // artifact name carries a directory prefix the bare href loses, so
+    // the app must resolve clicks against the current artifact's prefix.
     await page.goto(
-      "/projects/test-project/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/",
+      "/artifacts/claude-code/memory/" +
+        encodeURIComponent("test-project/MEMORY.md"),
     );
-    const main = page.locator("main");
+    await page.getByRole("link", { name: "conventions" }).click();
+    await expect(page).toHaveURL(/memory\/test-project%2Fconventions\.md/);
+    await expect(
+      page.getByRole("heading", { name: "Coding Conventions" }),
+    ).toBeVisible();
+  });
 
-    // Should be on conversation page
-    await expect(main.getByText(/\d+ messages/).first()).toBeVisible();
+  test("a plan renders as prose, not raw markdown", async ({ page }) => {
+    await page.goto("/artifacts");
+    await page.getByRole("button", { name: /^plan\b/ }).click();
+    await page.locator("ul li a").first().click();
 
-    // Click Commands tab
-    const commandsTab = main.getByRole("link", { name: "Commands" });
-    await commandsTab.click();
-    await expect(page).toHaveURL(/\/commands\/$/);
-    await expect(main.getByText(/\d+ commands/).first()).toBeVisible();
-
-    // Click Conversation tab to go back
-    const conversationTab = main.getByRole("link", { name: "Conversation" });
-    await conversationTab.click();
-    await expect(main.getByText(/\d+ messages/).first()).toBeVisible();
+    // Markdown artifacts render via the server-side goldmark hook.
+    await expect(page.locator("[class*=prose]")).toBeVisible();
   });
 });
 
-test.describe("browse file history detail", () => {
-  test("can view a file history detail", async ({ page }) => {
-    await page.goto("/file-history/");
-    const main = page.locator("main");
+test.describe("browse sessions", () => {
+  test("filter narrows the session stream", async ({ page }) => {
+    await page.goto("/sessions");
+    const rows = page.locator("ul li a");
+    await expect(rows.first()).toBeVisible();
+
+    await page.getByPlaceholder("Filter by title…").fill("zzz-no-such-title");
+    await expect(rows.first()).toBeHidden();
+  });
+
+  test("session detail links back from an artifact", async ({ page }) => {
+    // Artifacts linked to sessions expose session chips that navigate to
+    // the session page (session-centric model: artifacts attach to
+    // sessions, not directories).
+    await page.goto("/artifacts");
+    await page.getByRole("button", { name: /^todo list\b/ }).click();
+    await page.locator("ul li a").first().click();
+
+    const chip = page.locator("a[href*='/sessions/']").first();
+    await chip.click();
+    await expect(page).toHaveURL(/\/sessions\//);
+    await expect(page.getByRole("tab", { name: /transcript/ })).toBeVisible();
+  });
+});
+
+test.describe("transcript deep-link paging", () => {
+  const bigSession = "deadbeef-1111-2222-3333-444444444444";
+
+  test("backward pages tile without overlapping the anchor", async ({
+    page,
+  }) => {
+    const transcriptRequests: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes(`/${bigSession}/transcript`)) {
+        transcriptRequests.push(r.url());
+      }
+    });
+
+    // Deep link into the middle: the anchor sits 100 before the target.
+    await page.goto(`/sessions/claude-code/${bigSession}?seq=500`);
+    await expect(page.getByText("deep link message 500")).toBeVisible();
+
+    // The anchored request covers from_seq=400 with a full page limit.
+    expect(
+      transcriptRequests.some(
+        (u) => u.includes("from_seq=400") && u.includes("limit=1000"),
+      ),
+      `anchored request missing in ${transcriptRequests.join(", ")}`,
+    ).toBeTruthy();
+
+    // Scrolling to the top triggers the backward load. The page must be
+    // bounded to the uncovered gap (0..399 → limit=400), NOT a fixed
+    // 1000 that would re-cover 400..999 and duplicate seq keys.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect
+      .poll(
+        () =>
+          transcriptRequests.some(
+            (u) => u.includes("from_seq=0") && u.includes("limit=400"),
+          ),
+        {
+          message: `gap-bounded backward request missing in ${transcriptRequests.join(", ")}`,
+        },
+      )
+      .toBeTruthy();
+    expect(
+      transcriptRequests.some(
+        (u) => u.includes("from_seq=0") && u.includes("limit=1000"),
+      ),
+      "backward request used a full page limit (overlap)",
+    ).toBeFalsy();
+
+    // No duplicate mounted rows: each rendered permalink seq is unique.
+    const seqs = await page
+      .locator("button[title='Copy link to this message']")
+      .allTextContents();
+    const unique = new Set(seqs);
+    expect(unique.size, `duplicate mounted seqs among ${seqs.join(",")}`).toBe(
+      seqs.length,
+    );
+  });
+});
+
+test.describe("lazy tool payloads", () => {
+  const editSession = "11111111-aaaa-bbbb-cccc-111111111111";
+
+  test("transcript loads chips only; excerpts arrive on expansion", async ({
+    page,
+  }) => {
+    const toolRequests: string[] = [];
+    page.on("request", (r) => {
+      const u = r.url();
+      if (u.includes(`/${editSession}/tools`)) toolRequests.push(u);
+    });
+
+    await page.goto(`/sessions/claude-code/${editSession}`);
     await expect(
-      main.getByRole("heading", { name: "File History" }),
+      page.locator("button[title='Copy link to this message']").first(),
+    ).toBeVisible();
+    // Give any eager fetch a beat to fire before asserting it did not.
+    await page.waitForTimeout(300);
+
+    // The transcript triggers ONLY the compact chip projection — no full
+    // tool list, no per-call detail, no eager page loop.
+    expect(toolRequests.length).toBeGreaterThan(0);
+    for (const u of toolRequests) {
+      expect(
+        u,
+        `non-compact tools request before any tab/expansion: ${u}`,
+      ).toContain("compact=1");
+    }
+
+    // Expanding the Edit chip fetches exactly that call's detail and
+    // renders the diff.
+    await page.getByRole("button", { name: /Edit/ }).first().click();
+    await expect
+      .poll(() => toolRequests.some((u) => /\/tools\/\d+(\?|$)/.test(u)))
+      .toBeTruthy();
+
+    // Opening the Tools tab is what starts the full (excerpt-free) list.
+    const before = toolRequests.length;
+    await page.getByRole("tab", { name: /^tools/ }).click();
+    await expect
+      .poll(() =>
+        toolRequests
+          .slice(before)
+          .some((u) => u.includes("limit=500") && !u.includes("compact")),
+      )
+      .toBeTruthy();
+  });
+});
+
+// The Tools and Files tabs are DOM-windowed: a session's tool list pages
+// to completion (the tabs show counts and group by file, so they need
+// every row), and mounting all of them is what the windowing avoids. The
+// rows still have to render, stay expandable, and keep their table
+// semantics — a windowed grid is not a <table>, so the roles carry it.
+test.describe("session tool tabs", () => {
+  const editSession = "11111111-aaaa-bbbb-cccc-111111111111";
+
+  test("tools tab renders windowed rows that still expand", async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/claude-code/${editSession}?tab=tools`);
+
+    const grid = page.getByRole("table", { name: "Tool calls" });
+    await expect(grid).toBeVisible();
+    await expect(
+      grid.getByRole("columnheader", { name: "tool" }),
     ).toBeVisible();
 
-    const firstLink = main.locator("a.list-row").first();
-    await firstLink.click();
+    const rows = grid.getByRole("row");
+    // Header plus at least one call.
+    await expect.poll(() => rows.count()).toBeGreaterThan(1);
 
-    // Verify detail page has file version info
-    await expect(main.getByText(/\d+ file versions/)).toBeVisible();
-  });
-});
-
-test.describe("browse memories", () => {
-  test("lists memories and can view one", async ({ page }) => {
-    await page.goto("/memories/");
-    const main = page.locator("main");
-    await expect(main.getByRole("heading", { name: "Memories" })).toBeVisible();
-
-    const firstLink = main.locator("a.list-row").first();
-    await firstLink.click();
-
-    // Verify detail page has rendered markdown and View Project link
-    await expect(main.locator(".prose")).toBeVisible();
-    await expect(main.getByText("View Project")).toBeVisible();
-  });
-});
-
-test.describe("search", () => {
-  test("plans search filters results", async ({ page }) => {
-    await page.goto("/plans/");
-    const main = page.locator("main");
-
-    const searchInput = main.getByPlaceholder("Filter plans...");
-    await expect(searchInput).toBeVisible();
-
-    await searchInput.fill("implementation");
-
-    const countText = main.getByText(/of \d+ items/);
-    await expect(countText).toBeVisible();
+    // The Edit call's row opens its diff in place.
+    const editRow = rows.filter({ hasText: "Edit" }).first();
+    await expect(editRow).toBeVisible();
+    await editRow.click();
+    await expect(page.getByText(/diff too large|^[-+]/).first()).toBeVisible();
   });
 
-  test("projects search filters results", async ({ page }) => {
-    await page.goto("/projects/");
-    const main = page.locator("main");
+  test("files tab lists touched files and opens their changes", async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/claude-code/${editSession}?tab=files`);
+    // Rows show an edit/write tally; opening one reveals its changes. The
+    // tally is pluralised, so a single change reads "1 edit".
+    const row = page
+      .locator("li")
+      .filter({ hasText: /\d+ (edit|write)s?/ })
+      .first();
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(
+      page.getByRole("button", { name: /↗ #/ }).first(),
+    ).toBeVisible();
+  });
 
-    const searchInput = main.getByPlaceholder("Filter projects...");
-    await expect(searchInput).toBeVisible();
-
-    await searchInput.fill("dotfiles");
-
-    const countText = main.getByText(/of \d+ items/);
-    await expect(countText).toBeVisible();
+  test("commands tab renders its windowed rows", async ({ page }) => {
+    await page.goto(
+      "/sessions/claude-code/22222222-aaaa-bbbb-cccc-222222222222?tab=commands",
+    );
+    // Highlighting splits the command into spans, so match the row rather
+    // than a contiguous text node.
+    await expect(
+      page.locator("li").filter({ hasText: "go test" }).first(),
+    ).toBeVisible();
   });
 });

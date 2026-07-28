@@ -24,7 +24,9 @@ jobs:
       - name: Get version from flake.nix
         id: version
         run: |
-          VERSION=$(grep 'version = ' flake.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
+          # Match only the quoted assignment: the ccpeek-ui derivation
+          # carries an unquoted `version = self'...` reference above it.
+          VERSION=$(grep 'version = "' flake.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
           echo "version=$VERSION" >>$GITHUB_OUTPUT
       - name: Check if tag exists
         id: check_tag
@@ -58,16 +60,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: extractions/setup-just@v3
-      - name: Install cross-compiler
-        if: matrix.os == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-      - name: Build CSS and generate assets
+      - name: Build UI and generate assets
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           pnpm install
-          just css
-          CGO_ENABLED=1 go build -tags sqlite_fts5 -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
+          just ui
+          go build -tags withui -ldflags="-s -w -X github.com/ahmedelgabri/ccpeek/internal/cmd.Version=$VERSION" -o ccpeek-native ./cmd/ccpeek/
           mkdir -p dist/completions dist/man
           ./ccpeek-native completion bash > dist/completions/ccpeek.bash
           ./ccpeek-native completion zsh > dist/completions/_ccpeek
@@ -82,11 +81,7 @@ jobs:
           for arch in amd64 arm64; do
             DIR="ccpeek-${VERSION}-${{ matrix.os }}-${arch}"
             mkdir -p "dist/${DIR}"
-            CC_FLAG=""
-            if [ "${{ matrix.os }}" = "linux" ] && [ "$arch" = "arm64" ]; then
-              CC_FLAG="CC=aarch64-linux-gnu-gcc"
-            fi
-            env $CC_FLAG CGO_ENABLED=1 GOOS=${{ matrix.os }} GOARCH=${arch} go build -tags sqlite_fts5 -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
+            CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${arch} go build -tags withui -ldflags="$LDFLAGS" -o "dist/${DIR}/ccpeek" ./cmd/ccpeek/
             cp -r dist/completions "dist/${DIR}/"
             cp -r dist/man "dist/${DIR}/"
             tar -czf "dist/${DIR}.tar.gz" -C dist "$DIR"
