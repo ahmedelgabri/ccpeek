@@ -19,6 +19,12 @@ stays on this machine.
 brew install ahmedelgabri/tap/ccpeek
 ```
 
+### mise
+
+```sh
+mise use "github:ahmedelgabri/ccpeek"
+```
+
 ### Nix Flakes
 
 ```sh
