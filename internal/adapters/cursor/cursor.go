@@ -1,18 +1,17 @@
-// Package cursor is the Cursor adapter — the launch set's only non-file
-// source (docs/v2-plan.md §6): one SQLite database per session at
-// chats/{workspace-hash}/{session-uuid}/store.db. Meta values are
-// hex-encoded JSON; message blobs on real Cursor installs are raw JSON
-// BLOBs (fixtures still use hex TEXT). Binary non-message blobs (DAG /
-// checkpoint nodes) are skipped. The SourceRef is the per-session
-// store.db; change detection hashes it like any other file, and Parse
-// queries it as a database — the SourceDatabase path the adapter
-// framework was designed around.
+// Package cursor is the Cursor adapter. It indexes two session sources
+// under ~/.cursor:
 //
-// Real stores use content-hash blob ids with no per-message timestamp;
-// transcript order is SQLite rowid (append order). Numeric blob ids
-// (fixtures) still sort numerically so out-of-order inserts stay correct.
-// Tool calls live inside assistant/tool content blocks (type "tool-call"
-// / "tool-result"). Usage tokens are uncommon in live blobs.
+//   - chats/{workspace-hash}/{session-uuid}/store.db — SQLite per session
+//     (SourceDatabase). Meta is hex-encoded JSON; message blobs on live
+//     installs are raw JSON BLOBs (fixtures still use hex TEXT). Binary
+//     DAG/checkpoint blobs are skipped. Transcript order is SQLite rowid.
+//   - projects/{encoded-cwd}/agent-transcripts/{uuid}/{uuid}.jsonl — the
+//     IDE agent transcript (SourceFile). These keep writing after
+//     store.db traffic stopped on many machines; UUIDs already covered by
+//     a store.db are skipped so the richer SQLite parse wins.
+//
+// Tool calls: store.db uses content blocks typed "tool-call"/"tool-result";
+// JSONL uses "tool_use" (often without results). Usage tokens are uncommon.
 package cursor
 
 import (
@@ -57,19 +56,17 @@ func (*Adapter) RootSpec() agent.RootSpec {
 	}
 }
 
-// Discover walks chats/{workspace-hash}/{session-uuid}/store.db. The
-// workspace-hash directory is opaque; identity is the session uuid and
-// context comes from the database itself.
+// Discover enumerates per-session store.db files under chats/ and IDE
+// agent-transcript JSONL files under projects/*/agent-transcripts/.
 func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
+	var refs []agent.SourceRef
+	storeIDs := map[string]struct{}{}
+
 	chatsDir := filepath.Join(root.Path, "chats")
 	wsDirs, err := os.ReadDir(chatsDir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", chatsDir, err)
 	}
-	var refs []agent.SourceRef
 	for _, ws := range wsDirs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -87,6 +84,7 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			}
 			dbPath := filepath.Join(chatsDir, ws.Name(), sess.Name(), "store.db")
 			if fi, err := os.Stat(dbPath); err == nil && !fi.IsDir() {
+				storeIDs[sess.Name()] = struct{}{}
 				refs = append(refs, agent.SourceRef{
 					Root: root, Path: dbPath, Kind: agent.SourceDatabase,
 					// A live cursor-agent runs the store in WAL mode, so a
@@ -104,7 +102,17 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			}
 		}
 	}
+
+	refs = append(refs, discoverTranscripts(ctx, root, storeIDs)...)
 	return refs, nil
+}
+
+// Parse dispatches store.db vs agent-transcript JSONL by path shape.
+func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
+	if isTranscriptSource(src.Path) {
+		return a.parseTranscript(ctx, src, sink)
+	}
+	return a.parseStore(ctx, src, sink)
 }
 
 type metaDoc struct {
@@ -146,7 +154,7 @@ type blobRow struct {
 }
 
 // Parse opens the per-session database read-only and emits its records.
-func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
+func (a *Adapter) parseStore(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
 	sdb, err := sql.Open("sqlite", "file:"+src.Path+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src.Path, err)
