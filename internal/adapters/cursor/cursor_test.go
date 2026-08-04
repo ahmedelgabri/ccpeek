@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -159,9 +160,9 @@ func TestNumericBlobIDsOrderNumerically(t *testing.T) {
 			wantID: []string{"1", "2", "3", "4", "10", "11"},
 		},
 		{
-			name: "non-numeric ids stay lexicographic", decl: "TEXT",
+			name: "non-numeric ids keep rowid (live Cursor hash ids)", decl: "TEXT",
 			ids:    []any{"blob-c", "blob-a", "blob-b"},
-			wantID: []string{"blob-a", "blob-b", "blob-c"},
+			wantID: []string{"blob-c", "blob-a", "blob-b"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -218,5 +219,84 @@ func TestDiscoverDeclaresWALCompanion(t *testing.T) {
 	sink := parseRoot(t, root)
 	if len(sink.Messages) != 1 {
 		t.Errorf("messages = %d with no wal present, want 1", len(sink.Messages))
+	}
+}
+
+// TestParseRealRawJSONBlobStore covers the live Cursor shape: BLOB column
+// with raw JSON (not hex TEXT), content-hash ids, and tool-call blocks.
+// Ordering must follow rowid, not id lexicography.
+func TestParseRealRawJSONBlobStore(t *testing.T) {
+	root := t.TempDir()
+	sid := "a1b2c3d4-1111-2222-3333-cursorraw0001"
+	dir := filepath.Join(root, "chats", "ws-real", sid)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "store.db")
+	sdb, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sdb.Exec(`
+		CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+		CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	meta := hex.EncodeToString([]byte(`{"agentId":"` + sid + `","name":"New Agent","createdAt":1751364000000,"mode":"agent"}`))
+	if _, err := sdb.Exec(`INSERT INTO meta(key,value) VALUES ('0', ?)`, meta); err != nil {
+		t.Fatal(err)
+	}
+	// Hash-like ids inserted in conversation order; lexicographic id order
+	// would put the assistant before the user.
+	blobs := []struct {
+		id   string
+		body string
+	}{
+		{"ff00000000000000000000000000000000000000000000000000000000000001",
+			`{"role":"system","content":"You are an AI coding assistant, powered by Opus 4.6."}`},
+		{"aa00000000000000000000000000000000000000000000000000000000000002",
+			`{"role":"user","content":"Workspace Path: /home/u/demo/api\n\n<user_query>\nSpeed up CI\n</user_query>"}`},
+		{"bb00000000000000000000000000000000000000000000000000000000000003",
+			`{"role":"assistant","content":[{"type":"text","text":"On it."},{"type":"tool-call","toolCallId":"call_1","toolName":"Read","args":{"path":"Makefile"}}],"providerOptions":{"cursor":{}}}`},
+		{"cc00000000000000000000000000000000000000000000000000000000000004",
+			`{"role":"tool","content":[{"type":"tool-result","toolCallId":"call_1","toolName":"Read","result":"build:\n\tgo build"}]}`},
+		{"deadbeef00000000000000000000000000000000000000000000000000000000",
+			"this is not json"}, // binary/garbage skipped
+	}
+	for _, b := range blobs {
+		if _, err := sdb.Exec(`INSERT INTO blobs(id, data) VALUES (?, ?)`, b.id, []byte(b.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sdb.Close()
+
+	sink := parseRoot(t, root)
+	if len(sink.Sessions) != 1 {
+		t.Fatalf("sessions = %d", len(sink.Sessions))
+	}
+	sess := sink.Sessions[0]
+	if sess.Title != "Speed up CI" {
+		t.Errorf("title = %q, want user_query text", sess.Title)
+	}
+	if sess.CWD != "/home/u/demo/api" {
+		t.Errorf("cwd = %q", sess.CWD)
+	}
+	if len(sink.Messages) != 4 {
+		t.Fatalf("messages = %d, want 4 (garbage blob skipped)", len(sink.Messages))
+	}
+	roles := []canon.Role{sink.Messages[0].Role, sink.Messages[1].Role, sink.Messages[2].Role, sink.Messages[3].Role}
+	wantRoles := []canon.Role{canon.RoleSystem, canon.RoleUser, canon.RoleAssistant, canon.RoleTool}
+	if !slices.Equal(roles, wantRoles) {
+		t.Fatalf("roles = %v, want rowid order %v", roles, wantRoles)
+	}
+	if !strings.HasPrefix(sink.Messages[0].Model, "Opus") {
+		t.Errorf("system model = %q", sink.Messages[0].Model)
+	}
+	if len(sink.ToolCalls) != 1 || sink.ToolCalls[0].Name != "Read" {
+		t.Fatalf("tool calls = %+v", sink.ToolCalls)
+	}
+	if len(sink.ToolResults) != 1 || sink.ToolResults[0].CallExternalID != "call_1" {
+		t.Fatalf("tool results = %+v", sink.ToolResults)
 	}
 }

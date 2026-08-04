@@ -171,7 +171,7 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 | Pi          | supported        | ✓        | ✓          | ✓          | Documented session format; forks/branches; reported costs                                                                             |
 | Codex CLI   | supported        | ✓        | ✓          | ✓          | Cumulative token counts recovered per turn; reasoning is a subset of output                                                           |
 | OpenCode    | supported        | ✓        | ✓          | ✓          | Reported costs preferred; additive reasoning folded into billable output                                                              |
-| Cursor      | **experimental** | ✓        | ✓          | —          | Schema derived from fixtures, not yet validated against a real `store.db`; no tool extraction. Expect gaps until real-data validation |
+| Cursor      | **experimental** | ✓        | partial    | ✓          | Live `store.db` validated (raw JSON BLOBs, rowid order). Titles/cwd inferred from message text when meta omits them. Usage rarely present in blobs; plans/JSONL sidecars not indexed yet. |
 
 ## Agent-facing surface
 
