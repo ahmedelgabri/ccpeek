@@ -17,27 +17,36 @@ import (
 const maxLineBytes = 10 * 1024 * 1024
 
 // isTranscriptSource reports agent-transcript JSONL paths.
-// Layout: projects/<encoded-cwd>/agent-transcripts/<uuid>/<uuid>.jsonl
+// Layouts:
+//   - projects/<encoded-cwd>/agent-transcripts/<uuid>/<uuid>.jsonl
+//   - …/agent-transcripts/<parent>/subagents/<uuid>.jsonl
 func isTranscriptSource(path string) bool {
 	return strings.HasSuffix(path, ".jsonl") &&
 		strings.Contains(filepath.ToSlash(path), "/agent-transcripts/")
 }
 
-// discoverTranscripts walks projects/*/agent-transcripts/*/*.jsonl.
+// transcriptSessionID is the JSONL filename stem — works for both
+// <uuid>/<uuid>.jsonl and …/subagents/<uuid>.jsonl.
+func transcriptSessionID(path string) string {
+	base := filepath.Base(path)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// discoverTranscripts walks projects/*/agent-transcripts JSONL files.
 // storeIDs are session UUIDs already covered by a chats/.../store.db —
-// those JSONL files are skipped so the SQLite parse remains authoritative
-// for the overlap set (~5k on a typical corpus) while JSONL-only sessions
-// (recent IDE chats after store.db traffic stopped) still index.
-func discoverTranscripts(ctx context.Context, root agent.Root, storeIDs map[string]struct{}) []agent.SourceRef {
+// matching parent JSONL files are skipped so the SQLite parse remains
+// authoritative for the overlap set, while JSONL-only parents and all
+// subagent transcripts (own UUIDs) still index.
+func discoverTranscripts(ctx context.Context, root agent.Root, storeIDs map[string]struct{}) ([]agent.SourceRef, error) {
 	projectsDir := filepath.Join(root.Path, "projects")
 	projEntries, err := os.ReadDir(projectsDir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var refs []agent.SourceRef
 	for _, proj := range projEntries {
 		if err := ctx.Err(); err != nil {
-			return refs
+			return refs, err
 		}
 		if !proj.IsDir() {
 			continue
@@ -52,18 +61,40 @@ func discoverTranscripts(ctx context.Context, root agent.Root, storeIDs map[stri
 				continue
 			}
 			id := sess.Name()
-			if _, covered := storeIDs[id]; covered {
+			sessDir := filepath.Join(transcriptsDir, id)
+
+			if _, covered := storeIDs[id]; !covered {
+				path := filepath.Join(sessDir, id+".jsonl")
+				if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+					refs = append(refs, agent.SourceRef{
+						Root: root, Path: path, Kind: agent.SourceFile,
+					})
+				}
+			}
+
+			subDir := filepath.Join(sessDir, "subagents")
+			subs, err := os.ReadDir(subDir)
+			if err != nil {
 				continue
 			}
-			path := filepath.Join(transcriptsDir, id, id+".jsonl")
-			if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+			for _, sub := range subs {
+				name := sub.Name()
+				if sub.IsDir() || !strings.HasSuffix(name, ".jsonl") {
+					continue
+				}
+				stem := strings.TrimSuffix(name, ".jsonl")
+				if _, covered := storeIDs[stem]; covered {
+					continue
+				}
 				refs = append(refs, agent.SourceRef{
-					Root: root, Path: path, Kind: agent.SourceFile,
+					Root: root,
+					Path: filepath.Join(subDir, name),
+					Kind: agent.SourceFile,
 				})
 			}
 		}
 	}
-	return refs
+	return refs, nil
 }
 
 type transcriptLine struct {
@@ -89,7 +120,7 @@ type transcriptPending struct {
 
 // parseTranscript reads one agent-transcripts JSONL file.
 func (a *Adapter) parseTranscript(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
-	sessionID := filepath.Base(filepath.Dir(src.Path))
+	sessionID := transcriptSessionID(src.Path)
 	cwd := decodeProjectDir(projectDirFromTranscript(src.Path))
 
 	f, err := os.Open(src.Path)
@@ -227,7 +258,7 @@ func (a *Adapter) parseTranscript(ctx context.Context, src agent.SourceRef, sink
 }
 
 func projectDirFromTranscript(path string) string {
-	// .../projects/<proj>/agent-transcripts/<uuid>/<file>.jsonl
+	// .../projects/<proj>/agent-transcripts/<uuid>/…
 	slash := filepath.ToSlash(path)
 	const marker = "/agent-transcripts/"
 	i := strings.Index(slash, marker)

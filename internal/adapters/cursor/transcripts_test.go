@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/agent/agenttest"
@@ -17,6 +18,7 @@ func TestDiscoverIncludesTranscriptsAndSkipsStoreOverlap(t *testing.T) {
 	root := t.TempDir()
 	storeID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	jsonlOnly := "11111111-2222-3333-4444-555555555555"
+	subID := "99999999-aaaa-bbbb-cccc-dddddddddddd"
 	overlapID := storeID
 
 	// store.db session
@@ -35,6 +37,16 @@ func TestDiscoverIncludesTranscriptsAndSkipsStoreOverlap(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(overlapDir, overlapID+".jsonl"), []byte(
 		`{"role":"user","message":{"content":[{"type":"text","text":"overlap"}]}}`+"\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Subagent under an overlapped parent must still be discovered.
+	subDir := filepath.Join(overlapDir, "subagents")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, subID+".jsonl"), []byte(
+		`{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nSub task\n</user_query>"}]}}`+"\n",
 	), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +71,10 @@ func TestDiscoverIncludesTranscriptsAndSkipsStoreOverlap(t *testing.T) {
 	for _, r := range refs {
 		paths = append(paths, r.Path)
 	}
-	if len(refs) != 2 {
-		t.Fatalf("sources = %d (%v), want store.db + jsonl-only", len(refs), paths)
+	if len(refs) != 3 {
+		t.Fatalf("sources = %d (%v), want store.db + jsonl-only + subagent", len(refs), paths)
 	}
-	var sawStore, sawJSONL, sawOverlap bool
+	var sawStore, sawJSONL, sawOverlap, sawSub bool
 	for _, r := range refs {
 		if strings.HasSuffix(r.Path, "store.db") {
 			sawStore = true
@@ -79,9 +91,13 @@ func TestDiscoverIncludesTranscriptsAndSkipsStoreOverlap(t *testing.T) {
 		if strings.Contains(r.Path, overlapID+".jsonl") {
 			sawOverlap = true
 		}
+		if strings.Contains(r.Path, filepath.Join("subagents", subID+".jsonl")) {
+			sawSub = true
+		}
 	}
-	if !sawStore || !sawJSONL || sawOverlap {
-		t.Fatalf("sawStore=%v sawJSONL=%v sawOverlap=%v paths=%v", sawStore, sawJSONL, sawOverlap, paths)
+	if !sawStore || !sawJSONL || sawOverlap || !sawSub {
+		t.Fatalf("sawStore=%v sawJSONL=%v sawOverlap=%v sawSub=%v paths=%v",
+			sawStore, sawJSONL, sawOverlap, sawSub, paths)
 	}
 }
 
@@ -123,8 +139,14 @@ func TestParseTranscriptJSONL(t *testing.T) {
 	if sess.CWD != "/Users/demo/api" {
 		t.Errorf("cwd = %q", sess.CWD)
 	}
-	if sess.CreatedAt.IsZero() || sess.ModifiedAt.IsZero() {
-		t.Errorf("times unset: %v / %v", sess.CreatedAt, sess.ModifiedAt)
+	// 4:53 PM UTC+2 → 14:53 UTC. Prior bugs: space eaten before "(UTC)",
+	// missing "Jan" layout, and offset ignored (wall clock treated as UTC).
+	wantTS := time.Date(2026, 8, 4, 14, 53, 0, 0, time.UTC)
+	if !sess.CreatedAt.Equal(wantTS) {
+		t.Errorf("createdAt = %v, want %v from embedded timestamp", sess.CreatedAt, wantTS)
+	}
+	if !sink.Messages[0].CreatedAt.Equal(wantTS) {
+		t.Errorf("user message time = %v, want %v", sink.Messages[0].CreatedAt, wantTS)
 	}
 	if len(sink.Messages) != 3 {
 		t.Fatalf("messages = %d", len(sink.Messages))
@@ -136,6 +158,72 @@ func TestParseTranscriptJSONL(t *testing.T) {
 	}
 	if len(sink.ToolCalls) != 1 || sink.ToolCalls[0].Name != "Read" {
 		t.Fatalf("tools = %+v", sink.ToolCalls)
+	}
+}
+
+func TestParseSubagentTranscript(t *testing.T) {
+	root := t.TempDir()
+	parent := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	sub := "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+	dir := filepath.Join(root, "projects", "Users-demo-api", "agent-transcripts", parent, "subagents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, sub+".jsonl")
+	body := `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nExplore subtree\n</user_query>"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	src := agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: root},
+		Path: path, Kind: agent.SourceFile,
+	}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Sessions) != 1 || sink.Sessions[0].ExternalID != sub {
+		t.Fatalf("session = %+v, want external id %s", sink.Sessions, sub)
+	}
+	if sink.Sessions[0].Title != "Explore subtree" {
+		t.Errorf("title = %q", sink.Sessions[0].Title)
+	}
+	if sink.Sessions[0].CWD != "/Users/demo/api" {
+		t.Errorf("cwd = %q", sink.Sessions[0].CWD)
+	}
+}
+
+func TestParseEmbeddedTimestamp(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Time
+	}{
+		{
+			"Tuesday, Aug 4, 2026, 4:53 PM (UTC+2)",
+			time.Date(2026, 8, 4, 14, 53, 0, 0, time.UTC),
+		},
+		{
+			"Sunday, May 17, 2026, 1:50 PM (UTC+2)",
+			time.Date(2026, 5, 17, 11, 50, 0, 0, time.UTC),
+		},
+		{
+			"Monday, January 5, 2026, 9:01 AM (UTC)",
+			time.Date(2026, 1, 5, 9, 1, 0, 0, time.UTC),
+		},
+		{
+			"Friday, Jan 2, 2026, 10:00 AM (UTC-05:30)",
+			time.Date(2026, 1, 2, 15, 30, 0, 0, time.UTC),
+		},
+	}
+	for _, tt := range cases {
+		got, ok := parseEmbeddedTimestamp("<timestamp>" + tt.in + "</timestamp>")
+		if !ok {
+			t.Errorf("parse(%q) failed", tt.in)
+			continue
+		}
+		if !got.Equal(tt.want) {
+			t.Errorf("parse(%q) = %v, want %v", tt.in, got, tt.want)
+		}
 	}
 }
 

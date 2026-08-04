@@ -6,9 +6,10 @@
 //     installs are raw JSON BLOBs (fixtures still use hex TEXT). Binary
 //     DAG/checkpoint blobs are skipped. Transcript order is SQLite rowid.
 //   - projects/{encoded-cwd}/agent-transcripts/{uuid}/{uuid}.jsonl — the
-//     IDE agent transcript (SourceFile). These keep writing after
-//     store.db traffic stopped on many machines; UUIDs already covered by
-//     a store.db are skipped so the richer SQLite parse wins.
+//     IDE agent transcript (SourceFile), plus nested
+//     …/subagents/{uuid}.jsonl Task runs. UUIDs already covered by a
+//     store.db skip the parent JSONL so the richer SQLite parse wins;
+//     subagent files still index under their own UUIDs.
 //
 // Tool calls: store.db uses content blocks typed "tool-call"/"tool-result";
 // JSONL uses "tool_use" (often without results). Usage tokens are uncommon.
@@ -103,7 +104,11 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 		}
 	}
 
-	refs = append(refs, discoverTranscripts(ctx, root, storeIDs)...)
+	extra, err := discoverTranscripts(ctx, root, storeIDs)
+	if err != nil {
+		return nil, err
+	}
+	refs = append(refs, extra...)
 	return refs, nil
 }
 
@@ -456,8 +461,10 @@ func messageTime(msg blobMessage) time.Time {
 var (
 	timestampRe = regexp.MustCompile(`(?s)<timestamp>\s*([^<]+?)\s*</timestamp>`)
 	workspaceRe = regexp.MustCompile(`(?m)^Workspace Path:\s*(.+)$`)
-	poweredByRe = regexp.MustCompile(`(?i)powered by\s+([^\s.<,]+)`)
+	poweredByRe = regexp.MustCompile(`(?i)powered by\s+([^\n.<]+(?:\.\d+)*)`)
 	userQueryRe = regexp.MustCompile(`(?s)<user_query>\s*(.*?)\s*</user_query>`)
+	// "Tuesday, Aug 4, 2026, 4:53 PM (UTC+2)" / "(UTC)" / "(UTC-05:30)"
+	cursorStampRe = regexp.MustCompile(`^(?i)(.+?)\s*\(UTC([+-]\d{1,2}(?::\d{2})?)?\)$`)
 )
 
 func parseEmbeddedTimestamp(text string) (time.Time, bool) {
@@ -465,30 +472,58 @@ func parseEmbeddedTimestamp(text string) (time.Time, bool) {
 	if m == nil {
 		return time.Time{}, false
 	}
-	layouts := []string{
-		time.RFC1123,
-		"Monday, January 2, 2006, 3:04 PM (MST)",
-		"Monday, January 2, 2006, 15:04 (MST)",
+	return parseCursorTimestamp(strings.TrimSpace(m[1]))
+}
+
+func parseCursorTimestamp(s string) (time.Time, bool) {
+	zone := time.UTC
+	core := s
+	if m := cursorStampRe.FindStringSubmatch(s); m != nil {
+		core = strings.TrimSpace(m[1])
+		if m[2] != "" {
+			if sec, ok := utcOffsetSeconds(m[2]); ok {
+				zone = time.FixedZone("UTC"+m[2], sec)
+			}
+		}
 	}
-	s := strings.TrimSpace(m[1])
-	// Common Cursor form: "Sunday, May 17, 2026, 1:50 PM (UTC+2)"
-	if t, err := time.Parse("Monday, January 2, 2006, 3:04 PM (MST)", stripUTCOffset(s)); err == nil {
-		return t.UTC(), true
+	layouts := []string{
+		"Monday, Jan 2, 2006, 3:04 PM",
+		"Monday, January 2, 2006, 3:04 PM",
+		"Monday, Jan 2, 2006, 15:04",
+		"Monday, January 2, 2006, 15:04",
+		time.RFC1123,
 	}
 	for _, layout := range layouts {
-		if t, err := time.Parse(layout, s); err == nil {
+		if t, err := time.ParseInLocation(layout, core, zone); err == nil {
 			return t.UTC(), true
 		}
 	}
 	return time.Time{}, false
 }
 
-func stripUTCOffset(s string) string {
-	// "… (UTC+2)" / "(UTC-5)" → treat as UTC label for Parse's MST slot.
-	if i := strings.LastIndex(s, "(UTC"); i >= 0 {
-		return strings.TrimSpace(s[:i]) + "(UTC)"
+// utcOffsetSeconds parses "+2", "-5", "+05:30" into seconds east of UTC.
+func utcOffsetSeconds(off string) (int, bool) {
+	if off == "" {
+		return 0, true
 	}
-	return s
+	sign := 1
+	switch off[0] {
+	case '+':
+		off = off[1:]
+	case '-':
+		sign = -1
+		off = off[1:]
+	}
+	hours := 0
+	mins := 0
+	if i := strings.IndexByte(off, ':'); i >= 0 {
+		if _, err := fmt.Sscanf(off, "%d:%d", &hours, &mins); err != nil {
+			return 0, false
+		}
+	} else if _, err := fmt.Sscanf(off, "%d", &hours); err != nil {
+		return 0, false
+	}
+	return sign * (hours*3600 + mins*60), true
 }
 
 func workspaceFromText(text string) string {
@@ -504,7 +539,7 @@ var modelNameRe = regexp.MustCompile(`"modelName"\s*:\s*"([^"]+)"`)
 func modelFromBlob(msg blobMessage, raw []byte) string {
 	if text := contentText(msg.Content); text != "" {
 		if m := poweredByRe.FindStringSubmatch(text); m != nil {
-			return m[1]
+			return strings.TrimSpace(m[1])
 		}
 	}
 	var po struct {

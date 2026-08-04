@@ -171,7 +171,7 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 | Pi          | supported        | ✓        | ✓          | ✓          | Documented session format; forks/branches; reported costs                                                                             |
 | Codex CLI   | supported        | ✓        | ✓          | ✓          | Cumulative token counts recovered per turn; reasoning is a subset of output                                                           |
 | OpenCode    | supported        | ✓        | ✓          | ✓          | Reported costs preferred; additive reasoning folded into billable output                                                              |
-| Cursor      | **experimental** | ✓        | partial    | ✓          | Live `store.db` (raw JSON BLOBs) plus `projects/*/agent-transcripts` JSONL for IDE-only sessions. Overlapping UUIDs prefer `store.db`. Usage rarely present; plans not indexed yet. |
+| Cursor      | **experimental** | ✓        | partial    | ✓          | Live `store.db` (raw JSON BLOBs) plus `projects/*/agent-transcripts` JSONL (IDE sessions + `subagents/`). Overlapping parent UUIDs prefer `store.db`. Usage rarely present; plans not indexed yet. |
 
 ## Agent-facing surface
 

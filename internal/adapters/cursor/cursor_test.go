@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -290,8 +289,8 @@ func TestParseRealRawJSONBlobStore(t *testing.T) {
 	if !slices.Equal(roles, wantRoles) {
 		t.Fatalf("roles = %v, want rowid order %v", roles, wantRoles)
 	}
-	if !strings.HasPrefix(sink.Messages[0].Model, "Opus") {
-		t.Errorf("system model = %q", sink.Messages[0].Model)
+	if sink.Messages[0].Model != "Opus 4.6" {
+		t.Errorf("system model = %q, want full powered-by capture", sink.Messages[0].Model)
 	}
 	if len(sink.ToolCalls) != 1 || sink.ToolCalls[0].Name != "Read" {
 		t.Fatalf("tool calls = %+v", sink.ToolCalls)
