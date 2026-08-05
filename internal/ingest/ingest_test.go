@@ -972,3 +972,227 @@ func TestAddRecursiveCountsFailuresAndPrunesDeletedDirs(t *testing.T) {
 		t.Errorf("failures for a missing root = %d, want 0", failed)
 	}
 }
+
+// TestPollReindexesOnChange covers the scan half of the kqueue-platform
+// loop: a corpus mutated before the loop starts surfaces through
+// onChange, no-change passes stay silent, and cancellation ends the loop.
+func TestPollReindexesOnChange(t *testing.T) {
+	runner, _ := newRunner(t)
+
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(tmp, "claude-code", "projects", "-home-u-demo-api",
+		"22222222-aaaa-bbbb-cccc-222222222222.jsonl")
+	line := `{"parentUuid":"u-103","isSidechain":false,"cwd":"/home/u/demo/api","sessionId":"22222222-aaaa-bbbb-cccc-222222222222","gitBranch":"feat/limits","type":"user","message":{"role":"user","content":"and lint it"},"uuid":"u-104","timestamp":"2026-07-02T09:10:00.000Z"}` + "\n"
+	appendTo(t, target, line)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	changes := make(chan *Report, 1)
+	done := make(chan error, 1)
+	go func() {
+		timings := pollTimings{
+			idle: 10 * time.Millisecond, fast: 10 * time.Millisecond,
+			hotFor: time.Minute, debounce: 10 * time.Millisecond,
+		}
+		done <- runner.poll(ctx, opts, timings, func(rep *Report) {
+			select {
+			case changes <- rep:
+			default:
+			}
+		})
+	}()
+
+	select {
+	case rep := <-changes:
+		if rep.FilesChanged != 1 {
+			t.Errorf("files changed = %d, want 1", rep.FilesChanged)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("poll never reported the change")
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("poll returned %v, want context.Canceled", err)
+	}
+	// The passes between the report and cancellation changed nothing; a
+	// buffered send here means onChange fired for a no-change pass.
+	select {
+	case rep := <-changes:
+		t.Errorf("onChange fired for a no-change pass: %+v", rep)
+	default:
+	}
+}
+
+func appendTo(t *testing.T, path, line string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+// The point of the per-file watches: an append to a recently-active
+// session triggers a pass without waiting for a scan tick. Both scan
+// intervals sit far beyond the test deadline, so only a kqueue event on
+// the watched file can deliver the report.
+func TestHotFileEventTriggersPassWithoutScan(t *testing.T) {
+	if w, err := fsnotify.NewWatcher(); err != nil {
+		t.Skipf("fsnotify unavailable: %v", err)
+	} else {
+		w.Close()
+	}
+
+	runner, _ := newRunner(t)
+	tmp := t.TempDir()
+	copyDir(t, fixturePath(t, "claude-code"), filepath.Join(tmp, "claude-code"))
+	opts := fixtureOptions(t)
+	opts.ConfigRoots[claude.Slug] = []string{filepath.Join(tmp, "claude-code")}
+
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	changes := make(chan *Report, 1)
+	go func() {
+		timings := pollTimings{
+			idle: time.Hour, fast: time.Hour,
+			hotFor: time.Minute, debounce: 10 * time.Millisecond,
+		}
+		_ = runner.poll(ctx, opts, timings, func(rep *Report) {
+			select {
+			case changes <- rep:
+			default:
+			}
+		})
+	}()
+
+	target := filepath.Join(tmp, "claude-code", "projects", "-home-u-demo-api",
+		"22222222-aaaa-bbbb-cccc-222222222222.jsonl")
+	line := `{"parentUuid":"u-103","isSidechain":false,"cwd":"/home/u/demo/api","sessionId":"22222222-aaaa-bbbb-cccc-222222222222","gitBranch":"feat/limits","type":"user","message":{"role":"user","content":"and lint it"},"uuid":"u-104","timestamp":"2026-07-02T09:10:00.000Z"}` + "\n"
+	// Watch registration races the first append; re-appending keeps
+	// events coming until one lands after the watch is in place.
+	deadline := time.Now().Add(10 * time.Second)
+	var got *Report
+	for got == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("appends to a hot file never triggered a pass")
+		}
+		appendTo(t, target, line)
+		select {
+		case got = <-changes:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if got.FilesChanged == 0 {
+		t.Errorf("event-triggered pass reported 0 changed files")
+	}
+}
+
+// hotFiles bounds the descriptor budget: only files modified within
+// hotWindow qualify, the newest win when over maxHotFiles, and the
+// result is newest-first.
+func TestHotFilesWindowCapAndOrder(t *testing.T) {
+	runner, _ := newRunner(t)
+	root := filepath.Join(t.TempDir(), "claude-code")
+	dir := filepath.Join(root, "projects", "p")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	stale := filepath.Join(dir, "stale.jsonl")
+	if err := os.WriteFile(stale, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(stale, now.Add(-48*time.Hour), now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxHotFiles+3; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("s%04d.jsonl", i))
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mod := now.Add(-time.Duration(i) * time.Second)
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	opts := fixtureOptions(t)
+	opts.ConfigRoots = map[canon.AgentSlug][]string{claude.Slug: {root}}
+	got := runner.hotFiles(opts)
+
+	if len(got) != maxHotFiles {
+		t.Fatalf("hot files = %d, want the maxHotFiles cap (%d)", len(got), maxHotFiles)
+	}
+	if got[0] != filepath.Join(dir, "s0000.jsonl") {
+		t.Errorf("first = %s, want the newest file", got[0])
+	}
+	if got[len(got)-1] != filepath.Join(dir, fmt.Sprintf("s%04d.jsonl", maxHotFiles-1)) {
+		t.Errorf("last = %s, want the oldest surviving file", got[len(got)-1])
+	}
+	for _, p := range got {
+		if p == stale {
+			t.Error("a file older than hotWindow made the hot set")
+		}
+	}
+}
+
+// syncHotWatches converges the watch set on the current hot set, so
+// descriptors are released as sessions age out rather than accumulating.
+func TestSyncHotWatchesAddsAndRemoves(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Skipf("fsnotify unavailable: %v", err)
+	}
+	defer watcher.Close()
+
+	runner, _ := newRunner(t)
+	root := filepath.Join(t.TempDir(), "claude-code")
+	dir := filepath.Join(root, "projects", "p")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(dir, "a.jsonl")
+	b := filepath.Join(dir, "b.jsonl")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := fixtureOptions(t)
+	opts.ConfigRoots = map[canon.AgentSlug][]string{claude.Slug: {root}}
+
+	watched := map[string]bool{}
+	runner.syncHotWatches(watcher, opts, watched)
+	if !watched[a] || !watched[b] || len(watched) != 2 {
+		t.Fatalf("watched = %v, want both fresh files", watched)
+	}
+
+	// a ages out of the hot window; its watch (and descriptor) goes too.
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(a, old, old); err != nil {
+		t.Fatal(err)
+	}
+	runner.syncHotWatches(watcher, opts, watched)
+	if watched[a] || !watched[b] || len(watched) != 1 {
+		t.Errorf("watched = %v, want only the still-hot file", watched)
+	}
+	if list := watcher.WatchList(); len(list) != 1 {
+		t.Errorf("watcher holds %d watches, want 1: %v", len(list), list)
+	}
+}

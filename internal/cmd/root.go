@@ -84,11 +84,13 @@ func init() {
 	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
 	rootCmd.Flags().Bool("skip-scan", false, "Skip secret scanning after indexing")
 	rootCmd.Flags().BoolP("quiet", "q", false, "Suppress informational output")
-	// v2 watches with fsnotify, so there is no interval to set. The flag
-	// stays accepted so existing scripts keep working, but it is marked
-	// deprecated (cobra prints the notice when it is passed) rather than
-	// advertised with help text that describes behaviour it no longer has
-	// — and it is no longer validated, since rejecting a value that
+	// v2 watches with fsnotify (or, on kqueue platforms, per-file watches
+	// plus an adaptive scan — see ingest.Runner.Watch), so there is no
+	// interval to set.
+	// The flag stays accepted so existing scripts keep working, but it is
+	// marked deprecated (cobra prints the notice when it is passed) rather
+	// than advertised with help text that describes behaviour it no longer
+	// has — and it is no longer validated, since rejecting a value that
 	// changes nothing is the worst of both.
 	rootCmd.Flags().Int("watch-interval", 30, "Re-index interval in seconds")
 	_ = rootCmd.Flags().MarkDeprecated("watch-interval",
@@ -343,7 +345,7 @@ func run(cmd *cobra.Command, args []string) error {
 			ready.Store(true)
 		}
 		if watch {
-			logf("Watch mode enabled (re-indexing on filesystem events)\n")
+			logf("Watch mode enabled (re-indexing on changes)\n")
 			// Watch passes carry the prune policy the serve run started
 			// with, and re-scan what each pass changed — otherwise new
 			// secrets (and pruned sources) stay stale until a restart.

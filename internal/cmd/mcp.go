@@ -124,7 +124,7 @@ func runMCP(cmd *cobra.Command, stdin io.Reader, stdout, logw io.Writer, debounc
 }
 
 // liveIndex is the MCP server's index pipeline: bootstrap, then the
-// secret scan, then the fsnotify watch loop — the serving path's order,
+// secret scan, then the watch loop — the serving path's order,
 // for the serving path's reason (the scanner pages messages across
 // several read snapshots, so an ingest running under it could pair a new
 // content hash with a stale page set; watch passes scan inside onChange,
