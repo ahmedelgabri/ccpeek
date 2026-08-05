@@ -69,7 +69,7 @@
           # pkgs.go (1.26.4) carries GO-2026-5856 and fails govulncheck.
           ccpeek = (pkgs.buildGoModule.override {go = pkgs.go_1_25;}) {
             pname = "ccpeek";
-            version = "2.0.0";
+            version = "2.0.1";
 
             src = lib.cleanSource ./.;
 
