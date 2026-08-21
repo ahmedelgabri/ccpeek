@@ -167,6 +167,27 @@ func TestRollupsMaterializeExactModesWithHistoricalTiers(t *testing.T) {
 	}
 }
 
+func TestRollupsWithNoUsageAreStale(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO agents (id, slug) VALUES (1, 'claude-code')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO rollup_usage_daily (day, agent_id) VALUES ('2026-01-01', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := s.RollupsNeedRegeneration(ctx, stubPricer{})
+	if err != nil || !dirty {
+		t.Fatalf("stale rollup without usage dirty=%v err=%v, want true", dirty, err)
+	}
+	if err := s.RegenerateRollups(ctx, stubPricer{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM rollup_usage_daily`); n != 0 {
+		t.Fatalf("rollups after regeneration = %d, want 0", n)
+	}
+}
+
 func TestPricingFingerprintInvalidatesUnchangedRollups(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)

@@ -79,7 +79,9 @@ func (s *Store) RollupsNeedRegeneration(ctx context.Context, p Pricer) (bool, er
 		return false, err
 	}
 	if usage == 0 {
-		return false, nil
+		// A source prune or manual cleanup can remove the final usage row.
+		// Any remaining rollup is then stale data and must be cleared.
+		return rollups > 0, nil
 	}
 	if rollups == 0 {
 		return true, nil
