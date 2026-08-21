@@ -421,6 +421,13 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentPro
 			*currentProvider = pm.Provider
 		}
 		if pm.Model != "" {
+			// A model-only change cannot safely inherit the old provider: the
+			// pair may resolve to a provider-specific price for a backend Pi no
+			// longer uses. Keep the provider only when the model is unchanged.
+			if pm.Provider == "" && pm.Model != *currentModel {
+				base.Provider = ""
+				*currentProvider = ""
+			}
 			base.Model = pm.Model
 			*currentModel = pm.Model
 		}

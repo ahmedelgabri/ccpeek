@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,6 +165,21 @@ func TestModernMessageAndSummaryUsage(t *testing.T) {
 	}
 	if got := *sink.Messages[2].Usage.ReportedCostUSD; got != 0.2 {
 		t.Errorf("branch summary cost = %v", got)
+	}
+}
+
+func TestModelOnlyMessageClearsStaleProvider(t *testing.T) {
+	provider, model := "openai-codex", "gpt-5.6-sol"
+	entry := entry{
+		Type: "message", ID: "m2",
+		Message: json.RawMessage(`{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"switched"}]}`),
+	}
+	message, _, ok := New().convertEntry(entry, 0, &canon.Session{}, &provider, &model)
+	if !ok {
+		t.Fatal("message did not convert")
+	}
+	if message.Provider != "" || provider != "" || message.Model != "claude-sonnet-5" || model != "claude-sonnet-5" {
+		t.Fatalf("message/state provider-model = %q/%q and %q/%q", message.Provider, message.Model, provider, model)
 	}
 }
 
