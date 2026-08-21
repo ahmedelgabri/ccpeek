@@ -192,6 +192,14 @@ func TestEmbeddedSnapshot(t *testing.T) {
 	if tiered == 0 {
 		t.Error("embedded snapshot contains no long-context tiers")
 	}
+	beforeLaunch, _ := time.Parse("2006-01-02", "2026-06-29")
+	if _, resolution, ok := tbl.ResolveAt("claude-sonnet-5", beforeLaunch, 1); ok || resolution.Key != "claude-sonnet-5" {
+		t.Errorf("pre-launch Sonnet 5 unexpectedly priced: %+v, %v", resolution, ok)
+	}
+	launch, _ := time.Parse("2006-01-02", "2026-06-30")
+	if rate, resolution, ok := tbl.ResolveAt("claude-sonnet-5", launch, 1); !ok || rate.Input != 2e-6 || resolution.EffectiveFrom != "2026-06-30" {
+		t.Errorf("launch Sonnet 5 card = %+v, %+v, %v", rate, resolution, ok)
+	}
 	// A long-stable key that should survive snapshot refreshes.
 	rate, ok := tbl.Lookup("claude-3-opus-20240229")
 	if !ok {

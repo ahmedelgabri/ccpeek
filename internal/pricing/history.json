@@ -1,0 +1,15 @@
+{
+  "claude-sonnet-5": [
+    {
+      "effective_from": "2026-06-30",
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "rate": {
+        "input": 0.000002,
+        "output": 0.00001,
+        "cache_write": 0.0000025,
+        "cache_write_1h": 0.000004,
+        "cache_read": 2e-7
+      }
+    }
+  ]
+}

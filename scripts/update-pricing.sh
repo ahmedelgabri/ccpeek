@@ -11,13 +11,14 @@ set -euo pipefail
 
 SOURCE_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 OUT="internal/pricing/snapshot.json"
+HISTORY="internal/pricing/history.json"
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
 curl -fsSL "$SOURCE_URL" -o "$tmp"
 
-jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+jq --slurpfile history "$HISTORY" --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
   def tier($v; $threshold; $label):
     ({
       above_input_tokens: $threshold,
@@ -30,6 +31,7 @@ jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 
   {
     source: $source,
     fetched_at: $fetched_at,
+    history: $history[0],
     models: (
       to_entries
       | map(select(
