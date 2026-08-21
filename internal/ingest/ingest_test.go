@@ -179,6 +179,58 @@ func TestSecondRunIsNoop(t *testing.T) {
 	}
 }
 
+func TestPricingFingerprintRebuildsRollupsOnNoopPass(t *testing.T) {
+	runner, store := newRunner(t)
+	opts := fixtureOptions(t)
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(context.Background(), `
+		UPDATE rollup_usage_daily SET cost_usd = -1;
+		UPDATE meta SET value = 'stale' WHERE key = 'pricing_rollup_fingerprint'`); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runner.Run(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FilesChanged != 0 {
+		t.Fatalf("pass changed %d sources, want unchanged corpus", report.FilesChanged)
+	}
+	var minimum float64
+	if err := store.DB().QueryRowContext(context.Background(),
+		`SELECT MIN(cost_usd) FROM rollup_usage_daily`).Scan(&minimum); err != nil {
+		t.Fatal(err)
+	}
+	if minimum < 0 {
+		t.Errorf("stale rollup survived fingerprint mismatch: min cost %v", minimum)
+	}
+}
+
+func TestParseVersionReparsesUnchangedSources(t *testing.T) {
+	runner, store := newRunner(t)
+	opts := fixtureOptions(t)
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	before := queryInt(t, store, `SELECT COUNT(*) FROM messages`)
+	if _, err := store.DB().ExecContext(context.Background(),
+		`UPDATE source_files SET parse_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runner.Run(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FilesChanged != report.FilesSeen {
+		t.Errorf("parser bump changed %d/%d sources, want every source reparsed",
+			report.FilesChanged, report.FilesSeen)
+	}
+	if after := queryInt(t, store, `SELECT COUNT(*) FROM messages`); after != before {
+		t.Errorf("messages after forced reparse = %d, want %d", after, before)
+	}
+}
+
 func TestChangedFileReingestsWithoutDuplication(t *testing.T) {
 	runner, store := newRunner(t)
 

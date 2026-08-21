@@ -3,8 +3,14 @@ package query
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
 func TestArtifactsListAndDetail(t *testing.T) {
@@ -134,6 +140,59 @@ func TestSetScanIgnoreSeparatesMissFromFailure(t *testing.T) {
 	all, err := s.ScanFindings(ctx, true)
 	if err != nil || len(all) != 1 || !all[0].Ignored {
 		t.Fatalf("findings after ignore = %+v (err %v)", all, err)
+	}
+}
+
+// Timestamp populations intentionally differ: sessions count every usage row,
+// daily rollups fall back to the session timestamp, and fixed-time blocks
+// require a message timestamp because there is no honest window otherwise.
+func TestCostSurfacePopulationForMissingMessageTimestamp(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	table, err := pricing.Parse([]byte(`{"source":"test","fetched_at":"now","models":{"m":{"input":1,"output":1}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	id, err := w.UpsertSession(canon.Session{
+		Agent: "claude-code", ExternalID: "missing-message-time",
+		CreatedAt: at, ModifiedAt: at,
+	}, "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.InsertMessage(id, "claude-code", canon.Message{
+		Seq: 0, Role: canon.RoleAssistant, Model: "m",
+		Usage: &canon.Usage{InputTokens: 10},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+	sessions, err := svc.Sessions(ctx, SessionsFilter{})
+	if err != nil || len(sessions) != 1 || sessions[0].CostUSD != 10 {
+		t.Fatalf("session population = %+v err=%v", sessions, err)
+	}
+	usage, err := svc.Usage(ctx, UsageFilter{})
+	if err != nil || len(usage) != 1 || usage[0].Group != "2026-08-21" || usage[0].CostUSD != 10 {
+		t.Fatalf("rollup population = %+v err=%v", usage, err)
+	}
+	blocks, err := svc.Blocks(ctx, "", 10)
+	if err != nil || len(blocks) != 0 {
+		t.Fatalf("blocks should exclude untimed message usage: %+v err=%v", blocks, err)
 	}
 }
 

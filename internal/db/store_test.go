@@ -111,6 +111,55 @@ func TestReadsDontQueueBehindWrites(t *testing.T) {
 // on: every version between baseVersion and schemaVersion has exactly
 // one registered migration (pre-release both are equal and the slice is
 // empty).
+func TestV13CostMigrationPreservesArchiveAndAddsColumns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v13.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta VALUES ('schema_version', '13')`,
+		`CREATE TABLE messages (id INTEGER PRIMARY KEY, provider_placeholder TEXT)`,
+		`INSERT INTO messages (id) VALUES (1)`,
+		`CREATE TABLE message_usage (message_id INTEGER PRIMARY KEY)`,
+		`INSERT INTO message_usage VALUES (1)`,
+		`CREATE TABLE source_files (path TEXT PRIMARY KEY)`,
+		`INSERT INTO source_files VALUES ('kept')`,
+		`CREATE TABLE rollup_usage_daily (id INTEGER PRIMARY KEY)`,
+		`INSERT INTO rollup_usage_daily VALUES (1)`,
+		`CREATE TABLE rollup_session_days (id INTEGER PRIMARY KEY)`,
+		`INSERT INTO rollup_session_days VALUES (1)`,
+	} {
+		if _, err := raw.ExecContext(ctx, q); err != nil {
+			raw.Close()
+			t.Fatalf("seed v13: %v (%s)", err, q)
+		}
+	}
+	raw.Close()
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if n := count(t, s, `SELECT COUNT(*) FROM messages`); n != 1 {
+		t.Errorf("archive messages = %d, want preserved", n)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM rollup_usage_daily`); n != 0 {
+		t.Errorf("rollups = %d, want invalidated", n)
+	}
+	for table, column := range map[string]string{
+		"messages": "provider", "message_usage": "cache_write_1h_tokens",
+		"source_files": "parse_version", "rollup_usage_daily": "unpriced_cache_write_tokens",
+	} {
+		if n := count(t, s, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column); n != 1 {
+			t.Errorf("%s.%s missing after migration", table, column)
+		}
+	}
+}
+
 func TestMigrationInvariant(t *testing.T) {
 	if len(migrations) != schemaVersion-baseVersion {
 		t.Fatalf("len(migrations) = %d, want schemaVersion-baseVersion = %d",

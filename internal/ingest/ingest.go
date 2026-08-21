@@ -241,14 +241,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	// leaving Usage blank until the next change.
 	needRollups := report.Sessions > 0 || report.Messages > 0 || prunedSources > 0
 	if !needRollups {
-		var rollups, usage int
-		if err := r.store.DB().QueryRowContext(ctx, `
-			SELECT (SELECT COUNT(*) FROM rollup_usage_daily),
-			       (SELECT COUNT(*) FROM message_usage)`).
-			Scan(&rollups, &usage); err != nil {
+		var err error
+		needRollups, err = r.store.RollupsNeedRegeneration(ctx, r.pricer)
+		if err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
-		needRollups = rollups == 0 && usage > 0
 	}
 	if needRollups {
 		if err := r.store.RegenerateWorkspaces(ctx); err != nil {
@@ -298,9 +295,14 @@ const RunHistoryLimit = 100
 // content hash as the source of truth. Hash-check failures are recorded
 // as warnings here, parse failures as errors by the caller.
 func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent.SourceRef, prior db.SourceSig, report *Report) error {
+	parseVersion := 1
+	if v, ok := a.(agent.ParseVersioner); ok && v.ParseVersion() > 0 {
+		parseVersion = v.ParseVersion()
+	}
+	versionChanged := prior.ContentHash != "" && prior.ParseVersion != parseVersion
 	statSig, statErr := statFingerprint(src)
-	if statErr == nil && statSig != "" && prior.StatSig == statSig {
-		return nil // unchanged by stat — skip without reading content
+	if !versionChanged && statErr == nil && statSig != "" && prior.StatSig == statSig {
+		return nil // unchanged by stat and parser — skip without reading content
 	}
 
 	// A stored cursor lets one read serve two purposes: the full content
@@ -311,7 +313,7 @@ func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent
 	var cursor agent.TailState
 	tp, tailable := a.(agent.TailParser)
 	haveCursor := false
-	if tailable && prior.ParseState != "" && src.Kind == agent.SourceFile {
+	if !versionChanged && tailable && prior.ParseState != "" && src.Kind == agent.SourceFile {
 		if err := json.Unmarshal([]byte(prior.ParseState), &cursor); err == nil && cursor.Offset > 0 {
 			haveCursor = true
 		}
@@ -342,7 +344,7 @@ func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent
 		statSig = "" // unknown stat must never match next run
 	}
 
-	if prior.ContentHash == hash {
+	if !versionChanged && prior.ContentHash == hash {
 		// Identical bytes behind a new stat (e.g. rewritten in place):
 		// refresh the fingerprint so the fast path works next run.
 		return r.store.TouchSourceStat(ctx, src.Path, statSig)
@@ -364,7 +366,7 @@ func (r *Runner) ingestIfChanged(ctx context.Context, a agent.Adapter, src agent
 			return err
 		}
 	}
-	return r.ingestSource(ctx, a, src, hash, statSig, report)
+	return r.ingestSource(ctx, a, src, hash, statSig, parseVersion, report)
 }
 
 // hashFileWithPrefix hashes a whole file in one pass, additionally
@@ -402,7 +404,7 @@ func hashFileWithPrefix(path string, offset int64, wantPrefix string) (full stri
 }
 
 // ingestSource fully parses one changed source inside its own transaction.
-func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.SourceRef, hash, statSig string, report *Report) error {
+func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.SourceRef, hash, statSig string, parseVersion int, report *Report) error {
 	w, err := r.store.BeginWrite(ctx)
 	if err != nil {
 		return err
@@ -422,7 +424,7 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 		sink.publishIssues(report)
 		return err
 	}
-	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, parseState); err != nil {
+	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, parseState, parseVersion); err != nil {
 		return err
 	}
 	if err := w.Commit(); err != nil {
@@ -450,7 +452,12 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 		// the error itself.
 		return err
 	}
-	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, marshalTailState(newState)); err != nil {
+	parseVersion := 1
+	if v, ok := a.(agent.ParseVersioner); ok && v.ParseVersion() > 0 {
+		parseVersion = v.ParseVersion()
+	}
+	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig,
+		marshalTailState(newState), parseVersion); err != nil {
 		return err
 	}
 	if err := w.Commit(); err != nil {

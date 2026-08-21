@@ -320,6 +320,93 @@ func TestSearch(t *testing.T) {
 // SUBSET of output (never re-added). If either side regresses — dropped
 // OpenCode reasoning or double-counted Codex reasoning — the exact
 // token totals here break.
+func TestReportedZeroAndPartialPricingAgreeAcrossSurfaces(t *testing.T) {
+	ctx := context.Background()
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Parse([]byte(`{
+		"source":"test","fetched_at":"2026-08-21T00:00:00Z",
+		"models":{"provider/model-a":{"input":2,"output":3}}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := w.UpsertSession(canon.Session{
+		Agent: "opencode", ExternalID: "zero", CWD: "/tmp/project",
+		CreatedAt: at, ModifiedAt: at,
+	}, "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := 0.0
+	if err := w.InsertMessage(id, "opencode", canon.Message{
+		Seq: 0, Role: canon.RoleAssistant, CreatedAt: at,
+		Provider: "provider", Model: "model-a",
+		Usage: &canon.Usage{
+			InputTokens: 10, CacheReadTokens: 5, ReportedCostUSD: &zero,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateWorkspaces(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	sessions, err := svc.Sessions(ctx, SessionsFilter{})
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions = %+v err=%v", sessions, err)
+	}
+	// Input is priced (10×2); absent cache-read pricing leaves five tokens
+	// unpriced. The raw reported zero falls through rather than suppressing both.
+	if sessions[0].CostUSD != 20 || sessions[0].UnpricedTokens != 5 ||
+		sessions[0].UnpricedTokenTypes == nil || sessions[0].UnpricedTokenTypes.CacheRead != 5 {
+		t.Errorf("session cost provenance = %+v", sessions[0])
+	}
+	blocks, err := svc.Blocks(ctx, "", 10)
+	if err != nil || len(blocks) != 1 {
+		t.Fatalf("blocks = %+v err=%v", blocks, err)
+	}
+	if blocks[0].CostUSD != 20 || blocks[0].UnpricedTokens != 5 {
+		t.Errorf("block = %+v", blocks[0])
+	}
+	usage, err := svc.Usage(ctx, UsageFilter{GroupBy: "day"})
+	if err != nil || len(usage) != 1 {
+		t.Fatalf("usage = %+v err=%v", usage, err)
+	}
+	if usage[0].CostUSD != 20 || usage[0].CostReportedUSD != 0 ||
+		usage[0].CostEstimatedUSD != 20 || !usage[0].HasUnpriced ||
+		usage[0].UnpricedTokenTypes == nil || usage[0].UnpricedTokenTypes.CacheRead != 5 {
+		t.Errorf("usage row = %+v", usage[0])
+	}
+}
+
+func TestPricingDiagnostics(t *testing.T) {
+	svc := newService(t)
+	info, err := svc.Pricing(context.Background(), "anthropic/claude-sonnet-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Fingerprint == "" || info.Source == "" || info.Algorithm == "" ||
+		!info.Resolved || info.ResolvedModel == "" || info.Rates == nil {
+		t.Errorf("pricing diagnostics = %+v", info)
+	}
+}
+
 func TestReasoningSemanticsAcrossProviders(t *testing.T) {
 	svc := fixtureService(t, codex.Slug, opencode.Slug)
 	sessions, err := svc.Sessions(context.Background(), SessionsFilter{})

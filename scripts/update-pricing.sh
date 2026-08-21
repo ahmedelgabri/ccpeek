@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refresh the embedded pricing snapshot from LiteLLM's cross-provider
 # pricing database (docs/v2-plan.md §5.3). Prunes the ~1.6 MB source to the
-# four per-token cost fields ccpeek uses, dropping entries that can't price
+# per-token cost fields ccpeek uses, dropping entries that can't price
 # a chat completion. Run from the repo root:
 #
 #   ./scripts/update-pricing.sh
@@ -31,12 +31,13 @@ jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 
         ))
       | map({
           key: .key,
-          value: {
-            input:  .value.input_cost_per_token,
-            output: .value.output_cost_per_token,
-            cache_write: (.value.cache_creation_input_token_cost? // 0),
-            cache_read:  (.value.cache_read_input_token_cost? // 0)
-          }
+          value: ({
+            input:          .value.input_cost_per_token,
+            output:         .value.output_cost_per_token,
+            cache_write:    .value.cache_creation_input_token_cost?,
+            cache_write_1h: .value.cache_creation_input_token_cost_above_1hr?,
+            cache_read:     .value.cache_read_input_token_cost?
+          } | with_entries(select(.value != null)))
         })
       | from_entries
     )
@@ -44,7 +45,7 @@ jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 
 ' "$tmp" >"$OUT"
 
 # Match the repo formatter so a refresh never reintroduces treefmt drift.
-pnpm exec prettier --write "$OUT" >/dev/null
+pnpm -C ui exec prettier --write "../$OUT" >/dev/null
 
 count="$(jq '.models | length' "$OUT")"
 size="$(wc -c <"$OUT")"

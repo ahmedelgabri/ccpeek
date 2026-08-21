@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 13
+const schemaVersion = 14
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS messages (
 	role TEXT NOT NULL,
 	kind TEXT NOT NULL DEFAULT 'message',
 	created_at TEXT,
+	provider TEXT NOT NULL DEFAULT '',
 	model TEXT NOT NULL DEFAULT '',
 	cwd TEXT NOT NULL DEFAULT '',
 	is_sidechain INTEGER NOT NULL DEFAULT 0,
@@ -126,6 +127,9 @@ CREATE TABLE IF NOT EXISTS message_usage (
 	output_tokens INTEGER NOT NULL DEFAULT 0,
 	cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 	cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+	-- One-hour-TTL subset of cache_write_tokens. Zero on legacy rows whose
+	-- source did not expose (or no longer exists to recover) the split.
+	cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
 	reasoning_tokens INTEGER NOT NULL DEFAULT 0,
 	service_tier TEXT NOT NULL DEFAULT '',
 	reported_cost_usd REAL,
@@ -269,6 +273,9 @@ CREATE TABLE IF NOT EXISTS source_files (
 	-- parsing at the byte where the last pass stopped; '' means the next
 	-- change re-parses the whole source.
 	parse_state TEXT NOT NULL DEFAULT '',
+	-- Adapter-owned format version. A bump forces a full parse even when
+	-- the source bytes did not change, recovering newly captured fields.
+	parse_version INTEGER NOT NULL DEFAULT 1,
 	indexed_at TEXT NOT NULL
 );
 
@@ -319,7 +326,11 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 	-- the pricing table computed for rows with no reported figure.
 	cost_reported_usd REAL NOT NULL DEFAULT 0,
 	cost_estimated_usd REAL NOT NULL DEFAULT 0,
-	priced INTEGER NOT NULL DEFAULT 1, -- 0: model unknown to the pricing table
+	unpriced_input_tokens INTEGER NOT NULL DEFAULT 0,
+	unpriced_output_tokens INTEGER NOT NULL DEFAULT 0,
+	unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+	unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+	priced INTEGER NOT NULL DEFAULT 1, -- 0: at least one non-zero bucket has no rate
 	PRIMARY KEY (day, agent_id, workspace_id, model)
 );
 
@@ -457,8 +468,28 @@ var derivedTables = []string{
 // at the latest schema and never replay these.
 type migration func(ctx context.Context, tx *sql.Tx) error
 
-// migrations is intentionally empty until the v2.0 release: pre-release
-// schema changes go straight into initialSchema (see schemaVersion). The
-// first released schema becomes the baseline; every change after it
-// appends an entry here and bumps schemaVersion.
-var migrations = []migration{}
+// migrations carries every post-v2.0 schema change. Existing archives are
+// upgraded in place; fresh databases are born directly from initialSchema.
+var migrations = []migration{
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, q := range []string{
+			`ALTER TABLE messages ADD COLUMN provider TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE message_usage ADD COLUMN cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE source_files ADD COLUMN parse_version INTEGER NOT NULL DEFAULT 1`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unpriced_input_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unpriced_output_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
+			// Pricing semantics and the rollup input shape changed. Emptying
+			// both materializations lets the existing ingest self-heal rebuild
+			// them with the new algorithm while preserving the archive.
+			`DELETE FROM rollup_session_days`,
+			`DELETE FROM rollup_usage_daily`,
+		} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}

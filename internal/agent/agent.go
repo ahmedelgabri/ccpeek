@@ -136,6 +136,14 @@ type TailState struct {
 // falls back to a full re-parse of the source.
 var ErrTailInvalid = errors.New("source cannot be resumed from its cursor")
 
+// ParseVersioner is an optional adapter capability. Bumping the version
+// forces unchanged source bytes through a full parse once, so newly captured
+// fields can be recovered without pretending the file changed. Version 1 is
+// the default for adapters that do not implement it.
+type ParseVersioner interface {
+	ParseVersion() int
+}
+
 // TailParser is an optional adapter capability for append-only sources
 // (e.g. Claude Code's session JSONL): parse only the bytes added since
 // state and return the advanced cursor. A zero state means "parse

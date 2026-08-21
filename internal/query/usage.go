@@ -15,9 +15,10 @@ type UsageRow struct {
 	// CostUSD = reported (the agent's own figure) + estimated (priced from
 	// tokens) — the closest available proxy for API-billed vs
 	// subscription-covered spend.
-	CostReportedUSD  float64 `json:"costReportedUSD"`
-	CostEstimatedUSD float64 `json:"costEstimatedUSD"`
-	HasUnpriced      bool    `json:"hasUnpriced,omitempty"`
+	CostReportedUSD    float64      `json:"costReportedUSD"`
+	CostEstimatedUSD   float64      `json:"costEstimatedUSD"`
+	HasUnpriced        bool         `json:"hasUnpriced,omitempty"`
+	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
 }
 
 // UsageFilter narrows the usage op.
@@ -106,6 +107,10 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		       SUM(r.cache_read_tokens), SUM(r.cache_write_tokens),
 		       SUM(r.cost_usd), SUM(r.cost_reported_usd),
 		       SUM(r.cost_estimated_usd),
+		       SUM(r.unpriced_input_tokens),
+		       SUM(r.unpriced_output_tokens),
+		       SUM(r.unpriced_cache_read_tokens),
+		       SUM(r.unpriced_cache_write_tokens),
 		       MIN(r.priced)
 		FROM rollup_usage_daily r
 		JOIN agents a ON a.id = r.agent_id
@@ -123,14 +128,20 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	for rows.Next() {
 		var r UsageRow
 		var minPriced int
+		var unpriced TokenTotals
 		if err := rows.Scan(&r.Group, &r.Sessions, &r.Messages,
 			&r.Tokens.Input, &r.Tokens.Output,
 			&r.Tokens.CacheRead, &r.Tokens.CacheWrite,
 			&r.CostUSD, &r.CostReportedUSD, &r.CostEstimatedUSD,
+			&unpriced.Input, &unpriced.Output,
+			&unpriced.CacheRead, &unpriced.CacheWrite,
 			&minPriced); err != nil {
 			return nil, err
 		}
 		r.HasUnpriced = minPriced == 0
+		if r.HasUnpriced {
+			r.UnpricedTokenTypes = &unpriced
+		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

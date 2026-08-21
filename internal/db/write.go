@@ -193,19 +193,20 @@ func (w *Writer) ClearArtifactSearchDocs(artifactID int64) error {
 
 // InsertMessage writes one message (and its usage, when present) for an
 // already-upserted session. Usage rows are deduped agent-wide by
-// (content_id, request_id): one assistant turn spans several JSONL lines
-// in Claude Code, and resumed/forked session files repeat earlier entries —
-// counting either twice would inflate cost (docs/v2-plan.md §5.3). The
-// message row itself is always written so transcripts stay complete.
+// (content_id, request_id), with an empty request id retained as the legacy
+// key rather than disabling dedupe. The first-seen message owns the usage;
+// a more complete duplicate updates that row's values without moving cost
+// between sessions. The message row itself is always written so transcripts
+// stay complete.
 func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
 	res, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO messages
 			(session_id, seq, external_id, parent_external_id, content_id,
-			 role, kind, created_at, model, cwd, is_sidechain, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 role, kind, created_at, provider, model, cwd, is_sidechain, content)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, msg.Seq, msg.ExternalID, msg.ParentExternalID, msg.ContentID,
 		string(msg.Role), kindText(msg.Kind), timeText(msg.CreatedAt),
-		msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content))
+		msg.Provider, msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content))
 	if err != nil {
 		return fmt.Errorf("inserting message seq %d: %w", msg.Seq, err)
 	}
@@ -213,30 +214,53 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		return nil
 	}
 
-	if msg.ContentID != "" && msg.Usage.RequestID != "" {
+	if msg.ContentID != "" {
 		agentID, err := w.EnsureAgent(agent)
 		if err != nil {
 			return err
 		}
-		// The literal content_id <> '' predicate is what makes the partial
-		// index idx_messages_content_id eligible — the planner cannot prove
-		// a bound parameter is non-empty, and without the index this lookup
-		// walks every message of the agent, turning first-run ingest into
-		// O(messages²) (measured: minutes of the first pass).
-		var dup int
+		// The literal content_id <> '' predicate makes the partial index
+		// eligible; without it this lookup turns first-run ingest quadratic.
+		var existingID, existingOut, existingTotal int64
+		var existingReported sql.NullFloat64
 		err = w.tx.QueryRowContext(w.ctx, `
-			SELECT 1 FROM message_usage u
+			SELECT u.message_id, u.output_tokens,
+			       u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens,
+			       u.reported_cost_usd
+			FROM message_usage u
 			JOIN messages m ON m.id = u.message_id
 			JOIN sessions s ON s.id = m.session_id
 			WHERE s.agent_id = ? AND m.content_id = ? AND m.content_id <> ''
 			  AND u.request_id = ?
 			LIMIT 1`,
-			agentID, msg.ContentID, msg.Usage.RequestID).Scan(&dup)
+			agentID, msg.ContentID, msg.Usage.RequestID).
+			Scan(&existingID, &existingOut, &existingTotal, &existingReported)
 		switch {
 		case err == nil:
-			return nil // duplicate usage: transcript kept, tokens not double-counted
+			u := msg.Usage
+			candidateTotal := u.InputTokens + u.OutputTokens +
+				u.CacheReadTokens + u.CacheWriteTokens
+			betterCost := u.ReportedCostUSD != nil && *u.ReportedCostUSD != 0 &&
+				(!existingReported.Valid || existingReported.Float64 == 0)
+			moreComplete := u.OutputTokens > existingOut ||
+				(u.OutputTokens == existingOut && candidateTotal > existingTotal) ||
+				(u.OutputTokens == existingOut && candidateTotal == existingTotal && betterCost)
+			if moreComplete {
+				if _, err := w.tx.ExecContext(w.ctx, `
+					UPDATE message_usage SET
+						input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
+						cache_write_tokens = ?, cache_write_1h_tokens = ?,
+						reasoning_tokens = ?, service_tier = ?, reported_cost_usd = ?
+					WHERE message_id = ?`,
+					u.InputTokens, u.OutputTokens, u.CacheReadTokens,
+					u.CacheWriteTokens, u.CacheWrite1hTokens, u.ReasoningTokens,
+					u.ServiceTier, u.ReportedCostUSD, existingID); err != nil {
+					return fmt.Errorf("updating deduplicated usage: %w", err)
+				}
+			}
+			return nil
 		case errors.Is(err, sql.ErrNoRows):
-			// first sighting — fall through and record it
+			// First sighting: fall through and attach usage to this message.
 		default:
 			return fmt.Errorf("usage dedupe lookup: %w", err)
 		}
@@ -250,12 +274,12 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 	if _, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO message_usage
 			(message_id, input_tokens, output_tokens, cache_read_tokens,
-			 cache_write_tokens, reasoning_tokens, service_tier,
-			 reported_cost_usd, request_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 cache_write_tokens, cache_write_1h_tokens, reasoning_tokens,
+			 service_tier, reported_cost_usd, request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msgID, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
-		u.CacheWriteTokens, u.ReasoningTokens, u.ServiceTier,
-		u.ReportedCostUSD, u.RequestID); err != nil {
+		u.CacheWriteTokens, u.CacheWrite1hTokens, u.ReasoningTokens,
+		u.ServiceTier, u.ReportedCostUSD, u.RequestID); err != nil {
 		return fmt.Errorf("inserting usage for message seq %d: %w", msg.Seq, err)
 	}
 	return nil
@@ -525,23 +549,26 @@ func (w *Writer) InsertHistory(h canon.HistoryEntry, sourcePath string) error {
 	return nil
 }
 
-// RecordSourceFile stores the content hash, stat signature, and append
-// cursor for incremental comparison.
-func (w *Writer) RecordSourceFile(path string, agent canon.AgentSlug, contentHash, statSig, parseState string) error {
+// RecordSourceFile stores the content hash, stat signature, append cursor,
+// and adapter parse version for incremental comparison.
+func (w *Writer) RecordSourceFile(path string, agent canon.AgentSlug, contentHash, statSig, parseState string, parseVersion int) error {
 	agentID, err := w.EnsureAgent(agent)
 	if err != nil {
 		return err
 	}
 	_, err = w.tx.ExecContext(w.ctx, `
-		INSERT INTO source_files (path, agent_id, content_hash, stat_sig, parse_state, indexed_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO source_files
+			(path, agent_id, content_hash, stat_sig, parse_state, parse_version, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			agent_id = excluded.agent_id,
 			content_hash = excluded.content_hash,
 			stat_sig = excluded.stat_sig,
 			parse_state = excluded.parse_state,
+			parse_version = excluded.parse_version,
 			indexed_at = excluded.indexed_at`,
-		path, agentID, contentHash, statSig, parseState, time.Now().UTC().Format(time.RFC3339))
+		path, agentID, contentHash, statSig, parseState, parseVersion,
+		time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 

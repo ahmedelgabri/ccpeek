@@ -150,6 +150,7 @@ type Message struct {
 	Role        Role
 	Kind        MessageKind
 	CreatedAt   time.Time
+	Provider    string // upstream provider in effect, if the agent records it
 	Model       string // model in effect for this entry, if known
 	CWD         string // per-message cwd where the agent records it
 	IsSidechain bool   // subagent branch entries (Claude sidechains)
@@ -174,14 +175,15 @@ type Message struct {
 // the informational detail either way and must never be added to
 // OutputTokens downstream.
 type Usage struct {
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
-	ServiceTier      string
-	ReportedCostUSD  *float64
-	RequestID        string // dedupe key component for resumed/forked logs
+	InputTokens        int64
+	OutputTokens       int64
+	CacheReadTokens    int64
+	CacheWriteTokens   int64 // total cache writes, including CacheWrite1hTokens
+	CacheWrite1hTokens int64 // one-hour-TTL subset; legacy/unsplit writes are zero
+	ReasoningTokens    int64
+	ServiceTier        string
+	ReportedCostUSD    *float64
+	RequestID          string // dedupe key component for resumed/forked logs
 }
 
 // ToolKind is the shared taxonomy adapters normalize native tool names into.

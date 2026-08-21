@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
@@ -21,13 +22,14 @@ import (
 // the Active row is what has been spent since the last bucket boundary,
 // which can be well under what the live quota window is actually counting.
 type BlockRow struct {
-	Start          string      `json:"start"` // RFC3339 UTC window start
-	End            string      `json:"end"`
-	Sessions       int64       `json:"sessions"`
-	Messages       int64       `json:"messages"`
-	Tokens         TokenTotals `json:"tokens"`
-	CostUSD        float64     `json:"costUSD"`
-	UnpricedTokens int64       `json:"unpricedTokens,omitempty"`
+	Start              string       `json:"start"` // RFC3339 UTC window start
+	End                string       `json:"end"`
+	Sessions           int64        `json:"sessions"`
+	Messages           int64        `json:"messages"`
+	Tokens             TokenTotals  `json:"tokens"`
+	CostUSD            float64      `json:"costUSD"`
+	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
+	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
 	// Active marks the bucket containing now — a partial bucket, not a
 	// quota window's remaining allowance.
 	Active bool `json:"active"`
@@ -112,18 +114,18 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 
 	// created_at is RFC3339 text; unixepoch() handles it in SQLite ≥3.38.
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT (unixepoch(m.created_at) / %d) AS win, m.model,
+		SELECT (unixepoch(m.created_at) / %d) AS win, m.provider, m.model,
 		       COUNT(*),
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
-		       SUM(COALESCE(u.reported_cost_usd, 0)),
-		       `+db.UnpricedTokenSums+`
+		       `+db.ReportedCostSum+`,
+		       `+db.EstimatedTokenSums+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
 		JOIN agents a ON a.id = se.agent_id
 		WHERE m.created_at IS NOT NULL %s
-		GROUP BY win, m.model
+		GROUP BY win, m.provider, m.model
 		ORDER BY win DESC`, blockSeconds, where), args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating blocks: %w", err)
@@ -133,13 +135,13 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 	byWin := map[int64]*BlockRow{}
 	for rows.Next() {
 		var win, messages int64
-		var model string
+		var provider, model string
 		var in, out, cr, cw int64
 		var reported float64
-		var uin, uout, ucr, ucw int64
-		if err := rows.Scan(&win, &model, &messages,
+		var uin, uout, ucr, ucw, ucw1h int64
+		if err := rows.Scan(&win, &provider, &model, &messages,
 			&in, &out, &cr, &cw, &reported,
-			&uin, &uout, &ucr, &ucw); err != nil {
+			&uin, &uout, &ucr, &ucw, &ucw1h); err != nil {
 			return nil, err
 		}
 		b := byWin[win]
@@ -156,9 +158,12 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		b.Tokens.CacheRead += cr
 		b.Tokens.CacheWrite += cw
 		b.CostUSD += reported
-		cost, unpriced, _ := db.AutoCost(s.pricer, model, uin, uout, ucr, ucw)
+		cost, unpriced, _ := db.AutoCost(s.pricer, provider, model, canon.Usage{
+			InputTokens: uin, OutputTokens: uout, CacheReadTokens: ucr,
+			CacheWriteTokens: ucw, CacheWrite1hTokens: ucw1h,
+		})
 		b.CostUSD += cost
-		b.UnpricedTokens += unpriced
+		addUnpriced(&b.UnpricedTokens, &b.UnpricedTokenTypes, unpriced)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

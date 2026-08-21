@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 )
 
@@ -80,7 +81,8 @@ type SessionSummary struct {
 	CostUSD    float64     `json:"costUSD"`
 	// UnpricedTokens counts tokens whose model the pricing table can't
 	// resolve; when non-zero, CostUSD is a lower bound.
-	UnpricedTokens int64 `json:"unpricedTokens,omitempty"`
+	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
+	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
 }
 
 // SessionsFilter narrows the sessions op.
@@ -213,27 +215,27 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT m.session_id, m.model,
+		SELECT m.session_id, m.provider, m.model,
 		       SUM(u.input_tokens), SUM(u.output_tokens),
 		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
-		       SUM(COALESCE(u.reported_cost_usd, 0)),
-		       `+db.UnpricedTokenSums+`
+		       `+db.ReportedCostSum+`,
+		       `+db.EstimatedTokenSums+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		WHERE m.session_id IN (%s)
-		GROUP BY m.session_id, m.model`, placeholders), args...)
+		GROUP BY m.session_id, m.provider, m.model`, placeholders), args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var sessionID int64
-		var model string
+		var provider, model string
 		var in, out, cr, cw int64
 		var reported float64
-		var uin, uout, ucr, ucw int64
-		if err := rows.Scan(&sessionID, &model, &in, &out, &cr, &cw,
-			&reported, &uin, &uout, &ucr, &ucw); err != nil {
+		var uin, uout, ucr, ucw, ucw1h int64
+		if err := rows.Scan(&sessionID, &provider, &model, &in, &out, &cr, &cw,
+			&reported, &uin, &uout, &ucr, &ucw, &ucw1h); err != nil {
 			return err
 		}
 		i, found := byRow[sessionID]
@@ -246,14 +248,33 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 		sum.Tokens.CacheRead += cr
 		sum.Tokens.CacheWrite += cw
 		sum.CostUSD += reported
-		cost, unpriced, _ := db.AutoCost(s.pricer, model, uin, uout, ucr, ucw)
+		cost, unpriced, _ := db.AutoCost(s.pricer, provider, model, canon.Usage{
+			InputTokens: uin, OutputTokens: uout, CacheReadTokens: ucr,
+			CacheWriteTokens: ucw, CacheWrite1hTokens: ucw1h,
+		})
 		sum.CostUSD += cost
-		sum.UnpricedTokens += unpriced
+		addUnpriced(&sum.UnpricedTokens, &sum.UnpricedTokenTypes, unpriced)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func addUnpriced(total *int64, breakdown **TokenTotals, u canon.Usage) {
+	n := max(u.InputTokens, 0) + max(u.OutputTokens, 0) +
+		max(u.CacheReadTokens, 0) + max(u.CacheWriteTokens, 0)
+	if n == 0 {
+		return
+	}
+	*total += n
+	if *breakdown == nil {
+		*breakdown = &TokenTotals{}
+	}
+	(*breakdown).Input += max(u.InputTokens, 0)
+	(*breakdown).Output += max(u.OutputTokens, 0)
+	(*breakdown).CacheRead += max(u.CacheReadTokens, 0)
+	(*breakdown).CacheWrite += max(u.CacheWriteTokens, 0)
 }
 
 // Relation is one session-graph edge, viewed from a session.
@@ -376,6 +397,7 @@ type TranscriptMessage struct {
 	Role        string `json:"role"`
 	Kind        string `json:"kind"`
 	CreatedAt   string `json:"createdAt"`
+	Provider    string `json:"provider,omitempty"`
 	Model       string `json:"model,omitempty"`
 	IsSidechain bool   `json:"isSidechain,omitempty"`
 	Text        string `json:"text"`
@@ -413,7 +435,7 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 	}
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.seq, m.external_id, m.parent_external_id,
-		       m.role, m.kind, COALESCE(m.created_at, ''), m.model,
+		       m.role, m.kind, COALESCE(m.created_at, ''), m.provider, m.model,
 		       m.is_sidechain, d.text_content, m.content
 		FROM messages m
 		LEFT JOIN search_docs d ON d.session_id = m.session_id
@@ -431,7 +453,7 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 		var text sql.NullString
 		var content string
 		if err := rows.Scan(&tm.Seq, &tm.ExternalID, &tm.ParentID,
-			&tm.Role, &tm.Kind, &tm.CreatedAt,
+			&tm.Role, &tm.Kind, &tm.CreatedAt, &tm.Provider,
 			&tm.Model, &sidechain, &text, &content); err != nil {
 			return nil, err
 		}

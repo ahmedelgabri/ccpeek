@@ -185,6 +185,17 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "pricing",
+			Desc: "Explain the embedded pricing snapshot and optionally resolve one provider/model key, including missing cache-rate dimensions.",
+			Params: []Param{
+				{Name: "model", Type: "string", Desc: "Optional model or provider/model identifier to resolve"},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.Pricing(ctx, a.Str["model"])
+				return out, false, err
+			},
+		},
+		{
 			Name: "search",
 			Desc: "Full-text search across all indexed sessions and artifacts from every agent — 'have I solved this before?'.",
 			Params: []Param{

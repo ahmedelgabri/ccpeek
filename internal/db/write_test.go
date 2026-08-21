@@ -172,6 +172,47 @@ func TestUsageDedupeAcrossSessions(t *testing.T) {
 	}
 }
 
+func TestUsageDedupeLegacyAndMostCompleteSnapshot(t *testing.T) {
+	s, _ := openTemp(t)
+	w := beginWrite(t, s)
+	firstID, err := w.UpsertSession(testSession("first"), "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := canon.Message{
+		Seq: 0, ContentID: "legacy-msg", Role: canon.RoleAssistant,
+		Usage: &canon.Usage{InputTokens: 10, OutputTokens: 2},
+	}
+	if err := w.InsertMessage(firstID, "claude-code", first); err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := w.UpsertSession(testSession("resumed"), "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := first
+	later.Usage = &canon.Usage{InputTokens: 10, OutputTokens: 8}
+	if err := w.InsertMessage(secondID, "claude-code", later); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM message_usage`); n != 1 {
+		t.Fatalf("usage rows = %d, want 1", n)
+	}
+	var owner, output int64
+	if err := s.db.QueryRow(`
+		SELECT m.session_id, u.output_tokens FROM message_usage u
+		JOIN messages m ON m.id = u.message_id`).Scan(&owner, &output); err != nil {
+		t.Fatal(err)
+	}
+	if owner != firstID || output != 8 {
+		t.Errorf("owner/output = %d/%d, want first session %d and final output 8",
+			owner, output, firstID)
+	}
+}
+
 func TestLinkArtifactResolvedAndPending(t *testing.T) {
 	s, _ := openTemp(t)
 	w := beginWrite(t, s)
@@ -400,7 +441,7 @@ func TestPruneMissingSourcesRemovesEverySourceOwnedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{sessionSrc, artifactSrc, historySrc, keptSrc} {
-		if err := w.RecordSourceFile(p, "claude-code", "h", "stat", ""); err != nil {
+		if err := w.RecordSourceFile(p, "claude-code", "h", "stat", "", 1); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -460,7 +501,7 @@ func TestPruneKeepsImportedRows(t *testing.T) {
 	if _, err := w.UpsertSession(imported, "h"); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.RecordSourceFile(imported.SourcePath, "claude-code", "h", "stat", ""); err != nil {
+	if err := w.RecordSourceFile(imported.SourcePath, "claude-code", "h", "stat", "", 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Commit(); err != nil {

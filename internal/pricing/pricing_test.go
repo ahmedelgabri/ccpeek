@@ -72,6 +72,48 @@ func TestCost(t *testing.T) {
 	}
 }
 
+func TestPartialCachePricingAndOneHourTTL(t *testing.T) {
+	tbl, err := Parse([]byte(`{
+		"source":"test","fetched_at":"2026-08-21T00:00:00Z",
+		"models":{
+			"full":{"input":1,"output":2,"cache_write":3,"cache_write_1h":4,"cache_read":5},
+			"partial":{"input":1,"output":2}
+		}}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := canon.Usage{
+		InputTokens: 1, OutputTokens: 2, CacheReadTokens: 3,
+		CacheWriteTokens: 11, CacheWrite1hTokens: 7,
+	}
+	full, _ := tbl.Lookup("full")
+	if cost, unpriced := full.Price(u); cost != 1+4+15+12+28 ||
+		unpriced != (canon.Usage{}) {
+		t.Errorf("full price = %v, unpriced %+v", cost, unpriced)
+	}
+	partial, _ := tbl.Lookup("partial")
+	if cost, unpriced := partial.Price(u); cost != 5 ||
+		unpriced.CacheReadTokens != 3 || unpriced.CacheWriteTokens != 11 {
+		t.Errorf("partial price = %v, unpriced %+v; want cost 5, cache read/write 3/11", cost, unpriced)
+	}
+}
+
+func TestFingerprintCoversSnapshotAndAlgorithm(t *testing.T) {
+	a := syntheticTable(t)
+	b := syntheticTable(t)
+	if a.Fingerprint() == "" || a.Fingerprint() != b.Fingerprint() {
+		t.Fatalf("stable fingerprint = %q / %q", a.Fingerprint(), b.Fingerprint())
+	}
+	changed, err := Parse([]byte(`{"source":"test","fetched_at":"different","models":{"m":{"input":1,"output":1}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Fingerprint() == a.Fingerprint() {
+		t.Error("different snapshot has the same fingerprint")
+	}
+}
+
 func TestCandidatesOrder(t *testing.T) {
 	got := Candidates("us.anthropic.claude-3-5-sonnet-20241022-v2:0")
 	want := []string{

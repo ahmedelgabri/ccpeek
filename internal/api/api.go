@@ -88,6 +88,7 @@ func Routes() []Route {
 		{"GET /api/v1/commands", "commands", "op", []string{"format"}}, // shell-history download
 		{"GET /api/v1/history", "history", "op", nil},
 		{"GET /api/v1/usage", "usage", "op", nil},
+		{"GET /api/v1/pricing", "pricing", "op", nil},
 		{"GET /api/v1/search", "search", "op", nil},
 		{"GET /api/v1/artifacts", "artifacts", "op", nil},
 		{"GET /api/v1/artifacts/kinds", "artifact-kinds", "op", nil},
@@ -144,6 +145,7 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 		"GET /api/v1/commands":                            h.commands,
 		"GET /api/v1/history":                             h.history,
 		"GET /api/v1/usage":                               h.usage,
+		"GET /api/v1/pricing":                             h.pricing,
 		"GET /api/v1/search":                              h.search,
 		"GET /api/v1/events":                              h.events,
 		"GET /api/v1/artifacts":                           h.artifacts,
@@ -537,6 +539,21 @@ func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, rows)
+}
+
+func (h *handlers) pricing(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	model := p.Str("model")
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	info, err := h.svc.Pricing(r.Context(), model)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (h *handlers) search(w http.ResponseWriter, r *http.Request) {

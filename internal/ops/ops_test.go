@@ -92,7 +92,7 @@ func TestRegistryShape(t *testing.T) {
 	}
 
 	want := []string{
-		"sessions", "session", "transcript", "usage", "search",
+		"sessions", "session", "transcript", "usage", "pricing", "search",
 		"commands", "history", "stats", "blocks", "scan", "scan-rules",
 		"artifacts", "artifact-kinds", "artifact", "tools", "tool",
 	}
