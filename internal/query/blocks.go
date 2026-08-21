@@ -136,9 +136,7 @@ func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit in
 		       m.provider, m.model,
 		       u.input_tokens, u.output_tokens, u.cache_read_tokens,
 		       u.cache_write_tokens, u.cache_write_1h_tokens,
-		       CASE WHEN u.reported_cost_usd IS NULL THEN NULL
-		            ELSE COALESCE(u.reported_cost_nanos,
-		                 CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END
+		       `+db.ReportedCostNanosExpr+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
@@ -183,7 +181,7 @@ func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit in
 			reportedAmount = &amount
 		}
 		result, err := db.EvaluateCostAt(s.pricer, mode, provider, model,
-			parseQueryTime(occurredAt), usage, reportedAmount)
+			db.ParseCostTime(occurredAt), usage, reportedAmount)
 		if err != nil {
 			return nil, err
 		}

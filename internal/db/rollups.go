@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
@@ -46,43 +45,6 @@ func PricingModel(provider, model string) string {
 	return provider + "/" + model
 }
 
-// needsEstimatedCost is the SQL definition of auto mode. A reported zero with
-// non-zero usage is provenance, not a usable API-equivalent value: preserve it
-// in storage but calculate the row. A genuine zero-token reported zero remains
-// reported and does not manufacture an unpriced model warning.
-const needsEstimatedCost = `(u.reported_cost_usd IS NULL OR
-	(u.reported_cost_usd = 0 AND
-	 (u.input_tokens > 0 OR u.output_tokens > 0 OR
-	  u.cache_read_tokens > 0 OR u.cache_write_tokens > 0)))`
-
-// EstimatedTokenSums are the five token columns restricted to rows auto mode
-// must calculate. Cache-write 1h is a subset of cache-write total. Every raw
-// usage surface selects exactly these, in this order, and feeds them to
-// AutoCost.
-const EstimatedTokenSums = `SUM(CASE WHEN ` + needsEstimatedCost + ` THEN u.input_tokens ELSE 0 END),
-	SUM(CASE WHEN ` + needsEstimatedCost + ` THEN u.output_tokens ELSE 0 END),
-	SUM(CASE WHEN ` + needsEstimatedCost + ` THEN u.cache_read_tokens ELSE 0 END),
-	SUM(CASE WHEN ` + needsEstimatedCost + ` THEN u.cache_write_tokens ELSE 0 END),
-	SUM(CASE WHEN ` + needsEstimatedCost + ` THEN u.cache_write_1h_tokens ELSE 0 END)`
-
-// ReportedCostSum excludes rows whose zero report falls through to estimation.
-// Numerically zero would not change the sum, but spelling the same predicate
-// makes the reported/estimated decision auditable and robust to future modes.
-const ReportedCostSum = `SUM(CASE WHEN ` + needsEstimatedCost + `
-	THEN 0 ELSE COALESCE(u.reported_cost_usd, 0) END)`
-
-// AutoCost prices one normalized aggregate. It reports the cost of known
-// buckets, tokens left unpriced because the model or a bucket rate is absent,
-// and whether every non-zero bucket was priced. A zero-token row is always
-// fully priced: it cannot make a Usage group falsely claim unpriced tokens.
-func AutoCost(p Pricer, provider, model string, u canon.Usage) (cost float64, unpriced canon.Usage, fullyPriced bool) {
-	result, err := EvaluateCost(p, CostModeCalculate, provider, model, u)
-	if err != nil {
-		return 0, positiveUsage(u), false
-	}
-	return result.Amount.USD(), result.Unpriced, usageTotal(result.Unpriced) == 0
-}
-
 func usageTotal(u canon.Usage) int64 {
 	return max(u.InputTokens, 0) + max(u.OutputTokens, 0) +
 		max(u.CacheReadTokens, 0) + max(u.CacheWriteTokens, 0)
@@ -101,15 +63,6 @@ func dayOf(value string) string {
 		return value[:len("2006-01-02")]
 	}
 	return value
-}
-
-func parseCostTime(value string) time.Time {
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed.UTC()
-		}
-	}
-	return time.Time{}
 }
 
 // RollupsNeedRegeneration reports whether materialized cost was built with a
@@ -163,9 +116,7 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 			m.provider, m.model, s.id,
 			u.input_tokens, u.output_tokens, u.cache_read_tokens,
 			u.cache_write_tokens, u.cache_write_1h_tokens,
-			CASE WHEN u.reported_cost_usd IS NULL THEN NULL
-			     ELSE COALESCE(u.reported_cost_nanos,
-			          CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END
+			`+ReportedCostNanosExpr+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions s ON s.id = m.session_id
@@ -245,7 +196,7 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 			amount := pricing.Amount(reported.Int64)
 			reportedAmount = &amount
 		}
-		at := parseCostTime(occurredAt)
+		at := ParseCostTime(occurredAt)
 		auto, err := EvaluateCostAt(pricer, CostModeAuto, provider, k.model, at, usage, reportedAmount)
 		if err != nil {
 			return fmt.Errorf("pricing auto usage: %w", err)

@@ -874,7 +874,11 @@ func newStore(t *testing.T) (*db.Store, *pricing.Table) {
 func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newStore(t)
-	table, err := pricing.Parse([]byte(`{"source":"test","fetched_at":"2026-01-01T00:00:00Z","models":{"model":{"input":1,"output":1}}}`))
+	table, err := pricing.Parse([]byte(`{
+		"source":"test","fetched_at":"2026-01-01T00:00:00Z",
+		"models":{"model":{"input":9,"output":9,"tiers":[{"above_input_tokens":4,"input":2}]}},
+		"history":{"model":[{"effective_from":"2026-01-01","effective_to":"2027-01-01","rate":{"input":1,"output":1}}]}
+	}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -888,7 +892,7 @@ func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	reported := 7.0
-	for seq, usage := range []canon.Usage{{InputTokens: 2, ReportedCostUSD: &reported}, {InputTokens: 3}} {
+	for seq, usage := range []canon.Usage{{InputTokens: 2, ReportedCostUSD: &reported}, {InputTokens: 5}} {
 		if err := w.InsertMessage(id, "claude-code", canon.Message{Seq: seq, Role: canon.RoleAssistant, CreatedAt: at.Add(time.Duration(seq) * time.Minute), Model: "model", Usage: &usage}); err != nil {
 			t.Fatal(err)
 		}
@@ -909,9 +913,9 @@ func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
 		want       string
 		unreported int64
 	}{
-		{"auto", "10", 0},
-		{"calculate", "5", 0},
-		{"display", "7", 3},
+		{"auto", "17", 0},
+		{"calculate", "12", 0},
+		{"display", "7", 5},
 	} {
 		t.Run(tt.mode, func(t *testing.T) {
 			sessions, err := svc.Sessions(ctx, SessionsFilter{CostMode: tt.mode})

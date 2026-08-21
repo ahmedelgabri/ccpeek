@@ -235,9 +235,7 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 		       COALESCE(m.created_at, se.created_at, ''),
 		       u.input_tokens, u.output_tokens, u.cache_read_tokens,
 		       u.cache_write_tokens, u.cache_write_1h_tokens,
-		       CASE WHEN u.reported_cost_usd IS NULL THEN NULL
-		            ELSE COALESCE(u.reported_cost_nanos,
-		                 CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END
+		       `+db.ReportedCostNanosExpr+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
@@ -275,7 +273,7 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 			reportedAmount = &amount
 		}
 		result, err := db.EvaluateCostAt(s.pricer, mode, provider, model,
-			parseQueryTime(occurredAt), usage, reportedAmount)
+			db.ParseCostTime(occurredAt), usage, reportedAmount)
 		if err != nil {
 			return err
 		}
@@ -304,15 +302,6 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 		sums[i].CostEstimatedUSDExact = estimatedAmounts[i].String()
 	}
 	return nil
-}
-
-func parseQueryTime(value string) time.Time {
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed.UTC()
-		}
-	}
-	return time.Time{}
 }
 
 func addUnpriced(total *int64, breakdown **TokenTotals, u canon.Usage) {

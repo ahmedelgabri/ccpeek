@@ -16,6 +16,13 @@ const (
 	CostModeAuto      CostMode = "auto"
 	CostModeCalculate CostMode = "calculate"
 	CostModeDisplay   CostMode = "display"
+
+	// ReportedCostNanosExpr is the canonical exact reported-cost read. All
+	// usage queries alias message_usage as u. The REAL fallback supports rows
+	// inserted by old embedders and tests; schema-v15 ingestion writes nanos.
+	ReportedCostNanosExpr = `CASE WHEN u.reported_cost_usd IS NULL THEN NULL
+		ELSE COALESCE(u.reported_cost_nanos,
+		CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END`
 )
 
 // ParseCostMode applies the public default and validates an explicit value.
@@ -108,6 +115,18 @@ func EvaluateCostAt(p Pricer, mode CostMode, provider, model string, at time.Tim
 	}
 	result.Amount, result.Estimated, result.Unpriced = amount, amount, unpriced
 	return result, nil
+}
+
+// ParseCostTime accepts both stored RFC3339 instants and price-card dates.
+// A zero result means the row has no usable request time and current pricing
+// semantics apply.
+func ParseCostTime(value string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 func positiveUsage(u canon.Usage) canon.Usage {

@@ -61,7 +61,7 @@ func (s *Service) PricingAt(ctx context.Context, model, atRaw string, inputToken
 	}
 	var at time.Time
 	if atRaw != "" {
-		at = parseQueryTime(atRaw)
+		at = db.ParseCostTime(atRaw)
 		if at.IsZero() {
 			return PricingInfo{}, badRequest("at must be RFC3339 or YYYY-MM-DD")
 		}
