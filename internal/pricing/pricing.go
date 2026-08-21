@@ -73,31 +73,46 @@ func (r *Rate) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Price prices every bucket whose rate is known and returns unpriced tokens
-// by bucket. CacheWrite1hTokens is a subset of CacheWriteTokens; malformed
-// values are clamped so they can never create negative five-minute writes.
-func (r Rate) Price(u canon.Usage) (cost float64, unpriced canon.Usage) {
+// PriceAmount prices every bucket whose rate is known using fixed-point
+// nanodollars and returns unpriced tokens by bucket. CacheWrite1hTokens is a
+// subset of CacheWriteTokens; malformed values are clamped so they can never
+// create negative five-minute writes.
+func (r Rate) PriceAmount(u canon.Usage) (Amount, canon.Usage, error) {
 	cw1h := min(max(u.CacheWrite1hTokens, 0), max(u.CacheWriteTokens, 0))
 	cw5m := max(u.CacheWriteTokens, 0) - cw1h
-	cost = float64(max(u.InputTokens, 0))*r.Input +
-		float64(max(u.OutputTokens, 0))*r.Output
+	parts := []tokenRate{
+		{tokens: max(u.InputTokens, 0), usdPerToken: r.Input},
+		{tokens: max(u.OutputTokens, 0), usdPerToken: r.Output},
+	}
+	var unpriced canon.Usage
 	if r.cacheReadMissing {
 		unpriced.CacheReadTokens = max(u.CacheReadTokens, 0)
 	} else {
-		cost += float64(max(u.CacheReadTokens, 0)) * r.CacheRead
+		parts = append(parts, tokenRate{tokens: max(u.CacheReadTokens, 0), usdPerToken: r.CacheRead})
 	}
 	if r.cacheWriteMissing {
 		unpriced.CacheWriteTokens += cw5m
 	} else {
-		cost += float64(cw5m) * r.CacheWrite
+		parts = append(parts, tokenRate{tokens: cw5m, usdPerToken: r.CacheWrite})
 	}
 	if r.cacheWrite1hMissing {
 		unpriced.CacheWriteTokens += cw1h
 		unpriced.CacheWrite1hTokens = cw1h
 	} else {
-		cost += float64(cw1h) * r.CacheWrite1h
+		parts = append(parts, tokenRate{tokens: cw1h, usdPerToken: r.CacheWrite1h})
 	}
-	return cost, unpriced
+	cost, err := amountFromTokenRates(parts...)
+	return cost, unpriced, err
+}
+
+// Price is the floating-point compatibility wrapper. All internal aggregation
+// should use PriceAmount and convert only at an API boundary.
+func (r Rate) Price(u canon.Usage) (cost float64, unpriced canon.Usage) {
+	amount, unpriced, err := r.PriceAmount(u)
+	if err != nil {
+		return 0, unpriced
+	}
+	return amount.USD(), unpriced
 }
 
 // CacheWriteRate, CacheWrite1hRate, and CacheReadRate expose both value and
