@@ -41,6 +41,9 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
+// ParseVersion forces existing recoverable rollouts through cache-write-aware normalization.
+func (*Adapter) ParseVersion() int { return 2 }
+
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
 	return agent.RootSpec{
@@ -112,15 +115,15 @@ type eventMsg struct {
 	Info json.RawMessage `json:"info"`
 }
 
-// tokenUsage mirrors Codex's token_count payloads. reasoning_output_tokens
-// is a SUBSET of output_tokens, not an additional bucket — real rollouts
-// show total_tokens == input_tokens + output_tokens with reasoning ≤
-// output (OpenAI Responses semantics, where reasoning is a detail of
-// billable output). Cost and totals must therefore use output alone;
-// adding reasoning on top would double-count it.
+// tokenUsage mirrors Codex's token_count payloads. The response API reports
+// cached reads and cache writes as disjoint details of input_tokens; its own
+// parser fixture uses 40 cached + 60 written = 100 input. Reasoning is likewise
+// a subset of output_tokens. Canonical ordinary input must subtract both cache
+// details, while output must not add reasoning again.
 type tokenUsage struct {
 	InputTokens           int64 `json:"input_tokens"`
 	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
 	OutputTokens          int64 `json:"output_tokens"`
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 	TotalTokens           int64 `json:"total_tokens"`
@@ -327,10 +330,11 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				return nil
 			}
 			usage := &canon.Usage{
-				InputTokens:     delta.InputTokens - delta.CachedInputTokens,
-				OutputTokens:    delta.OutputTokens,
-				CacheReadTokens: delta.CachedInputTokens,
-				ReasoningTokens: delta.ReasoningOutputTokens,
+				InputTokens:      delta.InputTokens - delta.CachedInputTokens - delta.CacheWriteInputTokens,
+				OutputTokens:     delta.OutputTokens,
+				CacheReadTokens:  delta.CachedInputTokens,
+				CacheWriteTokens: delta.CacheWriteInputTokens,
+				ReasoningTokens:  delta.ReasoningOutputTokens,
 			}
 			// Attach to the held assistant message when one is waiting;
 			// otherwise (the count preceded the assistant text, as Codex
@@ -423,6 +427,7 @@ func perTurnUsage(info tokenCountInfo, st *tokenState) *tokenUsage {
 	return &tokenUsage{
 		InputTokens:           cur.InputTokens - p.InputTokens,
 		CachedInputTokens:     cur.CachedInputTokens - p.CachedInputTokens,
+		CacheWriteInputTokens: cur.CacheWriteInputTokens - p.CacheWriteInputTokens,
 		OutputTokens:          cur.OutputTokens - p.OutputTokens,
 		ReasoningOutputTokens: cur.ReasoningOutputTokens - p.ReasoningOutputTokens,
 		TotalTokens:           cur.TotalTokens - p.TotalTokens,

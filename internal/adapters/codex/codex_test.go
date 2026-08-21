@@ -161,10 +161,40 @@ func TestArgvRendersAsACommandLine(t *testing.T) {
 }
 
 func TestCounterResetTreatedAsAbsolute(t *testing.T) {
-	st := tokenState{total: &tokenUsage{InputTokens: 10000, TotalTokens: 12000}}
-	got := perTurnUsage(tokenCountInfo{Total: &tokenUsage{InputTokens: 500, TotalTokens: 600}}, &st)
-	if got.InputTokens != 500 {
+	st := tokenState{total: &tokenUsage{InputTokens: 10000, CacheWriteInputTokens: 2000, TotalTokens: 12000}}
+	got := perTurnUsage(tokenCountInfo{Total: &tokenUsage{InputTokens: 500, CacheWriteInputTokens: 100, TotalTokens: 600}}, &st)
+	if got.InputTokens != 500 || got.CacheWriteInputTokens != 100 {
 		t.Errorf("reset delta = %+v, want absolute values", got)
+	}
+}
+
+func TestCacheWritesAreSeparatedFromOrdinaryInput(t *testing.T) {
+	const meta = `{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"` + sessionID + `","cwd":"/home/u/demo/api"}}`
+	first := `{"input_tokens":100,"cached_input_tokens":40,"cache_write_input_tokens":60,"output_tokens":10,"reasoning_output_tokens":5,"total_tokens":110}`
+	second := `{"input_tokens":180,"cached_input_tokens":70,"cache_write_input_tokens":100,"output_tokens":30,"reasoning_output_tokens":12,"total_tokens":210}`
+
+	src := writeRollout(
+		t, meta,
+		tokenCountLine("2026-07-06T09:00:10.000Z", first, "null"),
+		tokenCountLine("2026-07-06T09:00:20.000Z", second, "null"),
+	)
+	usages := sessionUsage(t, src)
+	if len(usages) != 2 {
+		t.Fatalf("usage entries = %d, want 2", len(usages))
+	}
+	if got := *usages[0]; got.InputTokens != 0 || got.CacheReadTokens != 40 || got.CacheWriteTokens != 60 || got.OutputTokens != 10 || got.ReasoningTokens != 5 {
+		t.Errorf("first usage = %+v", got)
+	}
+	// The cumulative delta is 80 input: 30 cache reads, 40 cache writes,
+	// and 10 ordinary input.
+	if got := *usages[1]; got.InputTokens != 10 || got.CacheReadTokens != 30 || got.CacheWriteTokens != 40 || got.OutputTokens != 20 || got.ReasoningTokens != 7 {
+		t.Errorf("second usage = %+v", got)
+	}
+}
+
+func TestParseVersionIncludesCacheWrites(t *testing.T) {
+	if got := New().ParseVersion(); got != 2 {
+		t.Fatalf("ParseVersion() = %d, want 2", got)
 	}
 }
 
