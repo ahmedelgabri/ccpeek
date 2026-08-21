@@ -192,6 +192,29 @@ func TestCacheWritesAreSeparatedFromOrdinaryInput(t *testing.T) {
 	}
 }
 
+func TestCacheSubsetsCannotCreateNegativeInput(t *testing.T) {
+	const meta = `{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"` + sessionID + `","cwd":"/home/u/demo/api"}}`
+	usage := `{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":30,"output_tokens":10,"total_tokens":110}`
+	src := writeRollout(t, meta, tokenCountLine("2026-07-06T09:00:10.000Z", usage, usage))
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	var got *canon.Usage
+	for _, message := range sink.Messages {
+		if message.Usage != nil {
+			got = message.Usage
+			break
+		}
+	}
+	if got == nil || got.InputTokens != 0 || got.CacheReadTokens != 80 || got.CacheWriteTokens != 30 {
+		t.Fatalf("clamped usage = %+v", got)
+	}
+	if len(sink.Issues) != 1 || sink.Issues[0].Category != "usage" || !strings.Contains(sink.Issues[0].Detail, "clamping ordinary input") {
+		t.Fatalf("issues = %+v, want visible subset warning", sink.Issues)
+	}
+}
+
 func TestParseVersionIncludesCacheWrites(t *testing.T) {
 	if got := New().ParseVersion(); got != 2 {
 		t.Fatalf("ParseVersion() = %d, want 2", got)

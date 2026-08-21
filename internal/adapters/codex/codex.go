@@ -329,8 +329,21 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			if delta == nil {
 				return nil
 			}
+			ordinaryInput := delta.InputTokens - delta.CachedInputTokens - delta.CacheWriteInputTokens
+			if ordinaryInput < 0 {
+				if err := sink.Issue(canon.Issue{
+					Agent: Slug, Severity: canon.SeverityWarn, Category: "usage",
+					SourcePath: src.Path, Line: lineNo,
+					Detail: fmt.Sprintf(
+						"Codex input subsets exceed input total (%d cached + %d cache write > %d input); clamping ordinary input to zero",
+						delta.CachedInputTokens, delta.CacheWriteInputTokens, delta.InputTokens),
+				}); err != nil {
+					return err
+				}
+				ordinaryInput = 0
+			}
 			usage := &canon.Usage{
-				InputTokens:      delta.InputTokens - delta.CachedInputTokens - delta.CacheWriteInputTokens,
+				InputTokens:      ordinaryInput,
 				OutputTokens:     delta.OutputTokens,
 				CacheReadTokens:  delta.CachedInputTokens,
 				CacheWriteTokens: delta.CacheWriteInputTokens,
