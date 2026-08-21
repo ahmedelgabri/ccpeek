@@ -13,7 +13,7 @@ export const COST_MODES: CostMode[] = ["auto", "calculate", "display"];
 export function isCostMode(value: string | undefined): value is CostMode {
   return COST_MODES.some((mode) => mode === value);
 }
-export function costMode(value: string | undefined): CostMode {
+export function normalizeCostMode(value: string | undefined): CostMode {
   return isCostMode(value) ? value : "auto";
 }
 

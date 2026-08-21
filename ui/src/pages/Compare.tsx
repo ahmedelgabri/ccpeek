@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
   COST_MODES,
-  costMode as normalizeCostMode,
+  normalizeCostMode,
   fmtCost,
   fmtCount,
   fmtTokens,

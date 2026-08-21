@@ -9,7 +9,7 @@ import {
 import {
   api,
   COST_MODES,
-  costMode as normalizeCostMode,
+  normalizeCostMode,
   fmtCount,
   fmtTokens,
   shortPath,

@@ -4,7 +4,7 @@ import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
   COST_MODES,
-  costMode as normalizeCostMode,
+  normalizeCostMode,
   fmtCount,
   fmtTokens,
   parityApi,

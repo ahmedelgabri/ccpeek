@@ -150,7 +150,7 @@ test.describe("cost provenance", () => {
     ]);
     const path = await download.path();
     expect(path).not.toBeNull();
-    const csv = await readFile(path!, "utf8");
+    const csv = await readFile(path, "utf8");
     const header = csv.slice(0, csv.indexOf("\n"));
     expect(header).toContain("_has_incomplete_cost");
     expect(header).not.toContain("_has_unpriced");

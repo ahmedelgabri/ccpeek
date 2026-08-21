@@ -4,7 +4,7 @@ import {
   api,
   clipPath,
   COST_MODES,
-  costMode as normalizeCostMode,
+  normalizeCostMode,
   fmtCost,
   fmtCount,
   fmtTokens,
