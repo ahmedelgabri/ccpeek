@@ -179,9 +179,10 @@ func TestUsageDedupeLegacyAndMostCompleteSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reported := 0.42
 	first := canon.Message{
 		Seq: 0, ContentID: "legacy-msg", Role: canon.RoleAssistant,
-		Usage: &canon.Usage{InputTokens: 10, OutputTokens: 2},
+		Usage: &canon.Usage{InputTokens: 10, OutputTokens: 2, ReportedCostUSD: &reported},
 	}
 	if err := w.InsertMessage(firstID, "claude-code", first); err != nil {
 		t.Fatal(err)
@@ -201,15 +202,20 @@ func TestUsageDedupeLegacyAndMostCompleteSnapshot(t *testing.T) {
 	if n := count(t, s, `SELECT COUNT(*) FROM message_usage`); n != 1 {
 		t.Fatalf("usage rows = %d, want 1", n)
 	}
-	var owner, output int64
+	var owner, output, reportedNanos int64
+	var retainedCost float64
 	if err := s.db.QueryRow(`
-		SELECT m.session_id, u.output_tokens FROM message_usage u
-		JOIN messages m ON m.id = u.message_id`).Scan(&owner, &output); err != nil {
+		SELECT m.session_id, u.output_tokens, u.reported_cost_usd, u.reported_cost_nanos
+		FROM message_usage u
+		JOIN messages m ON m.id = u.message_id`).Scan(&owner, &output, &retainedCost, &reportedNanos); err != nil {
 		t.Fatal(err)
 	}
 	if owner != firstID || output != 8 {
 		t.Errorf("owner/output = %d/%d, want first session %d and final output 8",
 			owner, output, firstID)
+	}
+	if retainedCost != reported || reportedNanos != 420_000_000 {
+		t.Errorf("reported cost = %v / %d nanos, want retained %v", retainedCost, reportedNanos, reported)
 	}
 }
 

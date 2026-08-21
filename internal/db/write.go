@@ -229,10 +229,11 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		// eligible; without it this lookup turns first-run ingest quadratic.
 		var existingID, existingOut, existingTotal int64
 		var existingReported sql.NullFloat64
+		var existingReportedNanos sql.NullInt64
 		err = w.tx.QueryRowContext(w.ctx, `
 			SELECT u.message_id, u.output_tokens,
 			       u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens,
-			       u.reported_cost_usd
+			       u.reported_cost_usd, u.reported_cost_nanos
 			FROM message_usage u
 			JOIN messages m ON m.id = u.message_id
 			JOIN sessions s ON s.id = m.session_id
@@ -240,7 +241,7 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 			  AND u.request_id = ?
 			LIMIT 1`,
 			agentID, msg.ContentID, msg.Usage.RequestID).
-			Scan(&existingID, &existingOut, &existingTotal, &existingReported)
+			Scan(&existingID, &existingOut, &existingTotal, &existingReported, &existingReportedNanos)
 		switch {
 		case err == nil:
 			u := msg.Usage
@@ -252,6 +253,21 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 				(u.OutputTokens == existingOut && candidateTotal > existingTotal) ||
 				(u.OutputTokens == existingOut && candidateTotal == existingTotal && betterCost)
 			if moreComplete {
+				selectedCost := u.ReportedCostUSD
+				selectedNanos := reportedNanos
+				if existingReported.Valid &&
+					(selectedCost == nil || (*selectedCost == 0 && existingReported.Float64 != 0)) {
+					existing := existingReported.Float64
+					selectedCost = &existing
+					if existingReportedNanos.Valid {
+						selectedNanos = existingReportedNanos.Int64
+					} else {
+						selectedNanos, err = exactReportedCost(selectedCost)
+						if err != nil {
+							return err
+						}
+					}
+				}
 				if _, err := w.tx.ExecContext(w.ctx, `
 					UPDATE message_usage SET
 						input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
@@ -261,7 +277,7 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 					WHERE message_id = ?`,
 					u.InputTokens, u.OutputTokens, u.CacheReadTokens,
 					u.CacheWriteTokens, u.CacheWrite1hTokens, u.ReasoningTokens,
-					u.ServiceTier, u.ReportedCostUSD, reportedNanos, existingID); err != nil {
+					u.ServiceTier, selectedCost, selectedNanos, existingID); err != nil {
 					return fmt.Errorf("updating deduplicated usage: %w", err)
 				}
 			}
