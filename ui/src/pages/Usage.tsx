@@ -9,6 +9,7 @@ import {
   parityApi,
   shortPath,
   totalTokens,
+  type CostMode,
   type UsageRow,
 } from "../api";
 import {
@@ -32,10 +33,13 @@ const CostTimeline = lazy(() =>
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 type Group = (typeof GROUPS)[number];
+const COST_MODES: CostMode[] = ["auto", "calculate", "display"];
 
 // A ?group= from the URL is any string until proven otherwise.
 const isGroup = (v: string | undefined): v is Group =>
   GROUPS.some((g) => g === v);
+const isCostMode = (v: string | undefined): v is CostMode =>
+  COST_MODES.some((mode) => mode === v);
 
 // pivotSearch builds the /sessions filter for a usage row: the row's own
 // dimension plus every filter already active on this page, so drilling
@@ -138,30 +142,43 @@ export function UsagePage() {
   const until = search.until ?? "";
   const agent = search.agent ?? "";
   const model = search.model ?? "";
+  const costMode: CostMode = isCostMode(search.cost_mode)
+    ? search.cost_mode
+    : "auto";
   const isBlocks = group === "blocks";
 
   // "day" is the default and stays out of the URL.
   const setGroup = (g: Group) => setFilter({ group: g === "day" ? "" : g });
+  const setCostMode = (mode: CostMode) =>
+    setFilter({ cost_mode: mode === "auto" ? "" : mode });
 
   // No limit: usage is an aggregate surface and the server returns all
   // groups by default, so the page total, charts, and CSV are complete
   // by construction (the old fixed 1000 silently truncated past it).
   const { data, isLoading, error } = useQuery({
-    queryKey: ["usage", group, since, until, agent, model],
-    queryFn: () => api.usage({ group, since, until, agent, model }),
+    queryKey: ["usage", group, since, until, agent, model, costMode],
+    queryFn: () =>
+      api.usage({
+        group,
+        since,
+        until,
+        agent,
+        model,
+        cost_mode: costMode,
+      }),
     enabled: !isBlocks,
     placeholderData: (prev) => prev,
   });
   // Model options come from the unfiltered model rollup.
   const modelRows = useQuery({
-    queryKey: ["usage", "model-options"],
-    queryFn: () => api.usage({ group: "model" }),
+    queryKey: ["usage", "model-options", costMode],
+    queryFn: () => api.usage({ group: "model", cost_mode: costMode }),
   });
   // Blocks support the agent filter (dates/models don't apply to the
   // rolling 5h windows and are hidden on that tab).
   const blocks = useQuery({
-    queryKey: ["blocks", agent],
-    queryFn: () => parityApi.blocks(36, agent),
+    queryKey: ["blocks", agent, costMode],
+    queryFn: () => parityApi.blocks(36, agent, costMode),
     enabled: isBlocks,
   });
   const rows = useMemo(() => data ?? [], [data]);
@@ -174,9 +191,11 @@ export function UsagePage() {
   const total = isBlocks
     ? blockRows.reduce((acc, b) => acc + b.costUSD, 0)
     : rows.reduce((acc, r) => acc + r.costUSD, 0);
-  const anyUnpriced = isBlocks
-    ? blockRows.some((b) => (b.unpricedTokens ?? 0) > 0)
-    : rows.some((r) => r.hasUnpriced);
+  const anyIncomplete = isBlocks
+    ? blockRows.some(
+        (b) => (b.unpricedTokens ?? 0) > 0 || (b.unreportedTokens ?? 0) > 0,
+      )
+    : rows.some((r) => r.hasUnpriced || r.hasUnreported);
 
   const models = (modelRows.data ?? [])
     .map((r) => r.group)
@@ -190,7 +209,7 @@ export function UsagePage() {
           <span className="flex items-baseline gap-1.5">
             <Money
               usd={total}
-              unpriced={anyUnpriced ? 1 : undefined}
+              unpriced={anyIncomplete ? 1 : undefined}
               className="text-sm"
             />
             <span className="font-mono text-meta text-ink-faint">
@@ -226,6 +245,7 @@ export function UsagePage() {
             until={until}
             agent={agent}
             model={model}
+            costMode={costMode}
           />
         </Suspense>
       )}
@@ -234,7 +254,16 @@ export function UsagePage() {
         label={isBlocks ? "Rolling 5-hour windows" : `Grouped by ${group}`}
         action={
           <div className="flex items-center gap-3">
-            {!isBlocks && <CostSplitLegend />}
+            {costMode === "auto" && !isBlocks && <CostSplitLegend />}
+            <Segmented
+              label="Cost provenance"
+              value={costMode}
+              options={COST_MODES.map((mode) => ({
+                value: mode,
+                label: mode,
+              }))}
+              onChange={setCostMode}
+            />
             <Segmented
               label="Group usage by"
               value={group}
@@ -365,10 +394,14 @@ function UsageTable({
                       {groupLabel(group, r.group)}
                     </Link>
                   )}
-                  {r.hasUnpriced && (
+                  {(r.hasUnpriced || r.hasUnreported) && (
                     <span
                       className="ml-2 text-warn"
-                      title="Contains unpriced tokens"
+                      title={
+                        r.hasUnpriced
+                          ? "Contains tokens without a resolvable rate"
+                          : "Contains usage without an agent-reported cost"
+                      }
                     >
                       ●
                     </span>
@@ -386,9 +419,9 @@ function UsageTable({
                 <td className="px-4 py-2 text-right">
                   <Money
                     usd={r.costUSD}
-                    unpriced={r.hasUnpriced ? 1 : undefined}
+                    unpriced={r.hasUnpriced || r.hasUnreported ? 1 : undefined}
                     className="text-xs"
-                    title={`reported ${fmtCostExact(r.costReportedUSD)} · estimated ${fmtCostExact(r.costEstimatedUSD)}`}
+                    title={`${r.costMode} ${r.costUSDExact} USD · reported ${fmtCostExact(r.costReportedUSD)} · estimated ${fmtCostExact(r.costEstimatedUSD)}`}
                   />
                 </td>
                 <td
@@ -399,6 +432,8 @@ function UsageTable({
                       <span className="text-ink">
                         {groupLabel(group, r.group) || group}
                       </span>
+                      <br />
+                      mode {r.costMode} · exact ${r.costUSDExact}
                       <br />
                       reported {fmtCostExact(r.costReportedUSD)}
                       <br />
@@ -562,10 +597,15 @@ function BlocksTable({
                     active
                   </span>
                 )}
-                {(b.unpricedTokens ?? 0) > 0 && (
+                {((b.unpricedTokens ?? 0) > 0 ||
+                  (b.unreportedTokens ?? 0) > 0) && (
                   <span
                     className="ml-2 text-warn"
-                    title="Contains unpriced tokens"
+                    title={
+                      (b.unpricedTokens ?? 0) > 0
+                        ? "Contains tokens without a resolvable rate"
+                        : "Contains usage without an agent-reported cost"
+                    }
                   >
                     ●
                   </span>
@@ -580,8 +620,9 @@ function BlocksTable({
               <td className="px-4 py-2 text-right">
                 <Money
                   usd={b.costUSD}
-                  unpriced={b.unpricedTokens}
+                  unpriced={(b.unpricedTokens ?? 0) + (b.unreportedTokens ?? 0)}
                   className="text-xs"
+                  title={`${b.costMode} ${b.costUSDExact} USD`}
                 />
               </td>
               <td className="px-4 py-2">

@@ -9,7 +9,7 @@ import {
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { api } from "./api";
+import { api, type CostMode } from "./api";
 import { cssColor, useResolvedTheme } from "./theme";
 import { EmptyNote, Panel } from "./ui";
 
@@ -59,7 +59,7 @@ function withAlpha(rgb: string, alpha: number): string {
   return rgb.replace("rgb(", "rgba(").replace(")", `, ${alpha})`);
 }
 
-type DayValue = { cost: number; unpriced: boolean };
+type DayValue = { cost: number; incomplete: boolean };
 type DaySeries = { agent: string; byDay: Map<string, DayValue> };
 
 interface TimelineFilters {
@@ -67,12 +67,15 @@ interface TimelineFilters {
   until?: string;
   agent?: string;
   model?: string;
+  costMode?: CostMode;
 }
 
 async function fetchDailyCostByAgent(f: TimelineFilters): Promise<DaySeries[]> {
   const agents = f.agent
     ? [f.agent]
-    : ((await api.stats()).agents ?? []).map((a) => a.agent);
+    : ((await api.statsWithCostMode(f.costMode ?? "auto")).agents ?? []).map(
+        (a) => a.agent,
+      );
   const results = await Promise.all(
     agents.map(async (agent) => {
       const rows = await api.usage({
@@ -81,15 +84,16 @@ async function fetchDailyCostByAgent(f: TimelineFilters): Promise<DaySeries[]> {
         since: f.since,
         until: f.until,
         model: f.model,
+        cost_mode: f.costMode,
       });
       const byDay = new Map<string, DayValue>();
       for (const r of rows ?? []) {
         // An entirely unpriceable day is still usage. Keep it on the time
         // axis and render a warning-height marker rather than deleting it.
-        if (r.costUSD > 0 || r.hasUnpriced) {
+        if (r.costUSD > 0 || r.hasUnpriced || r.hasUnreported) {
           byDay.set(r.group, {
             cost: r.costUSD,
-            unpriced: Boolean(r.hasUnpriced),
+            incomplete: Boolean(r.hasUnpriced || r.hasUnreported),
           });
         }
       }
@@ -184,7 +188,7 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
         return {
           value: [dayMs(d), value?.cost ?? 0],
           itemStyle:
-            value?.unpriced && !(value.cost > 0)
+            value?.incomplete && !(value.cost > 0)
               ? { color: pal.warn, borderColor: pal.surface, borderWidth: 1 }
               : undefined,
         };
@@ -194,7 +198,7 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       // rides on hue alone.
       itemStyle: { borderColor: pal.surface, borderWidth: 1 },
       barMaxWidth: 28,
-      // Gives zero-dollar unpriced days a visible warning marker without
+      // Gives zero-dollar incomplete days a visible warning marker without
       // inventing a dollar value.
       barMinHeight: 3,
       // Over a year-wide axis a single day is a sliver; this keeps it on
@@ -211,14 +215,14 @@ function downloadCSV(series: DaySeries[]) {
   ).toSorted();
   const header = [
     "day",
-    ...series.flatMap((s) => [s.agent, `${s.agent}_has_unpriced`]),
+    ...series.flatMap((s) => [s.agent, `${s.agent}_has_incomplete_cost`]),
   ].join(",");
   const lines = days.map((d) =>
     [
       d,
       ...series.flatMap((s) => {
         const value = s.byDay.get(d);
-        return [(value?.cost ?? 0).toFixed(6), value?.unpriced ? "1" : "0"];
+        return [(value?.cost ?? 0).toFixed(6), value?.incomplete ? "1" : "0"];
       }),
     ].join(","),
   );
@@ -279,15 +283,22 @@ function useEChart(
 // stacked by agent, on a real time axis, with wheel + slider zoom,
 // following the page's date/agent/model filters. The rollup table below
 // it stays the accessible/table view of the same data.
-export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
+export function CostTimeline({
+  since,
+  until,
+  agent,
+  model,
+  costMode = "auto",
+}: TimelineFilters) {
   const { data, isLoading } = useQuery({
-    queryKey: ["usage", "daily-by-agent", since, until, agent, model],
-    queryFn: () => fetchDailyCostByAgent({ since, until, agent, model }),
+    queryKey: ["usage", "daily-by-agent", since, until, agent, model, costMode],
+    queryFn: () =>
+      fetchDailyCostByAgent({ since, until, agent, model, costMode }),
     placeholderData: (prev) => prev,
   });
   const series = useMemo(() => data ?? [], [data]);
-  const hasUnpriced = series.some((s) =>
-    Array.from(s.byDay.values()).some((v) => v.unpriced),
+  const hasIncomplete = series.some((s) =>
+    Array.from(s.byDay.values()).some((v) => v.incomplete),
   );
 
   const el = useRef<HTMLDivElement>(null);
@@ -314,12 +325,12 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
       action={
         series.length > 0 && (
           <span className="flex items-center gap-3">
-            {hasUnpriced && (
+            {hasIncomplete && (
               <span
                 className="font-mono text-meta text-warn"
-                title="Warning-height markers are days with usage that has no resolvable model or bucket rate; their dollar total is a lower bound"
+                title="Warning-height markers are days with unpriced usage or usage lacking agent-reported cost under the selected mode"
               >
-                ● unpriced usage
+                ● incomplete cost
               </span>
             )}
             <button
@@ -340,7 +351,7 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
         ref={el}
         className={`h-64 w-full ${series.length === 0 ? "hidden" : ""}`}
         role="img"
-        aria-label="Daily API-equivalent cost stacked by agent; warning markers indicate unpriced usage; the table below holds the same data"
+        aria-label="Daily API-equivalent cost stacked by agent; warning markers indicate incomplete cost coverage; the table below holds the same data"
       />
       {series.length === 0 && (
         <EmptyNote>

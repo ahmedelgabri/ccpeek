@@ -8,6 +8,8 @@ export interface TokenTotals {
   cacheWrite: number;
 }
 
+export type CostMode = "auto" | "calculate" | "display";
+
 export interface SessionSummary {
   agent: string;
   id: string;
@@ -20,8 +22,14 @@ export interface SessionSummary {
   toolCalls: number;
   tokens: TokenTotals;
   costUSD: number;
+  costUSDExact: string;
+  costMode: CostMode;
+  costReportedUSD: number;
+  costEstimatedUSD: number;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
+  unreportedTokens?: number;
+  unreportedTokenTypes?: TokenTotals;
 }
 
 export interface Relation {
@@ -64,12 +72,14 @@ export interface AgentStat {
   lastActive?: string;
   tokens: number;
   costUSD: number;
+  costUSDExact?: string;
 }
 
 export interface DayActivity {
   day: string;
   sessions: number;
   costUSD: number;
+  costUSDExact?: string;
 }
 
 export interface WorkspaceStat {
@@ -100,7 +110,10 @@ export interface Stats {
   scanFindings: number;
   tokens: number;
   costUSD: number;
+  costUSDExact: string;
+  costMode: CostMode;
   costMonthUSD: number;
+  costMonthUSDExact: string;
   agents?: AgentStat[];
   activity?: DayActivity[];
   workspaces?: WorkspaceStat[];
@@ -139,10 +152,14 @@ export interface UsageRow {
   messages: number;
   tokens: TokenTotals;
   costUSD: number;
+  costUSDExact: string;
+  costMode: CostMode;
   costReportedUSD: number;
   costEstimatedUSD: number;
   hasUnpriced?: boolean;
   unpricedTokenTypes?: TokenTotals;
+  hasUnreported?: boolean;
+  unreportedTokenTypes?: TokenTotals;
 }
 
 export interface SearchHit {
@@ -231,10 +248,11 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
+    cost_mode?: CostMode;
   }) => get<SessionSummary[]>("/sessions", filters),
 
-  session: (agent: string, id: string) =>
-    get<SessionDetail>(`/sessions/${agent}/${id}`),
+  session: (agent: string, id: string, costMode: CostMode = "auto") =>
+    get<SessionDetail>(`/sessions/${agent}/${id}`, { cost_mode: costMode }),
 
   transcript: (
     agent: string,
@@ -254,12 +272,16 @@ export const api = {
     since?: string;
     until?: string;
     limit?: string;
+    cost_mode?: CostMode;
   }) => get<UsageRow[]>("/usage", filters),
 
   search: (q: string, agent = "", limit = "20") =>
     get<SearchHit[]>("/search", { query: q, agent, limit }),
 
   stats: () => get<Stats>("/stats"),
+
+  statsWithCostMode: (costMode: CostMode) =>
+    get<Stats>("/stats", { cost_mode: costMode }),
 
   commands: (filters: {
     agent?: string;
@@ -429,8 +451,14 @@ export interface BlockRow {
   messages: number;
   tokens: TokenTotals;
   costUSD: number;
+  costUSDExact: string;
+  costMode: CostMode;
+  costReportedUSD: number;
+  costEstimatedUSD: number;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
+  unreportedTokens?: number;
+  unreportedTokenTypes?: TokenTotals;
   active?: boolean;
 }
 
@@ -467,6 +495,10 @@ export const parityApi = {
   scanRules: () => get<ScanRule[]>("/scan/rules"),
   scanIgnore: (id: number, ignored: boolean) =>
     send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
-  blocks: (limit = 24, agent = "") =>
-    get<BlockRow[]>("/blocks", { limit: String(limit), agent }),
+  blocks: (limit = 24, agent = "", costMode: CostMode = "auto") =>
+    get<BlockRow[]>("/blocks", {
+      limit: String(limit),
+      agent,
+      cost_mode: costMode,
+    }),
 };

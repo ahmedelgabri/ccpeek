@@ -72,8 +72,8 @@ function IndexingBanner() {
         <div className="mb-6 flex items-baseline gap-3 rounded-md border border-red-500/50 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
           <span className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full bg-red-500" />
           <span>
-            Indexing failed — showing what was indexed before the error.
-            Restart ccpeek to retry the pass.
+            Indexing failed — showing what was indexed before the error. Restart
+            ccpeek to retry the pass.
           </span>
           {data?.bootstrap?.error && (
             <span
@@ -323,9 +323,7 @@ function Layout() {
         <SidebarFooter collapsed={collapsed} onToggle={toggleSidebar} />
       </aside>
 
-      <div
-        className={`min-w-0 flex-1 ${collapsed ? "md:pl-12" : "md:pl-52"}`}
-      >
+      <div className={`min-w-0 flex-1 ${collapsed ? "md:pl-12" : "md:pl-52"}`}>
         <div className="mx-auto max-w-[1500px] px-5 py-5">
           {/* Below md the rail becomes a real disclosure menu. The old
               fallback wrapped every link inline around the logo, which
@@ -472,7 +470,14 @@ const routeTree = rootRoute.addChildren([
     component: UsagePage,
     // "day" is the default grouping and stays out of the URL.
     validateSearch: (s: Record<string, unknown>) =>
-      pickStrings(s, ["group", "agent", "model", "since", "until"]),
+      pickStrings(s, [
+        "group",
+        "agent",
+        "model",
+        "since",
+        "until",
+        "cost_mode",
+      ]),
   }),
   // /search has no page of its own any more — searching is the palette,
   // reachable from every view. The ROUTE survives because the v1
