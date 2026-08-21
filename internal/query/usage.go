@@ -3,32 +3,40 @@ package query
 import (
 	"context"
 	"fmt"
+
+	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
 // UsageRow is one group of the `usage` op, straight from the rollups.
 type UsageRow struct {
-	Group    string      `json:"group"` // day, model, project path, or agent slug
-	Sessions int64       `json:"sessions"`
-	Messages int64       `json:"messages"`
-	Tokens   TokenTotals `json:"tokens"`
-	CostUSD  float64     `json:"costUSD"`
+	Group        string      `json:"group"` // day, model, project path, or agent slug
+	Sessions     int64       `json:"sessions"`
+	Messages     int64       `json:"messages"`
+	Tokens       TokenTotals `json:"tokens"`
+	CostUSD      float64     `json:"costUSD"`
+	CostUSDExact string      `json:"costUSDExact"`
+	CostMode     string      `json:"costMode"`
 	// CostUSD = reported (the agent's own figure) + estimated (priced from
 	// tokens) — the closest available proxy for API-billed vs
 	// subscription-covered spend.
-	CostReportedUSD    float64      `json:"costReportedUSD"`
-	CostEstimatedUSD   float64      `json:"costEstimatedUSD"`
-	HasUnpriced        bool         `json:"hasUnpriced,omitempty"`
-	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	CostReportedUSD      float64      `json:"costReportedUSD"`
+	CostEstimatedUSD     float64      `json:"costEstimatedUSD"`
+	HasUnpriced          bool         `json:"hasUnpriced,omitempty"`
+	UnpricedTokenTypes   *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	HasUnreported        bool         `json:"hasUnreported,omitempty"`
+	UnreportedTokenTypes *TokenTotals `json:"unreportedTokenTypes,omitempty"`
 }
 
 // UsageFilter narrows the usage op.
 type UsageFilter struct {
-	GroupBy string // day | model | project | agent
-	Agent   string
-	Model   string
-	Since   string // inclusive YYYY-MM-DD
-	Until   string // INCLUSIVE YYYY-MM-DD
-	Limit   int
+	GroupBy  string // day | model | project | agent
+	Agent    string
+	Model    string
+	Since    string // inclusive YYYY-MM-DD
+	Until    string // INCLUSIVE YYYY-MM-DD
+	Limit    int
+	CostMode string // auto | calculate | display; empty = auto
 }
 
 // group resolves a UsageFilter's dimension to its SQL group and order
@@ -50,6 +58,40 @@ func (f UsageFilter) group() (groupExpr, orderExpr string, err error) {
 	}
 	return "", "", fmt.Errorf("%w: unknown group %q (want day|model|project|agent)",
 		ErrBadRequest, f.GroupBy)
+}
+
+type usageCostColumns struct {
+	amount, reported, estimated string
+	unpriced                    [4]string
+	unreported                  [4]string
+}
+
+func tokenTotal(tokens TokenTotals) int64 {
+	return max(tokens.Input, 0) + max(tokens.Output, 0) + max(tokens.CacheRead, 0) + max(tokens.CacheWrite, 0)
+}
+
+func columnsForMode(mode db.CostMode) usageCostColumns {
+	zero := "0"
+	switch mode {
+	case db.CostModeCalculate:
+		return usageCostColumns{
+			amount: "r.cost_calculated_nanos", reported: zero, estimated: "r.cost_calculated_nanos",
+			unpriced:   [4]string{"r.calculated_unpriced_input_tokens", "r.calculated_unpriced_output_tokens", "r.calculated_unpriced_cache_read_tokens", "r.calculated_unpriced_cache_write_tokens"},
+			unreported: [4]string{zero, zero, zero, zero},
+		}
+	case db.CostModeDisplay:
+		return usageCostColumns{
+			amount: "r.cost_reported_nanos", reported: "r.cost_reported_nanos", estimated: zero,
+			unpriced:   [4]string{zero, zero, zero, zero},
+			unreported: [4]string{"r.unreported_input_tokens", "r.unreported_output_tokens", "r.unreported_cache_read_tokens", "r.unreported_cache_write_tokens"},
+		}
+	default:
+		return usageCostColumns{
+			amount: "r.cost_nanos", reported: "r.cost_reported_nanos", estimated: "r.cost_estimated_nanos",
+			unpriced:   [4]string{"r.unpriced_input_tokens", "r.unpriced_output_tokens", "r.unpriced_cache_read_tokens", "r.unpriced_cache_write_tokens"},
+			unreported: [4]string{zero, zero, zero, zero},
+		}
+	}
 }
 
 // where builds the filter clause both queries run. Same reason as group():
@@ -78,6 +120,11 @@ func (f UsageFilter) where() (clause string, args []any) {
 
 // Usage aggregates the daily rollups by the requested dimension.
 func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) {
+	mode, err := db.ParseCostMode(f.CostMode)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
+	columns := columnsForMode(mode)
 	groupExpr, orderExpr, err := f.group()
 	if err != nil {
 		return nil, err
@@ -93,6 +140,9 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		return nil, err
 	}
 
+	if f.GroupBy != "" && f.GroupBy != "day" {
+		orderExpr = "SUM(" + columns.amount + ") DESC"
+	}
 	where, args := f.where()
 	limitClause := ""
 	if f.Limit > 0 {
@@ -105,20 +155,20 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		       SUM(r.sessions), SUM(r.messages),
 		       SUM(r.input_tokens), SUM(r.output_tokens),
 		       SUM(r.cache_read_tokens), SUM(r.cache_write_tokens),
-		       SUM(r.cost_usd), SUM(r.cost_reported_usd),
-		       SUM(r.cost_estimated_usd),
-		       SUM(r.unpriced_input_tokens),
-		       SUM(r.unpriced_output_tokens),
-		       SUM(r.unpriced_cache_read_tokens),
-		       SUM(r.unpriced_cache_write_tokens),
-		       MIN(r.priced)
+		       SUM(%s), SUM(%s), SUM(%s),
+		       SUM(%s), SUM(%s), SUM(%s), SUM(%s),
+		       SUM(%s), SUM(%s), SUM(%s), SUM(%s)
 		FROM rollup_usage_daily r
 		JOIN agents a ON a.id = r.agent_id
 		LEFT JOIN workspaces w ON w.id = r.workspace_id
 		%s
 		GROUP BY grp
 		ORDER BY %s
-		%s`, groupExpr, where, orderExpr, limitClause), args...)
+		%s`, groupExpr,
+		columns.amount, columns.reported, columns.estimated,
+		columns.unpriced[0], columns.unpriced[1], columns.unpriced[2], columns.unpriced[3],
+		columns.unreported[0], columns.unreported[1], columns.unreported[2], columns.unreported[3],
+		where, orderExpr, limitClause), args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating usage: %w", err)
 	}
@@ -127,20 +177,30 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 	var out []UsageRow
 	for rows.Next() {
 		var r UsageRow
-		var minPriced int
-		var unpriced TokenTotals
+		var amount, reported, estimated pricing.Amount
+		var unpriced, unreported TokenTotals
 		if err := rows.Scan(&r.Group, &r.Sessions, &r.Messages,
 			&r.Tokens.Input, &r.Tokens.Output,
 			&r.Tokens.CacheRead, &r.Tokens.CacheWrite,
-			&r.CostUSD, &r.CostReportedUSD, &r.CostEstimatedUSD,
+			&amount, &reported, &estimated,
 			&unpriced.Input, &unpriced.Output,
 			&unpriced.CacheRead, &unpriced.CacheWrite,
-			&minPriced); err != nil {
+			&unreported.Input, &unreported.Output,
+			&unreported.CacheRead, &unreported.CacheWrite); err != nil {
 			return nil, err
 		}
-		r.HasUnpriced = minPriced == 0
+		r.CostUSD = amount.USD()
+		r.CostUSDExact = amount.String()
+		r.CostMode = string(mode)
+		r.CostReportedUSD = reported.USD()
+		r.CostEstimatedUSD = estimated.USD()
+		r.HasUnpriced = tokenTotal(unpriced) > 0
 		if r.HasUnpriced {
 			r.UnpricedTokenTypes = &unpriced
+		}
+		r.HasUnreported = tokenTotal(unreported) > 0
+		if r.HasUnreported {
+			r.UnreportedTokenTypes = &unreported
 		}
 		out = append(out, r)
 	}

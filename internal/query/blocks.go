@@ -9,6 +9,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
 // BlockRow is one FIXED, UTC-aligned 5-hour window of usage
@@ -22,14 +23,20 @@ import (
 // the Active row is what has been spent since the last bucket boundary,
 // which can be well under what the live quota window is actually counting.
 type BlockRow struct {
-	Start              string       `json:"start"` // RFC3339 UTC window start
-	End                string       `json:"end"`
-	Sessions           int64        `json:"sessions"`
-	Messages           int64        `json:"messages"`
-	Tokens             TokenTotals  `json:"tokens"`
-	CostUSD            float64      `json:"costUSD"`
-	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
-	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	Start                string       `json:"start"` // RFC3339 UTC window start
+	End                  string       `json:"end"`
+	Sessions             int64        `json:"sessions"`
+	Messages             int64        `json:"messages"`
+	Tokens               TokenTotals  `json:"tokens"`
+	CostUSD              float64      `json:"costUSD"`
+	CostUSDExact         string       `json:"costUSDExact"`
+	CostMode             string       `json:"costMode"`
+	CostReportedUSD      float64      `json:"costReportedUSD"`
+	CostEstimatedUSD     float64      `json:"costEstimatedUSD"`
+	UnpricedTokens       int64        `json:"unpricedTokens,omitempty"`
+	UnpricedTokenTypes   *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	UnreportedTokens     int64        `json:"unreportedTokens,omitempty"`
+	UnreportedTokenTypes *TokenTotals `json:"unreportedTokenTypes,omitempty"`
 	// Active marks the bucket containing now — a partial bucket, not a
 	// quota window's remaining allowance.
 	Active bool `json:"active"`
@@ -54,6 +61,15 @@ const blockSeconds = 5 * 60 * 60
 // and then discard everything but the newest `limit` windows in Go. Years
 // of history were read to answer about one day of it.
 func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockRow, error) {
+	return s.BlocksWithCostMode(ctx, agent, limit, "")
+}
+
+// BlocksWithCostMode applies an explicit provenance mode to each usage row.
+func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit int, rawMode string) ([]BlockRow, error) {
+	mode, err := db.ParseCostMode(rawMode)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
 	if err := BlocksLimit.apply(&limit); err != nil {
 		return nil, err
 	}
@@ -114,34 +130,36 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 
 	// created_at is RFC3339 text; unixepoch() handles it in SQLite ≥3.38.
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT (unixepoch(m.created_at) / %d) AS win, m.provider, m.model,
-		       COUNT(*),
-		       SUM(u.input_tokens), SUM(u.output_tokens),
-		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
-		       `+db.ReportedCostSum+`,
-		       `+db.EstimatedTokenSums+`
+		SELECT (unixepoch(m.created_at) / %d) AS win, m.created_at,
+		       m.provider, m.model,
+		       u.input_tokens, u.output_tokens, u.cache_read_tokens,
+		       u.cache_write_tokens, u.cache_write_1h_tokens,
+		       CASE WHEN u.reported_cost_usd IS NULL THEN NULL
+		            ELSE COALESCE(u.reported_cost_nanos,
+		                 CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
 		JOIN agents a ON a.id = se.agent_id
 		WHERE m.created_at IS NOT NULL %s
-		GROUP BY win, m.provider, m.model
-		ORDER BY win DESC`, blockSeconds, where), args...)
+		ORDER BY win DESC, m.id`, blockSeconds, where), args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating blocks: %w", err)
 	}
 	defer rows.Close()
 
 	byWin := map[int64]*BlockRow{}
+	amounts := map[int64]pricing.Amount{}
+	reportedAmounts := map[int64]pricing.Amount{}
+	estimatedAmounts := map[int64]pricing.Amount{}
 	for rows.Next() {
-		var win, messages int64
-		var provider, model string
-		var in, out, cr, cw int64
-		var reported float64
-		var uin, uout, ucr, ucw, ucw1h int64
-		if err := rows.Scan(&win, &provider, &model, &messages,
-			&in, &out, &cr, &cw, &reported,
-			&uin, &uout, &ucr, &ucw, &ucw1h); err != nil {
+		var win int64
+		var occurredAt, provider, model string
+		var usage canon.Usage
+		var reported sql.NullInt64
+		if err := rows.Scan(&win, &occurredAt, &provider, &model,
+			&usage.InputTokens, &usage.OutputTokens, &usage.CacheReadTokens,
+			&usage.CacheWriteTokens, &usage.CacheWrite1hTokens, &reported); err != nil {
 			return nil, err
 		}
 		b := byWin[win]
@@ -152,18 +170,32 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 			}
 			byWin[win] = b
 		}
-		b.Messages += messages
-		b.Tokens.Input += in
-		b.Tokens.Output += out
-		b.Tokens.CacheRead += cr
-		b.Tokens.CacheWrite += cw
-		b.CostUSD += reported
-		cost, unpriced, _ := db.AutoCost(s.pricer, provider, model, canon.Usage{
-			InputTokens: uin, OutputTokens: uout, CacheReadTokens: ucr,
-			CacheWriteTokens: ucw, CacheWrite1hTokens: ucw1h,
-		})
-		b.CostUSD += cost
-		addUnpriced(&b.UnpricedTokens, &b.UnpricedTokenTypes, unpriced)
+		b.Messages++
+		b.Tokens.Input += usage.InputTokens
+		b.Tokens.Output += usage.OutputTokens
+		b.Tokens.CacheRead += usage.CacheReadTokens
+		b.Tokens.CacheWrite += usage.CacheWriteTokens
+		var reportedAmount *pricing.Amount
+		if reported.Valid {
+			amount := pricing.Amount(reported.Int64)
+			reportedAmount = &amount
+		}
+		result, err := db.EvaluateCostAt(s.pricer, mode, provider, model,
+			parseQueryTime(occurredAt), usage, reportedAmount)
+		if err != nil {
+			return nil, err
+		}
+		if amounts[win], err = amounts[win].Add(result.Amount); err != nil {
+			return nil, err
+		}
+		if reportedAmounts[win], err = reportedAmounts[win].Add(result.Reported); err != nil {
+			return nil, err
+		}
+		if estimatedAmounts[win], err = estimatedAmounts[win].Add(result.Estimated); err != nil {
+			return nil, err
+		}
+		addUnpriced(&b.UnpricedTokens, &b.UnpricedTokenTypes, result.Unpriced)
+		addUnpriced(&b.UnreportedTokens, &b.UnreportedTokenTypes, result.Unreported)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -183,6 +215,11 @@ func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockR
 		b := byWin[w]
 		b.Sessions = sessionsByWin[w]
 		b.Active = w == nowWin
+		b.CostUSD = amounts[w].USD()
+		b.CostUSDExact = amounts[w].String()
+		b.CostMode = string(mode)
+		b.CostReportedUSD = reportedAmounts[w].USD()
+		b.CostEstimatedUSD = estimatedAmounts[w].USD()
 		out = append(out, *b)
 	}
 	return out, nil

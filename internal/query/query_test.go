@@ -871,6 +871,94 @@ func newStore(t *testing.T) (*db.Store, *pricing.Table) {
 	return store, table
 }
 
+func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newStore(t)
+	table, err := pricing.Parse([]byte(`{"source":"test","fetched_at":"2026-01-01T00:00:00Z","models":{"model":{"input":1,"output":1}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	id, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "modes", CreatedAt: at, ModifiedAt: at}, "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported := 7.0
+	for seq, usage := range []canon.Usage{{InputTokens: 2, ReportedCostUSD: &reported}, {InputTokens: 3}} {
+		if err := w.InsertMessage(id, "claude-code", canon.Message{Seq: seq, Role: canon.RoleAssistant, CreatedAt: at.Add(time.Duration(seq) * time.Minute), Model: "model", Usage: &usage}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateWorkspaces(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store, table)
+
+	for _, tt := range []struct {
+		mode       string
+		want       string
+		unreported int64
+	}{
+		{"auto", "10", 0},
+		{"calculate", "5", 0},
+		{"display", "7", 3},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			sessions, err := svc.Sessions(ctx, SessionsFilter{CostMode: tt.mode})
+			if err != nil || len(sessions) != 1 {
+				t.Fatalf("sessions = %+v, %v", sessions, err)
+			}
+			detail, err := svc.SessionWithCostMode(ctx, "claude-code", "modes", tt.mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocks, err := svc.BlocksWithCostMode(ctx, "", 10, tt.mode)
+			if err != nil || len(blocks) != 1 {
+				t.Fatalf("blocks = %+v, %v", blocks, err)
+			}
+			usage, err := svc.Usage(ctx, UsageFilter{GroupBy: "day", CostMode: tt.mode})
+			if err != nil || len(usage) != 1 {
+				t.Fatalf("usage = %+v, %v", usage, err)
+			}
+			stats, err := svc.StatsWithCostMode(ctx, tt.mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for surface, got := range map[string]string{
+				"sessions": sessions[0].CostUSDExact,
+				"session":  detail.CostUSDExact,
+				"blocks":   blocks[0].CostUSDExact,
+				"usage":    usage[0].CostUSDExact,
+				"stats":    stats.CostUSDExact,
+			} {
+				if got != tt.want {
+					t.Errorf("%s exact cost = %q, want %q", surface, got, tt.want)
+				}
+			}
+			if sessions[0].UnreportedTokens != tt.unreported || blocks[0].UnreportedTokens != tt.unreported || tokenTotal(*usage[0].UnreportedTokenTypesOrZero()) != tt.unreported {
+				t.Errorf("unreported sessions/blocks/usage = %d/%d/%+v, want %d", sessions[0].UnreportedTokens, blocks[0].UnreportedTokens, usage[0].UnreportedTokenTypes, tt.unreported)
+			}
+		})
+	}
+}
+
+func (r UsageRow) UnreportedTokenTypesOrZero() *TokenTotals {
+	if r.UnreportedTokenTypes == nil {
+		return &TokenTotals{}
+	}
+	return r.UnreportedTokenTypes
+}
+
 // Session counts must stay true distinct counts per group after the
 // switch to the rollup side table — a session spanning two models on one
 // day is ONE session that day, not two, and one spanning two days is one

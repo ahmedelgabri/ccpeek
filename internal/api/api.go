@@ -309,14 +309,15 @@ func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.SessionsFilter{
-		Agent:   p.Str("agent"),
-		Project: p.Str("project"),
-		Model:   p.Str("model"),
-		Since:   p.Str("since"),
-		Until:   p.Str("until"),
-		Query:   p.Str("query"),
-		Limit:   p.Int("limit"),
-		Offset:  p.Int("offset"),
+		Agent:    p.Str("agent"),
+		Project:  p.Str("project"),
+		Model:    p.Str("model"),
+		Since:    p.Str("since"),
+		Until:    p.Str("until"),
+		Query:    p.Str("query"),
+		Limit:    p.Int("limit"),
+		Offset:   p.Int("offset"),
+		CostMode: p.Str("cost_mode"),
 	}
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)
@@ -331,7 +332,13 @@ func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) session(w http.ResponseWriter, r *http.Request) {
-	detail, err := h.svc.Session(r.Context(), r.PathValue("agent"), r.PathValue("id"))
+	p := newParams(r)
+	costMode := p.Str("cost_mode")
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	detail, err := h.svc.SessionWithCostMode(r.Context(), r.PathValue("agent"), r.PathValue("id"), costMode)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -401,7 +408,13 @@ func (h *handlers) sessionTool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) stats(w http.ResponseWriter, r *http.Request) {
-	st, err := h.svc.Stats(r.Context())
+	p := newParams(r)
+	costMode := p.Str("cost_mode")
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	st, err := h.svc.StatsWithCostMode(r.Context(), costMode)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -522,12 +535,13 @@ func (h *handlers) history(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.UsageFilter{
-		GroupBy: p.Str("group"),
-		Agent:   p.Str("agent"),
-		Model:   p.Str("model"),
-		Since:   p.Str("since"),
-		Until:   p.Str("until"),
-		Limit:   p.Int("limit"),
+		GroupBy:  p.Str("group"),
+		Agent:    p.Str("agent"),
+		Model:    p.Str("model"),
+		Since:    p.Str("since"),
+		Until:    p.Str("until"),
+		Limit:    p.Int("limit"),
+		CostMode: p.Str("cost_mode"),
 	}
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)
@@ -543,12 +557,12 @@ func (h *handlers) usage(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) pricing(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
-	model := p.Str("model")
+	model, at, inputTokens := p.Str("model"), p.Str("at"), p.Int("input_tokens")
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-	info, err := h.svc.Pricing(r.Context(), model)
+	info, err := h.svc.PricingAt(r.Context(), model, at, int64(inputTokens))
 	if err != nil {
 		writeError(w, err)
 		return

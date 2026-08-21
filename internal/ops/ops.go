@@ -109,6 +109,7 @@ func Registry() []Op {
 	agentParam := Param{Name: "agent", Type: "string", Desc: "Filter by agent slug (claude-code, pi, codex, opencode, cursor)"}
 	sinceParam := Param{Name: "since", Type: "string", Desc: "Inclusive YYYY-MM-DD lower bound"}
 	untilParam := Param{Name: "until", Type: "string", Desc: "Inclusive YYYY-MM-DD upper bound"}
+	costModeParam := Param{Name: "cost_mode", Type: "string", Default: "auto", Desc: "Cost provenance: auto | calculate | display (default auto)"}
 
 	return []Op{
 		{
@@ -122,6 +123,7 @@ func Registry() []Op {
 				{Name: "query", Type: "string", Desc: "Substring filter on session title", CLIFlag: "title"},
 				limitParam("Maximum results", query.SessionsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
+				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Sessions(ctx, query.SessionsFilter{
@@ -129,6 +131,7 @@ func Registry() []Op {
 					Model: a.Str["model"], Since: a.Str["since"],
 					Until: a.Str["until"], Query: a.Str["query"],
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
+					CostMode: a.Str["cost_mode"],
 				})
 				return out, len(out) == 0, err
 			},
@@ -139,9 +142,10 @@ func Registry() []Op {
 			Params: []Param{
 				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
 				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
+				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.Session(ctx, a.Str["agent"], a.Str["id"])
+				out, err := svc.SessionWithCostMode(ctx, a.Str["agent"], a.Str["id"], a.Str["cost_mode"])
 				return out, false, err
 			},
 		},
@@ -174,12 +178,14 @@ func Registry() []Op {
 				{Name: "model", Type: "string", Desc: "Filter to one model"},
 				sinceParam, untilParam,
 				limitParam("Maximum groups", query.UsageLimit),
+				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Usage(ctx, query.UsageFilter{
 					GroupBy: a.Str["group"], Agent: a.Str["agent"],
 					Model: a.Str["model"], Since: a.Str["since"],
 					Until: a.Str["until"], Limit: a.Int["limit"],
+					CostMode: a.Str["cost_mode"],
 				})
 				return out, len(out) == 0, err
 			},
@@ -189,9 +195,11 @@ func Registry() []Op {
 			Desc: "Explain the embedded pricing snapshot and optionally resolve one provider/model key, including missing cache-rate dimensions.",
 			Params: []Param{
 				{Name: "model", Type: "string", Desc: "Optional model or provider/model identifier to resolve"},
+				{Name: "at", Type: "string", Desc: "Request time as RFC3339 or YYYY-MM-DD for historical pricing"},
+				{Name: "input_tokens", Type: "integer", Desc: "Total request input tokens for long-context tier selection"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.Pricing(ctx, a.Str["model"])
+				out, err := svc.PricingAt(ctx, a.Str["model"], a.Str["at"], int64(a.Int["input_tokens"]))
 				return out, false, err
 			},
 		},
@@ -251,9 +259,9 @@ func Registry() []Op {
 		{
 			Name:   "stats",
 			Desc:   "Overview counters: sessions, messages, tool calls, artifacts, active scan findings, tokens, and cost, with per-agent and per-day activity.",
-			Params: nil,
+			Params: []Param{costModeParam},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.Stats(ctx)
+				out, err := svc.StatsWithCostMode(ctx, a.Str["cost_mode"])
 				return out, false, err
 			},
 		},
@@ -263,9 +271,10 @@ func Registry() []Op {
 			Params: []Param{
 				agentParam,
 				limitParam("Maximum windows", query.BlocksLimit),
+				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.Blocks(ctx, a.Str["agent"], a.Int["limit"])
+				out, err := svc.BlocksWithCostMode(ctx, a.Str["agent"], a.Int["limit"], a.Str["cost_mode"])
 				return out, len(out) == 0, err
 			},
 		},

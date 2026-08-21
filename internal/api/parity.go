@@ -215,12 +215,12 @@ func (h *handlers) scanIgnore(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) blocks(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
-	agent, limit := p.Str("agent"), p.Int("limit")
+	agent, limit, costMode := p.Str("agent"), p.Int("limit"), p.Str("cost_mode")
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-	blocks, err := h.svc.Blocks(r.Context(), agent, limit)
+	blocks, err := h.svc.BlocksWithCostMode(r.Context(), agent, limit, costMode)
 	if err != nil {
 		writeError(w, err)
 		return

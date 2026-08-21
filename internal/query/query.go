@@ -17,6 +17,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
 // exclusiveUntil converts an INCLUSIVE YYYY-MM-DD upper bound into the
@@ -47,6 +48,8 @@ var ErrNotFound = errors.New("not found")
 // to internal failures — transports map it to 400 vs 500.
 var ErrBadRequest = errors.New("bad request")
 
+func badRequest(detail string) error { return fmt.Errorf("%w: %s", ErrBadRequest, detail) }
+
 // Service executes queries against the store.
 type Service struct {
 	store  *db.Store
@@ -68,38 +71,49 @@ type TokenTotals struct {
 
 // SessionSummary is one row of the primary `sessions` op.
 type SessionSummary struct {
-	Agent      string      `json:"agent"`
-	ID         string      `json:"id"` // external id
-	Title      string      `json:"title"`
-	CreatedAt  string      `json:"createdAt"`
-	ModifiedAt string      `json:"modifiedAt"`
-	CWD        string      `json:"cwd"`
-	GitBranch  string      `json:"gitBranch,omitempty"`
-	Messages   int         `json:"messages"`
-	ToolCalls  int         `json:"toolCalls"`
-	Tokens     TokenTotals `json:"tokens"`
-	CostUSD    float64     `json:"costUSD"`
+	Agent            string      `json:"agent"`
+	ID               string      `json:"id"` // external id
+	Title            string      `json:"title"`
+	CreatedAt        string      `json:"createdAt"`
+	ModifiedAt       string      `json:"modifiedAt"`
+	CWD              string      `json:"cwd"`
+	GitBranch        string      `json:"gitBranch,omitempty"`
+	Messages         int         `json:"messages"`
+	ToolCalls        int         `json:"toolCalls"`
+	Tokens           TokenTotals `json:"tokens"`
+	CostUSD          float64     `json:"costUSD"`
+	CostUSDExact     string      `json:"costUSDExact"`
+	CostMode         string      `json:"costMode"`
+	CostReportedUSD  float64     `json:"costReportedUSD"`
+	CostEstimatedUSD float64     `json:"costEstimatedUSD"`
 	// UnpricedTokens counts tokens whose model the pricing table can't
 	// resolve; when non-zero, CostUSD is a lower bound.
-	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
-	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	UnpricedTokens       int64        `json:"unpricedTokens,omitempty"`
+	UnpricedTokenTypes   *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	UnreportedTokens     int64        `json:"unreportedTokens,omitempty"`
+	UnreportedTokenTypes *TokenTotals `json:"unreportedTokenTypes,omitempty"`
 }
 
 // SessionsFilter narrows the sessions op.
 type SessionsFilter struct {
-	Agent   string // slug, "" = all
-	Project string // workspace canonical path, "" = all
-	Model   string // sessions with ≥1 message on this model
-	Since   string // inclusive YYYY-MM-DD on modified_at
-	Until   string // INCLUSIVE YYYY-MM-DD upper bound on modified_at
-	Query   string // substring on title
-	Limit   int
-	Offset  int
+	Agent    string // slug, "" = all
+	Project  string // workspace canonical path, "" = all
+	Model    string // sessions with ≥1 message on this model
+	Since    string // inclusive YYYY-MM-DD on modified_at
+	Until    string // INCLUSIVE YYYY-MM-DD upper bound on modified_at
+	Query    string // substring on title
+	Limit    int
+	Offset   int
+	CostMode string // auto | calculate | display; empty = auto
 }
 
 // Sessions lists sessions newest-first — the primary op of the
 // session-centric model.
 func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSummary, error) {
+	mode, err := db.ParseCostMode(f.CostMode)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
 	if err := checkWindow(f.Since, f.Until); err != nil {
 		return nil, err
 	}
@@ -182,26 +196,26 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.attachCosts(ctx, rowIDs, out); err != nil {
+	if err := s.attachCosts(ctx, rowIDs, out, mode); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
 // attachCost computes one session's token totals and auto-mode cost.
-func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary) error {
+func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary, mode db.CostMode) error {
 	one := []SessionSummary{*sum}
-	if err := s.attachCosts(ctx, []int64{sessionRowID}, one); err != nil {
+	if err := s.attachCosts(ctx, []int64{sessionRowID}, one, mode); err != nil {
 		return err
 	}
 	*sum = one[0]
 	return nil
 }
 
-// attachCosts computes token totals and auto-mode cost for a whole page
-// of sessions in ONE grouped query — per-row queries made a 100-session
-// list cost 101 round trips. It writes through the slice.
-func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary) error {
+// attachCosts computes token totals and request-scoped cost for a whole page
+// in one query. Rows stay independent so historical cards, context tiers, and
+// provenance modes remain correct.
+func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary, mode db.CostMode) error {
 	if len(rowIDs) == 0 {
 		return nil
 	}
@@ -216,26 +230,32 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
 		SELECT m.session_id, m.provider, m.model,
-		       SUM(u.input_tokens), SUM(u.output_tokens),
-		       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
-		       `+db.ReportedCostSum+`,
-		       `+db.EstimatedTokenSums+`
+		       COALESCE(m.created_at, se.created_at, ''),
+		       u.input_tokens, u.output_tokens, u.cache_read_tokens,
+		       u.cache_write_tokens, u.cache_write_1h_tokens,
+		       CASE WHEN u.reported_cost_usd IS NULL THEN NULL
+		            ELSE COALESCE(u.reported_cost_nanos,
+		                 CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
+		JOIN sessions se ON se.id = m.session_id
 		WHERE m.session_id IN (%s)
-		GROUP BY m.session_id, m.provider, m.model`, placeholders), args...)
+		ORDER BY m.id`, placeholders), args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+	amounts := make([]pricing.Amount, len(sums))
+	reportedAmounts := make([]pricing.Amount, len(sums))
+	estimatedAmounts := make([]pricing.Amount, len(sums))
 	for rows.Next() {
 		var sessionID int64
-		var provider, model string
-		var in, out, cr, cw int64
-		var reported float64
-		var uin, uout, ucr, ucw, ucw1h int64
-		if err := rows.Scan(&sessionID, &provider, &model, &in, &out, &cr, &cw,
-			&reported, &uin, &uout, &ucr, &ucw, &ucw1h); err != nil {
+		var provider, model, occurredAt string
+		var usage canon.Usage
+		var reported sql.NullInt64
+		if err := rows.Scan(&sessionID, &provider, &model, &occurredAt,
+			&usage.InputTokens, &usage.OutputTokens, &usage.CacheReadTokens,
+			&usage.CacheWriteTokens, &usage.CacheWrite1hTokens, &reported); err != nil {
 			return err
 		}
 		i, found := byRow[sessionID]
@@ -243,22 +263,52 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 			continue
 		}
 		sum := &sums[i]
-		sum.Tokens.Input += in
-		sum.Tokens.Output += out
-		sum.Tokens.CacheRead += cr
-		sum.Tokens.CacheWrite += cw
-		sum.CostUSD += reported
-		cost, unpriced, _ := db.AutoCost(s.pricer, provider, model, canon.Usage{
-			InputTokens: uin, OutputTokens: uout, CacheReadTokens: ucr,
-			CacheWriteTokens: ucw, CacheWrite1hTokens: ucw1h,
-		})
-		sum.CostUSD += cost
-		addUnpriced(&sum.UnpricedTokens, &sum.UnpricedTokenTypes, unpriced)
+		sum.Tokens.Input += usage.InputTokens
+		sum.Tokens.Output += usage.OutputTokens
+		sum.Tokens.CacheRead += usage.CacheReadTokens
+		sum.Tokens.CacheWrite += usage.CacheWriteTokens
+		var reportedAmount *pricing.Amount
+		if reported.Valid {
+			amount := pricing.Amount(reported.Int64)
+			reportedAmount = &amount
+		}
+		result, err := db.EvaluateCostAt(s.pricer, mode, provider, model,
+			parseQueryTime(occurredAt), usage, reportedAmount)
+		if err != nil {
+			return err
+		}
+		if amounts[i], err = amounts[i].Add(result.Amount); err != nil {
+			return err
+		}
+		if reportedAmounts[i], err = reportedAmounts[i].Add(result.Reported); err != nil {
+			return err
+		}
+		if estimatedAmounts[i], err = estimatedAmounts[i].Add(result.Estimated); err != nil {
+			return err
+		}
+		addUnpriced(&sum.UnpricedTokens, &sum.UnpricedTokenTypes, result.Unpriced)
+		addUnpriced(&sum.UnreportedTokens, &sum.UnreportedTokenTypes, result.Unreported)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	for i := range sums {
+		sums[i].CostUSD = amounts[i].USD()
+		sums[i].CostUSDExact = amounts[i].String()
+		sums[i].CostMode = string(mode)
+		sums[i].CostReportedUSD = reportedAmounts[i].USD()
+		sums[i].CostEstimatedUSD = estimatedAmounts[i].USD()
+	}
 	return nil
+}
+
+func parseQueryTime(value string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 func addUnpriced(total *int64, breakdown **TokenTotals, u canon.Usage) {
@@ -300,8 +350,17 @@ type SessionDetail struct {
 	Models    []string         `json:"models,omitempty"`
 }
 
-// Session returns one session with its relations and linked artifacts.
+// Session returns one session in the default automatic cost mode.
 func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*SessionDetail, error) {
+	return s.SessionWithCostMode(ctx, agentSlug, externalID, "")
+}
+
+// SessionWithCostMode returns one session with its relations and linked artifacts.
+func (s *Service) SessionWithCostMode(ctx context.Context, agentSlug, externalID, rawMode string) (*SessionDetail, error) {
+	mode, err := db.ParseCostMode(rawMode)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
 	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
 	if err != nil {
 		return nil, err
@@ -322,7 +381,7 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 	if err != nil {
 		return nil, err
 	}
-	if err := s.attachCost(ctx, rowID, &detail.SessionSummary); err != nil {
+	if err := s.attachCost(ctx, rowID, &detail.SessionSummary, mode); err != nil {
 		return nil, err
 	}
 
