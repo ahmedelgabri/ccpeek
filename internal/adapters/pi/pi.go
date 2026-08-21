@@ -38,6 +38,10 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
+// ParseVersion forces one full reparse after per-message provider/model and
+// summary-entry usage became canonical fields.
+func (*Adapter) ParseVersion() int { return 2 }
+
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -105,10 +109,11 @@ type entry struct {
 	ModelID  string `json:"modelId"`
 
 	// type == "compaction" | "branch_summary"
-	Summary          string `json:"summary"`
-	FirstKeptEntryID string `json:"firstKeptEntryId"`
-	TokensBefore     int64  `json:"tokensBefore"`
-	FromID           string `json:"fromId"`
+	Summary          string   `json:"summary"`
+	FirstKeptEntryID string   `json:"firstKeptEntryId"`
+	TokensBefore     int64    `json:"tokensBefore"`
+	FromID           string   `json:"fromId"`
+	Usage            *piUsage `json:"usage"`
 
 	// type == "label"
 	TargetID string `json:"targetId"`
@@ -123,9 +128,11 @@ type entry struct {
 }
 
 type piMessage struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
-	Usage   *piUsage        `json:"usage"`
+	Role     string          `json:"role"`
+	Content  json.RawMessage `json:"content"`
+	Provider string          `json:"provider"`
+	Model    string          `json:"model"`
+	Usage    *piUsage        `json:"usage"`
 
 	// role == "toolResult": the outcome of an earlier toolCall block,
 	// delivered as its own message entry.
@@ -145,6 +152,21 @@ type piUsage struct {
 
 type piCost struct {
 	Total float64 `json:"total"`
+}
+
+func canonicalUsage(u *piUsage) *canon.Usage {
+	if u == nil {
+		return nil
+	}
+	out := &canon.Usage{
+		InputTokens: u.Input, OutputTokens: u.Output,
+		CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite,
+	}
+	if u.Cost != nil {
+		total := u.Cost.Total
+		out.ReportedCostUSD = &total
+	}
+	return out
 }
 
 type piBlock struct {
@@ -229,11 +251,12 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	// the first emit. Tool results pair through sink.ToolResult by call
 	// id instead of an in-memory index.
 	var (
-		sess         canon.Session
-		haveHeader   bool
-		messageCount int
-		toolCount    int
-		currentModel string
+		sess            canon.Session
+		haveHeader      bool
+		messageCount    int
+		toolCount       int
+		currentProvider string
+		currentModel    string
 	)
 
 	scanErr := jsonl.Scan(f, maxLineBytes, func(lineNo int, line []byte) error {
@@ -284,7 +307,8 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			sess.ModifiedAt = e.Timestamp
 		}
 
-		msg, dec, ok := a.convertEntry(e, messageCount, &sess, &currentModel)
+		msg, dec, ok := a.convertEntry(e, messageCount, &sess,
+			&currentProvider, &currentModel)
 		if !ok {
 			return nil
 		}
@@ -375,12 +399,13 @@ type decodedMessage struct {
 // established by model_change entries; the walk is file order, which
 // matches the main path for non-branching sessions and is a documented
 // approximation for branched ones.
-func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentModel *string) (canon.Message, decodedMessage, bool) {
+func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentProvider, currentModel *string) (canon.Message, decodedMessage, bool) {
 	base := canon.Message{
 		Seq:              seq,
 		ExternalID:       e.ID,
 		ParentExternalID: e.ParentID,
 		CreatedAt:        e.Timestamp,
+		Provider:         *currentProvider,
 		Model:            *currentModel,
 	}
 
@@ -391,39 +416,31 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 			return canon.Message{}, decodedMessage{}, false
 		}
 		dec := decodedMessage{pm: pm, blocks: piBlocks(pm.Content), ok: true}
+		if pm.Provider != "" {
+			base.Provider = pm.Provider
+			*currentProvider = pm.Provider
+		}
+		if pm.Model != "" {
+			base.Model = pm.Model
+			*currentModel = pm.Model
+		}
 		base.Kind = canon.KindMessage
 		base.Role = normalizeRole(pm.Role)
 		base.Content = e.Message
 		base.Text = piText(pm.Content, dec.blocks)
 		if pm.Usage != nil {
-			// No RequestID, and no ContentID either: Pi's format carries
-			// neither, so these rows bypass the store's (content_id,
-			// request_id) usage dedupe. That is SAFE here and the reason is
-			// structural, not luck — Pi branches in place, so a branch is
-			// new entries with new ids in the SAME file, and a fork is a new
-			// session file that references its parent by header
-			// parentSession WITHOUT copying the parent's entries. Nothing
-			// replicates a usage-bearing entry, so nothing can double-count
-			// it. A future Pi that starts replaying parent entries into a
-			// fork would need a dedupe key invented here first.
-			usage := &canon.Usage{
-				InputTokens:      pm.Usage.Input,
-				OutputTokens:     pm.Usage.Output,
-				CacheReadTokens:  pm.Usage.CacheRead,
-				CacheWriteTokens: pm.Usage.CacheWrite,
-			}
-			if pm.Usage.Cost != nil {
-				total := pm.Usage.Cost.Total
-				usage.ReportedCostUSD = &total
-			}
-			base.Usage = usage
+			// Pi branches in place and forks reference their parent without
+			// copying entries, so its lack of a request-id dedupe key is safe.
+			base.Usage = canonicalUsage(pm.Usage)
 		}
 		return base, dec, true
 
 	case "model_change":
+		*currentProvider = e.Provider
 		*currentModel = e.ModelID
 		base.Kind = canon.KindModelChange
 		base.Role = canon.RoleSystem
+		base.Provider = e.Provider
 		base.Model = e.ModelID
 		base.Text = fmt.Sprintf("model changed to %s/%s", e.Provider, e.ModelID)
 		base.Content = mustJSON(map[string]string{"provider": e.Provider, "modelId": e.ModelID})
@@ -433,6 +450,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 		base.Kind = canon.KindCompaction
 		base.Role = canon.RoleSystem
 		base.Text = e.Summary
+		base.Usage = canonicalUsage(e.Usage)
 		base.Content = mustJSON(map[string]any{
 			"summary": e.Summary, "firstKeptEntryId": e.FirstKeptEntryID,
 			"tokensBefore": e.TokensBefore,
@@ -443,6 +461,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentMod
 		base.Kind = canon.KindBranchPoint
 		base.Role = canon.RoleSystem
 		base.Text = e.Summary
+		base.Usage = canonicalUsage(e.Usage)
 		base.Content = mustJSON(map[string]string{"summary": e.Summary, "fromId": e.FromID})
 		return base, decodedMessage{}, true
 

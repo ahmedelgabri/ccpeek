@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,6 +127,43 @@ func TestParseUsageWithReportedCost(t *testing.T) {
 		if m.Model != "claude-sonnet-5" {
 			t.Errorf("model = %q, want model_change state applied", m.Model)
 		}
+	}
+}
+
+func TestModernMessageAndSummaryUsage(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	lines := []string{
+		`{"type":"session","id":"modern","version":3,"cwd":"/tmp/p","timestamp":"2026-08-21T10:00:00Z"}`,
+		`{"type":"message","id":"m1","timestamp":"2026-08-21T10:00:01Z","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.6-sol","content":[{"type":"text","text":"ok"}],"usage":{"input":10,"output":2,"cacheRead":3,"cacheWrite":4,"cost":{"total":0.5}}}}`,
+		`{"type":"compaction","id":"c1","parentId":"m1","timestamp":"2026-08-21T10:01:00Z","summary":"compact","usage":{"input":5,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.1}}}`,
+		`{"type":"branch_summary","id":"b1","parentId":"c1","timestamp":"2026-08-21T10:02:00Z","fromId":"m1","summary":"branch","usage":{"input":7,"output":2,"cacheRead":1,"cacheWrite":0,"cost":{"total":0.2}}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: root}, Path: path, Kind: agent.SourceFile,
+	}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3", len(sink.Messages))
+	}
+	for _, m := range sink.Messages {
+		if m.Provider != "openai-codex" || m.Model != "gpt-5.6-sol" {
+			t.Errorf("entry %s provider/model = %q/%q", m.ExternalID, m.Provider, m.Model)
+		}
+		if m.Usage == nil || m.Usage.ReportedCostUSD == nil {
+			t.Errorf("entry %s missing usage/cost", m.ExternalID)
+		}
+	}
+	if got := *sink.Messages[1].Usage.ReportedCostUSD; got != 0.1 {
+		t.Errorf("compaction cost = %v", got)
+	}
+	if got := *sink.Messages[2].Usage.ReportedCostUSD; got != 0.2 {
+		t.Errorf("branch summary cost = %v", got)
 	}
 }
 

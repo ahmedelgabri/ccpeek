@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -147,6 +148,27 @@ func TestParseCapturesUsageAndModel(t *testing.T) {
 	// Tree edges preserved.
 	if first.ParentExternalID != "u-001" || first.ExternalID != "a-001" {
 		t.Errorf("tree edge = %q→%q", first.ParentExternalID, first.ExternalID)
+	}
+}
+
+func TestCacheWriteTTLAndLegacyCostOnly(t *testing.T) {
+	cost := 0.25
+	withUsage, _, _ := New().convertLine(rawLine{
+		Type: "assistant", RequestID: "req", CostUSD: &cost,
+		Message: json.RawMessage(`{"id":"msg","role":"assistant","model":"claude-sonnet-5","content":[],"usage":{"input_tokens":3,"output_tokens":4,"cache_creation_input_tokens":100,"cache_read_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":40,"ephemeral_1h_input_tokens":60}}}`),
+	}, 0, "s")
+	if withUsage.Usage == nil || withUsage.Usage.CacheWriteTokens != 100 ||
+		withUsage.Usage.CacheWrite1hTokens != 60 {
+		t.Fatalf("ttl usage = %+v", withUsage.Usage)
+	}
+
+	costOnly, _, _ := New().convertLine(rawLine{
+		Type: "assistant", CostUSD: &cost,
+		Message: json.RawMessage(`{"id":"legacy","role":"assistant","model":"claude-2","content":[]}`),
+	}, 1, "s")
+	if costOnly.Usage == nil || costOnly.Usage.ReportedCostUSD == nil ||
+		*costOnly.Usage.ReportedCostUSD != cost {
+		t.Fatalf("legacy cost-only usage = %+v", costOnly.Usage)
 	}
 }
 

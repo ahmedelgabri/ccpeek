@@ -46,6 +46,10 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
+// ParseVersion forces one full reparse after the adapter learned the one-hour
+// cache split and legacy cost-only usage records.
+func (*Adapter) ParseVersion() int { return 2 }
+
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -128,6 +132,10 @@ type rawUsage struct {
 	CacheCreationInputTokens int64  `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64  `json:"cache_read_input_tokens"`
 	ServiceTier              string `json:"service_tier"`
+	CacheCreation            struct {
+		Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 type contentBlock struct {
@@ -458,13 +466,21 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 			msg.Model = payload.Model
 			if payload.Usage != nil {
 				msg.Usage = &canon.Usage{
-					InputTokens:      payload.Usage.InputTokens,
-					OutputTokens:     payload.Usage.OutputTokens,
-					CacheReadTokens:  payload.Usage.CacheReadInputTokens,
-					CacheWriteTokens: payload.Usage.CacheCreationInputTokens,
-					ServiceTier:      payload.Usage.ServiceTier,
-					ReportedCostUSD:  raw.CostUSD,
-					RequestID:        raw.RequestID,
+					InputTokens:        payload.Usage.InputTokens,
+					OutputTokens:       payload.Usage.OutputTokens,
+					CacheReadTokens:    payload.Usage.CacheReadInputTokens,
+					CacheWriteTokens:   payload.Usage.CacheCreationInputTokens,
+					CacheWrite1hTokens: payload.Usage.CacheCreation.Ephemeral1hInputTokens,
+					ServiceTier:        payload.Usage.ServiceTier,
+					ReportedCostUSD:    raw.CostUSD,
+					RequestID:          raw.RequestID,
+				}
+			} else if raw.CostUSD != nil {
+				// Legacy Claude lines can carry a complete reported cost without
+				// message.usage. Preserve the cost as a zero-token usage record.
+				msg.Usage = &canon.Usage{
+					ReportedCostUSD: raw.CostUSD,
+					RequestID:       raw.RequestID,
 				}
 			}
 		}

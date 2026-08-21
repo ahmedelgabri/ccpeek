@@ -34,6 +34,10 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
+// ParseVersion forces one full reparse after provider identity became a
+// canonical message field.
+func (*Adapter) ParseVersion() int { return 2 }
+
 // RootSpec implements agent.Adapter. OPENCODE_DATA_DIR may hold a
 // comma-separated list of directories.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -219,6 +223,7 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 			Role:              canon.Role(md.Role),
 			Kind:              canon.KindMessage,
 			CreatedAt:         millis(md.Time.Created),
+			Provider:          md.ProviderID,
 			Model:             md.ModelID,
 			CWD:               doc.Directory,
 			Content:           json.RawMessage(raw),
