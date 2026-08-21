@@ -128,6 +128,16 @@ test.describe("cost provenance", () => {
     ).toHaveAttribute("aria-checked", "true");
   });
 
+  test("overview marks incomplete display-mode days", async ({ page }) => {
+    await page.goto("/?cost_mode=display");
+    await expect(
+      page
+        .getByRole("radiogroup", { name: "Cost provenance" })
+        .getByRole("radio", { name: "display" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator("svg rect[stroke]").first()).toBeVisible();
+  });
+
   test("timeline CSV names incomplete-cost columns explicitly", async ({
     page,
   }) => {

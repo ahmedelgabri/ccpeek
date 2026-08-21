@@ -949,8 +949,8 @@ func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
 					t.Errorf("%s exact cost = %q, want %q", surface, got, tt.want)
 				}
 			}
-			if sessions[0].UnreportedTokens != tt.unreported || blocks[0].UnreportedTokens != tt.unreported || tokenTotal(*usage[0].UnreportedTokenTypesOrZero()) != tt.unreported {
-				t.Errorf("unreported sessions/blocks/usage = %d/%d/%+v, want %d", sessions[0].UnreportedTokens, blocks[0].UnreportedTokens, usage[0].UnreportedTokenTypes, tt.unreported)
+			if sessions[0].UnreportedTokens != tt.unreported || blocks[0].UnreportedTokens != tt.unreported || tokenTotal(*usage[0].UnreportedTokenTypesOrZero()) != tt.unreported || stats.UnreportedTokens != tt.unreported {
+				t.Errorf("unreported sessions/blocks/usage/stats = %d/%d/%+v/%d, want %d", sessions[0].UnreportedTokens, blocks[0].UnreportedTokens, usage[0].UnreportedTokenTypes, stats.UnreportedTokens, tt.unreported)
 			}
 		})
 	}

@@ -126,7 +126,16 @@ export function OverviewPage() {
         />
         <StatTile
           label="Cost / month"
-          value={<Money usd={st.costMonthUSD} />}
+          value={
+            <Money
+              usd={st.costMonthUSD}
+              unpriced={
+                (st.costMonthUnpricedTokens ?? 0) +
+                  (st.costMonthUnreportedTokens ?? 0) || undefined
+              }
+              title={`${st.costMode} $${st.costMonthUSDExact}`}
+            />
+          }
           detail={`${fmtCost(st.costUSD)} all time`}
           to="/usage"
           spark={<Sparkline values={last30.map((d) => d.costUSD)} />}
@@ -251,7 +260,15 @@ export function OverviewPage() {
                         {fmtTokens(a.tokens)} tok
                       </td>
                       <td className="px-3 py-1.5 text-right">
-                        <Money usd={a.costUSD} className="text-xs" />
+                        <Money
+                          usd={a.costUSD}
+                          unpriced={
+                            (a.unpricedTokens ?? 0) +
+                              (a.unreportedTokens ?? 0) || undefined
+                          }
+                          className="text-xs"
+                          title={`${costMode} $${a.costUSDExact ?? a.costUSD}`}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -413,7 +430,12 @@ function WorkspacesByCost({
                 style={{ width: `${Math.max((r.costUSD / max) * 100, 2)}%` }}
               />
             </span>
-            <Money usd={r.costUSD} className="shrink-0 text-meta" />
+            <Money
+              usd={r.costUSD}
+              unpriced={r.hasUnpriced || r.hasUnreported ? 1 : undefined}
+              className="shrink-0 text-meta"
+              title={`${r.costMode} $${r.costUSDExact}`}
+            />
           </Link>
         </li>
       ))}
@@ -548,9 +570,11 @@ function Heatmap({
           ))}
           {cells.map((c) => {
             const n = c.d?.sessions ?? 0;
+            const incomplete =
+              (c.d?.unpricedTokens ?? 0) + (c.d?.unreportedTokens ?? 0) > 0;
             const label = `${c.day}: ${plural(n, "session")}${
               c.d && c.d.costUSD > 0 ? `, ${fmtCost(c.d.costUSD)}` : ""
-            }`;
+            }${incomplete ? ", incomplete cost coverage" : ""}`;
             const rect = (
               <rect
                 x={GUTTER + c.week * (CELL + GAP)}
@@ -559,6 +583,8 @@ function Heatmap({
                 height={CELL}
                 rx={2}
                 fill={FILL[level(n)]}
+                stroke={incomplete ? "var(--color-warn)" : undefined}
+                strokeWidth={incomplete ? 2 : undefined}
               />
             );
             const tip = (
@@ -571,6 +597,12 @@ function Heatmap({
                   <>
                     {" · "}
                     <span className="text-ink">{fmtCost(c.d.costUSD)}</span>
+                  </>
+                )}
+                {incomplete && (
+                  <>
+                    <br />
+                    <span className="text-warn">incomplete cost coverage</span>
                   </>
                 )}
               </>

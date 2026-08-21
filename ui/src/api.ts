@@ -82,6 +82,8 @@ export interface AgentStat {
   tokens: number;
   costUSD: number;
   costUSDExact?: string;
+  unpricedTokens?: number;
+  unreportedTokens?: number;
 }
 
 export interface DayActivity {
@@ -89,6 +91,8 @@ export interface DayActivity {
   sessions: number;
   costUSD: number;
   costUSDExact?: string;
+  unpricedTokens?: number;
+  unreportedTokens?: number;
 }
 
 export interface WorkspaceStat {
@@ -121,8 +125,12 @@ export interface Stats {
   costUSD: number;
   costUSDExact: string;
   costMode: CostMode;
+  unpricedTokens?: number;
+  unreportedTokens?: number;
   costMonthUSD: number;
   costMonthUSDExact: string;
+  costMonthUnpricedTokens?: number;
+  costMonthUnreportedTokens?: number;
   agents?: AgentStat[];
   activity?: DayActivity[];
   workspaces?: WorkspaceStat[];
