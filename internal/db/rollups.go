@@ -74,20 +74,11 @@ const ReportedCostSum = `SUM(CASE WHEN ` + needsEstimatedCost + `
 // and whether every non-zero bucket was priced. A zero-token row is always
 // fully priced: it cannot make a Usage group falsely claim unpriced tokens.
 func AutoCost(p Pricer, provider, model string, u canon.Usage) (cost float64, unpriced canon.Usage, fullyPriced bool) {
-	total := usageTotal(u)
-	if total == 0 {
-		return 0, canon.Usage{}, true
+	result, err := EvaluateCost(p, CostModeCalculate, provider, model, u)
+	if err != nil {
+		return 0, positiveUsage(u), false
 	}
-	rate, ok := p.Lookup(PricingModel(provider, model))
-	if !ok {
-		return 0, canon.Usage{
-			InputTokens: max(u.InputTokens, 0), OutputTokens: max(u.OutputTokens, 0),
-			CacheReadTokens: max(u.CacheReadTokens, 0), CacheWriteTokens: max(u.CacheWriteTokens, 0),
-			CacheWrite1hTokens: min(max(u.CacheWrite1hTokens, 0), max(u.CacheWriteTokens, 0)),
-		}, false
-	}
-	cost, unpriced = rate.Price(u)
-	return cost, unpriced, usageTotal(unpriced) == 0
+	return result.Amount.USD(), result.Unpriced, usageTotal(result.Unpriced) == 0
 }
 
 func usageTotal(u canon.Usage) int64 {
