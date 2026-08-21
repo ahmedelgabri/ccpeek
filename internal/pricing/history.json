@@ -2,7 +2,7 @@
   "claude-sonnet-5": [
     {
       "effective_from": "2026-06-30",
-      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "source": "https://www.anthropic.com/news/claude-sonnet-5",
       "rate": {
         "input": 0.000002,
         "output": 0.00001,

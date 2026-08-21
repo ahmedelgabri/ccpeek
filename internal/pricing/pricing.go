@@ -278,32 +278,55 @@ func (t *Table) Resolve(model string) (rate Rate, key string, found bool) {
 // rather than silently receiving today's rate. Undated callers retain current
 // snapshot behavior.
 func (t *Table) ResolveAt(model string, at time.Time, inputTokens int64) (Rate, Resolution, bool) {
-	for _, candidate := range Candidates(model) {
-		base, currentFound := t.rates[candidate]
-		cards := t.history[candidate]
-		if at.IsZero() || len(cards) == 0 {
-			if !currentFound {
-				continue
-			}
-			selected, threshold := base.ForInput(inputTokens)
-			return selected, Resolution{Key: candidate, AboveInputTokens: threshold}, true
+	candidates := Candidates(model)
+	var current Rate
+	var currentKey string
+	var currentFound bool
+	for _, candidate := range candidates {
+		if rate, ok := t.rates[candidate]; ok {
+			current, currentKey, currentFound = rate, candidate, true
+			break
 		}
+	}
+	if at.IsZero() {
+		if !currentFound {
+			return Rate{}, Resolution{}, false
+		}
+		selected, threshold := current.ForInput(inputTokens)
+		return selected, Resolution{Key: currentKey, AboveInputTokens: threshold}, true
+	}
 
+	// History and current rates are normalized independently. A provider-
+	// specific current key must not prevent a less-specific historical card
+	// from governing the same normalized model.
+	for _, candidate := range candidates {
+		cards := t.history[candidate]
+		if len(cards) == 0 {
+			continue
+		}
 		card, ok := effectiveCard(cards, at)
 		if !ok {
-			// Historical coverage exists for this exact candidate, so a gap is
-			// authoritative. Do not fall through to a less-specific or current
-			// rate that would conceal the missing period.
+			// Historical coverage exists for this normalized model, so a gap is
+			// authoritative. Do not conceal it with today's current rate.
 			return Rate{}, Resolution{Key: candidate}, false
 		}
-		selected, threshold := card.Rate.ForInput(inputTokens)
+		cardRate := card.Rate
+		if len(cardRate.Tiers) == 0 && currentFound {
+			cardRate.Tiers = current.Tiers
+		}
+		selected, threshold := cardRate.ForInput(inputTokens)
 		return selected, Resolution{
 			Key: candidate, EffectiveFrom: card.EffectiveFrom,
 			EffectiveTo: card.EffectiveTo, Source: card.Source,
 			AboveInputTokens: threshold,
 		}, true
 	}
-	return Rate{}, Resolution{}, false
+
+	if !currentFound {
+		return Rate{}, Resolution{}, false
+	}
+	selected, threshold := current.ForInput(inputTokens)
+	return selected, Resolution{Key: currentKey, AboveInputTokens: threshold}, true
 }
 
 func effectiveCard(cards []RateCard, at time.Time) (RateCard, bool) {

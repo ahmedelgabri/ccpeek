@@ -172,6 +172,32 @@ func TestEffectiveDatedCardsAndCoverageGaps(t *testing.T) {
 	}
 }
 
+func TestHistoryNormalizationAndTierInheritance(t *testing.T) {
+	tbl, err := Parse([]byte(`{
+		"source":"test","fetched_at":"2026-08-21T00:00:00Z",
+		"models":{
+			"vertex_ai/model":{"input":9,"output":9,"tiers":[{"above_input_tokens":100,"input":4}]},
+			"model":{"input":8,"output":8}
+		},
+		"history":{"model":[{"effective_from":"2026-01-01","rate":{"input":1,"output":2}}]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, _ := time.Parse("2006-01-02", "2026-06-01")
+	rate, resolution, ok := tbl.ResolveAt("vertex_ai/model", at, 101)
+	if !ok || resolution.Key != "model" || resolution.EffectiveFrom != "2026-01-01" {
+		t.Fatalf("prefixed historical resolution = %+v, %v", resolution, ok)
+	}
+	if rate.Input != 4 {
+		t.Errorf("historical card did not inherit current tiers: input = %v, want 4", rate.Input)
+	}
+	before, _ := time.Parse("2006-01-02", "2025-12-31")
+	if _, resolution, ok := tbl.ResolveAt("vertex_ai/model", before, 1); ok || resolution.Key != "model" {
+		t.Errorf("prefixed coverage gap unexpectedly resolved: %+v, %v", resolution, ok)
+	}
+}
+
 func TestEmbeddedSnapshot(t *testing.T) {
 	tbl, err := Embedded()
 	if err != nil {
@@ -199,6 +225,13 @@ func TestEmbeddedSnapshot(t *testing.T) {
 	launch, _ := time.Parse("2006-01-02", "2026-06-30")
 	if rate, resolution, ok := tbl.ResolveAt("claude-sonnet-5", launch, 1); !ok || rate.Input != 2e-6 || resolution.EffectiveFrom != "2026-06-30" {
 		t.Errorf("launch Sonnet 5 card = %+v, %+v, %v", rate, resolution, ok)
+	}
+	// Anthropic made the launch price permanent on 2026-08-10; the planned
+	// September increase was cancelled. Pin a post-September request so a
+	// future edit cannot resurrect that obsolete transition.
+	postSeptember, _ := time.Parse("2006-01-02", "2026-09-01")
+	if rate, resolution, ok := tbl.ResolveAt("vertex_ai/claude-sonnet-5", postSeptember, 1); !ok || rate.Input != 2e-6 || rate.Output != 10e-6 || resolution.EffectiveTo != "" {
+		t.Errorf("permanent Sonnet 5 card = %+v, %+v, %v", rate, resolution, ok)
 	}
 	// A long-stable key that should survive snapshot refreshes.
 	rate, ok := tbl.Lookup("claude-3-opus-20240229")
