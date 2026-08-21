@@ -9,6 +9,13 @@ export interface TokenTotals {
 }
 
 export type CostMode = "auto" | "calculate" | "display";
+export const COST_MODES: CostMode[] = ["auto", "calculate", "display"];
+export function isCostMode(value: string | undefined): value is CostMode {
+  return COST_MODES.some((mode) => mode === value);
+}
+export function costMode(value: string | undefined): CostMode {
+  return isCostMode(value) ? value : "auto";
+}
 
 export interface SessionSummary {
   agent: string;

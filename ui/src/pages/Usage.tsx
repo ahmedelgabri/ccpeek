@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
+  COST_MODES,
+  costMode as normalizeCostMode,
   fmtCount,
   fmtTokens,
   parityApi,
@@ -32,13 +34,10 @@ const CostTimeline = lazy(() =>
 
 const GROUPS = ["day", "model", "project", "agent", "blocks"] as const;
 type Group = (typeof GROUPS)[number];
-const COST_MODES: CostMode[] = ["auto", "calculate", "display"];
 
 // A ?group= from the URL is any string until proven otherwise.
 const isGroup = (v: string | undefined): v is Group =>
   GROUPS.some((g) => g === v);
-const isCostMode = (v: string | undefined): v is CostMode =>
-  COST_MODES.some((mode) => mode === v);
 
 // pivotSearch builds the /sessions filter for a usage row: the row's own
 // dimension plus every filter already active on this page, so drilling
@@ -46,13 +45,20 @@ const isCostMode = (v: string | undefined): v is CostMode =>
 function pivotSearch(
   group: string,
   value: string,
-  active: { agent: string; model: string; since: string; until: string },
+  active: {
+    agent: string;
+    model: string;
+    since: string;
+    until: string;
+    costMode: CostMode;
+  },
 ): Record<string, string> {
   const search: Record<string, string> = {};
   if (active.agent) search.agent = active.agent;
   if (active.model) search.model = active.model;
   if (active.since) search.since = active.since;
   if (active.until) search.until = active.until;
+  if (active.costMode !== "auto") search.cost_mode = active.costMode;
   switch (group) {
     case "day":
       search.since = value;
@@ -141,9 +147,7 @@ export function UsagePage() {
   const until = search.until ?? "";
   const agent = search.agent ?? "";
   const model = search.model ?? "";
-  const costMode: CostMode = isCostMode(search.cost_mode)
-    ? search.cost_mode
-    : "auto";
+  const costMode: CostMode = normalizeCostMode(search.cost_mode);
   const isBlocks = group === "blocks";
 
   // "day" is the default and stays out of the URL.
@@ -297,7 +301,7 @@ export function UsagePage() {
               <UsageTable
                 rows={rows}
                 group={group}
-                filters={{ agent, model, since, until }}
+                filters={{ agent, model, since, until, costMode }}
               />
             )}
           </>
@@ -318,14 +322,20 @@ function UsageTable({
 }: {
   rows: UsageRow[];
   group: Group;
-  filters: { agent: string; model: string; since: string; until: string };
+  filters: {
+    agent: string;
+    model: string;
+    since: string;
+    until: string;
+    costMode: CostMode;
+  };
 }) {
   // Sorting: null keeps the server order (day desc / cost desc); a click
   // cycles asc↔desc per column.
   const { sorted: rows, sort, toggleSort } = useSorted(unsorted, SORT_VALUE);
   const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
   const tooltip = useTooltip();
-  const { agent, model, since, until } = filters;
+  const { agent, model, since, until, costMode } = filters;
   return (
     <>
       <div className="overflow-x-auto">
@@ -386,6 +396,7 @@ function UsageTable({
                         model,
                         since,
                         until,
+                        costMode,
                       })}
                       title={`Sessions matching this row (and the active filters)\n${r.group}`}
                       className="hover:text-accent"

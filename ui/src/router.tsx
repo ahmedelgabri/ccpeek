@@ -429,6 +429,8 @@ const routeTree = rootRoute.addChildren([
     getParentRoute: () => rootRoute,
     path: "/",
     component: OverviewPage,
+    validateSearch: (s: Record<string, unknown>) =>
+      pickStrings(s, ["cost_mode"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
@@ -436,7 +438,15 @@ const routeTree = rootRoute.addChildren([
     component: SessionsPage,
     // Only non-empty filters serialize, keeping /sessions URLs clean.
     validateSearch: (s: Record<string, unknown>) =>
-      pickStrings(s, ["agent", "q", "project", "model", "since", "until"]),
+      pickStrings(s, [
+        "agent",
+        "q",
+        "project",
+        "model",
+        "since",
+        "until",
+        "cost_mode",
+      ]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
@@ -444,10 +454,11 @@ const routeTree = rootRoute.addChildren([
     component: SessionDetailPage,
     validateSearch: (s: Record<string, unknown>) => {
       // "transcript" is the default tab and stays out of the URL.
-      const { tab } = pickStrings(s, ["tab"]);
-      const out: { tab?: string; seq?: number } = {};
+      const { tab, cost_mode } = pickStrings(s, ["tab", "cost_mode"]);
+      const out: { tab?: string; seq?: number; cost_mode?: string } = {};
       if (tab !== undefined && tab !== "transcript") out.tab = tab;
       if (typeof s.seq === "number") out.seq = s.seq;
+      if (cost_mode !== undefined) out.cost_mode = cost_mode;
       return out;
     },
   }),
@@ -514,9 +525,10 @@ const routeTree = rootRoute.addChildren([
     path: "/compare",
     component: ComparePage,
     validateSearch: (s: Record<string, unknown>) => {
-      const out: { a?: string; b?: string } = {};
+      const out: { a?: string; b?: string; cost_mode?: string } = {};
       if (typeof s.a === "string" && /^[^|]+\|[^|]+$/.test(s.a)) out.a = s.a;
       if (typeof s.b === "string" && /^[^|]+\|[^|]+$/.test(s.b)) out.b = s.b;
+      if (typeof s.cost_mode === "string") out.cost_mode = s.cost_mode;
       return out;
     },
   }),

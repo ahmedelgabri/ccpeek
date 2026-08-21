@@ -186,7 +186,10 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       data: days.map((d) => {
         const value = s.byDay.get(d);
         return {
-          value: [dayMs(d), value?.cost ?? 0],
+          // null means this agent had no row that day. A numeric zero is
+          // reserved for incomplete-cost usage that needs the warning-height
+          // marker; barMinHeight must never turn absence into a phantom bar.
+          value: [dayMs(d), value ? value.cost : null],
           itemStyle:
             value?.incomplete && !(value.cost > 0)
               ? { color: pal.warn, borderColor: pal.surface, borderWidth: 1 }

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
 
 // Regression cover for the UI/UX pass. Each test pins a defect that
@@ -93,6 +94,56 @@ test.describe("figures tell the truth", () => {
     const shown = parseUSD(header);
     expect(shown).toBeGreaterThanOrEqual(low - 0.005);
     expect(shown).toBeLessThanOrEqual(high + 0.005);
+  });
+});
+
+test.describe("cost provenance", () => {
+  test("mode survives usage drill-down into a session", async ({ page }) => {
+    await page.goto("/usage");
+    const usageMode = page.getByRole("radiogroup", {
+      name: "Cost provenance",
+    });
+    await usageMode.getByRole("radio", { name: "calculate" }).click();
+    await expect(page).toHaveURL(/\/usage\?.*cost_mode=calculate/);
+    await expect(
+      usageMode.getByRole("radio", { name: "calculate" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    await page.locator("table tbody tr td").first().getByRole("link").click();
+    await expect(page).toHaveURL(/\/sessions\?.*cost_mode=calculate/);
+    await expect(
+      page
+        .getByRole("radiogroup", { name: "Cost provenance" })
+        .getByRole("radio", { name: "calculate" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    await page.locator("ul li a").first().click();
+    await expect(page).toHaveURL(
+      /\/sessions\/[^/]+\/[^?]+\?.*cost_mode=calculate/,
+    );
+    await expect(
+      page
+        .getByRole("radiogroup", { name: "Cost provenance" })
+        .getByRole("radio", { name: "calculate" }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("timeline CSV names incomplete-cost columns explicitly", async ({
+    page,
+  }) => {
+    await page.goto("/usage");
+    const exportButton = page.getByRole("button", { name: "export CSV" });
+    await expect(exportButton).toBeVisible();
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      exportButton.click(),
+    ]);
+    const path = await download.path();
+    expect(path).not.toBeNull();
+    const csv = await readFile(path!, "utf8");
+    const header = csv.slice(0, csv.indexOf("\n"));
+    expect(header).toContain("_has_incomplete_cost");
+    expect(header).not.toContain("_has_unpriced");
   });
 });
 

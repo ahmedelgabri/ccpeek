@@ -4,11 +4,14 @@ import { LoadMore, usePagedList } from "../paged";
 import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
+  COST_MODES,
+  costMode as normalizeCostMode,
   fmtCount,
   fmtTokens,
   plural,
   shortPath,
   totalTokens,
+  type CostMode,
   type SessionSummary,
 } from "../api";
 import { fullWhen, localDay, localTime } from "../time";
@@ -23,6 +26,7 @@ import {
   Money,
   PageHeader,
   SectionHeading,
+  Segmented,
   SkeletonRows,
   useSetFilter,
   useSlashFocus,
@@ -42,6 +46,7 @@ export function SessionsPage() {
   const model = search.model ?? "";
   const since = search.since ?? "";
   const until = search.until ?? "";
+  const costMode: CostMode = normalizeCostMode(search.cost_mode);
 
   // The URL is the filter. The box is local so typing stays responsive and
   // only the settled value is pushed — one request and one history write
@@ -67,7 +72,7 @@ export function SessionsPage() {
     isFetchingNextPage,
     fetchNextPage,
   } = usePagedList(
-    ["sessions", agent, q, project, model, since, until],
+    ["sessions", agent, q, project, model, since, until, costMode],
     (offset) =>
       api.sessions({
         agent,
@@ -78,13 +83,14 @@ export function SessionsPage() {
         until,
         limit: String(PAGE),
         offset: String(offset),
+        cost_mode: costMode,
       }),
     PAGE,
   );
   // Model options come from the model rollup, same source as Usage.
   const modelRows = useQuery({
-    queryKey: ["usage", "model-options"],
-    queryFn: () => api.usage({ group: "model" }),
+    queryKey: ["usage", "model-options", costMode],
+    queryFn: () => api.usage({ group: "model", cost_mode: costMode }),
   });
   const models = (modelRows.data ?? [])
     .map((r) => r.group)
@@ -97,9 +103,15 @@ export function SessionsPage() {
     sessions,
     (s) => localDay(s.modifiedAt) || "(no date)",
   );
-  const activeFilters = [agent, project, model, since, until, q].filter(
-    Boolean,
-  ).length;
+  const activeFilters = [
+    agent,
+    project,
+    model,
+    since,
+    until,
+    q,
+    costMode === "auto" ? "" : costMode,
+  ].filter(Boolean).length;
 
   return (
     <div>
@@ -124,6 +136,14 @@ export function SessionsPage() {
           models={models}
           onModel={(v) => setFilter({ model: v })}
         >
+          <Segmented
+            label="Cost provenance"
+            value={costMode}
+            options={COST_MODES.map((mode) => ({ value: mode, label: mode }))}
+            onChange={(mode) =>
+              setFilter({ cost_mode: mode === "auto" ? "" : mode })
+            }
+          />
           <input
             ref={titleBox}
             value={titleInput}
@@ -177,6 +197,12 @@ export function SessionsPage() {
               onClear={() => setFilter({ since: "", until: "" })}
             />
           )}
+          {costMode !== "auto" && (
+            <FilterPill
+              label={`cost: ${costMode}`}
+              onClear={() => setFilter({ cost_mode: "" })}
+            />
+          )}
           {q && (
             <FilterPill
               label={`“${q}”`}
@@ -198,6 +224,7 @@ export function SessionsPage() {
                   since: "",
                   until: "",
                   q: "",
+                  cost_mode: "",
                 });
               }}
               className="font-mono text-meta text-ink-faint hover:text-ink"
@@ -278,6 +305,9 @@ function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
       <Link
         to="/sessions/$agent/$sessionId"
         params={{ agent: s.agent, sessionId: s.id }}
+        search={{
+          cost_mode: s.costMode === "auto" ? undefined : s.costMode,
+        }}
         className={`block border-l-2 border-transparent bg-surface-1 px-4 transition-colors hover:border-accent hover:bg-surface-2/40 ${
           dense ? "py-1.5" : "py-2.5"
         }`}
@@ -300,8 +330,11 @@ function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
           )}
           <Money
             usd={s.costUSD}
-            unpriced={s.unpricedTokens}
+            unpriced={
+              (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) || undefined
+            }
             className="shrink-0 text-sm"
+            title={`${s.costMode} $${s.costUSDExact}`}
           />
         </div>
         {!dense && (
