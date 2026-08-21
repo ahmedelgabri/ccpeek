@@ -192,6 +192,9 @@ func buildToolDefs() []map[string]any {
 			if p.Max > 0 {
 				prop["maximum"] = p.Max
 			}
+			if len(p.Enum) > 0 {
+				prop["enum"] = p.Enum
+			}
 			props[p.Name] = prop
 			if p.Required {
 				required = append(required, p.Name)

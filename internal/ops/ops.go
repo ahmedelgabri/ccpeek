@@ -46,7 +46,8 @@ type Param struct {
 	// ErrBadRequest, never a silent truncation — and both numbers come
 	// from the same query.Limit, so what a transport advertises is what
 	// the read applies.
-	Max int
+	Max  int
+	Enum []string // Optional JSON-Schema enum for string parameters.
 }
 
 // Args carries decoded inputs for an executor.
@@ -109,7 +110,11 @@ func Registry() []Op {
 	agentParam := Param{Name: "agent", Type: "string", Desc: "Filter by agent slug (claude-code, pi, codex, opencode, cursor)"}
 	sinceParam := Param{Name: "since", Type: "string", Desc: "Inclusive YYYY-MM-DD lower bound"}
 	untilParam := Param{Name: "until", Type: "string", Desc: "Inclusive YYYY-MM-DD upper bound"}
-	costModeParam := Param{Name: "cost_mode", Type: "string", Default: "auto", Desc: "Cost provenance: auto | calculate | display (default auto)"}
+	costModeParam := Param{
+		Name: "cost_mode", Type: "string", Default: "auto",
+		Desc: "Cost provenance: auto | calculate | display (default auto)",
+		Enum: []string{"auto", "calculate", "display"},
+	}
 
 	return []Op{
 		{
