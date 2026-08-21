@@ -1,4 +1,7 @@
-# Incremental Indexing
+# Incremental indexing (historical v1 design)
+
+> [!WARNING]
+> This document records the deleted v1 indexing architecture. Paths such as `internal/index` and `internal/store`, commands such as `RunIncremental`, and the flag behavior below do not describe the current v2 implementation; use `internal/ingest`, `internal/db`, `docs/v2-plan.md`, and current command help for active behavior.
 
 ## Summary
 
