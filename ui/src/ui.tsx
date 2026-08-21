@@ -139,8 +139,8 @@ export function Money({
       title={
         title ??
         (unpriced
-          ? "Contains tokens with no resolvable price — a lower bound"
-          : undefined)
+          ? "API-equivalent value; contains tokens with no resolvable price — a lower bound"
+          : "API-equivalent value; reported by the agent where available, otherwise estimated from list rates")
       }
       className={`font-mono tabular-nums ${
         unpriced ? "text-warn" : zero ? "text-ink-faint" : "text-ink"

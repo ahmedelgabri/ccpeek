@@ -21,6 +21,7 @@ export interface SessionSummary {
   tokens: TokenTotals;
   costUSD: number;
   unpricedTokens?: number;
+  unpricedTokenTypes?: TokenTotals;
 }
 
 export interface Relation {
@@ -49,6 +50,7 @@ export interface TranscriptMessage {
   role: string;
   kind: string;
   createdAt: string;
+  provider?: string;
   model?: string;
   isSidechain?: boolean;
   text: string;
@@ -140,6 +142,7 @@ export interface UsageRow {
   costReportedUSD: number;
   costEstimatedUSD: number;
   hasUnpriced?: boolean;
+  unpricedTokenTypes?: TokenTotals;
 }
 
 export interface SearchHit {
@@ -427,6 +430,7 @@ export interface BlockRow {
   tokens: TokenTotals;
   costUSD: number;
   unpricedTokens?: number;
+  unpricedTokenTypes?: TokenTotals;
   active?: boolean;
 }
 

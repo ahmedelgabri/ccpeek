@@ -181,8 +181,8 @@ export function SessionDetailPage() {
 
       {s.unpricedTokens ? (
         <p className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
-          {fmtTokens(s.unpricedTokens)} tokens use a model the pricing table
-          can't resolve — the cost shown is a lower bound.
+          {fmtTokens(s.unpricedTokens)} tokens have no resolvable model or
+          bucket rate — the API-equivalent cost shown is a lower bound.
         </p>
       ) : null}
 
