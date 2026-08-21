@@ -25,7 +25,9 @@ export interface SessionSummary {
   costUSDExact: string;
   costMode: CostMode;
   costReportedUSD: number;
+  costReportedUSDExact: string;
   costEstimatedUSD: number;
+  costEstimatedUSDExact: string;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
   unreportedTokens?: number;
@@ -155,7 +157,9 @@ export interface UsageRow {
   costUSDExact: string;
   costMode: CostMode;
   costReportedUSD: number;
+  costReportedUSDExact: string;
   costEstimatedUSD: number;
+  costEstimatedUSDExact: string;
   hasUnpriced?: boolean;
   unpricedTokenTypes?: TokenTotals;
   hasUnreported?: boolean;
@@ -454,7 +458,9 @@ export interface BlockRow {
   costUSDExact: string;
   costMode: CostMode;
   costReportedUSD: number;
+  costReportedUSDExact: string;
   costEstimatedUSD: number;
+  costEstimatedUSDExact: string;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
   unreportedTokens?: number;

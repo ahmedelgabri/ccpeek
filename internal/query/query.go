@@ -71,21 +71,23 @@ type TokenTotals struct {
 
 // SessionSummary is one row of the primary `sessions` op.
 type SessionSummary struct {
-	Agent            string      `json:"agent"`
-	ID               string      `json:"id"` // external id
-	Title            string      `json:"title"`
-	CreatedAt        string      `json:"createdAt"`
-	ModifiedAt       string      `json:"modifiedAt"`
-	CWD              string      `json:"cwd"`
-	GitBranch        string      `json:"gitBranch,omitempty"`
-	Messages         int         `json:"messages"`
-	ToolCalls        int         `json:"toolCalls"`
-	Tokens           TokenTotals `json:"tokens"`
-	CostUSD          float64     `json:"costUSD"`
-	CostUSDExact     string      `json:"costUSDExact"`
-	CostMode         string      `json:"costMode"`
-	CostReportedUSD  float64     `json:"costReportedUSD"`
-	CostEstimatedUSD float64     `json:"costEstimatedUSD"`
+	Agent                 string      `json:"agent"`
+	ID                    string      `json:"id"` // external id
+	Title                 string      `json:"title"`
+	CreatedAt             string      `json:"createdAt"`
+	ModifiedAt            string      `json:"modifiedAt"`
+	CWD                   string      `json:"cwd"`
+	GitBranch             string      `json:"gitBranch,omitempty"`
+	Messages              int         `json:"messages"`
+	ToolCalls             int         `json:"toolCalls"`
+	Tokens                TokenTotals `json:"tokens"`
+	CostUSD               float64     `json:"costUSD"`
+	CostUSDExact          string      `json:"costUSDExact"`
+	CostMode              string      `json:"costMode"`
+	CostReportedUSD       float64     `json:"costReportedUSD"`
+	CostReportedUSDExact  string      `json:"costReportedUSDExact"`
+	CostEstimatedUSD      float64     `json:"costEstimatedUSD"`
+	CostEstimatedUSDExact string      `json:"costEstimatedUSDExact"`
 	// UnpricedTokens counts tokens whose model the pricing table can't
 	// resolve; when non-zero, CostUSD is a lower bound.
 	UnpricedTokens       int64        `json:"unpricedTokens,omitempty"`
@@ -297,7 +299,9 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 		sums[i].CostUSDExact = amounts[i].String()
 		sums[i].CostMode = string(mode)
 		sums[i].CostReportedUSD = reportedAmounts[i].USD()
+		sums[i].CostReportedUSDExact = reportedAmounts[i].String()
 		sums[i].CostEstimatedUSD = estimatedAmounts[i].USD()
+		sums[i].CostEstimatedUSDExact = estimatedAmounts[i].String()
 	}
 	return nil
 }

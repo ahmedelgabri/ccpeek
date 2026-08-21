@@ -23,20 +23,22 @@ import (
 // the Active row is what has been spent since the last bucket boundary,
 // which can be well under what the live quota window is actually counting.
 type BlockRow struct {
-	Start                string       `json:"start"` // RFC3339 UTC window start
-	End                  string       `json:"end"`
-	Sessions             int64        `json:"sessions"`
-	Messages             int64        `json:"messages"`
-	Tokens               TokenTotals  `json:"tokens"`
-	CostUSD              float64      `json:"costUSD"`
-	CostUSDExact         string       `json:"costUSDExact"`
-	CostMode             string       `json:"costMode"`
-	CostReportedUSD      float64      `json:"costReportedUSD"`
-	CostEstimatedUSD     float64      `json:"costEstimatedUSD"`
-	UnpricedTokens       int64        `json:"unpricedTokens,omitempty"`
-	UnpricedTokenTypes   *TokenTotals `json:"unpricedTokenTypes,omitempty"`
-	UnreportedTokens     int64        `json:"unreportedTokens,omitempty"`
-	UnreportedTokenTypes *TokenTotals `json:"unreportedTokenTypes,omitempty"`
+	Start                 string       `json:"start"` // RFC3339 UTC window start
+	End                   string       `json:"end"`
+	Sessions              int64        `json:"sessions"`
+	Messages              int64        `json:"messages"`
+	Tokens                TokenTotals  `json:"tokens"`
+	CostUSD               float64      `json:"costUSD"`
+	CostUSDExact          string       `json:"costUSDExact"`
+	CostMode              string       `json:"costMode"`
+	CostReportedUSD       float64      `json:"costReportedUSD"`
+	CostReportedUSDExact  string       `json:"costReportedUSDExact"`
+	CostEstimatedUSD      float64      `json:"costEstimatedUSD"`
+	CostEstimatedUSDExact string       `json:"costEstimatedUSDExact"`
+	UnpricedTokens        int64        `json:"unpricedTokens,omitempty"`
+	UnpricedTokenTypes    *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	UnreportedTokens      int64        `json:"unreportedTokens,omitempty"`
+	UnreportedTokenTypes  *TokenTotals `json:"unreportedTokenTypes,omitempty"`
 	// Active marks the bucket containing now — a partial bucket, not a
 	// quota window's remaining allowance.
 	Active bool `json:"active"`
@@ -219,7 +221,9 @@ func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit in
 		b.CostUSDExact = amounts[w].String()
 		b.CostMode = string(mode)
 		b.CostReportedUSD = reportedAmounts[w].USD()
+		b.CostReportedUSDExact = reportedAmounts[w].String()
 		b.CostEstimatedUSD = estimatedAmounts[w].USD()
+		b.CostEstimatedUSDExact = estimatedAmounts[w].String()
 		out = append(out, *b)
 	}
 	return out, nil

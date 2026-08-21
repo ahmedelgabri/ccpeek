@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
-  fmtCostExact,
   fmtCount,
   fmtTokens,
   parityApi,
@@ -421,7 +420,7 @@ function UsageTable({
                     usd={r.costUSD}
                     unpriced={r.hasUnpriced || r.hasUnreported ? 1 : undefined}
                     className="text-xs"
-                    title={`${r.costMode} ${r.costUSDExact} USD · reported ${fmtCostExact(r.costReportedUSD)} · estimated ${fmtCostExact(r.costEstimatedUSD)}`}
+                    title={`${r.costMode} ${r.costUSDExact} USD · reported $${r.costReportedUSDExact} · estimated $${r.costEstimatedUSDExact}`}
                   />
                 </td>
                 <td
@@ -435,9 +434,9 @@ function UsageTable({
                       <br />
                       mode {r.costMode} · exact ${r.costUSDExact}
                       <br />
-                      reported {fmtCostExact(r.costReportedUSD)}
+                      reported ${r.costReportedUSDExact}
                       <br />
-                      estimated {fmtCostExact(r.costEstimatedUSD)}
+                      estimated ${r.costEstimatedUSDExact}
                     </>,
                   )}
                 >

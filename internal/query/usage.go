@@ -20,12 +20,14 @@ type UsageRow struct {
 	// CostUSD = reported (the agent's own figure) + estimated (priced from
 	// tokens) — the closest available proxy for API-billed vs
 	// subscription-covered spend.
-	CostReportedUSD      float64      `json:"costReportedUSD"`
-	CostEstimatedUSD     float64      `json:"costEstimatedUSD"`
-	HasUnpriced          bool         `json:"hasUnpriced,omitempty"`
-	UnpricedTokenTypes   *TokenTotals `json:"unpricedTokenTypes,omitempty"`
-	HasUnreported        bool         `json:"hasUnreported,omitempty"`
-	UnreportedTokenTypes *TokenTotals `json:"unreportedTokenTypes,omitempty"`
+	CostReportedUSD       float64      `json:"costReportedUSD"`
+	CostReportedUSDExact  string       `json:"costReportedUSDExact"`
+	CostEstimatedUSD      float64      `json:"costEstimatedUSD"`
+	CostEstimatedUSDExact string       `json:"costEstimatedUSDExact"`
+	HasUnpriced           bool         `json:"hasUnpriced,omitempty"`
+	UnpricedTokenTypes    *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	HasUnreported         bool         `json:"hasUnreported,omitempty"`
+	UnreportedTokenTypes  *TokenTotals `json:"unreportedTokenTypes,omitempty"`
 }
 
 // UsageFilter narrows the usage op.
@@ -193,7 +195,9 @@ func (s *Service) Usage(ctx context.Context, f UsageFilter) ([]UsageRow, error) 
 		r.CostUSDExact = amount.String()
 		r.CostMode = string(mode)
 		r.CostReportedUSD = reported.USD()
+		r.CostReportedUSDExact = reported.String()
 		r.CostEstimatedUSD = estimated.USD()
+		r.CostEstimatedUSDExact = estimated.String()
 		r.HasUnpriced = tokenTotal(unpriced) > 0
 		if r.HasUnpriced {
 			r.UnpricedTokenTypes = &unpriced
