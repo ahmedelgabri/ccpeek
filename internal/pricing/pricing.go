@@ -312,6 +312,9 @@ func (t *Table) ResolveAt(model string, at time.Time, inputTokens int64) (Rate, 
 		}
 		cardRate := card.Rate
 		if len(cardRate.Tiers) == 0 && currentFound {
+			// Sparse historical cards inherit the current card's absolute tier
+			// rates. This deliberately mixes eras when base prices changed;
+			// producers must include card-specific tiers to avoid that assumption.
 			cardRate.Tiers = current.Tiers
 		}
 		selected, threshold := cardRate.ForInput(inputTokens)
