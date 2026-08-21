@@ -18,6 +18,15 @@ trap 'rm -f "$tmp"' EXIT
 curl -fsSL "$SOURCE_URL" -o "$tmp"
 
 jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+  def tier($v; $threshold; $label):
+    ({
+      above_input_tokens: $threshold,
+      input:          $v["input_cost_per_token_above_" + $label + "_tokens"],
+      output:         $v["output_cost_per_token_above_" + $label + "_tokens"],
+      cache_write:    $v["cache_creation_input_token_cost_above_" + $label + "_tokens"],
+      cache_write_1h: $v["cache_creation_input_token_cost_above_1hr_above_" + $label + "_tokens"],
+      cache_read:     $v["cache_read_input_token_cost_above_" + $label + "_tokens"]
+    } | with_entries(select(.value != null)));
   {
     source: $source,
     fetched_at: $fetched_at,
@@ -36,8 +45,15 @@ jq --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 
             output:         .value.output_cost_per_token,
             cache_write:    .value.cache_creation_input_token_cost?,
             cache_write_1h: .value.cache_creation_input_token_cost_above_1hr?,
-            cache_read:     .value.cache_read_input_token_cost?
-          } | with_entries(select(.value != null)))
+            cache_read:     .value.cache_read_input_token_cost?,
+            tiers: ([
+              tier(.value; 128000; "128k"),
+              tier(.value; 200000; "200k"),
+              tier(.value; 256000; "256k"),
+              tier(.value; 272000; "272k"),
+              tier(.value; 512000; "512k")
+            ] | map(select(length > 1)))
+          } | with_entries(select(.value != null and .value != [])))
         })
       | from_entries
     )

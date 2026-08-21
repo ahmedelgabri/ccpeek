@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
@@ -26,7 +28,7 @@ var embedded []byte
 // AlgorithmVersion changes whenever cost-selection or bucket arithmetic
 // changes. It is folded into Table.Fingerprint so materialized rollups are
 // invalidated by code semantics as well as by snapshot bytes.
-const AlgorithmVersion = "cost-v2-zero-fallback-partial-cache-ttl"
+const AlgorithmVersion = "cost-v3-fixed-point-effective-tiered-modes"
 
 // Rate is USD per single token. Missing cache fields remain distinguishable
 // from a genuine zero rate; otherwise a known model with cache traffic would
@@ -37,10 +39,44 @@ type Rate struct {
 	CacheWrite   float64 `json:"cache_write,omitempty"`
 	CacheWrite1h float64 `json:"cache_write_1h,omitempty"`
 	CacheRead    float64 `json:"cache_read,omitempty"`
+	Tiers        []Tier  `json:"tiers,omitempty"`
 
 	cacheWriteMissing   bool
 	cacheWrite1hMissing bool
 	cacheReadMissing    bool
+}
+
+// Tier overrides whichever base rates a provider changes after a request's
+// total input crosses AboveInputTokens. Nil fields inherit the lower tier;
+// this matters for providers that increase input/output while retaining their
+// base cache-read rate.
+type Tier struct {
+	AboveInputTokens int64    `json:"above_input_tokens"`
+	Input            *float64 `json:"input,omitempty"`
+	Output           *float64 `json:"output,omitempty"`
+	CacheWrite       *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h     *float64 `json:"cache_write_1h,omitempty"`
+	CacheRead        *float64 `json:"cache_read,omitempty"`
+}
+
+// RateCard is one effective-dated override for a model. EffectiveTo is
+// exclusive. Empty bounds are open; overlapping cards resolve to the one with
+// the latest start. Price-card producers, not snapshot fetch times, own these
+// dates.
+type RateCard struct {
+	EffectiveFrom string `json:"effective_from,omitempty"`
+	EffectiveTo   string `json:"effective_to,omitempty"`
+	Source        string `json:"source,omitempty"`
+	Rate          Rate   `json:"rate"`
+}
+
+// Resolution explains the exact key, historical card, and request tier used.
+type Resolution struct {
+	Key              string `json:"key"`
+	EffectiveFrom    string `json:"effectiveFrom,omitempty"`
+	EffectiveTo      string `json:"effectiveTo,omitempty"`
+	Source           string `json:"source,omitempty"`
+	AboveInputTokens int64  `json:"aboveInputTokens,omitempty"`
 }
 
 // UnmarshalJSON preserves field presence while keeping Rate literals concise
@@ -53,11 +89,13 @@ func (r *Rate) UnmarshalJSON(data []byte) error {
 		CacheWrite   *float64 `json:"cache_write"`
 		CacheWrite1h *float64 `json:"cache_write_1h"`
 		CacheRead    *float64 `json:"cache_read"`
+		Tiers        []Tier   `json:"tiers"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	r.Input, r.Output = raw.Input, raw.Output
+	r.Input, r.Output, r.Tiers = raw.Input, raw.Output, raw.Tiers
+	sort.Slice(r.Tiers, func(i, j int) bool { return r.Tiers[i].AboveInputTokens < r.Tiers[j].AboveInputTokens })
 	r.cacheWriteMissing = raw.CacheWrite == nil
 	r.cacheWrite1hMissing = raw.CacheWrite1h == nil
 	r.cacheReadMissing = raw.CacheRead == nil
@@ -71,6 +109,36 @@ func (r *Rate) UnmarshalJSON(data []byte) error {
 		r.CacheRead = *raw.CacheRead
 	}
 	return nil
+}
+
+// ForInput returns the rate selected for one request and the threshold that
+// selected it. Input includes ordinary input, cache reads, and cache writes.
+func (r Rate) ForInput(inputTokens int64) (Rate, int64) {
+	selected := r
+	selected.Tiers = nil
+	var threshold int64
+	for _, tier := range r.Tiers {
+		if inputTokens <= tier.AboveInputTokens {
+			break
+		}
+		threshold = tier.AboveInputTokens
+		if tier.Input != nil {
+			selected.Input = *tier.Input
+		}
+		if tier.Output != nil {
+			selected.Output = *tier.Output
+		}
+		if tier.CacheWrite != nil {
+			selected.CacheWrite, selected.cacheWriteMissing = *tier.CacheWrite, false
+		}
+		if tier.CacheWrite1h != nil {
+			selected.CacheWrite1h, selected.cacheWrite1hMissing = *tier.CacheWrite1h, false
+		}
+		if tier.CacheRead != nil {
+			selected.CacheRead, selected.cacheReadMissing = *tier.CacheRead, false
+		}
+	}
+	return selected, threshold
 }
 
 // PriceAmount prices every bucket whose rate is known using fixed-point
@@ -134,12 +202,14 @@ type Table struct {
 	FetchedAt   string
 	fingerprint string
 	rates       map[string]Rate
+	history     map[string][]RateCard
 }
 
 type snapshot struct {
-	Source    string          `json:"source"`
-	FetchedAt string          `json:"fetched_at"`
-	Models    map[string]Rate `json:"models"`
+	Source    string                `json:"source"`
+	FetchedAt string                `json:"fetched_at"`
+	Models    map[string]Rate       `json:"models"`
+	History   map[string][]RateCard `json:"history,omitempty"`
 }
 
 // Embedded parses the built-in snapshot.
@@ -160,10 +230,16 @@ func Parse(data []byte) (*Table, error) {
 	for model, rate := range snap.Models {
 		rates[strings.ToLower(model)] = rate
 	}
+	history := make(map[string][]RateCard, len(snap.History))
+	for model, cards := range snap.History {
+		key := strings.ToLower(model)
+		sort.SliceStable(cards, func(i, j int) bool { return cards[i].EffectiveFrom < cards[j].EffectiveFrom })
+		history[key] = cards
+	}
 	sum := sha256.Sum256(append(append([]byte(AlgorithmVersion), 0), data...))
 	return &Table{
 		Source: snap.Source, FetchedAt: snap.FetchedAt,
-		fingerprint: hex.EncodeToString(sum[:]), rates: rates,
+		fingerprint: hex.EncodeToString(sum[:]), rates: rates, history: history,
 	}, nil
 }
 
@@ -195,6 +271,70 @@ func (t *Table) Resolve(model string) (rate Rate, key string, found bool) {
 		}
 	}
 	return Rate{}, "", false
+}
+
+// ResolveAt selects an effective-dated card and request-size tier. If a model
+// has historical cards, a dated request in a gap is deliberately unpriced
+// rather than silently receiving today's rate. Undated callers retain current
+// snapshot behavior.
+func (t *Table) ResolveAt(model string, at time.Time, inputTokens int64) (Rate, Resolution, bool) {
+	for _, candidate := range Candidates(model) {
+		base, currentFound := t.rates[candidate]
+		cards := t.history[candidate]
+		if at.IsZero() || len(cards) == 0 {
+			if !currentFound {
+				continue
+			}
+			selected, threshold := base.ForInput(inputTokens)
+			return selected, Resolution{Key: candidate, AboveInputTokens: threshold}, true
+		}
+
+		card, ok := effectiveCard(cards, at)
+		if !ok {
+			// Historical coverage exists for this exact candidate, so a gap is
+			// authoritative. Do not fall through to a less-specific or current
+			// rate that would conceal the missing period.
+			return Rate{}, Resolution{Key: candidate}, false
+		}
+		selected, threshold := card.Rate.ForInput(inputTokens)
+		return selected, Resolution{
+			Key: candidate, EffectiveFrom: card.EffectiveFrom,
+			EffectiveTo: card.EffectiveTo, Source: card.Source,
+			AboveInputTokens: threshold,
+		}, true
+	}
+	return Rate{}, Resolution{}, false
+}
+
+func effectiveCard(cards []RateCard, at time.Time) (RateCard, bool) {
+	var selected RateCard
+	found := false
+	for _, card := range cards {
+		from, fromOK := parseBoundary(card.EffectiveFrom)
+		to, toOK := parseBoundary(card.EffectiveTo)
+		if card.EffectiveFrom != "" && (!fromOK || at.Before(from)) {
+			continue
+		}
+		if card.EffectiveTo != "" && (!toOK || !at.Before(to)) {
+			continue
+		}
+		if !found || card.EffectiveFrom >= selected.EffectiveFrom {
+			selected, found = card, true
+		}
+	}
+	return selected, found
+}
+
+func parseBoundary(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, true
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 var (

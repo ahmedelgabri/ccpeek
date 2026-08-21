@@ -4,6 +4,7 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
@@ -128,6 +129,49 @@ func TestCandidatesOrder(t *testing.T) {
 	}
 }
 
+func TestTierSelection(t *testing.T) {
+	baseInput, tierInput, tierOutput := 1.0, 2.0, 3.0
+	rate := Rate{Input: baseInput, Output: 1, Tiers: []Tier{{
+		AboveInputTokens: 200_000, Input: &tierInput, Output: &tierOutput,
+	}}}
+	if got, threshold := rate.ForInput(200_000); got.Input != 1 || threshold != 0 {
+		t.Errorf("boundary rate = %+v at %d", got, threshold)
+	}
+	if got, threshold := rate.ForInput(200_001); got.Input != 2 || got.Output != 3 || threshold != 200_000 {
+		t.Errorf("tier rate = %+v at %d", got, threshold)
+	}
+}
+
+func TestEffectiveDatedCardsAndCoverageGaps(t *testing.T) {
+	tbl, err := Parse([]byte(`{
+		"source":"current","fetched_at":"2026-08-21T00:00:00Z",
+		"models":{"model":{"input":9,"output":9}},
+		"history":{"model":[
+			{"effective_from":"2025-01-01","effective_to":"2026-01-01","source":"vendor-2025","rate":{"input":1,"output":2}},
+			{"effective_from":"2026-02-01","effective_to":"2027-01-01","source":"vendor-2026","rate":{"input":3,"output":4}}
+		]}}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(value string) time.Time {
+		parsed, err := time.Parse("2006-01-02", value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parsed
+	}
+	if rate, resolution, ok := tbl.ResolveAt("model", at("2025-06-01"), 1); !ok || rate.Input != 1 || resolution.Source != "vendor-2025" {
+		t.Errorf("2025 resolution = %+v, %+v, %v", rate, resolution, ok)
+	}
+	if _, resolution, ok := tbl.ResolveAt("model", at("2026-01-15"), 1); ok || resolution.Key != "model" {
+		t.Errorf("coverage gap unexpectedly resolved: %+v, %v", resolution, ok)
+	}
+	if rate, resolution, ok := tbl.ResolveAt("model", time.Time{}, 1); !ok || rate.Input != 9 || resolution.EffectiveFrom != "" {
+		t.Errorf("undated current resolution = %+v, %+v, %v", rate, resolution, ok)
+	}
+}
+
 func TestEmbeddedSnapshot(t *testing.T) {
 	tbl, err := Embedded()
 	if err != nil {
@@ -138,6 +182,15 @@ func TestEmbeddedSnapshot(t *testing.T) {
 	}
 	if tbl.Source == "" || tbl.FetchedAt == "" {
 		t.Error("embedded snapshot missing provenance")
+	}
+	var tiered int
+	for _, rate := range tbl.rates {
+		if len(rate.Tiers) > 0 {
+			tiered++
+		}
+	}
+	if tiered == 0 {
+		t.Error("embedded snapshot contains no long-context tiers")
 	}
 	// A long-stable key that should survive snapshot refreshes.
 	rate, ok := tbl.Lookup("claude-3-opus-20240229")
@@ -166,7 +219,7 @@ func TestBlankModelIsUnpricedNotFatal(t *testing.T) {
 		if ok {
 			t.Errorf("Lookup(%q) reported priced (%+v), want unpriced", model, rate)
 		}
-		if rate != (Rate{}) {
+		if !reflect.DeepEqual(rate, Rate{}) {
 			t.Errorf("Lookup(%q) rate = %+v, want zero value", model, rate)
 		}
 	}
