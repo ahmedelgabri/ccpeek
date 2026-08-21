@@ -188,8 +188,8 @@ export function SessionDetailPage() {
           value={
             <Money
               usd={s.costUSD}
-              unpriced={
-                (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) || undefined
+              incomplete={
+                (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) > 0
               }
               title={`${s.costMode} $${s.costUSDExact}`}
             />

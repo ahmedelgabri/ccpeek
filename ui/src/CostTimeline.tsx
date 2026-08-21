@@ -9,7 +9,7 @@ import {
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { api, type CostMode } from "./api";
+import { api, fmtCostDecimal, fmtCostExact, type CostMode } from "./api";
 import { cssColor, useResolvedTheme } from "./theme";
 import { EmptyNote, Panel } from "./ui";
 
@@ -138,7 +138,7 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       borderColor: pal.edge,
       textStyle: { color: pal.ink, fontSize: 12 },
       valueFormatter: (v: unknown) =>
-        typeof v === "number" && v > 0 ? `$${v.toFixed(4)}` : "—",
+        typeof v === "number" && v > 0 ? fmtCostExact(v) : "—",
     },
     // A TIME axis, not a category axis. As categories, every day the data
     // happened to contain sat one bar-width from the next, so a gap of a
@@ -225,7 +225,10 @@ function downloadCSV(series: DaySeries[]) {
       d,
       ...series.flatMap((s) => {
         const value = s.byDay.get(d);
-        return [(value?.cost ?? 0).toFixed(6), value?.incomplete ? "1" : "0"];
+        return [
+          fmtCostDecimal(value?.cost ?? 0),
+          value?.incomplete ? "1" : "0",
+        ];
       }),
     ].join(","),
   );

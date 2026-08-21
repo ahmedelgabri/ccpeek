@@ -374,21 +374,27 @@ export function clipCommand(cmd: string, max = 60): string {
  *  precision. Zero now reads as an em dash (there is no cost, not a very
  *  small one) and sub-cent amounts say so rather than pretending to
  *  hundredths-of-a-cent accuracy. */
-export function fmtCost(usd: number, unpriced?: number): string {
-  if (!(usd > 0)) return unpriced ? "—+" : "—";
+export function fmtCost(usd: number, incomplete = false): string {
+  if (!(usd > 0)) return incomplete ? "—+" : "—";
   const cost =
     usd >= 1
       ? `$${usd.toFixed(2)}`
       : usd >= 0.01
         ? `$${usd.toFixed(3)}`
         : "<$0.01";
-  return unpriced ? `${cost}+` : cost;
+  return incomplete ? `${cost}+` : cost;
+}
+
+/** fmtCostDecimal retains API precision without a currency symbol, which is
+ *  useful for machine-readable exports as well as the exact UI formatter. */
+export function fmtCostDecimal(usd: number): string {
+  return usd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".00");
 }
 
 /** fmtCostExact is the full-precision figure for tooltips and titles,
  *  where the abbreviation in fmtCost would hide a real difference. */
 export function fmtCostExact(usd: number): string {
-  return `$${usd.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".00")}`;
+  return `$${fmtCostDecimal(usd)}`;
 }
 
 /** fmtTokens abbreviates TOKEN magnitudes, where a thousands suffix is

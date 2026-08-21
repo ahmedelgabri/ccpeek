@@ -189,8 +189,18 @@ function ComparisonTable({
             label="Cost"
             a={left.costUSD}
             b={right.costUSD}
-            formatA={(n) => fmtCost(n, left.unpricedTokens)}
-            formatB={(n) => fmtCost(n, right.unpricedTokens)}
+            formatA={(n) =>
+              fmtCost(
+                n,
+                (left.unpricedTokens ?? 0) + (left.unreportedTokens ?? 0) > 0,
+              )
+            }
+            formatB={(n) =>
+              fmtCost(
+                n,
+                (right.unpricedTokens ?? 0) + (right.unreportedTokens ?? 0) > 0,
+              )
+            }
             deltaFormat={(n) => fmtCost(n)}
             direction="lower"
             cost
@@ -340,9 +350,8 @@ function SessionPicker({
                   </span>
                   <Money
                     usd={s.costUSD}
-                    unpriced={
-                      (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) ||
-                      undefined
+                    incomplete={
+                      (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) > 0
                     }
                     className="shrink-0 text-meta"
                     title={`${s.costMode} $${s.costUSDExact}`}

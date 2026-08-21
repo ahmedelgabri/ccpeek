@@ -120,16 +120,16 @@ export function PageHeader({
 // Money renders a cost figure. Cost is deliberately NOT green: green
 // reads as "good", and it collided with the ok/warn semantics the scan
 // findings depend on. The number carries itself in tabular mono; warn is
-// reserved for the cases that genuinely warrant attention — an unpriced
-// lower bound.
+// reserved for the cases that genuinely warrant attention — incomplete
+// cost coverage.
 export function Money({
   usd,
-  unpriced,
+  incomplete = false,
   className = "",
   title,
 }: {
   usd: number;
-  unpriced?: number;
+  incomplete?: boolean;
   className?: string;
   title?: string;
 }) {
@@ -138,15 +138,15 @@ export function Money({
     <span
       title={
         title ??
-        (unpriced
-          ? "API-equivalent value; contains tokens with no resolvable price — a lower bound"
+        (incomplete
+          ? "API-equivalent value; some usage is unpriced or unreported under the selected mode — a lower bound"
           : "API-equivalent value; reported by the agent where available, otherwise estimated from list rates")
       }
       className={`font-mono tabular-nums ${
-        unpriced ? "text-warn" : zero ? "text-ink-faint" : "text-ink"
+        incomplete ? "text-warn" : zero ? "text-ink-faint" : "text-ink"
       } ${className}`}
     >
-      {fmtCost(usd, unpriced)}
+      {fmtCost(usd, incomplete)}
     </span>
   );
 }

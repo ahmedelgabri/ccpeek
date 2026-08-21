@@ -129,9 +129,10 @@ export function OverviewPage() {
           value={
             <Money
               usd={st.costMonthUSD}
-              unpriced={
+              incomplete={
                 (st.costMonthUnpricedTokens ?? 0) +
-                  (st.costMonthUnreportedTokens ?? 0) || undefined
+                  (st.costMonthUnreportedTokens ?? 0) >
+                0
               }
               title={`${st.costMode} $${st.costMonthUSDExact}`}
             />
@@ -204,9 +205,9 @@ export function OverviewPage() {
                       </span>
                       <Money
                         usd={s.costUSD}
-                        unpriced={
-                          (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) ||
-                          undefined
+                        incomplete={
+                          (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) >
+                          0
                         }
                         className="shrink-0 text-xs"
                         title={`${s.costMode} $${s.costUSDExact}`}
@@ -262,9 +263,10 @@ export function OverviewPage() {
                       <td className="px-3 py-1.5 text-right">
                         <Money
                           usd={a.costUSD}
-                          unpriced={
+                          incomplete={
                             (a.unpricedTokens ?? 0) +
-                              (a.unreportedTokens ?? 0) || undefined
+                              (a.unreportedTokens ?? 0) >
+                            0
                           }
                           className="text-xs"
                           title={`${costMode} $${a.costUSDExact ?? a.costUSD}`}
@@ -432,7 +434,7 @@ function WorkspacesByCost({
             </span>
             <Money
               usd={r.costUSD}
-              unpriced={r.hasUnpriced || r.hasUnreported ? 1 : undefined}
+              incomplete={Boolean(r.hasUnpriced || r.hasUnreported)}
               className="shrink-0 text-meta"
               title={`${r.costMode} $${r.costUSDExact}`}
             />

@@ -330,9 +330,7 @@ function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
           )}
           <Money
             usd={s.costUSD}
-            unpriced={
-              (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) || undefined
-            }
+            incomplete={(s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) > 0}
             className="shrink-0 text-sm"
             title={`${s.costMode} $${s.costUSDExact}`}
           />

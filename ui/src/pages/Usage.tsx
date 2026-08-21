@@ -210,11 +210,7 @@ export function UsagePage() {
         title="Usage"
         lede={
           <span className="flex items-baseline gap-1.5">
-            <Money
-              usd={total}
-              unpriced={anyIncomplete ? 1 : undefined}
-              className="text-sm"
-            />
+            <Money usd={total} incomplete={anyIncomplete} className="text-sm" />
             <span className="font-mono text-meta text-ink-faint">
               {isBlocks ? "across shown windows" : "over the current filters"}
             </span>
@@ -429,7 +425,7 @@ function UsageTable({
                 <td className="px-4 py-2 text-right">
                   <Money
                     usd={r.costUSD}
-                    unpriced={r.hasUnpriced || r.hasUnreported ? 1 : undefined}
+                    incomplete={Boolean(r.hasUnpriced || r.hasUnreported)}
                     className="text-xs"
                     title={`${r.costMode} ${r.costUSDExact} USD · reported $${r.costReportedUSDExact} · estimated $${r.costEstimatedUSDExact}`}
                   />
@@ -630,7 +626,9 @@ function BlocksTable({
               <td className="px-4 py-2 text-right">
                 <Money
                   usd={b.costUSD}
-                  unpriced={(b.unpricedTokens ?? 0) + (b.unreportedTokens ?? 0)}
+                  incomplete={
+                    (b.unpricedTokens ?? 0) + (b.unreportedTokens ?? 0) > 0
+                  }
                   className="text-xs"
                   title={`${b.costMode} ${b.costUSDExact} USD`}
                 />
