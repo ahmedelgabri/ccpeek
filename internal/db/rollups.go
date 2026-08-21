@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
@@ -86,6 +88,30 @@ func usageTotal(u canon.Usage) int64 {
 		max(u.CacheReadTokens, 0) + max(u.CacheWriteTokens, 0)
 }
 
+func addUsage(dst *canon.Usage, src canon.Usage) {
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	dst.CacheReadTokens += src.CacheReadTokens
+	dst.CacheWriteTokens += src.CacheWriteTokens
+	dst.CacheWrite1hTokens += src.CacheWrite1hTokens
+}
+
+func dayOf(value string) string {
+	if len(value) >= len("2006-01-02") {
+		return value[:len("2006-01-02")]
+	}
+	return value
+}
+
+func parseCostTime(value string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
+}
+
 // RollupsNeedRegeneration reports whether materialized cost was built with a
 // different pricing snapshot/algorithm. Empty rollups with usage also rebuild,
 // preserving the migration self-heal behavior.
@@ -126,32 +152,27 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		return fmt.Errorf("clearing session days: %w", err)
 	}
 
-	// One scan groups by provider as well as the materialized display
-	// dimensions so provider-specific prices apply. The Go fold drops provider
-	// again, preserving the public model grouping while adding costs correctly.
+	// Pricing is request-scoped: a SQL aggregate could cross a long-context
+	// threshold or effective-date boundary. Scan canonical rows once and fold
+	// all three modes into daily materializations using exact amounts.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
-			substr(COALESCE(m.created_at, s.created_at, ''), 1, 10) AS day,
+			COALESCE(m.created_at, s.created_at, '') AS occurred_at,
 			s.agent_id,
 			COALESCE(sw.workspace_id, 0) AS workspace_id,
-			m.provider,
-			m.model,
-			s.id,
-			COUNT(*),
-			SUM(u.input_tokens),
-			SUM(u.output_tokens),
-			SUM(u.cache_read_tokens),
-			SUM(u.cache_write_tokens),
-			`+ReportedCostSum+`,
-			`+EstimatedTokenSums+`,
-			SUM(CASE WHEN `+needsEstimatedCost+` THEN 1 ELSE 0 END)
+			m.provider, m.model, s.id,
+			u.input_tokens, u.output_tokens, u.cache_read_tokens,
+			u.cache_write_tokens, u.cache_write_1h_tokens,
+			CASE WHEN u.reported_cost_usd IS NULL THEN NULL
+			     ELSE COALESCE(u.reported_cost_nanos,
+			          CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions s ON s.id = m.session_id
 		LEFT JOIN session_workspaces sw ON sw.session_id = s.id
-		GROUP BY day, s.agent_id, workspace_id, m.provider, m.model, s.id`)
+		ORDER BY m.id`)
 	if err != nil {
-		return fmt.Errorf("aggregating usage: %w", err)
+		return fmt.Errorf("reading usage for rollups: %w", err)
 	}
 	defer rows.Close()
 
@@ -162,11 +183,16 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	}
 	type rollupRow struct {
 		key
-		sessions, messages  int64
-		in, out, cr, cw     int64
-		reported, estimated float64
-		unpriced            canon.Usage
-		seenSessions        map[int64]bool
+		sessions, messages int64
+		in, out, cr, cw    int64
+		auto               pricing.Amount
+		reported           pricing.Amount
+		estimated          pricing.Amount
+		calculated         pricing.Amount
+		unpriced           canon.Usage
+		calculatedUnpriced canon.Usage
+		unreported         canon.Usage
+		seenSessions       map[int64]bool
 	}
 
 	sessionDays, err := tx.PrepareContext(ctx, `
@@ -181,17 +207,18 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	daily := map[key]*rollupRow{}
 	var order []key
 	for rows.Next() {
+		var occurredAt, provider string
 		var k key
-		var provider string
 		var sessionID int64
-		var messages, in, out, cr, cw int64
-		var reported float64
-		var uin, uout, ucr, ucw, ucw1h, estimatedRows int64
-		if err := rows.Scan(&k.day, &k.agentID, &k.workspaceID, &provider,
-			&k.model, &sessionID, &messages, &in, &out, &cr, &cw,
-			&reported, &uin, &uout, &ucr, &ucw, &ucw1h, &estimatedRows); err != nil {
+		var usage canon.Usage
+		var reported sql.NullInt64
+		if err := rows.Scan(&occurredAt, &k.agentID, &k.workspaceID,
+			&provider, &k.model, &sessionID, &usage.InputTokens,
+			&usage.OutputTokens, &usage.CacheReadTokens, &usage.CacheWriteTokens,
+			&usage.CacheWrite1hTokens, &reported); err != nil {
 			return err
 		}
+		k.day = dayOf(occurredAt)
 		if _, err := sessionDays.ExecContext(ctx,
 			k.day, k.agentID, k.workspaceID, k.model, sessionID); err != nil {
 			return fmt.Errorf("writing session day: %w", err)
@@ -207,23 +234,45 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 			r.seenSessions[sessionID] = true
 			r.sessions++
 		}
-		r.messages += messages
-		r.in += in
-		r.out += out
-		r.cr += cr
-		r.cw += cw
-		r.reported += reported
-		if estimatedRows > 0 {
-			cost, unpriced, _ := AutoCost(pricer, provider, k.model, canon.Usage{
-				InputTokens: uin, OutputTokens: uout, CacheReadTokens: ucr,
-				CacheWriteTokens: ucw, CacheWrite1hTokens: ucw1h,
-			})
-			r.estimated += cost
-			r.unpriced.InputTokens += unpriced.InputTokens
-			r.unpriced.OutputTokens += unpriced.OutputTokens
-			r.unpriced.CacheReadTokens += unpriced.CacheReadTokens
-			r.unpriced.CacheWriteTokens += unpriced.CacheWriteTokens
+		r.messages++
+		r.in += usage.InputTokens
+		r.out += usage.OutputTokens
+		r.cr += usage.CacheReadTokens
+		r.cw += usage.CacheWriteTokens
+
+		var reportedAmount *pricing.Amount
+		if reported.Valid {
+			amount := pricing.Amount(reported.Int64)
+			reportedAmount = &amount
 		}
+		at := parseCostTime(occurredAt)
+		auto, err := EvaluateCostAt(pricer, CostModeAuto, provider, k.model, at, usage, reportedAmount)
+		if err != nil {
+			return fmt.Errorf("pricing auto usage: %w", err)
+		}
+		calculated, err := EvaluateCostAt(pricer, CostModeCalculate, provider, k.model, at, usage, reportedAmount)
+		if err != nil {
+			return fmt.Errorf("pricing calculated usage: %w", err)
+		}
+		display, err := EvaluateCostAt(pricer, CostModeDisplay, provider, k.model, at, usage, reportedAmount)
+		if err != nil {
+			return fmt.Errorf("pricing reported usage: %w", err)
+		}
+		if r.auto, err = r.auto.Add(auto.Amount); err != nil {
+			return err
+		}
+		if r.reported, err = r.reported.Add(display.Reported); err != nil {
+			return err
+		}
+		if r.estimated, err = r.estimated.Add(auto.Estimated); err != nil {
+			return err
+		}
+		if r.calculated, err = r.calculated.Add(calculated.Amount); err != nil {
+			return err
+		}
+		addUsage(&r.unpriced, auto.Unpriced)
+		addUsage(&r.calculatedUnpriced, calculated.Unpriced)
+		addUsage(&r.unreported, display.Unreported)
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -233,12 +282,17 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO rollup_usage_daily
 			(day, agent_id, workspace_id, model, sessions, messages,
-			 input_tokens, output_tokens, cache_read_tokens,
-			 cache_write_tokens, cost_usd, cost_reported_usd,
-			 cost_estimated_usd, unpriced_input_tokens,
-			 unpriced_output_tokens, unpriced_cache_read_tokens,
-			 unpriced_cache_write_tokens, priced)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+			 cost_usd, cost_reported_usd, cost_estimated_usd,
+			 cost_nanos, cost_reported_nanos, cost_estimated_nanos,
+			 cost_calculated_nanos,
+			 unpriced_input_tokens, unpriced_output_tokens,
+			 unpriced_cache_read_tokens, unpriced_cache_write_tokens,
+			 calculated_unpriced_input_tokens, calculated_unpriced_output_tokens,
+			 calculated_unpriced_cache_read_tokens, calculated_unpriced_cache_write_tokens,
+			 unreported_input_tokens, unreported_output_tokens,
+			 unreported_cache_read_tokens, unreported_cache_write_tokens, priced)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -247,9 +301,14 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		r := daily[k]
 		if _, err := stmt.ExecContext(ctx, r.day, r.agentID, r.workspaceID,
 			r.model, r.sessions, r.messages, r.in, r.out, r.cr, r.cw,
-			r.reported+r.estimated, r.reported, r.estimated,
+			r.auto.USD(), r.reported.USD(), r.estimated.USD(),
+			int64(r.auto), int64(r.reported), int64(r.estimated), int64(r.calculated),
 			r.unpriced.InputTokens, r.unpriced.OutputTokens,
 			r.unpriced.CacheReadTokens, r.unpriced.CacheWriteTokens,
+			r.calculatedUnpriced.InputTokens, r.calculatedUnpriced.OutputTokens,
+			r.calculatedUnpriced.CacheReadTokens, r.calculatedUnpriced.CacheWriteTokens,
+			r.unreported.InputTokens, r.unreported.OutputTokens,
+			r.unreported.CacheReadTokens, r.unreported.CacheWriteTokens,
 			boolInt(usageTotal(r.unpriced) == 0)); err != nil {
 			return fmt.Errorf("writing rollup: %w", err)
 		}

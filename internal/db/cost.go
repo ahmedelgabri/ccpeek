@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
@@ -46,36 +47,57 @@ type CostResult struct {
 // intentionally row-scoped so future request tiers and effective dates cannot
 // be selected from an aggregate that crossed a threshold or rate boundary.
 func EvaluateCost(p Pricer, mode CostMode, provider, model string, u canon.Usage) (CostResult, error) {
+	var reported *pricing.Amount
+	if u.ReportedCostUSD != nil {
+		amount, err := pricing.AmountFromUSD(*u.ReportedCostUSD)
+		if err != nil {
+			return CostResult{}, err
+		}
+		reported = &amount
+	}
+	return EvaluateCostAt(p, mode, provider, model, time.Time{}, u, reported)
+}
+
+// EvaluateCostAt is the exact storage-facing evaluator. Reported is already
+// quantized at ingestion, and at selects historical cards when the pricer
+// supports them.
+func EvaluateCostAt(p Pricer, mode CostMode, provider, model string, at time.Time, u canon.Usage, reported *pricing.Amount) (CostResult, error) {
 	var result CostResult
 	total := usageTotal(u)
-	hasReported := u.ReportedCostUSD != nil
-	reportedUsableInAuto := hasReported && (*u.ReportedCostUSD != 0 || total == 0)
+	hasReported := reported != nil
+	reportedUsableInAuto := hasReported && (*reported != 0 || total == 0)
 
 	if mode == CostModeDisplay {
 		if !hasReported {
 			result.Unreported = positiveUsage(u)
 			return result, nil
 		}
-		amount, err := pricing.AmountFromUSD(*u.ReportedCostUSD)
-		if err != nil {
-			return CostResult{}, err
-		}
-		result.Amount, result.Reported = amount, amount
+		result.Amount, result.Reported = *reported, *reported
 		return result, nil
 	}
 	if mode == CostModeAuto && reportedUsableInAuto {
-		amount, err := pricing.AmountFromUSD(*u.ReportedCostUSD)
-		if err != nil {
-			return CostResult{}, err
-		}
-		result.Amount, result.Reported = amount, amount
+		result.Amount, result.Reported = *reported, *reported
 		return result, nil
 	}
 	if total == 0 {
 		return result, nil
 	}
 
-	rate, ok := p.Lookup(PricingModel(provider, model))
+	pricingModel := PricingModel(provider, model)
+	var rate pricing.Rate
+	var ok bool
+	if contextual, supportsContext := p.(interface {
+		ResolveAt(string, time.Time, int64) (pricing.Rate, pricing.Resolution, bool)
+	}); supportsContext {
+		input := max(u.InputTokens, 0) + max(u.CacheReadTokens, 0) + max(u.CacheWriteTokens, 0)
+		rate, _, ok = contextual.ResolveAt(pricingModel, at, input)
+	} else {
+		rate, ok = p.Lookup(pricingModel)
+		if ok {
+			input := max(u.InputTokens, 0) + max(u.CacheReadTokens, 0) + max(u.CacheWriteTokens, 0)
+			rate, _ = rate.ForInput(input)
+		}
+	}
 	if !ok {
 		result.Unpriced = positiveUsage(u)
 		return result, nil

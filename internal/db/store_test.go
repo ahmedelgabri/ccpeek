@@ -123,8 +123,8 @@ func TestV13CostMigrationPreservesArchiveAndAddsColumns(t *testing.T) {
 		`INSERT INTO meta VALUES ('schema_version', '13')`,
 		`CREATE TABLE messages (id INTEGER PRIMARY KEY, provider_placeholder TEXT)`,
 		`INSERT INTO messages (id) VALUES (1)`,
-		`CREATE TABLE message_usage (message_id INTEGER PRIMARY KEY)`,
-		`INSERT INTO message_usage VALUES (1)`,
+		`CREATE TABLE message_usage (message_id INTEGER PRIMARY KEY, reported_cost_usd REAL)`,
+		`INSERT INTO message_usage VALUES (1, 0.125)`,
 		`CREATE TABLE source_files (path TEXT PRIMARY KEY)`,
 		`INSERT INTO source_files VALUES ('kept')`,
 		`CREATE TABLE rollup_usage_daily (id INTEGER PRIMARY KEY)`,
@@ -150,9 +150,13 @@ func TestV13CostMigrationPreservesArchiveAndAddsColumns(t *testing.T) {
 	if n := count(t, s, `SELECT COUNT(*) FROM rollup_usage_daily`); n != 0 {
 		t.Errorf("rollups = %d, want invalidated", n)
 	}
+	var reportedNanos int64
+	if err := s.db.QueryRowContext(ctx, `SELECT reported_cost_nanos FROM message_usage WHERE message_id = 1`).Scan(&reportedNanos); err != nil || reportedNanos != 125_000_000 {
+		t.Errorf("reported cost backfill = %d, %v; want 125000000", reportedNanos, err)
+	}
 	for table, column := range map[string]string{
-		"messages": "provider", "message_usage": "cache_write_1h_tokens",
-		"source_files": "parse_version", "rollup_usage_daily": "unpriced_cache_write_tokens",
+		"messages": "provider", "message_usage": "reported_cost_nanos",
+		"source_files": "parse_version", "rollup_usage_daily": "cost_calculated_nanos",
 	} {
 		if n := count(t, s, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column); n != 1 {
 			t.Errorf("%s.%s missing after migration", table, column)

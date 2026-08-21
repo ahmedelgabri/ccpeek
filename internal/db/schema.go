@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 14
+const schemaVersion = 15
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -133,6 +133,9 @@ CREATE TABLE IF NOT EXISTS message_usage (
 	reasoning_tokens INTEGER NOT NULL DEFAULT 0,
 	service_tier TEXT NOT NULL DEFAULT '',
 	reported_cost_usd REAL,
+	-- Exact fixed-point mirror used for all arithmetic. REAL remains as a
+	-- compatibility/provenance column for existing tooling.
+	reported_cost_nanos INTEGER,
 	request_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_message_usage_request ON message_usage(request_id) WHERE request_id <> '';
@@ -326,11 +329,25 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 	-- the pricing table computed for rows with no reported figure.
 	cost_reported_usd REAL NOT NULL DEFAULT 0,
 	cost_estimated_usd REAL NOT NULL DEFAULT 0,
+	-- Exact mode materializations. cost_nanos is auto; reported is display;
+	-- calculated prices every row regardless of reported provenance.
+	cost_nanos INTEGER NOT NULL DEFAULT 0,
+	cost_reported_nanos INTEGER NOT NULL DEFAULT 0,
+	cost_estimated_nanos INTEGER NOT NULL DEFAULT 0,
+	cost_calculated_nanos INTEGER NOT NULL DEFAULT 0,
 	unpriced_input_tokens INTEGER NOT NULL DEFAULT 0,
 	unpriced_output_tokens INTEGER NOT NULL DEFAULT 0,
 	unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 	unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-	priced INTEGER NOT NULL DEFAULT 1, -- 0: at least one non-zero bucket has no rate
+	calculated_unpriced_input_tokens INTEGER NOT NULL DEFAULT 0,
+	calculated_unpriced_output_tokens INTEGER NOT NULL DEFAULT 0,
+	calculated_unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+	calculated_unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+	unreported_input_tokens INTEGER NOT NULL DEFAULT 0,
+	unreported_output_tokens INTEGER NOT NULL DEFAULT 0,
+	unreported_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+	unreported_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+	priced INTEGER NOT NULL DEFAULT 1, -- 0: at least one non-zero auto bucket has no rate
 	PRIMARY KEY (day, agent_id, workspace_id, model)
 );
 
@@ -483,6 +500,31 @@ var migrations = []migration{
 			// Pricing semantics and the rollup input shape changed. Emptying
 			// both materializations lets the existing ingest self-heal rebuild
 			// them with the new algorithm while preserving the archive.
+			`DELETE FROM rollup_session_days`,
+			`DELETE FROM rollup_usage_daily`,
+		} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, q := range []string{
+			`ALTER TABLE message_usage ADD COLUMN reported_cost_nanos INTEGER`,
+			`UPDATE message_usage SET reported_cost_nanos = CAST(ROUND(reported_cost_usd * 1000000000) AS INTEGER) WHERE reported_cost_usd IS NOT NULL`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_nanos INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_reported_nanos INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_estimated_nanos INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_calculated_nanos INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_input_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_output_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_input_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_output_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
 			`DELETE FROM rollup_session_days`,
 			`DELETE FROM rollup_usage_daily`,
 		} {

@@ -125,6 +125,48 @@ func TestReportedZeroWithTokensFallsBackToEstimate(t *testing.T) {
 	}
 }
 
+func TestRollupsMaterializeExactModesWithHistoricalTiers(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	w := beginWrite(t, s)
+	id, err := w.UpsertSession(testSession("exact-modes"), "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported := 7.0
+	at := time.Date(2025, 6, 1, 10, 0, 0, 0, time.UTC)
+	usageMessage(t, w, id, "claude-code", 0, "tiered", at, canon.Usage{InputTokens: 201, ReportedCostUSD: &reported})
+	usageMessage(t, w, id, "claude-code", 1, "tiered", at.Add(time.Minute), canon.Usage{InputTokens: 1})
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	table, err := pricing.Parse([]byte(`{
+		"source":"test","fetched_at":"2026-01-01T00:00:00Z",
+		"models":{"tiered":{"input":9,"output":9}},
+		"history":{"tiered":[{"effective_from":"2025-01-01","effective_to":"2026-01-01","rate":{
+			"input":3,"output":1,"tiers":[{"above_input_tokens":200,"input":4}]
+		}}]}}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegenerateRollups(ctx, table); err != nil {
+		t.Fatal(err)
+	}
+	var auto, reportedNanos, estimated, calculated int64
+	var unreported int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT cost_nanos, cost_reported_nanos, cost_estimated_nanos,
+		       cost_calculated_nanos, unreported_input_tokens
+		FROM rollup_usage_daily`).Scan(&auto, &reportedNanos, &estimated, &calculated, &unreported); err != nil {
+		t.Fatal(err)
+	}
+	// auto = reported $7 + estimated $3. calculate = 201×$4 + 1×$3.
+	if auto != 10_000_000_000 || reportedNanos != 7_000_000_000 || estimated != 3_000_000_000 || calculated != 807_000_000_000 || unreported != 1 {
+		t.Errorf("auto/reported/estimated/calculated/unreported = %d/%d/%d/%d/%d", auto, reportedNanos, estimated, calculated, unreported)
+	}
+}
+
 func TestPricingFingerprintInvalidatesUnchangedRollups(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)

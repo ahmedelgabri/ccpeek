@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
 // Writer applies canonical records inside a single transaction — the
@@ -214,6 +215,11 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		return nil
 	}
 
+	reportedNanos, err := exactReportedCost(msg.Usage.ReportedCostUSD)
+	if err != nil {
+		return fmt.Errorf("normalizing reported cost for message seq %d: %w", msg.Seq, err)
+	}
+
 	if msg.ContentID != "" {
 		agentID, err := w.EnsureAgent(agent)
 		if err != nil {
@@ -250,11 +256,12 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 					UPDATE message_usage SET
 						input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
 						cache_write_tokens = ?, cache_write_1h_tokens = ?,
-						reasoning_tokens = ?, service_tier = ?, reported_cost_usd = ?
+						reasoning_tokens = ?, service_tier = ?, reported_cost_usd = ?,
+						reported_cost_nanos = ?
 					WHERE message_id = ?`,
 					u.InputTokens, u.OutputTokens, u.CacheReadTokens,
 					u.CacheWriteTokens, u.CacheWrite1hTokens, u.ReasoningTokens,
-					u.ServiceTier, u.ReportedCostUSD, existingID); err != nil {
+					u.ServiceTier, u.ReportedCostUSD, reportedNanos, existingID); err != nil {
 					return fmt.Errorf("updating deduplicated usage: %w", err)
 				}
 			}
@@ -275,14 +282,25 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		INSERT INTO message_usage
 			(message_id, input_tokens, output_tokens, cache_read_tokens,
 			 cache_write_tokens, cache_write_1h_tokens, reasoning_tokens,
-			 service_tier, reported_cost_usd, request_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 service_tier, reported_cost_usd, reported_cost_nanos, request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msgID, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
 		u.CacheWriteTokens, u.CacheWrite1hTokens, u.ReasoningTokens,
-		u.ServiceTier, u.ReportedCostUSD, u.RequestID); err != nil {
+		u.ServiceTier, u.ReportedCostUSD, reportedNanos, u.RequestID); err != nil {
 		return fmt.Errorf("inserting usage for message seq %d: %w", msg.Seq, err)
 	}
 	return nil
+}
+
+func exactReportedCost(cost *float64) (any, error) {
+	if cost == nil {
+		return nil, nil
+	}
+	amount, err := pricing.AmountFromUSD(*cost)
+	if err != nil {
+		return nil, err
+	}
+	return int64(amount), nil
 }
 
 // InsertToolCall writes one tool call for an already-upserted session.
