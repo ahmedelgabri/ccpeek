@@ -16,51 +16,55 @@ CCPeek's dollar values are usage analytics, not invoice reconciliation.
 
 Every adapter normalizes usage into these fields in `canon.Usage`:
 
-| Field | Meaning |
-| --- | --- |
-| `InputTokens` | Ordinary, non-cached input tokens |
-| `OutputTokens` | Billable output tokens, including reasoning exactly once |
-| `CacheReadTokens` | Input tokens served from a prompt cache |
-| `CacheWriteTokens` | Input tokens written to a prompt cache |
-| `ReasoningTokens` | Informational reasoning detail; never added to cost separately |
-| `ReportedCostUSD` | Optional cost supplied by the agent |
-| `ServiceTier` | Recorded provider tier when available; currently not used by pricing |
+| Field                | Meaning                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `InputTokens`        | Ordinary, non-cached input tokens                                    |
+| `OutputTokens`       | Billable output tokens, including reasoning exactly once             |
+| `CacheReadTokens`    | Input tokens served from a prompt cache                              |
+| `CacheWriteTokens`   | Total input tokens written to a prompt cache                         |
+| `CacheWrite1hTokens` | One-hour-TTL subset of cache writes; zero for legacy unsplit rows    |
+| `ReasoningTokens`    | Informational reasoning detail; never added to cost separately       |
+| `ReportedCostUSD`    | Optional cost supplied by the agent                                  |
+| `ServiceTier`        | Recorded provider tier when available; currently not used by pricing |
+
+Provider identity is stored separately on each canonical message and combined with the model for exact rate lookup before falling back to normalized bare-model candidates.
 
 The normalization contract is important because providers disagree about reasoning. Codex reports reasoning as a subset of output, while OpenCode reports reasoning additively beside output. The Codex adapter leaves output unchanged and records reasoning only as detail; the OpenCode adapter adds reasoning to output. Downstream code must therefore never add `ReasoningTokens` to `OutputTokens`.
 
 ## Per-record cost selection
 
-CCPeek currently has one effective cost mode: automatic, reported-first pricing. The `calculate` and `display` modes mentioned as plans in `docs/v2-plan.md` are not implemented.
+CCPeek exposes three cost modes through the UI, HTTP API, CLI query commands, and MCP tools. Selection is applied independently to each `message_usage` row:
 
-For each `message_usage` row:
+- `auto` uses a non-zero agent-reported cost when present, otherwise calculates from tokens. A reported zero with non-zero usage falls through to calculation; the raw zero remains stored as provenance. A reported zero on a zero-token row remains reported.
+- `calculate` ignores every reported cost and calculates each row from tokens.
+- `display` uses only agent-reported costs. Tokens on rows without a report are counted as unreported and contribute no USD amount.
 
-1. If `reported_cost_usd` is present, CCPeek uses that value and does not calculate another cost for the row's tokens.
-2. If `reported_cost_usd` is absent, CCPeek looks up the message's model in the embedded pricing table and calculates a cost from tokens.
-3. If the model cannot be resolved, the tokens are counted as unpriced and contribute no USD amount.
-
-A reported value of `0` is still considered present. It suppresses calculated pricing for that record just like any other reported value.
+For rows that a mode calculates, CCPeek resolves an effective-dated, request-size-aware provider/model rate and prices every bucket whose rate is known. If the model or an individual cache-bucket rate cannot be resolved, those tokens are counted as unpriced and contribute no USD amount; other known buckets on the same row are still priced.
 
 The estimated formula is:
 
 ```text
+cache_write_5m_tokens = cache_write_tokens - cache_write_1h_tokens
+
 estimated_cost_usd =
-    input_tokens       × input_rate
-  + output_tokens      × output_rate
-  + cache_write_tokens × cache_write_rate
-  + cache_read_tokens  × cache_read_rate
+    input_tokens          × input_rate
+  + output_tokens         × output_rate
+  + cache_write_5m_tokens × cache_write_rate
+  + cache_write_1h_tokens × cache_write_1h_rate
+  + cache_read_tokens     × cache_read_rate
 ```
 
 Rates are stored as USD per single token. No reasoning term appears in the formula because billable reasoning is already included in `output_tokens`.
 
-At aggregate level:
+At aggregate level in `auto` mode:
 
 ```text
-cost_usd = sum(reported_cost_usd) + sum(estimated_cost_usd)
+cost_usd = sum(reported_cost_usd selected by auto) + sum(estimated_cost_usd selected by auto)
 ```
 
-Reported and estimated cost are mutually exclusive for an individual usage row, so this aggregation does not intentionally charge the same row twice.
+Reported and estimated cost are mutually exclusive for an individual row in `auto`, so this aggregation does not intentionally charge the same row twice. `calculate` sums estimates for all usage rows; `display` sums only reported amounts.
 
-The core calculated arithmetic lives in `pricing.Rate.Cost` and `db.AutoCost`. Session summaries, rolling blocks, and usage rollups call the shared implementation rather than maintaining separate formulas.
+The core exact arithmetic lives in `pricing.Rate.PriceAmount`; `db.EvaluateCostAt` applies mode selection, effective dates, provider/model resolution, and request-size tiers to one row. Session summaries, rolling blocks, daily rollups, stats, and query surfaces use that shared evaluator rather than maintaining separate formulas.
 
 ## Agent-specific capture and normalization
 
@@ -68,57 +72,56 @@ The core calculated arithmetic lives in `pricing.Rate.Cost` and `db.AutoCost`. S
 
 The Claude adapter reads assistant `message.usage` fields as follows:
 
-| Claude field | Canonical field |
-| --- | --- |
-| `input_tokens` | `InputTokens` |
-| `output_tokens` | `OutputTokens` |
-| `cache_read_input_tokens` | `CacheReadTokens` |
+| Claude field                  | Canonical field    |
+| ----------------------------- | ------------------ |
+| `input_tokens`                | `InputTokens`      |
+| `output_tokens`               | `OutputTokens`     |
+| `cache_read_input_tokens`     | `CacheReadTokens`  |
 | `cache_creation_input_tokens` | `CacheWriteTokens` |
-| `service_tier` | `ServiceTier` |
-| top-level legacy `costUSD` | `ReportedCostUSD` |
+| `service_tier`                | `ServiceTier`      |
+| top-level legacy `costUSD`    | `ReportedCostUSD`  |
 
 Anthropic's `input_tokens` excludes cache reads and cache creation, so the four buckets are additive and match the cost formula directly.
 
-Claude can repeat an API response across resumed or forked transcripts. CCPeek deduplicates usage across the same agent using `(message.id, requestId)` while retaining every transcript message. The current implementation keeps the first matching usage row it encounters. This prevents obvious double-counting, but it can underestimate output when Claude persists multiple streaming snapshots for one response and later snapshots contain a larger, final `output_tokens` value.
+Claude can repeat an API response across resumed or forked transcripts. CCPeek deduplicates usage across the same agent using `(message.id, requestId)` while retaining every transcript message; an empty legacy `requestId` remains a valid second key rather than disabling dedupe. The first-seen message owns the usage row, while a duplicate with greater output, then greater total tokens, then a usable reported cost updates that row's values without moving ownership between sessions.
 
-The dedupe check is skipped entirely when either key is empty. Legacy transcripts — the same generation that carries `costUSD` — predate `requestId`, so a resumed legacy transcript re-counts both tokens and reported cost. Separately, a legacy line carrying `costUSD` but no `message.usage` produces no usage row at all, so its reported cost is dropped.
+A legacy line carrying `costUSD` but no `message.usage` is retained as a reported, zero-token usage row.
 
-Claude also records a nested cache-creation breakdown for five-minute and one-hour cache writes in newer logs. CCPeek currently stores only the combined cache-write count and prices all cache writes at the five-minute rate.
+Claude's nested cache-creation breakdown is stored as total cache writes plus a one-hour subset. Five-minute writes use `cache_creation_input_token_cost`; one-hour writes use `cache_creation_input_token_cost_above_1hr`. Archived rows that cannot be reparsed retain a zero one-hour subset and therefore keep the documented five-minute assumption permanently.
 
 ### Pi
 
 For message entries with usage, the Pi adapter maps:
 
-| Pi field | Canonical field |
-| --- | --- |
-| `usage.input` | `InputTokens` |
-| `usage.output` | `OutputTokens` |
-| `usage.cacheRead` | `CacheReadTokens` |
+| Pi field           | Canonical field    |
+| ------------------ | ------------------ |
+| `usage.input`      | `InputTokens`      |
+| `usage.output`     | `OutputTokens`     |
+| `usage.cacheRead`  | `CacheReadTokens`  |
 | `usage.cacheWrite` | `CacheWriteTokens` |
-| `usage.cost.total` | `ReportedCostUSD` |
+| `usage.cost.total` | `ReportedCostUSD`  |
 
 Pi already normalizes provider token accounting into mutually exclusive Anthropic-style buckets, and its output count includes normal and reasoning output. CCPeek therefore prefers Pi's reported total and does not calculate a second cost for those records.
 
-The current adapter derives the active model from `model_change` entries in file order. Modern Pi assistant messages also carry their own provider and model, but CCPeek does not currently use those per-message fields. File-order model state is an approximation for branched sessions.
+The adapter prefers the provider and model recorded on each modern Pi message, falling back to `model_change` state for older entries. This removes file-order model ambiguity for usage-bearing modern messages.
 
-Modern Pi `compaction` and `branch_summary` entries can carry usage and reported cost for the LLM call that generated the summary. CCPeek currently does not capture that top-level usage, so those tokens and costs are omitted from session totals.
+Usage and reported cost on modern Pi `compaction` and `branch_summary` entries are captured and included in session totals.
 
 ### Codex CLI
 
 Codex token-count events contain cumulative totals and, in many logs, a `last_token_usage` record for the latest turn. CCPeek uses `last_token_usage` when available. Otherwise it subtracts the previous cumulative total and treats a lower total as a counter reset. Repeated events with an unchanged cumulative total and identical last-turn usage are suppressed.
 
-Codex input includes cached input, so CCPeek currently normalizes:
+Codex input includes cache reads and cache writes, so CCPeek normalizes:
 
 ```text
-InputTokens     = input_tokens - cached_input_tokens
-CacheReadTokens = cached_input_tokens
-OutputTokens    = output_tokens
-ReasoningTokens = reasoning_output_tokens
+InputTokens      = max(input_tokens - cached_input_tokens - cache_write_input_tokens, 0)
+CacheReadTokens  = cached_input_tokens
+CacheWriteTokens = cache_write_input_tokens
+OutputTokens     = output_tokens
+ReasoningTokens  = reasoning_output_tokens
 ```
 
-Codex reasoning is a subset of output and is not added again.
-
-Current Codex formats also include `cache_write_input_tokens`. CCPeek does not yet parse this field. Logs containing cache writes therefore omit that token bucket and its cost, and their ordinary input should eventually be normalized as input minus both cache reads and cache writes — pending fixture verification that cache writes are in fact a subset of `input_tokens` rather than a disjoint bucket.
+Codex reasoning is a subset of output and is not added again. Cache-write counters participate in the same latest-turn, cumulative-delta, reset, and duplicate-event handling as the other buckets. If malformed input reports cache reads plus writes greater than total input, CCPeek clamps ordinary input to zero and emits a warning ingest issue naming the conflicting counts.
 
 Codex does not report a USD cost in the indexed format, so its usage normally follows calculated pricing. Token-count events that arrive before a model is known remain visible as unpriced rather than being assigned an arbitrary model.
 
@@ -135,7 +138,7 @@ CacheWriteTokens = tokens.cache.write
 ReportedCostUSD = cost
 ```
 
-If an OpenCode usage record has no reported cost, its normalized tokens use calculated pricing. The adapter currently stores `modelID` but discards `providerID`, which can make fallback pricing less precise when the same model identifier is offered by several providers.
+If an OpenCode usage record has no reported cost, or stores zero with non-zero tokens, its normalized tokens use calculated pricing. The adapter preserves both `providerID` and `modelID`, tries the exact provider/model rate first, and can still fall back to the bare model through normal lookup candidates.
 
 ### Cursor
 
@@ -143,12 +146,14 @@ The Cursor adapter reads fixture-based `inputTokens`, `outputTokens`, `cacheRead
 
 ## Pricing data and model lookup
 
-Pricing comes exclusively from `internal/pricing/snapshot.json`, an embedded, pruned copy of LiteLLM's `model_prices_and_context_window.json`. The snapshot records its source URL and fetch timestamp. `scripts/update-pricing.sh` downloads a new source file and keeps these four fields:
+Pricing comes from `internal/pricing/snapshot.json`, an embedded, pruned copy of LiteLLM's `model_prices_and_context_window.json` augmented with authoritative effective-dated cards maintained in `internal/pricing/history.json`. The generated snapshot records its source URL and fetch timestamp. `scripts/update-pricing.sh` downloads a new source file, merges the maintained history, and keeps these fields without converting missing dimensions to zero:
 
 - `input_cost_per_token`
 - `output_cost_per_token`
 - `cache_creation_input_token_cost`
+- `cache_creation_input_token_cost_above_1hr`
 - `cache_read_input_token_cost`
+- Input, output, cache-write, one-hour-cache-write, and cache-read tier variants above 128k, 200k, 256k, 272k, and 512k input tokens
 
 The binary does not fetch prices at runtime. Updating the script output only affects binaries built with the new snapshot.
 
@@ -161,44 +166,43 @@ Model lookup is case-insensitive and tries candidates in order:
 
 Exact provider-specific matches therefore win when present, but fallback to a bare model can use a generic rate that does not reflect the original provider, region, or negotiated price.
 
-A model is considered priced when lookup finds a `Rate`. The update script currently replaces missing cache-rate fields with numeric zero. Consequently, a known model with a non-zero cache bucket and an absent cache rate is treated as fully priced with free cache tokens rather than partially unpriced. This is a known source of silent underestimation.
+Input and output rates are required for a model to enter the snapshot. Cache-rate presence is preserved separately from its numeric value. A known model can therefore be partially priced: input and output contribute cost while cache tokens with an absent rate remain visibly unpriced.
+
+Dated requests resolve against effective-date cards when history exists; a gap in that history is authoritative and remains unpriced rather than silently receiving today's rate. Long-context tiers are selected per request from ordinary input plus cache reads and writes, so aggregation cannot push several small requests across a threshold. A sparse historical card without tiers inherits the current snapshot's absolute tier rates. This deliberately mixes eras when base prices changed; authoritative cards must include their own tiers to avoid that assumption.
 
 ## Aggregation and materialization
 
 Raw usage is stored per message in `message_usage`. Costs are exposed through two paths:
 
-- Session summaries and rolling block queries aggregate raw usage by model and call `db.AutoCost` at query time.
-- The Usage page and cost timeline read `rollup_usage_daily`, which materializes reported and estimated costs for dashboard speed.
+- Session summaries and rolling block queries scan raw usage and evaluate each row before aggregation, preserving request dates and size tiers.
+- The Usage page, cost timeline, and overview stats read `rollup_usage_daily`, which materializes exact `auto`, `calculate`, and `display` amounts plus reported, estimated, unpriced, and unreported provenance for dashboard speed.
 
 Daily rollups group by day, agent, workspace, and model. A session that uses several models is priced independently for each model before the results are added. Session counts are recomputed as distinct sessions rather than summed across model rows.
 
-Rollups are fully rebuilt after an ingest pass changes sessions or messages, after source pruning, or when usage exists but the rollup table is empty. A pricing-snapshot change by itself is not tracked as a rollup dependency. After upgrading to a binary with new prices, unchanged historical rollups can therefore retain the previous calculated values while query-time session costs use the new snapshot. A later session change triggers a full rebuild and makes them agree again.
+Rollups are fully rebuilt after an ingest pass changes sessions or messages, after source pruning, whenever raw usage and rollup presence disagree (including deletion of the final usage row), or when the stored pricing fingerprint differs. The fingerprint hashes the exact snapshot bytes together with a pricing-algorithm version and is written transactionally with the rollups, so query-time and materialized costs cannot remain on different pricing semantics after an upgrade.
 
-The database stores costs as SQLite `REAL`, and Go calculates with `float64`. Values are not rounded during calculation or aggregation; formatting rounds only for display. This is suitable for analytics but not financial-ledger precision.
+Internal amounts are signed 64-bit nanodollars. Per-token rates are quantized to picodollars, token multiplication uses arbitrary-precision intermediates, each row is rounded once to the nearest nanodollar, and aggregation detects overflow. SQLite stores exact integer mirrors such as `reported_cost_nanos`, `cost_nanos`, and mode-specific rollup amounts; legacy `REAL` columns and API floats remain compatibility projections produced only at boundaries. Exact decimal strings are exposed alongside those floats.
 
 ## Unpriced data
 
-For an unreported usage row whose model cannot be resolved:
+For a usage row selected for calculation whose model cannot be resolved:
 
 - Token totals are still included.
 - Calculated cost contributes zero.
 - Session and block responses include an `unpricedTokens` count.
-- Daily usage rollups set `priced = 0`, exposed as `hasUnpriced`.
+- Daily usage responses derive `hasUnpriced` from persisted per-bucket unpriced token counts; the legacy `priced` rollup column is vestigial and remains write-only pending a schema cleanup.
 - The displayed USD amount is a lower bound.
 
 Agent-reported costs do not require model lookup. A row with a reported cost and an unknown model is considered costed because CCPeek does not need a rate to use the reported value.
 
-The current unpriced mechanism operates at model lookup level, not individual rate-field level. It does not detect missing cache rates represented as zero.
-
-The mechanism also has a zero-token false positive: a group whose only unreported rows carry zero tokens and an unresolvable model (Claude Code `<synthetic>` error stubs are the common case) still sets `priced = 0`, so the usage surface reports `hasUnpriced` for a group with no actual unpriced tokens — while session and block surfaces, which count unpriced tokens rather than groups, report zero for the same data.
+Unpriced accounting operates per bucket. Session and block responses expose both the total and a token-type breakdown; daily rollups persist the same breakdown and derive `hasUnpriced` from actual non-zero unpriced tokens. Unknown zero-token rows are fully priced by definition and no longer create a cross-surface false positive.
 
 ## Pricing dimensions not currently modeled
 
 The LiteLLM source and provider APIs contain more pricing dimensions than CCPeek preserves:
 
-- Historical rate changes and effective dates.
-- Long-context thresholds such as rates above 128k, 200k, or 272k tokens.
-- Anthropic one-hour cache creation versus five-minute cache creation.
+- Historical periods not covered by the small maintained set of authoritative effective-dated cards.
+- Historical long-context tier rates when a sparse historical card inherits absolute tiers from the current snapshot.
 - Batch, priority, service-tier, and data-residency modifiers.
 - Provider-specific and regional rates when only a bare model identifier is stored or matched.
 - Images, audio, web-search requests, server tools, and other non-token charges.
@@ -217,73 +221,67 @@ The semantics above were verified against primary sources on 2026-08-21. Upstrea
 
 **OpenCode normalization and cost.** OpenCode's `getUsage` (`sst/opencode` `packages/opencode/src/session/session.ts` @ `9b0dd36cda0b`) stores `tokens.input = inputTokens − cacheRead − cacheWrite` and `tokens.output = outputTokens − reasoningTokens`, computes cost from models.dev rates with context tiers (`experimentalOver200K`) and reasoning charged at the output rate, derives Copilot cost from `totalNanoAiu`, and defaults cost to `0` when no rate applies. Confirmed empirically in local storage (`input=3` beside `cache.write=15072`). The reported-zero suppression is live in the indexed corpus: 4 OpenCode rows totaling 110,145 tokens carry reported `0`, including 15,087 claude-sonnet-4-5 tokens.
 
-**Pi summary usage and per-message model.** Upstream Pi (`badlogic/pi-mono` `packages/agent/src/harness/session/types.ts` @ `7bdb16c28d79`) declares optional `usage` on `CompactionEntry` and `BranchSummaryEntry`, plus lane `UsageRecord`s with `cause: "assistant" | "compaction" | "branch_summary" | "tool" | …`. The local corpus predates this — 0 of 19 session files containing summary entries carry usage — so fixtures need a current Pi build. Real local Pi assistant payloads carry per-message `model` and `provider` (e.g. `"gpt-5.4"` / `"openai-codex"`), which the adapter ignores in favor of file-order `model_change` state; the openai-codex provider is also the source of the gpt-5.4 cache-write tokens in the corpus.
+**Pi summary usage and per-message model.** Upstream Pi (`badlogic/pi-mono` `packages/agent/src/harness/session/types.ts` @ `7bdb16c28d79`) declares optional `usage` on `CompactionEntry` and `BranchSummaryEntry`, plus lane `UsageRecord`s with `cause: "assistant" | "compaction" | "branch_summary" | "tool" | …`. The local corpus predates this — 0 of 19 session files containing summary entries carry usage — so a representative fixture still needs a current Pi build. Real local Pi assistant payloads carry per-message `model` and `provider` (e.g. `"gpt-5.4"` / `"openai-codex"`); the adapter now prefers those fields, falls back to file-order `model_change` state, and clears a stale provider when a message changes only the model.
 
-**LiteLLM coverage** (`BerriAI/litellm` `model_prices_and_context_window.json` @ `418c7c6012d7`, fetched 2026-08-21). Units are USD per single token. 126 models carry `cache_creation_input_token_cost_above_1hr` (2× base for Anthropic models — claude-fable-5 at $20/MTok); 60 carry `input_cost_per_token_above_200k_tokens` and 35 the cache-write equivalent; 14 carry `_above_128k_tokens` variants. `claude-sonnet-5` is listed at the $2/$10 introductory rate that ends 2026-08-31 — the embedded snapshot (fetched 2026-07-10) predates that transition, a concrete instance of the temporal-pricing limitation. GPT-5.x entries carry no cache-write cost through the gpt-5.5 family; the gpt-5.6 family carries one at 1.25× input. Embedded snapshot rates were spot-checked against list prices for every model in the local corpus; all match.
+**LiteLLM coverage** (`BerriAI/litellm` `model_prices_and_context_window.json` @ `418c7c6012d7`, fetched 2026-08-21). Units are USD per single token. 126 models carry `cache_creation_input_token_cost_above_1hr` (2× base for Anthropic models — claude-fable-5 at $20/MTok); 60 carry `input_cost_per_token_above_200k_tokens` and 35 the cache-write equivalent; 14 carry `_above_128k_tokens` variants. GPT-5.x entries carry no cache-write cost through the gpt-5.5 family; the gpt-5.6 family carries one at 1.25× input. Embedded snapshot rates were spot-checked against list prices for every model in the local corpus; all match. Anthropic's 2026-08-10 Sonnet 5 announcement made the launch $2/$10 rate permanent and cancelled the planned September increase; the maintained open-ended card and a post-2026-09-01 regression test pin that correction.
 
 **ccusage comparison** (`ryoppippi/ccusage` `rust/crates/ccusage-core/src/pricing.rs` @ `b936c29211b9`). The reference implementation ships three cost modes (`auto`/`calculate`/`display`), carries the four `_above_200k_tokens` tier fields, and — where cache rates are absent — falls back to `input×1.25` / `input×0.1` while tracking whether each rate was explicit. CCPeek deliberately prefers partial pricing with visible unpriced cache buckets over that multiplier default (see improvement 2).
 
-**Claude streaming snapshots.** The first-wins dedupe risk was probed: the 8 largest local transcripts contain only byte-identical duplicate usage rows, no divergent same-key snapshots. The retain-most-complete change therefore remains fixture-gated (see the verification strategy).
+**Claude streaming snapshots.** The first-wins dedupe risk was probed: the 8 largest local transcripts contain only byte-identical duplicate usage rows, no divergent same-key snapshots. Retaining the most complete duplicate is nevertheless implemented and covered synthetically; durability across a later reparse of the first-seen owner file remains separate follow-up work.
 
-## Recommended improvements
+## Improvement status
 
-### 1. Fix known token omissions before adding pricing features
+### 1. Harden token capture
 
-Add regression fixtures and then correct the three confirmed capture gaps: retain the most complete Claude streaming usage snapshot, capture Pi compaction and branch-summary usage, and normalize Codex cache-write tokens. Existing indexed databases would need a rebuild after adapter fixes because missing source fields cannot be repaired from the current canonical rows.
+Claude duplicate completeness, Pi compaction/branch-summary usage, and Codex cache-write normalization are implemented with synthetic regression fixtures. Schema parse versions force recoverable unchanged sources through a full parse; rows whose source files disappeared remain archival and cannot gain fields that were never stored. Representative real-corpus fixtures for current Codex cache writes, current Pi summary usage, and legacy Claude resumes without `message.id` remain outstanding.
 
 ### 2. Distinguish missing rates from true zero rates
 
-Preserve whether each LiteLLM field was absent instead of converting absence to zero. Pricing should return a per-bucket result so a model can be partly priced: known input and output cost plus explicitly unpriced cache tokens. This avoids both silently free tokens and incorrectly rejecting all tokens for an otherwise known model.
+Implemented. Snapshot pruning preserves field absence, pricing returns per-bucket unpriced usage, and all cost surfaces expose partial results without treating missing cache prices as free.
 
 ### 3. Invalidate rollups when pricing changes
 
-Store a pricing-snapshot fingerprint or version in database metadata when rollups are generated. On startup, rebuild rollups when that fingerprint differs from the embedded table. This keeps materialized Usage values consistent with query-time session values without requiring unrelated session activity.
+Implemented. The transactional rollup fingerprint covers exact snapshot bytes and the pricing algorithm version; an unchanged ingest pass rebuilds stale materializations.
 
 ### 4. Preserve provider identity
 
-Store provider and model separately, or preserve a normalized `provider/model` key alongside the display model. Exact provider-specific rates should be preferred, and fallback to a generic model should be visible as an approximation rather than silently treated as equally authoritative.
+Implemented. Provider and model are stored separately, raw cost queries price by provider/model before folding into display-model groups, and the pricing diagnostic reports the exact candidate that resolved.
 
 ### 5. Support historical and tiered rates
 
-A billing-grade design needs effective-dated price cards and enough per-request context to select long-context and service-tier rates. Applying today's base rate to all historical usage is simple and reproducible, but it cannot answer what an old request would actually have cost at the time.
+Implemented for effective-dated cards and request-size tiers. Rows are priced independently so dates and thresholds are not crossed by aggregation, authoritative history gaps remain unpriced, and current LiteLLM long-context dimensions are retained. Historical coverage is intentionally sparse, service-tier modifiers remain unsupported, and sparse cards inherit current absolute tiers as documented above.
 
 ### 6. Split cache-write tiers
 
-Capture five-minute and one-hour cache-creation tokens separately where Claude exposes them. Until the schema supports that distinction, documentation and UI should explicitly identify the current five-minute-rate assumption.
+Implemented as total cache writes plus a one-hour subset. This representation preserves existing token totals and naturally treats irrecoverable legacy rows as five-minute writes.
 
 ### 7. Make cost provenance inspectable
 
-Expose the snapshot source, fetch timestamp, resolved model key, selected rates, and reported-versus-estimated decision through a diagnostic command or API response. A user investigating a surprising total should be able to trace one usage row from source fields to final arithmetic.
+Implemented through `ccpeek query pricing [--model provider/model]` and `/api/v1/pricing`: source, fetch time, algorithm, fingerprint, rollup currentness, resolved key, and present rate dimensions are inspectable. Usage rows continue to expose the reported/estimated split.
 
-### 8. Add explicit cost modes only if users need them
+### 8. Add explicit cost modes
 
-If the planned modes are implemented, their semantics should be unambiguous:
-
-- `auto`: use reported cost when present, otherwise calculate.
-- `calculate`: ignore reported cost and price every possible token row from the selected price card.
-- `display`: show only agent-reported costs and mark all other usage as having no reported cost.
-
-Until those modes exist, user-facing documentation should describe only automatic reported-first behavior.
+Implemented across sessions, session detail, usage, blocks, stats, pricing diagnostics, HTTP, CLI, MCP, and the UI. `auto`, `calculate`, and `display` use the row-level semantics documented above, URL navigation preserves the selected mode, and incomplete calculated or reported-only totals remain visibly marked.
 
 ### 9. Improve user-facing labeling
 
-Every dollar surface should consistently say whether a value is reported, estimated, mixed, or a lower bound. Subscription-backed activity should be labeled API-equivalent rather than spend. The current Usage page shows a reported/estimated split, but that distinction and the subscription caveat are not consistently visible on session and overview surfaces.
+Implemented for the existing surfaces: money tooltips identify API-equivalent value and its reported/estimated rule, lower bounds name missing model or bucket rates, timeline agents come from indexed data, and unpriced-only days remain visible and exportable.
 
 ## Implementation order (agreed 2026-08-21)
 
 The improvements above are sequenced as staged work; each stage uses fixed synthetic rates and asserts cross-surface agreement before the next begins.
 
 1. **Merge documentation** — this document is canonical; dated evidence and pinned citations merged in (done).
-2. **Rollup invalidation infrastructure** (improvement 3) — fingerprint the snapshot content plus a pricing-algorithm version, persist it transactionally in `meta`, rebuild rollups on change; test an unchanged corpus under a changed pricing version.
-3. **Reported-zero fallback** — nonzero tokens with reported `$0` use estimation in auto mode; the raw zero is preserved as provenance; unknown models become visibly unpriced. Ships with stage 2, or with a schema bump that guarantees rollup recreation.
-4. **Cache-write TTL support** (improvement 6) — keep `cache_write_tokens` as the total, add `cache_write_1h_tokens` as a subset, price `total − 1h` at the five-minute rate and `1h` at its own rate. Version adapter parsing/source cursors to force re-parsing of unchanged files; archived rows whose sources are gone remain permanently unsplit under the five-minute assumption.
-5. **Adapter capture hardening** (improvement 1) — Pi per-message provider/model and summary usage; Claude legacy cost-only rows and legacy dedupe; define the duplicate winner and row ownership before implementing compare-and-update, with fixtures covering differing snapshots across resumed sessions; Codex cache writes stay fixture-gated until subset semantics are verified.
-6. **Edge cases and population semantics** (improvement 2) — fix the zero-token `hasUnpriced` false positive, add partial bucket pricing, and either normalize timestamp populations across sessions/blocks/rollups or explicitly document and test why they include different rows. Arithmetic parity tests run on well-formed aligned fixtures; intentional population differences are tested separately in `parity_test.go`.
-7. **Provider identity and diagnostics** (improvements 4, 7) — preserve provider separately from model; expose the resolved pricing key, rates, snapshot fingerprint, and the reported-versus-estimated decision.
-8. **Presentation** (improvement 9) — dynamic timeline agents, preserve unpriced-only days, consistent provenance and API-equivalent labeling.
-9. **Deferred** (improvements 5, 8) — historical and tiered pricing, explicit cost modes, and billing-grade decimal arithmetic remain later work.
+2. **Rollup invalidation infrastructure** (improvement 3) — implemented: the snapshot content plus pricing-algorithm version is fingerprinted, persisted transactionally in `meta`, and tested against an unchanged corpus under a changed version.
+3. **Reported-zero fallback** — implemented: nonzero tokens with reported `$0` use estimation in auto mode; raw zero is preserved; unknown models become visibly unpriced across all cost surfaces.
+4. **Cache-write TTL support** (improvement 6) — implemented: `cache_write_tokens` remains the total, `cache_write_1h_tokens` is the subset, adapter parse versions force recoverable sources through one full reparse, and unavailable archived splits retain the five-minute assumption.
+5. **Adapter capture hardening** (improvement 1) — implemented for Pi per-message provider/model and summary usage, Claude legacy cost-only rows and legacy dedupe, compare-and-update with first-seen ownership and an explicit completeness order, and Codex cache-write subset normalization with cumulative-delta/reset handling.
+6. **Edge cases and population semantics** (improvement 2) — implemented: zero-token rows no longer create unpriced warnings, partial bucket pricing is persisted and exposed, and `parity_test.go` pins the intentional population rule that blocks require message timestamps while sessions include all usage and daily rollups fall back to session timestamps.
+7. **Provider identity and diagnostics** (improvements 4, 7) — preserve provider separately from model; expose the resolved pricing key, rates, snapshot fingerprint, and the reported-versus-estimated decision. Implemented in schema v14 and the `pricing` query/API operation.
+8. **Presentation** (improvement 9) — dynamic timeline agents, preserve unpriced-only days, consistent provenance and API-equivalent labeling. Implemented; zero-dollar unpriced days render warning-height markers and remain in CSV exports.
+9. **Advanced pricing and modes** (improvements 5, 8) — implemented with effective-dated cards, per-request long-context tiers, exact fixed-point arithmetic, mode-specific materializations, and cross-surface mode exposure.
 
-Once stage 2 lands, refreshing the pricing snapshot — including the Sonnet 5 intro-price transition — is safe, because unchanged rollups will invalidate correctly.
+The pricing snapshot was refreshed after stage 2 landed, including permanent Sonnet 5 pricing, current long-context tiers, one-hour cache-write fields, and maintained history. Future refreshes are safe because unchanged rollups invalidate against the snapshot-and-algorithm fingerprint.
 
 ## Verification strategy
 
@@ -301,6 +299,6 @@ Cost changes should be tested with fixed synthetic rates rather than asserting a
 - Codex last-turn usage, cumulative deltas, counter resets, duplicate events, cache reads, cache writes, and reasoning subsets.
 - OpenCode additive reasoning being billed exactly once.
 - A pricing-fingerprint change invalidating materialized rollups.
-- Agreement between session, block, and daily usage totals over the same synthetic corpus.
+- Agreement between session, block, daily usage, stats, and API parity surfaces over the same synthetic corpus, including an effective-date boundary and a long-context tier.
 
 For manual validation, compare a small session against the source transcript by grouping usage per model, applying the exact embedded rates, and checking reported and estimated rows separately. Do not compare only the final rounded UI value; inspect full-precision API output so display formatting does not hide arithmetic differences.
