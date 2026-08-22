@@ -164,14 +164,16 @@ func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath str
 		})
 	}
 
+	title := strings.TrimSpace(doc.Title)
 	sess := canon.Session{
-		Agent:      Slug,
-		ExternalID: doc.ID,
-		Title:      canon.TruncateBytes(doc.Title, canon.SessionTitleLimit),
-		CreatedAt:  millis(doc.Time.Created),
-		ModifiedAt: millis(doc.Time.Updated),
-		CWD:        doc.Directory,
-		SourcePath: docPath,
+		Agent:         Slug,
+		ExternalID:    doc.ID,
+		Title:         canon.TruncateBytes(title, canon.SessionTitleLimit),
+		TitleOverride: title != "",
+		CreatedAt:     millis(doc.Time.Created),
+		ModifiedAt:    millis(doc.Time.Updated),
+		CWD:           doc.Directory,
+		SourcePath:    docPath,
 	}
 	if err := sink.Session(sess); err != nil {
 		return err

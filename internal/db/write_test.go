@@ -103,6 +103,43 @@ func TestUpsertSessionIdempotent(t *testing.T) {
 	}
 }
 
+func TestAdvanceSessionOnlyOverridesTitleForNativeRename(t *testing.T) {
+	s, _ := openTemp(t)
+	w := beginWrite(t, s)
+	if _, err := w.UpsertSession(testSession("sess-title"), "hash1"); err != nil {
+		t.Fatal(err)
+	}
+
+	fallback := testSession("sess-title")
+	fallback.Title = "later tail prompt"
+	if _, err := w.AdvanceSession(fallback, "hash2"); err != nil {
+		t.Fatal(err)
+	}
+	var title string
+	if err := w.tx.QueryRow(`SELECT title FROM sessions WHERE external_id = 'sess-title'`).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "hello" {
+		t.Fatalf("ordinary tail title replaced original: %q", title)
+	}
+
+	rename := fallback
+	rename.Title = "user-assigned-name"
+	rename.TitleOverride = true
+	if _, err := w.AdvanceSession(rename, "hash3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.tx.QueryRow(`SELECT title FROM sessions WHERE external_id = 'sess-title'`).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "user-assigned-name" {
+		t.Fatalf("native rename title = %q, want user-assigned-name", title)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUsageDedupeAcrossSessions(t *testing.T) {
 	s, _ := openTemp(t)
 	w := beginWrite(t, s)

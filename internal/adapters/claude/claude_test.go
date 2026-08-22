@@ -322,6 +322,85 @@ func appendTo(t *testing.T, path, data string) {
 	f.Close()
 }
 
+func TestSessionTitleSkipsSyntheticLocalCommands(t *testing.T) {
+	src, path := tailFixture(t)
+	body := `{"type":"user","uuid":"u-1","timestamp":"2026-07-01T10:00:00Z","message":{"role":"user","content":"<bash-input>nix-collect-garbage -d</bash-input>"}}
+{"type":"user","uuid":"u-2","timestamp":"2026-07-01T10:00:01Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+{"type":"user","uuid":"u-3","timestamp":"2026-07-01T10:00:02Z","message":{"role":"user","content":"explain the failing build"}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	got := sink.Sessions[len(sink.Sessions)-1].Title
+	if got != "explain the failing build" {
+		t.Fatalf("session title = %q, want first real prompt", got)
+	}
+}
+
+func TestSessionTitlePrefersNativeMetadata(t *testing.T) {
+	src, path := tailFixture(t)
+	appendTo(t, path, `{"type":"ai-title","aiTitle":"AI summary","sessionId":"99999999-aaaa-bbbb-cccc-999999999999"}
+{"type":"custom-title","customTitle":"user-assigned-name","sessionId":"99999999-aaaa-bbbb-cccc-999999999999"}
+`)
+
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Sessions) == 0 {
+		t.Fatal("no session emitted")
+	}
+	got := sink.Sessions[len(sink.Sessions)-1]
+	if got.Title != "user-assigned-name" || !got.TitleOverride {
+		t.Fatalf("session title = %q override=%v, want custom title override", got.Title, got.TitleOverride)
+	}
+}
+
+func TestParseTailEmitsCustomTitleWithoutMessages(t *testing.T) {
+	src, path := tailFixture(t)
+	state, err := New().ParseTail(context.Background(), src, agent.TailState{}, &agenttest.Sink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendTo(t, path, `{"type":"custom-title","customTitle":"renamed-later","sessionId":"99999999-aaaa-bbbb-cccc-999999999999"}
+`)
+
+	sink := &agenttest.Sink{}
+	if _, err := New().ParseTail(context.Background(), src, state, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Messages) != 0 || len(sink.Sessions) != 1 {
+		t.Fatalf("tail emitted %d messages and %d sessions, want metadata-only session update", len(sink.Messages), len(sink.Sessions))
+	}
+	if got := sink.Sessions[0]; got.Title != "renamed-later" || !got.TitleOverride {
+		t.Fatalf("tail title = %q override=%v, want explicit rename", got.Title, got.TitleOverride)
+	}
+}
+
+func TestClaudePromptTitleSkipsSyntheticLocalCommands(t *testing.T) {
+	for _, text := range []string{
+		"<local-command-caveat>Caveat: generated locally</local-command-caveat>",
+		"<command-name>/clear</command-name>",
+		"<local-command-stdout></local-command-stdout>",
+		"<bash-input>nix-collect-garbage -d</bash-input>",
+		"<bash-stdout>store paths deleted</bash-stdout>",
+		"<bash-stderr>warning</bash-stderr>",
+		"<system-reminder>metadata</system-reminder>",
+	} {
+		if got := claudePromptTitle(text); got != "" {
+			t.Errorf("claudePromptTitle(%q) = %q, want empty", text, got)
+		}
+	}
+	if got := claudePromptTitle("  explain the failing build  "); got != "explain the failing build" {
+		t.Errorf("real prompt title = %q", got)
+	}
+}
+
 func TestParseTailEmitsOnlyAppendedRecords(t *testing.T) {
 	src, path := tailFixture(t)
 	ctx := context.Background()

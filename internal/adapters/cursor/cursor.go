@@ -156,7 +156,9 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				(meta.Name == "" && meta.WorkspaceRoot == "" && meta.CreatedAt == 0) {
 				continue
 			}
-			sess.Title = canon.TruncateBytes(meta.Name, canon.SessionTitleLimit)
+			name := strings.TrimSpace(meta.Name)
+			sess.Title = canon.TruncateBytes(name, canon.SessionTitleLimit)
+			sess.TitleOverride = name != ""
 			sess.CWD = meta.WorkspaceRoot
 			if meta.CreatedAt > 0 {
 				sess.CreatedAt = time.UnixMilli(meta.CreatedAt).UTC()

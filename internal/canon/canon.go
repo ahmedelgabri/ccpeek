@@ -70,19 +70,20 @@ const (
 	OriginImportedV1 Origin = "imported-v1" // carried over from a v1 database
 )
 
-// SessionTitleLimit bounds Session.Title. Titles come from a first prompt,
-// which is unbounded; five adapters each carried this number.
+// SessionTitleLimit bounds Session.Title. Titles come from agent-provided
+// names or first-prompt fallbacks, either of which can be unbounded.
 const SessionTitleLimit = 200
 
 // Session is the hub of the model. ExternalID is the agent's own stable
 // identifier (session UUID, rollout id, …); (Agent, ExternalID) is the
 // natural key everything else attaches to.
 type Session struct {
-	Agent      AgentSlug
-	ExternalID string
-	Title      string // first prompt or agent-provided name
-	CreatedAt  time.Time
-	ModifiedAt time.Time
+	Agent         AgentSlug
+	ExternalID    string
+	Title         string // first prompt or agent-provided name
+	TitleOverride bool   // an explicit native rename should replace a stored fallback title
+	CreatedAt     time.Time
+	ModifiedAt    time.Time
 
 	// Context attributes — where the session ran, not hierarchy.
 	CWD       string

@@ -38,9 +38,9 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
-// ParseVersion forces one full reparse after per-message provider/model and
-// summary-entry usage became canonical fields.
-func (*Adapter) ParseVersion() int { return 2 }
+// ParseVersion forces one full reparse after per-message provider/model,
+// summary-entry usage, and fallback-title normalization became canonical.
+func (*Adapter) ParseVersion() int { return 3 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -358,8 +358,10 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}
 			}
 		}
-		if sess.Title == "" && msg.Role == canon.RoleUser && msg.Text != "" {
-			sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.SessionTitleLimit)
+		if sess.Title == "" && msg.Role == canon.RoleUser {
+			if title := piPromptTitle(msg.Text); title != "" {
+				sess.Title = canon.TruncateBytes(title, canon.SessionTitleLimit)
+			}
 		}
 		if err := sink.Message(msg); err != nil {
 			return err
@@ -382,6 +384,16 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 	// Final emit: the folded title and ModifiedAt.
 	return sink.Session(sess)
+}
+
+// piPromptTitle rejects skill envelopes injected as synthetic user messages.
+// They remain transcript provenance but do not describe the session's purpose.
+func piPromptTitle(text string) string {
+	title := strings.TrimSpace(text)
+	if strings.HasPrefix(title, "<skill ") {
+		return ""
+	}
+	return title
 }
 
 // decodedMessage is a "message" entry's payload decoded ONCE. The caller
@@ -480,7 +492,10 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentPro
 		return base, decodedMessage{}, true
 
 	case "session_info":
-		sess.Title = canon.TruncateBytes(e.Name, canon.SessionTitleLimit)
+		if name := strings.TrimSpace(e.Name); name != "" {
+			sess.Title = canon.TruncateBytes(name, canon.SessionTitleLimit)
+			sess.TitleOverride = true
+		}
 		return canon.Message{}, decodedMessage{}, false
 
 	case "custom_message":

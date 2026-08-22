@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -32,17 +33,23 @@ const (
 	maxLineBytes = 10 * 1024 * 1024
 )
 
-// Adapter implements agent.Adapter for Codex CLI.
-type Adapter struct{}
+// Adapter implements agent.Adapter for Codex CLI. Discover snapshots the
+// optional thread-name index once per root so concurrent rollout parses do not
+// rescan the same sidecar for every session.
+type Adapter struct {
+	mu          sync.RWMutex
+	threadNames map[string]map[string]string
+}
 
 // New returns the Codex adapter.
-func New() *Adapter { return &Adapter{} }
+func New() *Adapter { return &Adapter{threadNames: make(map[string]map[string]string)} }
 
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
-// ParseVersion forces existing recoverable rollouts through cache-write-aware normalization.
-func (*Adapter) ParseVersion() int { return 2 }
+// ParseVersion forces existing recoverable rollouts through the latest usage
+// normalization and session-title enrichment.
+func (*Adapter) ParseVersion() int { return 3 }
 
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -52,14 +59,24 @@ func (*Adapter) RootSpec() agent.RootSpec {
 	}
 }
 
-// Discover walks sessions/YYYY/MM/DD/*.jsonl.
-func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
+// Discover walks sessions/YYYY/MM/DD/*.jsonl and snapshots the optional
+// session_index.jsonl that records user-assigned Codex thread names.
+func (a *Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
+	indexPath := filepath.Join(root.Path, "session_index.jsonl")
+	names, err := loadThreadNames(indexPath)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	a.threadNames[root.Path] = names
+	a.mu.Unlock()
+
 	sessionsDir := filepath.Join(root.Path, "sessions")
 	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
 		return nil, nil
 	}
 	var refs []agent.SourceRef
-	err := filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable subtree: pipeline diagnostics cover it
 		}
@@ -67,7 +84,12 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			return cerr
 		}
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") {
-			refs = append(refs, agent.SourceRef{Root: root, Path: path, Kind: agent.SourceFile})
+			// The index is one shared sidecar, so any rename invalidates every
+			// rollout. That favors correct titles over selective reparse complexity.
+			refs = append(refs, agent.SourceRef{
+				Root: root, Path: path, Kind: agent.SourceFile,
+				CompanionPaths: []string{indexPath},
+			})
 		}
 		return nil
 	})
@@ -75,6 +97,44 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 		return nil, err
 	}
 	return refs, nil
+}
+
+type threadIndexEntry struct {
+	ID         string `json:"id"`
+	ThreadName string `json:"thread_name"`
+}
+
+func loadThreadNames(path string) (map[string]string, error) {
+	names := make(map[string]string)
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return names, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("opening Codex session index %s: %w", path, err)
+	}
+	defer f.Close()
+
+	err = jsonl.Scan(f, maxLineBytes, func(_ int, raw []byte) error {
+		var entry threadIndexEntry
+		if json.Unmarshal(raw, &entry) == nil && entry.ID != "" {
+			name := strings.TrimSpace(entry.ThreadName)
+			if name != "" {
+				names[entry.ID] = name // later rename entries win
+			}
+		}
+		return nil
+	}, func(_ int, _ int64) error { return nil })
+	if err != nil {
+		return nil, fmt.Errorf("reading Codex session index %s: %w", path, err)
+	}
+	return names, nil
+}
+
+func (a *Adapter) threadName(root, sessionID string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.threadNames[root][sessionID]
 }
 
 type rolloutLine struct {
@@ -151,6 +211,10 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		ExternalID: fallbackID,
 		SourcePath: src.Path,
 	}
+	if title := a.threadName(src.Root.Path, fallbackID); title != "" {
+		sess.Title = canon.TruncateBytes(title, canon.SessionTitleLimit)
+		sess.TitleOverride = true
+	}
 
 	// Records stream to the sink as they parse — memory stays bounded by
 	// one line, not the rollout. The session is emitted before its first
@@ -220,6 +284,10 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			if json.Unmarshal(line.Payload, &meta) == nil {
 				if meta.ID != "" && !emitted {
 					sess.ExternalID = meta.ID
+					if title := a.threadName(src.Root.Path, meta.ID); title != "" {
+						sess.Title = canon.TruncateBytes(title, canon.SessionTitleLimit)
+						sess.TitleOverride = true
+					}
 				} else if meta.ID != "" && meta.ID != sess.ExternalID {
 					// Children already carry the earlier id; switching now
 					// would orphan them. Keep the id and say so.
@@ -265,8 +333,10 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					Text:      itemText(item),
 				}
 				messageCount++
-				if msg.Role == canon.RoleUser && sess.Title == "" && msg.Text != "" {
-					sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.SessionTitleLimit)
+				if msg.Role == canon.RoleUser && sess.Title == "" {
+					if title := codexPromptTitle(msg.Text); title != "" {
+						sess.Title = canon.TruncateBytes(title, canon.SessionTitleLimit)
+					}
 				}
 				if msg.Role == canon.RoleAssistant {
 					pendingAsst = &msg
@@ -465,6 +535,23 @@ func itemText(item responseItem) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// codexPromptTitle rejects user-role context envelopes injected by Codex.
+// They remain transcript provenance but do not describe the session's purpose.
+func codexPromptTitle(text string) string {
+	title := strings.TrimSpace(text)
+	for _, prefix := range []string{
+		"<environment_context>",
+		"<permissions",
+		"<recommended_plugins>",
+		"<user_instructions>",
+	} {
+		if strings.HasPrefix(title, prefix) {
+			return ""
+		}
+	}
+	return title
 }
 
 // codexToolArgs is the subset of a function call's arguments the

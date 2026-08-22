@@ -46,9 +46,9 @@ func New() *Adapter { return &Adapter{} }
 // Slug implements agent.Adapter.
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
-// ParseVersion forces one full reparse after the adapter learned the one-hour
-// cache split and legacy cost-only usage records.
-func (*Adapter) ParseVersion() int { return 2 }
+// ParseVersion forces a full reparse after the adapter learns metadata or
+// normalization that cannot be recovered from an append-only tail.
+func (*Adapter) ParseVersion() int { return 3 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -113,6 +113,8 @@ type rawLine struct {
 	Timestamp   time.Time       `json:"timestamp"`
 	RequestID   string          `json:"requestId"`
 	CostUSD     *float64        `json:"costUSD"` // pre-v1.0.9 Claude Code
+	CustomTitle string          `json:"customTitle"`
+	AITitle     string          `json:"aiTitle"`
 	Content     json.RawMessage `json:"content"` // system lines
 	Message     json.RawMessage `json:"message"`
 }
@@ -231,6 +233,18 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		return sink.Session(sess)
 	}
 	messageCount, toolCount := 0, 0
+	metadataChanged := false
+	titlePriority := 0 // first prompt < AI title < user-assigned custom title
+	setTitle := func(title string, priority int, override bool) bool {
+		title = strings.TrimSpace(title)
+		if title == "" || priority < titlePriority {
+			return false
+		}
+		sess.Title = canon.TruncateBytes(title, canon.SessionTitleLimit)
+		sess.TitleOverride = sess.TitleOverride || override
+		titlePriority = priority
+		return true
+	}
 
 	offset := state.Offset
 	lineNo := state.LineNo
@@ -308,6 +322,17 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			continue
 		}
 		switch entry.Type {
+		case "custom-title":
+			// Claude's /rename metadata is authoritative and can arrive in a
+			// later tail after the fallback prompt was already stored.
+			metadataChanged = setTitle(entry.CustomTitle, 3, true) || metadataChanged
+			continue
+		case "ai-title":
+			// AI titles improve a full parse and can fill an otherwise untitled
+			// session. They are not explicit renames, so AdvanceSession will not
+			// replace a title already chosen by the user or an earlier prompt.
+			metadataChanged = setTitle(entry.AITitle, 2, false) || metadataChanged
+			continue
 		case "user", "assistant", "system":
 		default:
 			continue // progress lines and future types are not transcript entries
@@ -332,7 +357,12 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		}
 
 		msg, calls, results := a.convertLine(entry, state.MessageSeq+messageCount, sessionID)
-		a.foldSession(&sess, entry, msg)
+		a.foldSession(&sess, entry)
+		if titlePriority < 1 && msg.Role == canon.RoleUser && !msg.IsSidechain {
+			if title := claudePromptTitle(msg.Text); title != "" {
+				setTitle(title, 1, false)
+			}
+		}
 		if err := emitSession(); err != nil {
 			return state, err
 		}
@@ -365,9 +395,13 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		ToolSeq:    state.ToolSeq + toolCount,
 		LineNo:     lineNo,
 	}
-	if messageCount == 0 {
+	if messageCount == 0 && (!metadataChanged || !resuming) {
 		// Not a transcript (or nothing new): nothing was emitted, and the
-		// cursor still advances past what was read.
+		// cursor still advances past what was read. A metadata-only initial
+		// file also waits for its first message; the later tail will fall back
+		// to a full parse because no session row exists yet, preserving its
+		// creation attributes. Metadata-only tails of existing sessions do
+		// emit below so a rename takes effect immediately.
 		return newState, nil
 	}
 
@@ -542,9 +576,10 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 }
 
 // foldSession accumulates session attributes from entries: first
-// timestamp/cwd/branch wins for creation state, last timestamp wins for
-// modification, title comes from the first non-sidechain user text.
-func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Message) {
+// timestamp/cwd wins for creation state, while the last timestamp and branch
+// win for the current state. Title selection is handled by parseSession so
+// native title metadata can outrank fallback prompt text.
+func (a *Adapter) foldSession(sess *canon.Session, raw rawLine) {
 	if sess.CreatedAt.IsZero() && !raw.Timestamp.IsZero() {
 		sess.CreatedAt = raw.Timestamp
 	}
@@ -557,9 +592,30 @@ func (a *Adapter) foldSession(sess *canon.Session, raw rawLine, msg canon.Messag
 	if raw.GitBranch != "" {
 		sess.GitBranch = raw.GitBranch
 	}
-	if sess.Title == "" && msg.Role == canon.RoleUser && !msg.IsSidechain && msg.Text != "" {
-		sess.Title = canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.SessionTitleLimit)
+}
+
+// claudePromptTitle rejects Claude's synthetic user-role control messages.
+// They are useful transcript provenance, but a local-command caveat or slash
+// command envelope says nothing about the session's purpose. Returning empty
+// lets the next real user prompt become the fallback title.
+func claudePromptTitle(text string) string {
+	title := strings.TrimSpace(text)
+	for _, prefix := range []string{
+		"<local-command-caveat>",
+		"<command-name>",
+		"<command-message>",
+		"<command-args>",
+		"<local-command-stdout>",
+		"<bash-input>",
+		"<bash-stdout>",
+		"<bash-stderr>",
+		"<system-reminder>",
+	} {
+		if strings.HasPrefix(title, prefix) {
+			return ""
+		}
 	}
+	return title
 }
 
 // blocks decodes a message's content array. Claude writes a bare STRING

@@ -20,7 +20,8 @@ func parseFixture(t *testing.T) *agenttest.Sink {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refs, err := New().Discover(context.Background(),
+	adapter := New()
+	refs, err := adapter.Discover(context.Background(),
 		agent.Root{Agent: Slug, Path: root, Origin: agent.RootFromDefault})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -28,8 +29,11 @@ func parseFixture(t *testing.T) *agenttest.Sink {
 	if len(refs) != 1 {
 		t.Fatalf("discovered %d sources, want 1", len(refs))
 	}
+	if len(refs[0].CompanionPaths) != 1 || filepath.Base(refs[0].CompanionPaths[0]) != "session_index.jsonl" {
+		t.Fatalf("rollout companions = %v, want session_index.jsonl", refs[0].CompanionPaths)
+	}
 	sink := &agenttest.Sink{}
-	if err := New().Parse(context.Background(), refs[0], sink); err != nil {
+	if err := adapter.Parse(context.Background(), refs[0], sink); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	return sink
@@ -49,8 +53,8 @@ func TestParseSessionMeta(t *testing.T) {
 	if sess.CWD != "/home/u/demo/api" || sess.GitBranch != "main" {
 		t.Errorf("cwd/branch = %q/%q", sess.CWD, sess.GitBranch)
 	}
-	if sess.Title != "Profile the login endpoint and find the slow path" {
-		t.Errorf("title = %q", sess.Title)
+	if sess.Title != "profile-login-performance" || !sess.TitleOverride {
+		t.Errorf("title = %q override=%v, want Codex thread name", sess.Title, sess.TitleOverride)
 	}
 }
 
@@ -215,9 +219,41 @@ func TestCacheSubsetsCannotCreateNegativeInput(t *testing.T) {
 	}
 }
 
-func TestParseVersionIncludesCacheWrites(t *testing.T) {
-	if got := New().ParseVersion(); got != 2 {
-		t.Fatalf("ParseVersion() = %d, want 2", got)
+func TestSessionTitleSkipsInjectedContext(t *testing.T) {
+	src := writeRollout(t,
+		`{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"`+sessionID+`","cwd":"/tmp/demo"}}`,
+		`{"timestamp":"2026-07-06T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>synthetic context</recommended_plugins>"}]}}`,
+		`{"timestamp":"2026-07-06T09:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"explain the failing build"}]}}`,
+	)
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	got := sink.Sessions[len(sink.Sessions)-1]
+	if got.Title != "explain the failing build" || got.TitleOverride {
+		t.Fatalf("session title = %q override=%v, want first real prompt", got.Title, got.TitleOverride)
+	}
+}
+
+func TestCodexPromptTitleSkipsInjectedContext(t *testing.T) {
+	for _, text := range []string{
+		"<environment_context>metadata</environment_context>",
+		"<permissions instructions=\"ask\">metadata</permissions>",
+		"<recommended_plugins>metadata</recommended_plugins>",
+		"<user_instructions>metadata</user_instructions>",
+	} {
+		if got := codexPromptTitle(text); got != "" {
+			t.Errorf("codexPromptTitle(%q) = %q, want empty", text, got)
+		}
+	}
+	if got := codexPromptTitle("  explain the failing build  "); got != "explain the failing build" {
+		t.Errorf("real prompt title = %q", got)
+	}
+}
+
+func TestParseVersionIncludesLatestNormalization(t *testing.T) {
+	if got := New().ParseVersion(); got != 3 {
+		t.Fatalf("ParseVersion() = %d, want 3", got)
 	}
 }
 

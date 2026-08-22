@@ -121,8 +121,9 @@ func (w *Writer) UpsertSession(sess canon.Session, contentHash string) (int64, e
 // of newly-appended source bytes only: modification time, branch, and
 // content hash move forward; creation-time attributes (created_at, and
 // title/cwd once set) stay as the full parse recorded them — the tail
-// never saw the lines they came from. Returns ErrUnknownSession when the
-// session was never fully parsed; callers fall back to a full parse.
+// never saw the lines they came from. An explicit native rename is the
+// exception and replaces the stored fallback title. Returns ErrUnknownSession
+// when the session was never fully parsed; callers fall back to a full parse.
 func (w *Writer) AdvanceSession(sess canon.Session, contentHash string) (int64, error) {
 	id, err := w.sessionID(sess.Agent, sess.ExternalID)
 	if err != nil {
@@ -132,13 +133,18 @@ func (w *Writer) AdvanceSession(sess canon.Session, contentHash string) (int64, 
 		UPDATE sessions SET
 			modified_at = COALESCE(?, modified_at),
 			git_branch = CASE WHEN ? <> '' THEN ? ELSE git_branch END,
-			title = CASE WHEN title = '' THEN ? ELSE title END,
+			title = CASE
+				WHEN ? AND ? <> '' THEN ?
+				WHEN title = '' THEN ?
+				ELSE title
+			END,
 			cwd = CASE WHEN cwd = '' THEN ? ELSE cwd END,
 			source_path = ?,
 			content_hash = ?
 		WHERE id = ?`,
 		timeText(sess.ModifiedAt), sess.GitBranch, sess.GitBranch,
-		sess.Title, sess.CWD, sess.SourcePath, contentHash, id); err != nil {
+		sess.TitleOverride, sess.Title, sess.Title, sess.Title,
+		sess.CWD, sess.SourcePath, contentHash, id); err != nil {
 		return 0, fmt.Errorf("advancing session %s/%s: %w", sess.Agent, sess.ExternalID, err)
 	}
 	return id, nil

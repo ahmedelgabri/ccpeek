@@ -71,8 +71,8 @@ func TestParseMainSession(t *testing.T) {
 	if sess.CWD != "/home/u/demo/api" {
 		t.Errorf("cwd = %q (must come from header, not directory name)", sess.CWD)
 	}
-	if sess.Title != "rate limiting work" {
-		t.Errorf("title = %q, want session_info name", sess.Title)
+	if sess.Title != "rate limiting work" || !sess.TitleOverride {
+		t.Errorf("title = %q override=%v, want session_info name", sess.Title, sess.TitleOverride)
 	}
 	if len(sink.Relations) != 0 {
 		t.Errorf("relations = %v, want none for root session", sink.Relations)
@@ -92,6 +92,44 @@ func TestParseMainSession(t *testing.T) {
 		kinds[canon.KindCompaction] != 1 || kinds[canon.KindBranchPoint] != 1 ||
 		kinds[canon.KindInfo] != 1 {
 		t.Errorf("kind histogram = %v", kinds)
+	}
+}
+
+func TestSessionTitleSkipsSkillEnvelope(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	lines := []string{
+		`{"type":"session","id":"title-test","version":3,"cwd":"/tmp/demo","timestamp":"2026-08-22T10:00:00Z"}`,
+		`{"type":"message","id":"m1","timestamp":"2026-08-22T10:00:01Z","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"commit\">synthetic instructions</skill>"}]}}`,
+		`{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-08-22T10:00:02Z","message":{"role":"user","content":[{"type":"text","text":"explain the failing build"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{
+		Root: agent.Root{Agent: Slug, Path: root}, Path: path, Kind: agent.SourceFile,
+	}, sink); err != nil {
+		t.Fatal(err)
+	}
+	got := sink.Sessions[len(sink.Sessions)-1]
+	if got.Title != "explain the failing build" || got.TitleOverride {
+		t.Fatalf("session title = %q override=%v, want first real prompt", got.Title, got.TitleOverride)
+	}
+}
+
+func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
+	if got := piPromptTitle(`<skill name="commit">synthetic instructions</skill>`); got != "" {
+		t.Errorf("piPromptTitle() = %q, want empty", got)
+	}
+	if got := piPromptTitle("  explain the failing build  "); got != "explain the failing build" {
+		t.Errorf("real prompt title = %q", got)
+	}
+}
+
+func TestParseVersionIncludesTitleNormalization(t *testing.T) {
+	if got := New().ParseVersion(); got != 3 {
+		t.Fatalf("ParseVersion() = %d, want 3", got)
 	}
 }
 

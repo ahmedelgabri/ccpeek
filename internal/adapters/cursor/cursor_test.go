@@ -51,8 +51,8 @@ func TestParseStoreDB(t *testing.T) {
 	if sess.ExternalID != sessionID {
 		t.Errorf("external id = %q (must be the session-uuid dir)", sess.ExternalID)
 	}
-	if sess.Title != "Speed up the CI pipeline" {
-		t.Errorf("title = %q (must come from hex meta)", sess.Title)
+	if sess.Title != "Speed up the CI pipeline" || !sess.TitleOverride {
+		t.Errorf("title = %q override=%v (must come from hex meta)", sess.Title, sess.TitleOverride)
 	}
 	if sess.CWD != "/home/u/demo/api" {
 		t.Errorf("cwd = %q", sess.CWD)

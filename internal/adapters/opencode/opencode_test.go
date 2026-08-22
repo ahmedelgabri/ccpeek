@@ -63,7 +63,7 @@ func TestParseSessionDocument(t *testing.T) {
 		t.Fatalf("sessions = %d", len(sink.Sessions))
 	}
 	sess := sink.Sessions[0]
-	if sess.ExternalID != "ses_oc001" || sess.Title != "Refactor auth middleware" {
+	if sess.ExternalID != "ses_oc001" || sess.Title != "Refactor auth middleware" || !sess.TitleOverride {
 		t.Errorf("session = %+v", sess)
 	}
 	if sess.CWD != "/home/u/demo/api" {
