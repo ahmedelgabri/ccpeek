@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -239,21 +238,14 @@ func TestToolSchemasForbidUndeclaredArguments(t *testing.T) {
 	}
 }
 
-func TestCostModeSchemaAdvertisesEnum(t *testing.T) {
+func TestCostModeIsNotAdvertised(t *testing.T) {
 	for _, tool := range buildToolDefs() {
-		if tool["name"] != "sessions" {
-			continue
-		}
 		schema := tool["inputSchema"].(map[string]any)
 		props := schema["properties"].(map[string]any)
-		mode := props["cost_mode"].(map[string]any)
-		got, ok := mode["enum"].([]string)
-		if !ok || !slices.Equal(got, []string{"auto", "calculate", "display"}) {
-			t.Fatalf("cost_mode enum = %#v", mode["enum"])
+		if _, ok := props["cost_mode"]; ok {
+			t.Fatalf("tool %v still advertises cost_mode", tool["name"])
 		}
-		return
 	}
-	t.Fatal("sessions tool missing")
 }
 
 // A tools/call with no params at all answered "invalid tool call params:

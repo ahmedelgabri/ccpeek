@@ -8,15 +8,6 @@ export interface TokenTotals {
   cacheWrite: number;
 }
 
-export type CostMode = "auto" | "calculate" | "display";
-export const COST_MODES: CostMode[] = ["auto", "calculate", "display"];
-export function isCostMode(value: string | undefined): value is CostMode {
-  return COST_MODES.some((mode) => mode === value);
-}
-export function normalizeCostMode(value: string | undefined): CostMode {
-  return isCostMode(value) ? value : "auto";
-}
-
 export interface SessionSummary {
   agent: string;
   id: string;
@@ -30,15 +21,12 @@ export interface SessionSummary {
   tokens: TokenTotals;
   costUSD: number;
   costUSDExact: string;
-  costMode: CostMode;
   costReportedUSD: number;
   costReportedUSDExact: string;
   costEstimatedUSD: number;
   costEstimatedUSDExact: string;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
-  unreportedTokens?: number;
-  unreportedTokenTypes?: TokenTotals;
 }
 
 export interface Relation {
@@ -83,7 +71,6 @@ export interface AgentStat {
   costUSD: number;
   costUSDExact?: string;
   unpricedTokens?: number;
-  unreportedTokens?: number;
 }
 
 export interface DayActivity {
@@ -92,7 +79,6 @@ export interface DayActivity {
   costUSD: number;
   costUSDExact?: string;
   unpricedTokens?: number;
-  unreportedTokens?: number;
 }
 
 export interface WorkspaceStat {
@@ -124,13 +110,10 @@ export interface Stats {
   tokens: number;
   costUSD: number;
   costUSDExact: string;
-  costMode: CostMode;
   unpricedTokens?: number;
-  unreportedTokens?: number;
   costMonthUSD: number;
   costMonthUSDExact: string;
   costMonthUnpricedTokens?: number;
-  costMonthUnreportedTokens?: number;
   agents?: AgentStat[];
   activity?: DayActivity[];
   workspaces?: WorkspaceStat[];
@@ -170,15 +153,12 @@ export interface UsageRow {
   tokens: TokenTotals;
   costUSD: number;
   costUSDExact: string;
-  costMode: CostMode;
   costReportedUSD: number;
   costReportedUSDExact: string;
   costEstimatedUSD: number;
   costEstimatedUSDExact: string;
   hasUnpriced?: boolean;
   unpricedTokenTypes?: TokenTotals;
-  hasUnreported?: boolean;
-  unreportedTokenTypes?: TokenTotals;
 }
 
 export interface SearchHit {
@@ -267,11 +247,10 @@ export const api = {
     until?: string;
     limit?: string;
     offset?: string;
-    cost_mode?: CostMode;
   }) => get<SessionSummary[]>("/sessions", filters),
 
-  session: (agent: string, id: string, costMode: CostMode = "auto") =>
-    get<SessionDetail>(`/sessions/${agent}/${id}`, { cost_mode: costMode }),
+  session: (agent: string, id: string) =>
+    get<SessionDetail>(`/sessions/${agent}/${id}`),
 
   transcript: (
     agent: string,
@@ -291,16 +270,12 @@ export const api = {
     since?: string;
     until?: string;
     limit?: string;
-    cost_mode?: CostMode;
   }) => get<UsageRow[]>("/usage", filters),
 
   search: (q: string, agent = "", limit = "20") =>
     get<SearchHit[]>("/search", { query: q, agent, limit }),
 
   stats: () => get<Stats>("/stats"),
-
-  statsWithCostMode: (costMode: CostMode) =>
-    get<Stats>("/stats", { cost_mode: costMode }),
 
   commands: (filters: {
     agent?: string;
@@ -477,15 +452,12 @@ export interface BlockRow {
   tokens: TokenTotals;
   costUSD: number;
   costUSDExact: string;
-  costMode: CostMode;
   costReportedUSD: number;
   costReportedUSDExact: string;
   costEstimatedUSD: number;
   costEstimatedUSDExact: string;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
-  unreportedTokens?: number;
-  unreportedTokenTypes?: TokenTotals;
   active?: boolean;
 }
 
@@ -522,10 +494,9 @@ export const parityApi = {
   scanRules: () => get<ScanRule[]>("/scan/rules"),
   scanIgnore: (id: number, ignored: boolean) =>
     send<{ ignored: boolean }>("POST", `/scan/${id}/ignore`, { ignored }),
-  blocks: (limit = 24, agent = "", costMode: CostMode = "auto") =>
+  blocks: (limit = 24, agent = "") =>
     get<BlockRow[]>("/blocks", {
       limit: String(limit),
       agent,
-      cost_mode: costMode,
     }),
 };

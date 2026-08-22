@@ -139,7 +139,7 @@ export function Money({
       title={
         title ??
         (incomplete
-          ? "API-equivalent value; some usage is unpriced or unreported under the selected mode — a lower bound"
+          ? "API-equivalent value; some usage has no resolvable price — a lower bound"
           : "API-equivalent value; reported by the agent where available, otherwise estimated from list rates")
       }
       className={`font-mono tabular-nums ${

@@ -12,14 +12,7 @@ Done — engine and agent surface:
   session-centric store, schema v1 with derived/user-state separation
   (`internal/db`); pricing with embedded LiteLLM snapshot
   (`internal/pricing`); fixture corpus (`testdata/agents/`).
-- ✅ P1 complete: Claude Code adapter (sessions with real usage capture +
-  all 10 sidecar sources), Pi adapter (documented format, tree, reported
-  cost), agent-agnostic ingest pipeline (incremental hashing, per-source
-  transactions, pending-link resolution, workspace facet, run telemetry),
-  cost rollups (auto mode, unpriced visibility), typed query layer
-  (sessions/session/transcript/usage/search), `ccpeek query` CLI with
-  versioned JSON + exit codes, `/api/v1`, v1→v2 migration importer with
-  zero-step first-run auto-migration.
+- ✅ P1 complete: Claude Code adapter (sessions with real usage capture + all 10 sidecar sources), Pi adapter (documented format, tree, reported cost), agent-agnostic ingest pipeline (incremental hashing, per-source transactions, pending-link resolution, workspace facet, run telemetry), automatic reported-first cost rollups with unpriced visibility, typed query layer (sessions/session/transcript/usage/search), `ccpeek query` CLI with versioned JSON + exit codes, `/api/v1`, v1→v2 migration importer with zero-step first-run auto-migration.
 - ✅ P3 launch set complete: Codex (cumulative token deltas), OpenCode
   (native tokens+cost), Cursor (SQLite-per-session via SourceDatabase).
   All five agents registered in the engine.
@@ -692,12 +685,7 @@ Schema hygiene rules (fixing v1's drift):
   offline-capable.
 - Model-key normalization layer (`claude-sonnet-5` ≡ `anthropic/claude-sonnet-5`
   ≡ Bedrock/Vertex ids).
-- Cost is **computed from tokens** against the embedded pricing
-  snapshot, materialized into `rollup_usage_daily` for dashboard speed;
-  rollups regenerate when session data changes. Where the agent
-  reported its own cost (Pi's `cost.total`, legacy `costUSD`, OpenCode), store
-  it and offer ccusage-style modes: `auto` (prefer reported) / `calculate` /
-  `display`.
+- Cost uses one automatic reported-first policy: where the agent reports a non-zero cost (Pi's `cost.total`, legacy `costUSD`, OpenCode), preserve and use it; otherwise calculate from the token counts reported by the agent against the embedded pricing snapshot. Materialize that result into `rollup_usage_daily` for dashboard speed and regenerate rollups when session data or pricing semantics change. Do not expose alternate calculated-only or reported-only modes.
 - **Honest labeling:** for subscription users (Pro/Max) dollar figures are
   "estimated API-equivalent value," not billing. The UI says so.
 
@@ -816,7 +804,7 @@ Notes:
   `session_info` entries map to `artifacts` kinds, and forked sessions carry
   `parentSession` in the header. Its per-message `usage` includes both tokens
   and a pre-computed cost breakdown — the first real consumer of the cost
-  engine's `auto` (reported-vs-calculated) mode. Building Claude + Pi together
+  engine's automatic reported-vs-calculated selection. Building Claude + Pi together
   in P1 validates the adapter interface before the messier P3 formats.
 - Each P3 adapter starts with a **format spike**: collect real fixtures across
   agent versions into `testdata/<agent>/`, then implement against fixtures.

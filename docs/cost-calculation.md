@@ -33,13 +33,13 @@ The normalization contract is important because providers disagree about reasoni
 
 ## Per-record cost selection
 
-CCPeek exposes three cost modes through the UI, HTTP API, CLI query commands, and MCP tools. Selection is applied independently to each `message_usage` row:
+CCPeek uses one automatic reported-first policy for each `message_usage` row:
 
-- `auto` uses a non-zero agent-reported cost when present, otherwise calculates from tokens. A reported zero with non-zero usage falls through to calculation; the raw zero remains stored as provenance. A reported zero on a zero-token row remains reported.
-- `calculate` ignores every reported cost and calculates each row from tokens.
-- `display` uses only agent-reported costs. Tokens on rows without a report are counted as unreported and contribute no USD amount.
+1. Use a non-zero agent-reported cost when present.
+2. Otherwise calculate from the token counts reported by the agent. A reported zero with non-zero usage falls through to calculation; the raw zero remains stored as provenance. A reported zero on a zero-token row remains reported.
+3. Resolve an effective-dated, request-size-aware provider/model rate and price every bucket whose rate is known. If the model or an individual cache-bucket rate cannot be resolved, count those tokens as unpriced and contribute no USD amount; other known buckets on the same row are still priced.
 
-For rows that a mode calculates, CCPeek resolves an effective-dated, request-size-aware provider/model rate and prices every bucket whose rate is known. If the model or an individual cache-bucket rate cannot be resolved, those tokens are counted as unpriced and contribute no USD amount; other known buckets on the same row are still priced.
+CCPeek does not expose alternate calculated-only or reported-only modes.
 
 The estimated formula is:
 
@@ -56,15 +56,15 @@ estimated_cost_usd =
 
 Rates are stored as USD per single token. No reasoning term appears in the formula because billable reasoning is already included in `output_tokens`.
 
-At aggregate level in `auto` mode:
+At aggregate level:
 
 ```text
-cost_usd = sum(reported_cost_usd selected by auto) + sum(estimated_cost_usd selected by auto)
+cost_usd = sum(selected reported_cost_usd) + sum(selected estimated_cost_usd)
 ```
 
-Reported and estimated cost are mutually exclusive for an individual row in `auto`, so this aggregation does not intentionally charge the same row twice. `calculate` sums estimates for all usage rows; `display` sums only reported amounts.
+Reported and estimated cost are mutually exclusive for an individual row, so this aggregation does not intentionally charge the same row twice.
 
-The core exact arithmetic lives in `pricing.Rate.PriceAmount`; `db.EvaluateCostAt` applies mode selection, effective dates, provider/model resolution, and request-size tiers to one row. Session summaries, rolling blocks, daily rollups, stats, and query surfaces use that shared evaluator rather than maintaining separate formulas.
+The core exact arithmetic lives in `pricing.Rate.PriceAmount`; `db.EvaluateCostAt` applies reported-first selection, effective dates, provider/model resolution, and request-size tiers to one row. Session summaries, rolling blocks, daily rollups, stats, and query surfaces use that shared evaluator rather than maintaining separate formulas.
 
 ## Agent-specific capture and normalization
 
@@ -175,13 +175,13 @@ Dated requests resolve against effective-date cards when history exists; a gap i
 Raw usage is stored per message in `message_usage`. Costs are exposed through two paths:
 
 - Session summaries and rolling block queries scan raw usage and evaluate each row before aggregation, preserving request dates and size tiers.
-- The Usage page, cost timeline, and overview stats read `rollup_usage_daily`, which materializes exact `auto`, `calculate`, and `display` amounts plus reported, estimated, unpriced, and unreported provenance for dashboard speed.
+- The Usage page, cost timeline, and overview stats read `rollup_usage_daily`, which materializes the exact automatic amount plus reported, estimated, and unpriced provenance for dashboard speed.
 
 Daily rollups group by day, agent, workspace, and model. A session that uses several models is priced independently for each model before the results are added. Session counts are recomputed as distinct sessions rather than summed across model rows.
 
 Rollups are fully rebuilt after an ingest pass changes sessions or messages, after source pruning, whenever raw usage and rollup presence disagree (including deletion of the final usage row), or when the stored pricing fingerprint differs. The fingerprint hashes the exact snapshot bytes together with a pricing-algorithm version and is written transactionally with the rollups, so query-time and materialized costs cannot remain on different pricing semantics after an upgrade.
 
-Internal amounts are signed 64-bit nanodollars. Per-token rates are quantized to picodollars, token multiplication uses arbitrary-precision intermediates, each row is rounded once to the nearest nanodollar, and aggregation detects overflow. SQLite stores exact integer mirrors such as `reported_cost_nanos`, `cost_nanos`, and mode-specific rollup amounts; legacy `REAL` columns and API floats remain compatibility projections produced only at boundaries. Exact decimal strings are exposed alongside those floats.
+Internal amounts are signed 64-bit nanodollars. Per-token rates are quantized to picodollars, token multiplication uses arbitrary-precision intermediates, each row is rounded once to the nearest nanodollar, and aggregation detects overflow. SQLite stores exact integer mirrors such as `reported_cost_nanos`, `cost_nanos`, `cost_reported_nanos`, and `cost_estimated_nanos`; legacy `REAL` columns and API floats remain compatibility projections produced only at boundaries. Exact decimal strings are exposed alongside those floats.
 
 ## Unpriced data
 
@@ -225,7 +225,7 @@ The semantics above were verified against primary sources on 2026-08-21. Upstrea
 
 **LiteLLM coverage** (`BerriAI/litellm` `model_prices_and_context_window.json` @ `418c7c6012d7`, fetched 2026-08-21). Units are USD per single token. 126 models carry `cache_creation_input_token_cost_above_1hr` (2× base for Anthropic models — claude-fable-5 at $20/MTok); 60 carry `input_cost_per_token_above_200k_tokens` and 35 the cache-write equivalent; 14 carry `_above_128k_tokens` variants. GPT-5.x entries carry no cache-write cost through the gpt-5.5 family; the gpt-5.6 family carries one at 1.25× input. Embedded snapshot rates were spot-checked against list prices for every model in the local corpus; all match. Anthropic's 2026-08-10 Sonnet 5 announcement made the launch $2/$10 rate permanent and cancelled the planned September increase; the maintained open-ended card and a post-2026-09-01 regression test pin that correction.
 
-**ccusage comparison** (`ryoppippi/ccusage` `rust/crates/ccusage-core/src/pricing.rs` @ `b936c29211b9`). The reference implementation ships three cost modes (`auto`/`calculate`/`display`), carries the four `_above_200k_tokens` tier fields, and — where cache rates are absent — falls back to `input×1.25` / `input×0.1` while tracking whether each rate was explicit. CCPeek deliberately prefers partial pricing with visible unpriced cache buckets over that multiplier default (see improvement 2).
+**ccusage comparison** (`ryoppippi/ccusage` `rust/crates/ccusage-core/src/pricing.rs` @ `b936c29211b9`). The reference implementation ships three cost modes, carries the four `_above_200k_tokens` tier fields, and — where cache rates are absent — falls back to `input×1.25` / `input×0.1` while tracking whether each rate was explicit. CCPeek deliberately exposes only its automatic reported-first policy and prefers partial pricing with visible unpriced cache buckets over that multiplier default (see improvement 2).
 
 **Claude streaming snapshots.** The first-wins dedupe risk was probed: the 8 largest local transcripts contain only byte-identical duplicate usage rows, no divergent same-key snapshots. Retaining the most complete duplicate is nevertheless implemented and covered synthetically; durability across a later reparse of the first-seen owner file remains separate follow-up work.
 
@@ -259,9 +259,9 @@ Implemented as total cache writes plus a one-hour subset. This representation pr
 
 Implemented through `ccpeek query pricing [--model provider/model]` and `/api/v1/pricing`: source, fetch time, algorithm, fingerprint, rollup currentness, resolved key, and present rate dimensions are inspectable. Usage rows continue to expose the reported/estimated split.
 
-### 8. Add explicit cost modes
+### 8. Keep one automatic cost policy
 
-Implemented across sessions, session detail, usage, blocks, stats, pricing diagnostics, HTTP, CLI, MCP, and the UI. `auto`, `calculate`, and `display` use the row-level semantics documented above, URL navigation preserves the selected mode, and incomplete calculated or reported-only totals remain visibly marked.
+Implemented. Every surface uses the same reported-first selection described above. Alternate calculated-only and reported-only modes are intentionally not exposed, which keeps session, usage, block, stats, HTTP, CLI, MCP, and UI totals on one interpretation.
 
 ### 9. Improve user-facing labeling
 
@@ -273,13 +273,13 @@ The improvements above are sequenced as staged work; each stage uses fixed synth
 
 1. **Merge documentation** — this document is canonical; dated evidence and pinned citations merged in (done).
 2. **Rollup invalidation infrastructure** (improvement 3) — implemented: the snapshot content plus pricing-algorithm version is fingerprinted, persisted transactionally in `meta`, and tested against an unchanged corpus under a changed version.
-3. **Reported-zero fallback** — implemented: nonzero tokens with reported `$0` use estimation in auto mode; raw zero is preserved; unknown models become visibly unpriced across all cost surfaces.
+3. **Reported-zero fallback** — implemented: nonzero tokens with reported `$0` use estimation; raw zero is preserved; unknown models become visibly unpriced across all cost surfaces.
 4. **Cache-write TTL support** (improvement 6) — implemented: `cache_write_tokens` remains the total, `cache_write_1h_tokens` is the subset, adapter parse versions force recoverable sources through one full reparse, and unavailable archived splits retain the five-minute assumption.
 5. **Adapter capture hardening** (improvement 1) — implemented for Pi per-message provider/model and summary usage, Claude legacy cost-only rows and legacy dedupe, compare-and-update with first-seen ownership and an explicit completeness order, and Codex cache-write subset normalization with cumulative-delta/reset handling.
 6. **Edge cases and population semantics** (improvement 2) — implemented: zero-token rows no longer create unpriced warnings, partial bucket pricing is persisted and exposed, and `parity_test.go` pins the intentional population rule that blocks require message timestamps while sessions include all usage and daily rollups fall back to session timestamps.
 7. **Provider identity and diagnostics** (improvements 4, 7) — preserve provider separately from model; expose the resolved pricing key, rates, snapshot fingerprint, and the reported-versus-estimated decision. Implemented in schema v14 and the `pricing` query/API operation.
 8. **Presentation** (improvement 9) — dynamic timeline agents, preserve unpriced-only days, consistent provenance and API-equivalent labeling. Implemented; zero-dollar unpriced days render warning-height markers and remain in CSV exports.
-9. **Advanced pricing and modes** (improvements 5, 8) — implemented with effective-dated cards, per-request long-context tiers, exact fixed-point arithmetic, mode-specific materializations, and cross-surface mode exposure.
+9. **Advanced pricing and one cost policy** (improvements 5, 8) — implemented with effective-dated cards, per-request long-context tiers, exact fixed-point arithmetic, automatic reported-first materialization, and cross-surface arithmetic parity.
 
 The pricing snapshot was refreshed after stage 2 landed, including permanent Sonnet 5 pricing, current long-context tiers, one-hour cache-write fields, and maintained history. Future refreshes are safe because unchanged rollups invalidate against the snapshot-and-algorithm fingerprint.
 

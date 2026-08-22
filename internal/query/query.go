@@ -83,39 +83,31 @@ type SessionSummary struct {
 	Tokens                TokenTotals `json:"tokens"`
 	CostUSD               float64     `json:"costUSD"`
 	CostUSDExact          string      `json:"costUSDExact"`
-	CostMode              string      `json:"costMode"`
 	CostReportedUSD       float64     `json:"costReportedUSD"`
 	CostReportedUSDExact  string      `json:"costReportedUSDExact"`
 	CostEstimatedUSD      float64     `json:"costEstimatedUSD"`
 	CostEstimatedUSDExact string      `json:"costEstimatedUSDExact"`
 	// UnpricedTokens counts tokens whose model the pricing table can't
 	// resolve; when non-zero, CostUSD is a lower bound.
-	UnpricedTokens       int64        `json:"unpricedTokens,omitempty"`
-	UnpricedTokenTypes   *TokenTotals `json:"unpricedTokenTypes,omitempty"`
-	UnreportedTokens     int64        `json:"unreportedTokens,omitempty"`
-	UnreportedTokenTypes *TokenTotals `json:"unreportedTokenTypes,omitempty"`
+	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
+	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
 }
 
 // SessionsFilter narrows the sessions op.
 type SessionsFilter struct {
-	Agent    string // slug, "" = all
-	Project  string // workspace canonical path, "" = all
-	Model    string // sessions with ≥1 message on this model
-	Since    string // inclusive YYYY-MM-DD on modified_at
-	Until    string // INCLUSIVE YYYY-MM-DD upper bound on modified_at
-	Query    string // substring on title
-	Limit    int
-	Offset   int
-	CostMode string // auto | calculate | display; empty = auto
+	Agent   string // slug, "" = all
+	Project string // workspace canonical path, "" = all
+	Model   string // sessions with ≥1 message on this model
+	Since   string // inclusive YYYY-MM-DD on modified_at
+	Until   string // INCLUSIVE YYYY-MM-DD upper bound on modified_at
+	Query   string // substring on title
+	Limit   int
+	Offset  int
 }
 
 // Sessions lists sessions newest-first — the primary op of the
 // session-centric model.
 func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSummary, error) {
-	mode, err := db.ParseCostMode(f.CostMode)
-	if err != nil {
-		return nil, badRequest(err.Error())
-	}
 	if err := checkWindow(f.Since, f.Until); err != nil {
 		return nil, err
 	}
@@ -198,16 +190,16 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := s.attachCosts(ctx, rowIDs, out, mode); err != nil {
+	if err := s.attachCosts(ctx, rowIDs, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
 // attachCost computes one session's token totals and auto-mode cost.
-func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary, mode db.CostMode) error {
+func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *SessionSummary) error {
 	one := []SessionSummary{*sum}
-	if err := s.attachCosts(ctx, []int64{sessionRowID}, one, mode); err != nil {
+	if err := s.attachCosts(ctx, []int64{sessionRowID}, one); err != nil {
 		return err
 	}
 	*sum = one[0]
@@ -215,9 +207,9 @@ func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *Sessi
 }
 
 // attachCosts computes token totals and request-scoped cost for a whole page
-// in one query. Rows stay independent so historical cards, context tiers, and
-// provenance modes remain correct.
-func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary, mode db.CostMode) error {
+// in one query. Rows stay independent so historical cards and context tiers
+// remain correct.
+func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary) error {
 	if len(rowIDs) == 0 {
 		return nil
 	}
@@ -272,7 +264,7 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 			amount := pricing.Amount(reported.Int64)
 			reportedAmount = &amount
 		}
-		result, err := db.EvaluateCostAt(s.pricer, mode, provider, model,
+		result, err := db.EvaluateCostAt(s.pricer, provider, model,
 			db.ParseCostTime(occurredAt), usage, reportedAmount)
 		if err != nil {
 			return err
@@ -287,7 +279,6 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 			return err
 		}
 		addUnpriced(&sum.UnpricedTokens, &sum.UnpricedTokenTypes, result.Unpriced)
-		addUnpriced(&sum.UnreportedTokens, &sum.UnreportedTokenTypes, result.Unreported)
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -295,7 +286,6 @@ func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []Sessio
 	for i := range sums {
 		sums[i].CostUSD = amounts[i].USD()
 		sums[i].CostUSDExact = amounts[i].String()
-		sums[i].CostMode = string(mode)
 		sums[i].CostReportedUSD = reportedAmounts[i].USD()
 		sums[i].CostReportedUSDExact = reportedAmounts[i].String()
 		sums[i].CostEstimatedUSD = estimatedAmounts[i].USD()
@@ -343,17 +333,8 @@ type SessionDetail struct {
 	Models    []string         `json:"models,omitempty"`
 }
 
-// Session returns one session in the default automatic cost mode.
+// Session returns one session with its relations and linked artifacts.
 func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*SessionDetail, error) {
-	return s.SessionWithCostMode(ctx, agentSlug, externalID, "")
-}
-
-// SessionWithCostMode returns one session with its relations and linked artifacts.
-func (s *Service) SessionWithCostMode(ctx context.Context, agentSlug, externalID, rawMode string) (*SessionDetail, error) {
-	mode, err := db.ParseCostMode(rawMode)
-	if err != nil {
-		return nil, badRequest(err.Error())
-	}
 	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
 	if err != nil {
 		return nil, err
@@ -374,7 +355,7 @@ func (s *Service) SessionWithCostMode(ctx context.Context, agentSlug, externalID
 	if err != nil {
 		return nil, err
 	}
-	if err := s.attachCost(ctx, rowID, &detail.SessionSummary, mode); err != nil {
+	if err := s.attachCost(ctx, rowID, &detail.SessionSummary); err != nil {
 		return nil, err
 	}
 

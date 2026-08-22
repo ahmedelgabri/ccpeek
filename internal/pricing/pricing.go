@@ -28,7 +28,7 @@ var embedded []byte
 // AlgorithmVersion changes whenever cost-selection or bucket arithmetic
 // changes. It is folded into Table.Fingerprint so materialized rollups are
 // invalidated by code semantics as well as by snapshot bytes.
-const AlgorithmVersion = "cost-v3-fixed-point-effective-tiered-modes"
+const AlgorithmVersion = "cost-v4-fixed-point-effective-tiered-auto"
 
 // Rate is USD per single token. Missing cache fields remain distinguishable
 // from a genuine zero rate; otherwise a known model with cache traffic would

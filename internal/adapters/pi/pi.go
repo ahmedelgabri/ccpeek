@@ -4,7 +4,7 @@
 // line is a session header and whose entries form a tree via id/parentId,
 // enabling in-place branching. Assistant entries carry token usage AND a
 // pre-computed cost breakdown — the first consumer of the cost engine's
-// reported-vs-calculated mode (docs/v2-plan.md §6).
+// automatic reported-first selection (docs/v2-plan.md §6).
 package pi
 
 import (

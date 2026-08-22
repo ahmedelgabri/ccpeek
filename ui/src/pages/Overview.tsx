@@ -1,17 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import {
   api,
   clipPath,
-  COST_MODES,
-  normalizeCostMode,
   fmtCost,
   fmtCount,
   fmtTokens,
   plural,
   shortPath,
   totalTokens,
-  type CostMode,
   type DayActivity,
 } from "../api";
 import { fmtWhen, fullWhen, todayUTC, utcDay } from "../time";
@@ -26,7 +23,6 @@ import {
   Money,
   PageHeader,
   Panel,
-  Segmented,
   SkeletonRows,
   SkeletonTiles,
   Sparkline,
@@ -38,16 +34,13 @@ import {
 // heatmap, and the relation facets (agents, workspaces, latest sessions,
 // latest file edits) — every figure links into its detail view.
 export function OverviewPage() {
-  const search = useSearch({ from: "/" });
-  const navigate = useNavigate({ from: "/" });
-  const costMode: CostMode = normalizeCostMode(search.cost_mode);
   const stats = useQuery({
-    queryKey: ["stats", costMode],
-    queryFn: () => api.statsWithCostMode(costMode),
+    queryKey: ["stats"],
+    queryFn: api.stats,
   });
   const recent = useQuery({
-    queryKey: ["sessions", "recent", costMode],
-    queryFn: () => api.sessions({ limit: "18", cost_mode: costMode }),
+    queryKey: ["sessions", "recent"],
+    queryFn: () => api.sessions({ limit: "18" }),
   });
   // Workspaces ranked by spend, not by session count: "where does the
   // money go" is the question this panel is on the page to answer, and a
@@ -58,9 +51,8 @@ export function OverviewPage() {
   // indexed to display eight of them. Nine because at most one group is
   // the blank "no workspace" bucket the panel filters out.
   const byProject = useQuery({
-    queryKey: ["usage", "project", costMode],
-    queryFn: () =>
-      api.usage({ group: "project", limit: "9", cost_mode: costMode }),
+    queryKey: ["usage", "project"],
+    queryFn: () => api.usage({ group: "project", limit: "9" }),
   });
   const st = stats.data;
   if (stats.isLoading)
@@ -101,21 +93,7 @@ export function OverviewPage() {
             {plural((st.agents ?? []).length, "agent")}
           </span>
         }
-      >
-        <Segmented
-          label="Cost provenance"
-          value={costMode}
-          options={COST_MODES.map((mode) => ({ value: mode, label: mode }))}
-          onChange={(mode) =>
-            void navigate({
-              search: {
-                cost_mode: mode === "auto" ? undefined : mode,
-              },
-              replace: true,
-            })
-          }
-        />
-      </PageHeader>
+      />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile
@@ -129,12 +107,8 @@ export function OverviewPage() {
           value={
             <Money
               usd={st.costMonthUSD}
-              incomplete={
-                (st.costMonthUnpricedTokens ?? 0) +
-                  (st.costMonthUnreportedTokens ?? 0) >
-                0
-              }
-              title={`${st.costMode} $${st.costMonthUSDExact}`}
+              incomplete={(st.costMonthUnpricedTokens ?? 0) > 0}
+              title={`$${st.costMonthUSDExact}`}
             />
           }
           detail={`${fmtCost(st.costUSD)} all time`}
@@ -171,7 +145,7 @@ export function OverviewPage() {
           other time in the UI is local, so the one surface that is not
           has to say so. */}
       <Panel label="Activity — sessions per UTC day, last 52 weeks">
-        <Heatmap days={st.activity ?? []} costMode={costMode} />
+        <Heatmap days={st.activity ?? []} />
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-5">
@@ -185,9 +159,6 @@ export function OverviewPage() {
                   <Link
                     to="/sessions/$agent/$sessionId"
                     params={{ agent: s.agent, sessionId: s.id }}
-                    search={{
-                      cost_mode: costMode === "auto" ? undefined : costMode,
-                    }}
                     className="block px-3 py-2 transition-colors hover:bg-surface-2/40"
                   >
                     {/* min-w-0 on the flex child is what lets `truncate`
@@ -205,12 +176,9 @@ export function OverviewPage() {
                       </span>
                       <Money
                         usd={s.costUSD}
-                        incomplete={
-                          (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) >
-                          0
-                        }
+                        incomplete={(s.unpricedTokens ?? 0) > 0}
                         className="shrink-0 text-xs"
-                        title={`${s.costMode} $${s.costUSDExact}`}
+                        title={`$${s.costUSDExact}`}
                       />
                     </div>
                     <div className="mt-0.5 flex min-w-0 gap-3 font-mono text-meta text-ink-faint">
@@ -244,11 +212,7 @@ export function OverviewPage() {
                       <td className="px-3 py-1.5">
                         <Link
                           to="/sessions"
-                          search={{
-                            agent: a.agent,
-                            cost_mode:
-                              costMode === "auto" ? undefined : costMode,
-                          }}
+                          search={{ agent: a.agent }}
                           className="hover:text-accent"
                         >
                           <AgentChip agent={a.agent} />
@@ -263,13 +227,9 @@ export function OverviewPage() {
                       <td className="px-3 py-1.5 text-right">
                         <Money
                           usd={a.costUSD}
-                          incomplete={
-                            (a.unpricedTokens ?? 0) +
-                              (a.unreportedTokens ?? 0) >
-                            0
-                          }
+                          incomplete={(a.unpricedTokens ?? 0) > 0}
                           className="text-xs"
-                          title={`${costMode} $${a.costUSDExact ?? a.costUSD}`}
+                          title={`$${a.costUSDExact ?? a.costUSD}`}
                         />
                       </td>
                     </tr>
@@ -311,10 +271,7 @@ export function OverviewPage() {
                     <Link
                       to="/sessions/$agent/$sessionId"
                       params={{ agent: f.agent, sessionId: f.sessionId }}
-                      search={{
-                        tab: "files",
-                        cost_mode: costMode === "auto" ? undefined : costMode,
-                      }}
+                      search={{ tab: "files" }}
                       className="flex min-w-0 items-baseline gap-2 px-3 py-1.5 transition-colors hover:bg-surface-2/40"
                     >
                       <AgentDot agent={f.agent} />
@@ -434,9 +391,9 @@ function WorkspacesByCost({
             </span>
             <Money
               usd={r.costUSD}
-              incomplete={Boolean(r.hasUnpriced || r.hasUnreported)}
+              incomplete={Boolean(r.hasUnpriced)}
               className="shrink-0 text-meta"
-              title={`${r.costMode} $${r.costUSDExact}`}
+              title={`$${r.costUSDExact}`}
             />
           </Link>
         </li>
@@ -480,13 +437,7 @@ const FILL = [
   "var(--color-accent)",
 ];
 
-function Heatmap({
-  days,
-  costMode,
-}: {
-  days: DayActivity[];
-  costMode: CostMode;
-}) {
+function Heatmap({ days }: { days: DayActivity[] }) {
   const tooltip = useTooltip();
   const byDay = new Map(days.map((d) => [d.day, d]));
 
@@ -572,8 +523,7 @@ function Heatmap({
           ))}
           {cells.map((c) => {
             const n = c.d?.sessions ?? 0;
-            const incomplete =
-              (c.d?.unpricedTokens ?? 0) + (c.d?.unreportedTokens ?? 0) > 0;
+            const incomplete = (c.d?.unpricedTokens ?? 0) > 0;
             const label = `${c.day}: ${plural(n, "session")}${
               c.d && c.d.costUSD > 0 ? `, ${fmtCost(c.d.costUSD)}` : ""
             }${incomplete ? ", incomplete cost coverage" : ""}`;
@@ -616,11 +566,7 @@ function Heatmap({
               <Link
                 key={c.day}
                 to="/sessions"
-                search={{
-                  since: c.day,
-                  until: c.day,
-                  cost_mode: costMode === "auto" ? undefined : costMode,
-                }}
+                search={{ since: c.day, until: c.day }}
                 aria-label={label}
                 className="outline-offset-2"
                 {...tooltip.bind(tip)}

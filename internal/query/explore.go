@@ -18,24 +18,22 @@ import (
 
 // AgentStat is one agent's slice of the overview.
 type AgentStat struct {
-	Agent            string  `json:"agent"`
-	Sessions         int     `json:"sessions"`
-	LastActive       string  `json:"lastActive,omitempty"`
-	Tokens           int64   `json:"tokens"`
-	CostUSD          float64 `json:"costUSD"`
-	CostUSDExact     string  `json:"costUSDExact"`
-	UnpricedTokens   int64   `json:"unpricedTokens,omitempty"`
-	UnreportedTokens int64   `json:"unreportedTokens,omitempty"`
+	Agent          string  `json:"agent"`
+	Sessions       int     `json:"sessions"`
+	LastActive     string  `json:"lastActive,omitempty"`
+	Tokens         int64   `json:"tokens"`
+	CostUSD        float64 `json:"costUSD"`
+	CostUSDExact   string  `json:"costUSDExact"`
+	UnpricedTokens int64   `json:"unpricedTokens,omitempty"`
 }
 
 // DayActivity is one day of the activity heatmap.
 type DayActivity struct {
-	Day              string  `json:"day"`
-	Sessions         int     `json:"sessions"`
-	CostUSD          float64 `json:"costUSD"`
-	CostUSDExact     string  `json:"costUSDExact"`
-	UnpricedTokens   int64   `json:"unpricedTokens,omitempty"`
-	UnreportedTokens int64   `json:"unreportedTokens,omitempty"`
+	Day            string  `json:"day"`
+	Sessions       int     `json:"sessions"`
+	CostUSD        float64 `json:"costUSD"`
+	CostUSDExact   string  `json:"costUSDExact"`
+	UnpricedTokens int64   `json:"unpricedTokens,omitempty"`
 }
 
 // WorkspaceStat is one workspace facet row of the overview.
@@ -64,23 +62,20 @@ type KindCount struct {
 // dashboard renders (per-agent, per-day activity, workspaces, recent
 // file edits).
 type Stats struct {
-	Sessions         int     `json:"sessions"`
-	Messages         int     `json:"messages"`
-	ToolCalls        int     `json:"toolCalls"`
-	Commands         int     `json:"commands"`
-	Artifacts        int     `json:"artifacts"`
-	ScanFindings     int     `json:"scanFindings"`
-	Tokens           int64   `json:"tokens"`
-	CostUSD          float64 `json:"costUSD"`
-	CostUSDExact     string  `json:"costUSDExact"`
-	CostMode         string  `json:"costMode"`
-	UnpricedTokens   int64   `json:"unpricedTokens,omitempty"`
-	UnreportedTokens int64   `json:"unreportedTokens,omitempty"`
+	Sessions       int     `json:"sessions"`
+	Messages       int     `json:"messages"`
+	ToolCalls      int     `json:"toolCalls"`
+	Commands       int     `json:"commands"`
+	Artifacts      int     `json:"artifacts"`
+	ScanFindings   int     `json:"scanFindings"`
+	Tokens         int64   `json:"tokens"`
+	CostUSD        float64 `json:"costUSD"`
+	CostUSDExact   string  `json:"costUSDExact"`
+	UnpricedTokens int64   `json:"unpricedTokens,omitempty"`
 	// CostMonthUSD is the current calendar month (UTC rollup days).
-	CostMonthUSD              float64 `json:"costMonthUSD"`
-	CostMonthUSDExact         string  `json:"costMonthUSDExact"`
-	CostMonthUnpricedTokens   int64   `json:"costMonthUnpricedTokens,omitempty"`
-	CostMonthUnreportedTokens int64   `json:"costMonthUnreportedTokens,omitempty"`
+	CostMonthUSD            float64 `json:"costMonthUSD"`
+	CostMonthUSDExact       string  `json:"costMonthUSDExact"`
+	CostMonthUnpricedTokens int64   `json:"costMonthUnpricedTokens,omitempty"`
 
 	Agents      []AgentStat     `json:"agents,omitempty"`
 	Activity    []DayActivity   `json:"activity,omitempty"`
@@ -89,23 +84,12 @@ type Stats struct {
 	ToolKinds   []KindCount     `json:"toolKinds,omitempty"`
 }
 
-// Stats builds the overview in automatic cost mode.
+// Stats builds the overview with automatic reported-first cost.
 func (s *Service) Stats(ctx context.Context) (*Stats, error) {
-	return s.StatsWithCostMode(ctx, "")
-}
-
-// StatsWithCostMode builds the overview from one exact rollup component.
-func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats, error) {
-	mode, err := db.ParseCostMode(rawMode)
-	if err != nil {
-		return nil, badRequest(err.Error())
-	}
-	costColumns := columnsForMode(mode)
-	costColumn := strings.TrimPrefix(costColumns.amount, "r.")
-	unpricedExpr := strings.Join(costColumns.unpriced[:], " + ")
-	unreportedExpr := strings.Join(costColumns.unreported[:], " + ")
+	const costColumn = "cost_nanos"
+	const unpricedExpr = "r.unpriced_input_tokens + r.unpriced_output_tokens + r.unpriced_cache_read_tokens + r.unpriced_cache_write_tokens"
 	rdb := s.store.ReadDB()
-	st := &Stats{CostMode: string(mode)}
+	st := &Stats{}
 
 	// Scan findings count only ACTIVE ones: a finding the user ignored must
 	// not keep the overview tile in its warning state. The ignore-match
@@ -116,7 +100,7 @@ func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats
 	// normalized is not browsable, so counting it made the tile promise
 	// rows the browser can never show — the ArtifactKinds mismatch again,
 	// a count answering a different question than the list beneath it.
-	err = rdb.QueryRowContext(ctx, `
+	err := rdb.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM sessions),
 		       (SELECT COUNT(*) FROM messages),
 		       (SELECT COUNT(*) FROM tool_calls),
@@ -134,14 +118,12 @@ func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats
 		SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0),
 		       COALESCE(SUM(%s), 0),
 		       COALESCE(SUM(CASE WHEN day >= strftime('%%Y-%%m-01', 'now') THEN %s ELSE 0 END), 0),
-		       COALESCE(SUM(%s), 0), COALESCE(SUM(%s), 0),
-		       COALESCE(SUM(CASE WHEN day >= strftime('%%Y-%%m-01', 'now') THEN %s ELSE 0 END), 0),
+		       COALESCE(SUM(%s), 0),
 		       COALESCE(SUM(CASE WHEN day >= strftime('%%Y-%%m-01', 'now') THEN %s ELSE 0 END), 0)
 		FROM rollup_usage_daily r`, costColumn, costColumn,
-		unpricedExpr, unreportedExpr, unpricedExpr, unreportedExpr)).
+		unpricedExpr, unpricedExpr)).
 		Scan(&st.Tokens, &totalAmount, &monthAmount,
-			&st.UnpricedTokens, &st.UnreportedTokens,
-			&st.CostMonthUnpricedTokens, &st.CostMonthUnreportedTokens)
+			&st.UnpricedTokens, &st.CostMonthUnpricedTokens)
 	if err != nil {
 		return nil, fmt.Errorf("overview totals: %w", err)
 	}
@@ -156,10 +138,9 @@ func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats
 		       COALESCE((SELECT SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens)
 		                 FROM rollup_usage_daily r WHERE r.agent_id = a.id), 0),
 		       COALESCE((SELECT SUM(r.%s) FROM rollup_usage_daily r WHERE r.agent_id = a.id), 0),
-		       COALESCE((SELECT SUM(%s) FROM rollup_usage_daily r WHERE r.agent_id = a.id), 0),
 		       COALESCE((SELECT SUM(%s) FROM rollup_usage_daily r WHERE r.agent_id = a.id), 0)
 		FROM agents a
-		ORDER BY 5 DESC, 2 DESC`, costColumn, unpricedExpr, unreportedExpr))
+		ORDER BY 5 DESC, 2 DESC`, costColumn, unpricedExpr))
 	if err != nil {
 		return nil, fmt.Errorf("agent stats: %w", err)
 	}
@@ -168,7 +149,7 @@ func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats
 		var a AgentStat
 		var amount pricing.Amount
 		if err := rows.Scan(&a.Agent, &a.Sessions, &a.LastActive, &a.Tokens,
-			&amount, &a.UnpricedTokens, &a.UnreportedTokens); err != nil {
+			&amount, &a.UnpricedTokens); err != nil {
 			return nil, err
 		}
 		a.CostUSD, a.CostUSDExact = amount.USD(), amount.String()
@@ -185,15 +166,15 @@ func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats
 	// covers the UI's 52-week grid plus the partial week at each end.
 	rows, err = rdb.QueryContext(ctx, fmt.Sprintf(`
 		SELECT act.day, act.n, COALESCE(r.cost, 0),
-		       COALESCE(r.unpriced, 0), COALESCE(r.unreported, 0)
+		       COALESCE(r.unpriced, 0)
 		FROM (SELECT substr(modified_at, 1, 10) AS day, COUNT(*) AS n
 		      FROM sessions
 		      WHERE modified_at >= date('now', '-371 days')
 		      GROUP BY 1) act
 		LEFT JOIN (SELECT day, SUM(%s) AS cost,
-		                  SUM(%s) AS unpriced, SUM(%s) AS unreported
+		                  SUM(%s) AS unpriced
 		           FROM rollup_usage_daily r GROUP BY day) r ON r.day = act.day
-		ORDER BY act.day`, costColumn, unpricedExpr, unreportedExpr))
+		ORDER BY act.day`, costColumn, unpricedExpr))
 	if err != nil {
 		return nil, fmt.Errorf("activity: %w", err)
 	}
@@ -202,7 +183,7 @@ func (s *Service) StatsWithCostMode(ctx context.Context, rawMode string) (*Stats
 		var d DayActivity
 		var amount pricing.Amount
 		if err := rows.Scan(&d.Day, &d.Sessions, &amount,
-			&d.UnpricedTokens, &d.UnreportedTokens); err != nil {
+			&d.UnpricedTokens); err != nil {
 			return nil, err
 		}
 		d.CostUSD, d.CostUSDExact = amount.USD(), amount.String()

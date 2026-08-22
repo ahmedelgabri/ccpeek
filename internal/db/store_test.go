@@ -156,7 +156,7 @@ func TestV13CostMigrationPreservesArchiveAndAddsColumns(t *testing.T) {
 	}
 	for table, column := range map[string]string{
 		"messages": "provider", "message_usage": "reported_cost_nanos",
-		"source_files": "parse_version", "rollup_usage_daily": "cost_calculated_nanos",
+		"source_files": "parse_version", "rollup_usage_daily": "cost_nanos",
 	} {
 		if n := count(t, s, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column); n != 1 {
 			t.Errorf("%s.%s missing after migration", table, column)

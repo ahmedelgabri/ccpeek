@@ -429,8 +429,6 @@ const routeTree = rootRoute.addChildren([
     getParentRoute: () => rootRoute,
     path: "/",
     component: OverviewPage,
-    validateSearch: (s: Record<string, unknown>) =>
-      pickStrings(s, ["cost_mode"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
@@ -438,15 +436,7 @@ const routeTree = rootRoute.addChildren([
     component: SessionsPage,
     // Only non-empty filters serialize, keeping /sessions URLs clean.
     validateSearch: (s: Record<string, unknown>) =>
-      pickStrings(s, [
-        "agent",
-        "q",
-        "project",
-        "model",
-        "since",
-        "until",
-        "cost_mode",
-      ]),
+      pickStrings(s, ["agent", "q", "project", "model", "since", "until"]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,
@@ -454,11 +444,10 @@ const routeTree = rootRoute.addChildren([
     component: SessionDetailPage,
     validateSearch: (s: Record<string, unknown>) => {
       // "transcript" is the default tab and stays out of the URL.
-      const { tab, cost_mode } = pickStrings(s, ["tab", "cost_mode"]);
-      const out: { tab?: string; seq?: number; cost_mode?: string } = {};
+      const { tab } = pickStrings(s, ["tab"]);
+      const out: { tab?: string; seq?: number } = {};
       if (tab !== undefined && tab !== "transcript") out.tab = tab;
       if (typeof s.seq === "number") out.seq = s.seq;
-      if (cost_mode !== undefined) out.cost_mode = cost_mode;
       return out;
     },
   }),
@@ -481,14 +470,7 @@ const routeTree = rootRoute.addChildren([
     component: UsagePage,
     // "day" is the default grouping and stays out of the URL.
     validateSearch: (s: Record<string, unknown>) =>
-      pickStrings(s, [
-        "group",
-        "agent",
-        "model",
-        "since",
-        "until",
-        "cost_mode",
-      ]),
+      pickStrings(s, ["group", "agent", "model", "since", "until"]),
   }),
   // /search has no page of its own any more — searching is the palette,
   // reachable from every view. The ROUTE survives because the v1
@@ -525,10 +507,9 @@ const routeTree = rootRoute.addChildren([
     path: "/compare",
     component: ComparePage,
     validateSearch: (s: Record<string, unknown>) => {
-      const out: { a?: string; b?: string; cost_mode?: string } = {};
+      const out: { a?: string; b?: string } = {};
       if (typeof s.a === "string" && /^[^|]+\|[^|]+$/.test(s.a)) out.a = s.a;
       if (typeof s.b === "string" && /^[^|]+\|[^|]+$/.test(s.b)) out.b = s.b;
-      if (typeof s.cost_mode === "string") out.cost_mode = s.cost_mode;
       return out;
     },
   }),

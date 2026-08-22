@@ -125,11 +125,11 @@ func TestReportedZeroWithTokensFallsBackToEstimate(t *testing.T) {
 	}
 }
 
-func TestRollupsMaterializeExactModesWithHistoricalTiers(t *testing.T) {
+func TestRollupsMaterializeExactAutomaticCostWithHistoricalTiers(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	w := beginWrite(t, s)
-	id, err := w.UpsertSession(testSession("exact-modes"), "hash")
+	id, err := w.UpsertSession(testSession("exact-automatic-cost"), "hash")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,17 +153,15 @@ func TestRollupsMaterializeExactModesWithHistoricalTiers(t *testing.T) {
 	if err := s.RegenerateRollups(ctx, table); err != nil {
 		t.Fatal(err)
 	}
-	var auto, reportedNanos, estimated, calculated int64
-	var unreported int64
+	var cost, reportedNanos, estimated int64
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT cost_nanos, cost_reported_nanos, cost_estimated_nanos,
-		       cost_calculated_nanos, unreported_input_tokens
-		FROM rollup_usage_daily`).Scan(&auto, &reportedNanos, &estimated, &calculated, &unreported); err != nil {
+		SELECT cost_nanos, cost_reported_nanos, cost_estimated_nanos
+		FROM rollup_usage_daily`).Scan(&cost, &reportedNanos, &estimated); err != nil {
 		t.Fatal(err)
 	}
-	// auto = reported $7 + estimated $3. calculate = 201×$4 + 1×$3.
-	if auto != 10_000_000_000 || reportedNanos != 7_000_000_000 || estimated != 3_000_000_000 || calculated != 807_000_000_000 || unreported != 1 {
-		t.Errorf("auto/reported/estimated/calculated/unreported = %d/%d/%d/%d/%d", auto, reportedNanos, estimated, calculated, unreported)
+	// Automatic cost = reported $7 + the second row's historical $3 estimate.
+	if cost != 10_000_000_000 || reportedNanos != 7_000_000_000 || estimated != 3_000_000_000 {
+		t.Errorf("cost/reported/estimated = %d/%d/%d", cost, reportedNanos, estimated)
 	}
 }
 

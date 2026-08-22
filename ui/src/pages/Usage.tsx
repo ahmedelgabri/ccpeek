@@ -3,14 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import {
   api,
-  COST_MODES,
-  normalizeCostMode,
   fmtCount,
   fmtTokens,
   parityApi,
   shortPath,
   totalTokens,
-  type CostMode,
   type UsageRow,
 } from "../api";
 import {
@@ -50,7 +47,6 @@ function pivotSearch(
     model: string;
     since: string;
     until: string;
-    costMode: CostMode;
   },
 ): Record<string, string> {
   const search: Record<string, string> = {};
@@ -58,7 +54,6 @@ function pivotSearch(
   if (active.model) search.model = active.model;
   if (active.since) search.since = active.since;
   if (active.until) search.until = active.until;
-  if (active.costMode !== "auto") search.cost_mode = active.costMode;
   switch (group) {
     case "day":
       search.since = value;
@@ -147,19 +142,16 @@ export function UsagePage() {
   const until = search.until ?? "";
   const agent = search.agent ?? "";
   const model = search.model ?? "";
-  const costMode: CostMode = normalizeCostMode(search.cost_mode);
   const isBlocks = group === "blocks";
 
   // "day" is the default and stays out of the URL.
   const setGroup = (g: Group) => setFilter({ group: g === "day" ? "" : g });
-  const setCostMode = (mode: CostMode) =>
-    setFilter({ cost_mode: mode === "auto" ? "" : mode });
 
   // No limit: usage is an aggregate surface and the server returns all
   // groups by default, so the page total, charts, and CSV are complete
   // by construction (the old fixed 1000 silently truncated past it).
   const { data, isLoading, error } = useQuery({
-    queryKey: ["usage", group, since, until, agent, model, costMode],
+    queryKey: ["usage", group, since, until, agent, model],
     queryFn: () =>
       api.usage({
         group,
@@ -167,21 +159,20 @@ export function UsagePage() {
         until,
         agent,
         model,
-        cost_mode: costMode,
       }),
     enabled: !isBlocks,
     placeholderData: (prev) => prev,
   });
   // Model options come from the unfiltered model rollup.
   const modelRows = useQuery({
-    queryKey: ["usage", "model-options", costMode],
-    queryFn: () => api.usage({ group: "model", cost_mode: costMode }),
+    queryKey: ["usage", "model-options"],
+    queryFn: () => api.usage({ group: "model" }),
   });
   // Blocks support the agent filter (dates/models don't apply to the
   // rolling 5h windows and are hidden on that tab).
   const blocks = useQuery({
-    queryKey: ["blocks", agent, costMode],
-    queryFn: () => parityApi.blocks(36, agent, costMode),
+    queryKey: ["blocks", agent],
+    queryFn: () => parityApi.blocks(36, agent),
     enabled: isBlocks,
   });
   const rows = useMemo(() => data ?? [], [data]);
@@ -195,10 +186,8 @@ export function UsagePage() {
     ? blockRows.reduce((acc, b) => acc + b.costUSD, 0)
     : rows.reduce((acc, r) => acc + r.costUSD, 0);
   const anyIncomplete = isBlocks
-    ? blockRows.some(
-        (b) => (b.unpricedTokens ?? 0) > 0 || (b.unreportedTokens ?? 0) > 0,
-      )
-    : rows.some((r) => r.hasUnpriced || r.hasUnreported);
+    ? blockRows.some((b) => (b.unpricedTokens ?? 0) > 0)
+    : rows.some((r) => r.hasUnpriced);
 
   const models = (modelRows.data ?? [])
     .map((r) => r.group)
@@ -244,7 +233,6 @@ export function UsagePage() {
             until={until}
             agent={agent}
             model={model}
-            costMode={costMode}
           />
         </Suspense>
       )}
@@ -253,16 +241,7 @@ export function UsagePage() {
         label={isBlocks ? "Rolling 5-hour windows" : `Grouped by ${group}`}
         action={
           <div className="flex items-center gap-3">
-            {costMode === "auto" && !isBlocks && <CostSplitLegend />}
-            <Segmented
-              label="Cost provenance"
-              value={costMode}
-              options={COST_MODES.map((mode) => ({
-                value: mode,
-                label: mode,
-              }))}
-              onChange={setCostMode}
-            />
+            {!isBlocks && <CostSplitLegend />}
             <Segmented
               label="Group usage by"
               value={group}
@@ -297,7 +276,7 @@ export function UsagePage() {
               <UsageTable
                 rows={rows}
                 group={group}
-                filters={{ agent, model, since, until, costMode }}
+                filters={{ agent, model, since, until }}
               />
             )}
           </>
@@ -323,7 +302,6 @@ function UsageTable({
     model: string;
     since: string;
     until: string;
-    costMode: CostMode;
   };
 }) {
   // Sorting: null keeps the server order (day desc / cost desc); a click
@@ -331,7 +309,7 @@ function UsageTable({
   const { sorted: rows, sort, toggleSort } = useSorted(unsorted, SORT_VALUE);
   const maxCost = Math.max(...rows.map((r) => r.costUSD), 0.000001);
   const tooltip = useTooltip();
-  const { agent, model, since, until, costMode } = filters;
+  const { agent, model, since, until } = filters;
   return (
     <>
       <div className="overflow-x-auto">
@@ -392,7 +370,6 @@ function UsageTable({
                         model,
                         since,
                         until,
-                        costMode,
                       })}
                       title={`Sessions matching this row (and the active filters)\n${r.group}`}
                       className="hover:text-accent"
@@ -400,14 +377,10 @@ function UsageTable({
                       {groupLabel(group, r.group)}
                     </Link>
                   )}
-                  {(r.hasUnpriced || r.hasUnreported) && (
+                  {r.hasUnpriced && (
                     <span
                       className="ml-2 text-warn"
-                      title={
-                        r.hasUnpriced
-                          ? "Contains tokens without a resolvable rate"
-                          : "Contains usage without an agent-reported cost"
-                      }
+                      title="Contains tokens without a resolvable rate"
                     >
                       ●
                     </span>
@@ -425,9 +398,9 @@ function UsageTable({
                 <td className="px-4 py-2 text-right">
                   <Money
                     usd={r.costUSD}
-                    incomplete={Boolean(r.hasUnpriced || r.hasUnreported)}
+                    incomplete={Boolean(r.hasUnpriced)}
                     className="text-xs"
-                    title={`${r.costMode} ${r.costUSDExact} USD · reported $${r.costReportedUSDExact} · estimated $${r.costEstimatedUSDExact}`}
+                    title={`${r.costUSDExact} USD · reported $${r.costReportedUSDExact} · estimated $${r.costEstimatedUSDExact}`}
                   />
                 </td>
                 <td
@@ -439,7 +412,7 @@ function UsageTable({
                         {groupLabel(group, r.group) || group}
                       </span>
                       <br />
-                      mode {r.costMode} · exact ${r.costUSDExact}
+                      exact ${r.costUSDExact}
                       <br />
                       reported ${r.costReportedUSDExact}
                       <br />
@@ -603,15 +576,10 @@ function BlocksTable({
                     active
                   </span>
                 )}
-                {((b.unpricedTokens ?? 0) > 0 ||
-                  (b.unreportedTokens ?? 0) > 0) && (
+                {(b.unpricedTokens ?? 0) > 0 && (
                   <span
                     className="ml-2 text-warn"
-                    title={
-                      (b.unpricedTokens ?? 0) > 0
-                        ? "Contains tokens without a resolvable rate"
-                        : "Contains usage without an agent-reported cost"
-                    }
+                    title="Contains tokens without a resolvable rate"
                   >
                     ●
                   </span>
@@ -626,11 +594,9 @@ function BlocksTable({
               <td className="px-4 py-2 text-right">
                 <Money
                   usd={b.costUSD}
-                  incomplete={
-                    (b.unpricedTokens ?? 0) + (b.unreportedTokens ?? 0) > 0
-                  }
+                  incomplete={(b.unpricedTokens ?? 0) > 0}
                   className="text-xs"
-                  title={`${b.costMode} ${b.costUSDExact} USD`}
+                  title={`${b.costUSDExact} USD`}
                 />
               </td>
               <td className="px-4 py-2">

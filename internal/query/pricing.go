@@ -9,14 +9,14 @@ import (
 )
 
 // PricingInfo explains the immutable price source and, optionally, one model
-// resolution. It is diagnostic provenance, not another cost mode.
+// resolution. It is diagnostic provenance for the single cost policy.
 type PricingInfo struct {
 	Source           string       `json:"source,omitempty"`
 	FetchedAt        string       `json:"fetchedAt,omitempty"`
 	Algorithm        string       `json:"algorithm,omitempty"`
 	Fingerprint      string       `json:"fingerprint,omitempty"`
 	RollupsCurrent   bool         `json:"rollupsCurrent"`
-	AutoMode         string       `json:"autoMode"`
+	CostPolicy       string       `json:"costPolicy"`
 	RequestedModel   string       `json:"requestedModel,omitempty"`
 	ResolvedModel    string       `json:"resolvedModel,omitempty"`
 	Resolved         bool         `json:"resolved"`
@@ -67,7 +67,7 @@ func (s *Service) PricingAt(ctx context.Context, model, atRaw string, inputToken
 		}
 	}
 	info := PricingInfo{
-		AutoMode:       "reported non-zero cost; otherwise calculate non-zero tokens; missing rates remain unpriced",
+		CostPolicy:     "reported non-zero cost; otherwise calculate from reported tokens; missing rates remain unpriced",
 		RequestedModel: model,
 		RequestedAt:    atRaw,
 		InputTokens:    inputTokens,

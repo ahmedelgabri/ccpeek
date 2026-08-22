@@ -3,13 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   api,
-  COST_MODES,
-  normalizeCostMode,
   fmtCost,
   fmtCount,
   fmtTokens,
   shortPath,
-  type CostMode,
   type SessionDetail,
 } from "../api";
 import { fmtWhen } from "../time";
@@ -22,7 +19,6 @@ import {
   Loading,
   Money,
   PageHeader,
-  Segmented,
   SkeletonRows,
   useDebounced,
 } from "../ui";
@@ -38,34 +34,15 @@ export function ComparePage() {
   const navigate = useNavigate({ from: "/compare" });
   const a = search.a ?? "";
   const b = search.b ?? "";
-  const costMode: CostMode = normalizeCostMode(search.cost_mode);
 
   const [agentA, idA] = a.split("|");
   const [agentB, idB] = b.split("|");
-  const left = useQueryDetail(agentA, idA, costMode);
-  const right = useQueryDetail(agentB, idB, costMode);
+  const left = useQueryDetail(agentA, idA);
+  const right = useQueryDetail(agentB, idB);
 
   return (
     <div>
       <PageHeader title="Compare sessions">
-        <Segmented
-          label="Cost provenance"
-          value={costMode}
-          options={COST_MODES.map((mode) => ({ value: mode, label: mode }))}
-          onChange={(mode) =>
-            void navigate({
-              search: (prev: {
-                a?: string;
-                b?: string;
-                cost_mode?: string;
-              }) => ({
-                ...prev,
-                cost_mode: mode === "auto" ? undefined : mode,
-              }),
-              replace: true,
-            })
-          }
-        />
         <button
           type="button"
           onClick={() =>
@@ -73,7 +50,6 @@ export function ComparePage() {
               search: {
                 a: b || undefined,
                 b: a || undefined,
-                cost_mode: costMode === "auto" ? undefined : costMode,
               },
               replace: true,
             })
@@ -88,7 +64,6 @@ export function ComparePage() {
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <SessionPicker
           value={a}
-          costMode={costMode}
           onChange={(value) =>
             void navigate({
               search: (prev: { a?: string; b?: string }) => ({
@@ -102,7 +77,6 @@ export function ComparePage() {
         />
         <SessionPicker
           value={b}
-          costMode={costMode}
           onChange={(value) =>
             void navigate({
               search: (prev: { a?: string; b?: string }) => ({
@@ -189,18 +163,8 @@ function ComparisonTable({
             label="Cost"
             a={left.costUSD}
             b={right.costUSD}
-            formatA={(n) =>
-              fmtCost(
-                n,
-                (left.unpricedTokens ?? 0) + (left.unreportedTokens ?? 0) > 0,
-              )
-            }
-            formatB={(n) =>
-              fmtCost(
-                n,
-                (right.unpricedTokens ?? 0) + (right.unreportedTokens ?? 0) > 0,
-              )
-            }
+            formatA={(n) => fmtCost(n, (left.unpricedTokens ?? 0) > 0)}
+            formatB={(n) => fmtCost(n, (right.unpricedTokens ?? 0) > 0)}
             deltaFormat={(n) => fmtCost(n)}
             direction="lower"
             cost
@@ -252,9 +216,6 @@ function SessionHeading({ session }: { session: SessionDetail }) {
       <Link
         to="/sessions/$agent/$sessionId"
         params={{ agent: session.agent, sessionId: session.id }}
-        search={{
-          cost_mode: session.costMode === "auto" ? undefined : session.costMode,
-        }}
         className="flex items-center justify-end gap-2 hover:text-accent"
       >
         <AgentChip agent={session.agent} />
@@ -277,22 +238,19 @@ function SessionPicker({
   value,
   onChange,
   label,
-  costMode,
 }: {
   value: string;
   onChange: (v: string) => void;
   label: string;
-  costMode: CostMode;
 }) {
   const [qInput, setQInput] = useState("");
   const q = useDebounced(qInput, 250);
   const sessions = useQuery({
-    queryKey: ["compare-sessions", q, costMode],
+    queryKey: ["compare-sessions", q],
     queryFn: () =>
       api.sessions({
         query: q,
         limit: String(PICKER_PAGE),
-        cost_mode: costMode,
       }),
     placeholderData: (prev) => prev,
   });
@@ -350,11 +308,9 @@ function SessionPicker({
                   </span>
                   <Money
                     usd={s.costUSD}
-                    incomplete={
-                      (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) > 0
-                    }
+                    incomplete={(s.unpricedTokens ?? 0) > 0}
                     className="shrink-0 text-meta"
-                    title={`${s.costMode} $${s.costUSDExact}`}
+                    title={`$${s.costUSDExact}`}
                   />
                 </span>
                 <span className="font-mono text-meta text-ink-faint">
@@ -533,14 +489,10 @@ function fmtDuration(ms: number): string {
   return `${days}d ${hours % 24}h`;
 }
 
-function useQueryDetail(
-  agent: string | undefined,
-  id: string | undefined,
-  costMode: CostMode,
-) {
+function useQueryDetail(agent: string | undefined, id: string | undefined) {
   return useQuery({
-    queryKey: ["session", agent, id, costMode],
-    queryFn: () => api.session(agent!, id!, costMode),
+    queryKey: ["session", agent, id],
+    queryFn: () => api.session(agent!, id!),
     enabled: Boolean(agent && id),
   });
 }

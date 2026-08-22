@@ -1,22 +1,13 @@
 package db
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 )
 
-// CostMode selects which provenance is allowed to contribute to a cost.
-type CostMode string
-
 const (
-	CostModeAuto      CostMode = "auto"
-	CostModeCalculate CostMode = "calculate"
-	CostModeDisplay   CostMode = "display"
-
 	// ReportedCostNanosExpr is the canonical exact reported-cost read. All
 	// usage queries alias message_usage as u. The REAL fallback supports rows
 	// inserted by old embedders and tests; schema-v15 ingestion writes nanos.
@@ -25,35 +16,18 @@ const (
 		CAST(ROUND(u.reported_cost_usd * 1000000000) AS INTEGER)) END`
 )
 
-// ParseCostMode applies the public default and validates an explicit value.
-func ParseCostMode(raw string) (CostMode, error) {
-	mode := CostMode(strings.ToLower(strings.TrimSpace(raw)))
-	if mode == "" {
-		return CostModeAuto, nil
-	}
-	switch mode {
-	case CostModeAuto, CostModeCalculate, CostModeDisplay:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("cost mode must be auto, calculate, or display")
-	}
-}
-
-// CostResult keeps exact amount provenance and completeness separate. Unpriced
-// is rate-resolution failure; Unreported is usage hidden by display mode
-// because the agent supplied no cost.
+// CostResult keeps exact amount provenance and unpriced usage separate.
 type CostResult struct {
-	Amount     pricing.Amount
-	Reported   pricing.Amount
-	Estimated  pricing.Amount
-	Unpriced   canon.Usage
-	Unreported canon.Usage
+	Amount    pricing.Amount
+	Reported  pricing.Amount
+	Estimated pricing.Amount
+	Unpriced  canon.Usage
 }
 
-// EvaluateCost applies one cost mode to one canonical usage row. Pricing is
-// intentionally row-scoped so future request tiers and effective dates cannot
-// be selected from an aggregate that crossed a threshold or rate boundary.
-func EvaluateCost(p Pricer, mode CostMode, provider, model string, u canon.Usage) (CostResult, error) {
+// EvaluateCost applies automatic reported-first pricing to one canonical usage
+// row. Pricing is intentionally row-scoped so request tiers and effective dates
+// cannot be selected from an aggregate that crossed a threshold or boundary.
+func EvaluateCost(p Pricer, provider, model string, u canon.Usage) (CostResult, error) {
 	var reported *pricing.Amount
 	if u.ReportedCostUSD != nil {
 		amount, err := pricing.AmountFromUSD(*u.ReportedCostUSD)
@@ -62,27 +36,15 @@ func EvaluateCost(p Pricer, mode CostMode, provider, model string, u canon.Usage
 		}
 		reported = &amount
 	}
-	return EvaluateCostAt(p, mode, provider, model, time.Time{}, u, reported)
+	return EvaluateCostAt(p, provider, model, time.Time{}, u, reported)
 }
 
 // EvaluateCostAt is the exact storage-facing evaluator. Reported is already
-// quantized at ingestion, and at selects historical cards when the pricer
-// supports them.
-func EvaluateCostAt(p Pricer, mode CostMode, provider, model string, at time.Time, u canon.Usage, reported *pricing.Amount) (CostResult, error) {
+// quantized at ingestion, and at selects historical cards when supported.
+func EvaluateCostAt(p Pricer, provider, model string, at time.Time, u canon.Usage, reported *pricing.Amount) (CostResult, error) {
 	var result CostResult
 	total := usageTotal(u)
-	hasReported := reported != nil
-	reportedUsableInAuto := hasReported && (*reported != 0 || total == 0)
-
-	if mode == CostModeDisplay {
-		if !hasReported {
-			result.Unreported = positiveUsage(u)
-			return result, nil
-		}
-		result.Amount, result.Reported = *reported, *reported
-		return result, nil
-	}
-	if mode == CostModeAuto && reportedUsableInAuto {
+	if reported != nil && (*reported != 0 || total == 0) {
 		result.Amount, result.Reported = *reported, *reported
 		return result, nil
 	}

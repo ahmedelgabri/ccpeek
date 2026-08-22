@@ -2,7 +2,7 @@
 // per session under storage/session/<project-hash>/ses_*.json and one per
 // message under storage/message/<sessionID>/msg_*.json
 // (docs/v2-plan.md §6). Messages natively carry tokens (with cache
-// read/write) AND a reported cost, so the cost engine's auto mode uses
+// read/write) AND a reported cost, so the automatic cost policy uses
 // OpenCode's own figures. The project-hash directory is opaque — cwd comes
 // from the session document.
 package opencode

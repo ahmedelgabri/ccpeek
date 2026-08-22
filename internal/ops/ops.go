@@ -110,12 +110,6 @@ func Registry() []Op {
 	agentParam := Param{Name: "agent", Type: "string", Desc: "Filter by agent slug (claude-code, pi, codex, opencode, cursor)"}
 	sinceParam := Param{Name: "since", Type: "string", Desc: "Inclusive YYYY-MM-DD lower bound"}
 	untilParam := Param{Name: "until", Type: "string", Desc: "Inclusive YYYY-MM-DD upper bound"}
-	costModeParam := Param{
-		Name: "cost_mode", Type: "string", Default: "auto",
-		Desc: "Cost provenance: auto | calculate | display (default auto)",
-		Enum: []string{"auto", "calculate", "display"},
-	}
-
 	return []Op{
 		{
 			Name: "sessions",
@@ -128,7 +122,6 @@ func Registry() []Op {
 				{Name: "query", Type: "string", Desc: "Substring filter on session title", CLIFlag: "title"},
 				limitParam("Maximum results", query.SessionsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
-				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Sessions(ctx, query.SessionsFilter{
@@ -136,7 +129,6 @@ func Registry() []Op {
 					Model: a.Str["model"], Since: a.Str["since"],
 					Until: a.Str["until"], Query: a.Str["query"],
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
-					CostMode: a.Str["cost_mode"],
 				})
 				return out, len(out) == 0, err
 			},
@@ -147,10 +139,9 @@ func Registry() []Op {
 			Params: []Param{
 				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
 				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
-				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.SessionWithCostMode(ctx, a.Str["agent"], a.Str["id"], a.Str["cost_mode"])
+				out, err := svc.Session(ctx, a.Str["agent"], a.Str["id"])
 				return out, false, err
 			},
 		},
@@ -183,14 +174,12 @@ func Registry() []Op {
 				{Name: "model", Type: "string", Desc: "Filter to one model"},
 				sinceParam, untilParam,
 				limitParam("Maximum groups", query.UsageLimit),
-				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Usage(ctx, query.UsageFilter{
 					GroupBy: a.Str["group"], Agent: a.Str["agent"],
 					Model: a.Str["model"], Since: a.Str["since"],
 					Until: a.Str["until"], Limit: a.Int["limit"],
-					CostMode: a.Str["cost_mode"],
 				})
 				return out, len(out) == 0, err
 			},
@@ -262,11 +251,10 @@ func Registry() []Op {
 			},
 		},
 		{
-			Name:   "stats",
-			Desc:   "Overview counters: sessions, messages, tool calls, artifacts, active scan findings, tokens, and cost, with per-agent and per-day activity.",
-			Params: []Param{costModeParam},
-			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.StatsWithCostMode(ctx, a.Str["cost_mode"])
+			Name: "stats",
+			Desc: "Overview counters: sessions, messages, tool calls, artifacts, active scan findings, tokens, and cost, with per-agent and per-day activity.",
+			Run: func(ctx context.Context, svc *query.Service, _ Args) (any, bool, error) {
+				out, err := svc.Stats(ctx)
 				return out, false, err
 			},
 		},
@@ -276,10 +264,9 @@ func Registry() []Op {
 			Params: []Param{
 				agentParam,
 				limitParam("Maximum windows", query.BlocksLimit),
-				costModeParam,
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
-				out, err := svc.BlocksWithCostMode(ctx, a.Str["agent"], a.Int["limit"], a.Str["cost_mode"])
+				out, err := svc.Blocks(ctx, a.Str["agent"], a.Int["limit"])
 				return out, len(out) == 0, err
 			},
 		},

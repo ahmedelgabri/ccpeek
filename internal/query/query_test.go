@@ -871,7 +871,7 @@ func newStore(t *testing.T) (*db.Store, *pricing.Table) {
 	return store, table
 }
 
-func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
+func TestAutomaticCostAgreesAcrossSurfaces(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newStore(t)
 	table, err := pricing.Parse([]byte(`{
@@ -887,7 +887,7 @@ func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
-	id, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "modes", CreatedAt: at, ModifiedAt: at}, "hash")
+	id, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "automatic-cost", CreatedAt: at, ModifiedAt: at}, "hash")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -908,59 +908,37 @@ func TestCostModesAgreeAcrossSurfaces(t *testing.T) {
 	}
 	svc := New(store, table)
 
-	for _, tt := range []struct {
-		mode       string
-		want       string
-		unreported int64
-	}{
-		{"auto", "17", 0},
-		{"calculate", "12", 0},
-		{"display", "7", 5},
+	sessions, err := svc.Sessions(ctx, SessionsFilter{})
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions = %+v, %v", sessions, err)
+	}
+	detail, err := svc.Session(ctx, "claude-code", "automatic-cost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := svc.Blocks(ctx, "", 10)
+	if err != nil || len(blocks) != 1 {
+		t.Fatalf("blocks = %+v, %v", blocks, err)
+	}
+	usage, err := svc.Usage(ctx, UsageFilter{GroupBy: "day"})
+	if err != nil || len(usage) != 1 {
+		t.Fatalf("usage = %+v, %v", usage, err)
+	}
+	stats, err := svc.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for surface, got := range map[string]string{
+		"sessions": sessions[0].CostUSDExact,
+		"session":  detail.CostUSDExact,
+		"blocks":   blocks[0].CostUSDExact,
+		"usage":    usage[0].CostUSDExact,
+		"stats":    stats.CostUSDExact,
 	} {
-		t.Run(tt.mode, func(t *testing.T) {
-			sessions, err := svc.Sessions(ctx, SessionsFilter{CostMode: tt.mode})
-			if err != nil || len(sessions) != 1 {
-				t.Fatalf("sessions = %+v, %v", sessions, err)
-			}
-			detail, err := svc.SessionWithCostMode(ctx, "claude-code", "modes", tt.mode)
-			if err != nil {
-				t.Fatal(err)
-			}
-			blocks, err := svc.BlocksWithCostMode(ctx, "", 10, tt.mode)
-			if err != nil || len(blocks) != 1 {
-				t.Fatalf("blocks = %+v, %v", blocks, err)
-			}
-			usage, err := svc.Usage(ctx, UsageFilter{GroupBy: "day", CostMode: tt.mode})
-			if err != nil || len(usage) != 1 {
-				t.Fatalf("usage = %+v, %v", usage, err)
-			}
-			stats, err := svc.StatsWithCostMode(ctx, tt.mode)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for surface, got := range map[string]string{
-				"sessions": sessions[0].CostUSDExact,
-				"session":  detail.CostUSDExact,
-				"blocks":   blocks[0].CostUSDExact,
-				"usage":    usage[0].CostUSDExact,
-				"stats":    stats.CostUSDExact,
-			} {
-				if got != tt.want {
-					t.Errorf("%s exact cost = %q, want %q", surface, got, tt.want)
-				}
-			}
-			if sessions[0].UnreportedTokens != tt.unreported || blocks[0].UnreportedTokens != tt.unreported || tokenTotal(*usage[0].UnreportedTokenTypesOrZero()) != tt.unreported || stats.UnreportedTokens != tt.unreported {
-				t.Errorf("unreported sessions/blocks/usage/stats = %d/%d/%+v/%d, want %d", sessions[0].UnreportedTokens, blocks[0].UnreportedTokens, usage[0].UnreportedTokenTypes, stats.UnreportedTokens, tt.unreported)
-			}
-		})
+		if got != "17" {
+			t.Errorf("%s exact cost = %q, want 17", surface, got)
+		}
 	}
-}
-
-func (r UsageRow) UnreportedTokenTypesOrZero() *TokenTotals {
-	if r.UnreportedTokenTypes == nil {
-		return &TokenTotals{}
-	}
-	return r.UnreportedTokenTypes
 }
 
 // Session counts must stay true distinct counts per group after the

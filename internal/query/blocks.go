@@ -30,15 +30,12 @@ type BlockRow struct {
 	Tokens                TokenTotals  `json:"tokens"`
 	CostUSD               float64      `json:"costUSD"`
 	CostUSDExact          string       `json:"costUSDExact"`
-	CostMode              string       `json:"costMode"`
 	CostReportedUSD       float64      `json:"costReportedUSD"`
 	CostReportedUSDExact  string       `json:"costReportedUSDExact"`
 	CostEstimatedUSD      float64      `json:"costEstimatedUSD"`
 	CostEstimatedUSDExact string       `json:"costEstimatedUSDExact"`
 	UnpricedTokens        int64        `json:"unpricedTokens,omitempty"`
 	UnpricedTokenTypes    *TokenTotals `json:"unpricedTokenTypes,omitempty"`
-	UnreportedTokens      int64        `json:"unreportedTokens,omitempty"`
-	UnreportedTokenTypes  *TokenTotals `json:"unreportedTokenTypes,omitempty"`
 	// Active marks the bucket containing now — a partial bucket, not a
 	// quota window's remaining allowance.
 	Active bool `json:"active"`
@@ -47,7 +44,7 @@ type BlockRow struct {
 const blockSeconds = 5 * 60 * 60
 
 // Blocks aggregates usage into fixed UTC-aligned 5-hour windows, newest
-// first, priced in auto mode (reported costs preferred, computed
+// first, priced by the automatic policy (reported costs preferred, computed
 // otherwise). limit bounds the number of windows returned.
 //
 // The buckets are epoch-aligned (00:00, 05:00, 10:00 … UTC) and nothing
@@ -63,15 +60,6 @@ const blockSeconds = 5 * 60 * 60
 // and then discard everything but the newest `limit` windows in Go. Years
 // of history were read to answer about one day of it.
 func (s *Service) Blocks(ctx context.Context, agent string, limit int) ([]BlockRow, error) {
-	return s.BlocksWithCostMode(ctx, agent, limit, "")
-}
-
-// BlocksWithCostMode applies an explicit provenance mode to each usage row.
-func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit int, rawMode string) ([]BlockRow, error) {
-	mode, err := db.ParseCostMode(rawMode)
-	if err != nil {
-		return nil, badRequest(err.Error())
-	}
 	if err := BlocksLimit.apply(&limit); err != nil {
 		return nil, err
 	}
@@ -180,7 +168,7 @@ func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit in
 			amount := pricing.Amount(reported.Int64)
 			reportedAmount = &amount
 		}
-		result, err := db.EvaluateCostAt(s.pricer, mode, provider, model,
+		result, err := db.EvaluateCostAt(s.pricer, provider, model,
 			db.ParseCostTime(occurredAt), usage, reportedAmount)
 		if err != nil {
 			return nil, err
@@ -195,7 +183,6 @@ func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit in
 			return nil, err
 		}
 		addUnpriced(&b.UnpricedTokens, &b.UnpricedTokenTypes, result.Unpriced)
-		addUnpriced(&b.UnreportedTokens, &b.UnreportedTokenTypes, result.Unreported)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -217,7 +204,6 @@ func (s *Service) BlocksWithCostMode(ctx context.Context, agent string, limit in
 		b.Active = w == nowWin
 		b.CostUSD = amounts[w].USD()
 		b.CostUSDExact = amounts[w].String()
-		b.CostMode = string(mode)
 		b.CostReportedUSD = reportedAmounts[w].USD()
 		b.CostReportedUSDExact = reportedAmounts[w].String()
 		b.CostEstimatedUSD = estimatedAmounts[w].USD()

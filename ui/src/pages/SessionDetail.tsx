@@ -6,15 +6,7 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import {
-  api,
-  COST_MODES,
-  normalizeCostMode,
-  fmtCount,
-  fmtTokens,
-  shortPath,
-  type CostMode,
-} from "../api";
+import { api, fmtCount, fmtTokens, shortPath } from "../api";
 import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
@@ -55,11 +47,10 @@ export function SessionDetailPage() {
   const search = useSearch({ from: "/sessions/$agent/$sessionId" });
   const navigate = useNavigate({ from: "/sessions/$agent/$sessionId" });
   const tab: Tab = isTab(search.tab) ? search.tab : "transcript";
-  const costMode: CostMode = normalizeCostMode(search.cost_mode);
 
   const detail = useQuery({
-    queryKey: ["session", agent, sessionId, costMode],
-    queryFn: () => api.session(agent, sessionId, costMode),
+    queryKey: ["session", agent, sessionId],
+    queryFn: () => api.session(agent, sessionId),
   });
   const win = useTranscriptWindow(agent, sessionId, search.seq);
   const {
@@ -99,9 +90,6 @@ export function SessionDetailPage() {
         <ErrorPanel error={detail.error} scope="this session" />
         <Link
           to="/sessions"
-          search={{
-            cost_mode: costMode === "auto" ? undefined : costMode,
-          }}
           className="inline-block font-mono text-xs text-accent hover:underline"
         >
           ← back to all sessions
@@ -143,33 +131,12 @@ export function SessionDetailPage() {
         <h1 className="min-w-0 flex-1 truncate text-xl font-semibold">
           {s.title || "(untitled)"}
         </h1>
-        <Segmented
-          label="Cost provenance"
-          value={costMode}
-          options={COST_MODES.map((mode) => ({ value: mode, label: mode }))}
-          onChange={(mode) =>
-            void navigate({
-              search: (prev: {
-                tab?: string;
-                seq?: number;
-                cost_mode?: string;
-              }) => ({
-                ...prev,
-                cost_mode: mode === "auto" ? undefined : mode,
-              }),
-              replace: true,
-            })
-          }
-        />
       </div>
       <p className="mb-4 font-mono text-xs text-ink-faint">
         {s.cwd && (
           <Link
             to="/sessions"
-            search={{
-              project: s.cwd,
-              cost_mode: costMode === "auto" ? undefined : costMode,
-            }}
+            search={{ project: s.cwd }}
             className="hover:text-accent"
           >
             {shortPath(s.cwd)}
@@ -188,10 +155,8 @@ export function SessionDetailPage() {
           value={
             <Money
               usd={s.costUSD}
-              incomplete={
-                (s.unpricedTokens ?? 0) + (s.unreportedTokens ?? 0) > 0
-              }
-              title={`${s.costMode} $${s.costUSDExact}`}
+              incomplete={(s.unpricedTokens ?? 0) > 0}
+              title={`$${s.costUSDExact}`}
             />
           }
         />
@@ -262,11 +227,7 @@ export function SessionDetailPage() {
           // link was FOR was gone from the URL.
           onChange={(t) =>
             void navigate({
-              search: (prev: {
-                tab?: string;
-                seq?: number;
-                cost_mode?: string;
-              }) => ({
+              search: (prev: { tab?: string; seq?: number }) => ({
                 ...prev,
                 tab: t === "transcript" ? undefined : t,
               }),

@@ -329,24 +329,14 @@ CREATE TABLE IF NOT EXISTS rollup_usage_daily (
 	-- the pricing table computed for rows with no reported figure.
 	cost_reported_usd REAL NOT NULL DEFAULT 0,
 	cost_estimated_usd REAL NOT NULL DEFAULT 0,
-	-- Exact mode materializations. cost_nanos is auto; reported is display;
-	-- calculated prices every row regardless of reported provenance.
+	-- Exact automatic-cost materialization and provenance.
 	cost_nanos INTEGER NOT NULL DEFAULT 0,
 	cost_reported_nanos INTEGER NOT NULL DEFAULT 0,
 	cost_estimated_nanos INTEGER NOT NULL DEFAULT 0,
-	cost_calculated_nanos INTEGER NOT NULL DEFAULT 0,
 	unpriced_input_tokens INTEGER NOT NULL DEFAULT 0,
 	unpriced_output_tokens INTEGER NOT NULL DEFAULT 0,
 	unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
 	unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-	calculated_unpriced_input_tokens INTEGER NOT NULL DEFAULT 0,
-	calculated_unpriced_output_tokens INTEGER NOT NULL DEFAULT 0,
-	calculated_unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-	calculated_unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-	unreported_input_tokens INTEGER NOT NULL DEFAULT 0,
-	unreported_output_tokens INTEGER NOT NULL DEFAULT 0,
-	unreported_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-	unreported_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
 	priced INTEGER NOT NULL DEFAULT 1, -- 0: at least one non-zero auto bucket has no rate
 	PRIMARY KEY (day, agent_id, workspace_id, model)
 );
@@ -516,15 +506,6 @@ var migrations = []migration{
 			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_nanos INTEGER NOT NULL DEFAULT 0`,
 			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_reported_nanos INTEGER NOT NULL DEFAULT 0`,
 			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_estimated_nanos INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN cost_calculated_nanos INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_input_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_output_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN calculated_unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_input_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_output_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_cache_read_tokens INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE rollup_usage_daily ADD COLUMN unreported_cache_write_tokens INTEGER NOT NULL DEFAULT 0`,
 			`DELETE FROM rollup_session_days`,
 			`DELETE FROM rollup_usage_daily`,
 		} {

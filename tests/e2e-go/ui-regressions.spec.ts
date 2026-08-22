@@ -98,44 +98,11 @@ test.describe("figures tell the truth", () => {
 });
 
 test.describe("cost provenance", () => {
-  test("mode survives usage drill-down into a session", async ({ page }) => {
+  test("uses one automatic cost path", async ({ page }) => {
     await page.goto("/usage");
-    const usageMode = page.getByRole("radiogroup", {
-      name: "Cost provenance",
-    });
-    await usageMode.getByRole("radio", { name: "calculate" }).click();
-    await expect(page).toHaveURL(/\/usage\?.*cost_mode=calculate/);
     await expect(
-      usageMode.getByRole("radio", { name: "calculate" }),
-    ).toHaveAttribute("aria-checked", "true");
-
-    await page.locator("table tbody tr td").first().getByRole("link").click();
-    await expect(page).toHaveURL(/\/sessions\?.*cost_mode=calculate/);
-    await expect(
-      page
-        .getByRole("radiogroup", { name: "Cost provenance" })
-        .getByRole("radio", { name: "calculate" }),
-    ).toHaveAttribute("aria-checked", "true");
-
-    await page.locator("ul li a").first().click();
-    await expect(page).toHaveURL(
-      /\/sessions\/[^/]+\/[^?]+\?.*cost_mode=calculate/,
-    );
-    await expect(
-      page
-        .getByRole("radiogroup", { name: "Cost provenance" })
-        .getByRole("radio", { name: "calculate" }),
-    ).toHaveAttribute("aria-checked", "true");
-  });
-
-  test("overview marks incomplete display-mode days", async ({ page }) => {
-    await page.goto("/?cost_mode=display");
-    await expect(
-      page
-        .getByRole("radiogroup", { name: "Cost provenance" })
-        .getByRole("radio", { name: "display" }),
-    ).toHaveAttribute("aria-checked", "true");
-    await expect(page.locator("svg rect[stroke]").first()).toBeVisible();
+      page.getByRole("radiogroup", { name: "Cost provenance" }),
+    ).toHaveCount(0);
   });
 
   test("timeline CSV names incomplete-cost columns explicitly", async ({
