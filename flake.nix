@@ -65,8 +65,8 @@
             '';
           });
 
-          # go_1_25 (1.25.12) matches go.mod's toolchain line; the default
-          # pkgs.go (1.26.4) carries GO-2026-5856 and fails govulncheck.
+          # go_1_25 (1.25.13) matches go.mod's toolchain line; the default
+          # pkgs.go is a newer major (1.26.x) than the module targets.
           ccpeek = (pkgs.buildGoModule.override {go = pkgs.go_1_25;}) {
             pname = "ccpeek";
             version = "2.0.2";
@@ -150,7 +150,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            go_1_25 # 1.25.12, the go.mod toolchain; pkgs.go 1.26.4 fails govulncheck (GO-2026-5856)
+            go_1_25 # 1.25.13, the go.mod toolchain; pkgs.go is a newer major (1.26.x) than the module targets
             go-tools # includes staticcheck
             gofumpt
             gomodifytags
