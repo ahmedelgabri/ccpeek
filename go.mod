@@ -2,7 +2,7 @@ module github.com/ahmedelgabri/ccpeek
 
 go 1.25.0
 
-toolchain go1.25.13
+toolchain go1.26.6
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1

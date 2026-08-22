@@ -25,7 +25,18 @@
         self',
         lib,
         ...
-      }: {
+      }: let
+        # Go 1.26.6 fixes stdlib vulnerabilities that fail govulncheck
+        # (nixpkgs still ships 1.26.5). Drop this override and use
+        # pkgs.go directly once nixpkgs catches up.
+        go_1_26_6 = pkgs.go.overrideAttrs {
+          version = "1.26.6";
+          src = pkgs.fetchurl {
+            url = "https://go.dev/dl/go1.26.6.src.tar.gz";
+            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+          };
+        };
+      in {
         packages = {
           default = self'.packages.ccpeek;
 
@@ -65,9 +76,7 @@
             '';
           });
 
-          # go_1_25 (1.25.13) matches go.mod's toolchain line; the default
-          # pkgs.go is a newer major (1.26.x) than the module targets.
-          ccpeek = (pkgs.buildGoModule.override {go = pkgs.go_1_25;}) {
+          ccpeek = (pkgs.buildGoModule.override {go = go_1_26_6;}) {
             pname = "ccpeek";
             version = "2.0.2";
 
@@ -150,7 +159,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            go_1_25 # 1.25.13, the go.mod toolchain; pkgs.go is a newer major (1.26.x) than the module targets
+            go_1_26_6
             go-tools # includes staticcheck
             gofumpt
             gomodifytags
