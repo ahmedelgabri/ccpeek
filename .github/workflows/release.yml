@@ -142,6 +142,12 @@ jobs:
             brew install ahmedelgabri/tap/ccpeek
             ```
 
+            ### Using mise
+
+            ```bash
+            mise use "github:ahmedelgabri/ccpeek"
+            ```
+
             ### Manual Download
 
             Download the archive for your platform, extract it, and place the binary in your `$PATH`:
