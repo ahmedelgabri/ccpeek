@@ -98,6 +98,35 @@ test.describe("figures tell the truth", () => {
 });
 
 test.describe("cost provenance", () => {
+  test("usage chart drag-selects a range and only then offers reset", async ({
+    page,
+  }) => {
+    await page.goto("/usage");
+    const chart = page.getByRole("img", { name: /drag across the plot/ });
+    await expect(chart).toBeVisible();
+    const reset = page.getByRole("button", { name: "Reset chart zoom" });
+    await expect(reset).toHaveCount(0);
+
+    const box = await chart.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 90, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 90, y, { steps: 5 });
+    await page.mouse.up();
+
+    await expect(reset).toBeVisible();
+    const resetBox = await reset.boundingBox();
+    expect(resetBox).not.toBeNull();
+    if (resetBox) {
+      expect(resetBox.x).toBeGreaterThan(box.x + box.width - 40);
+      expect(resetBox.y).toBeLessThan(box.y + 36);
+    }
+    await reset.click();
+    await expect(reset).toHaveCount(0);
+  });
+
   test("uses one automatic cost path", async ({ page }) => {
     await page.goto("/usage");
     await expect(

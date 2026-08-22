@@ -104,8 +104,8 @@ function IndexingBanner() {
         </div>
       )}
       {data?.indexing && !indexFailed && (
-        <div className="mb-6 flex items-baseline gap-3 rounded-md border border-accent/40 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
-          <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse self-center rounded-full bg-accent" />
+        <div className="mb-6 flex items-baseline gap-3 rounded-md border border-warn/50 bg-warn/10 px-4 py-2 text-sm text-ink-dim">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse self-center rounded-full bg-warn" />
           <span>
             Indexing your agent history — pages fill in live as data lands.
           </span>

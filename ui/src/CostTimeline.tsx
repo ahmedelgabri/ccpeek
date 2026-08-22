@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as echarts from "echarts/core";
 import { BarChart } from "echarts/charts";
@@ -61,6 +68,12 @@ function withAlpha(rgb: string, alpha: number): string {
 
 type DayValue = { cost: number; incomplete: boolean };
 type DaySeries = { agent: string; byDay: Map<string, DayValue> };
+type DragSelection = { startX: number; currentX: number };
+
+// Shared by ECharts and the pointer-selection overlay so a drag is accepted
+// only over the actual plot, never over its axes or the zoom slider.
+const CHART_GRID = { left: 60, right: 16, top: 36, bottom: 52 } as const;
+const MIN_DRAG_PX = 4;
 
 interface TimelineFilters {
   since?: string;
@@ -118,7 +131,7 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
 
   return {
     backgroundColor: "transparent",
-    grid: { left: 60, right: 16, top: 36, bottom: 52 },
+    grid: CHART_GRID,
     legend: {
       top: 0,
       left: 0,
@@ -159,7 +172,9 @@ function buildOption(series: DaySeries[], pal: ChartPalette) {
       splitLine: { lineStyle: { color: pal.edge } },
     },
     dataZoom: [
-      { type: "inside" },
+      // Wheel zoom remains available, but mouse-drag panning is disabled so
+      // an unmodified drag can always mean selecting a visible range.
+      { type: "inside", moveOnMouseMove: false },
       {
         type: "slider",
         height: 18,
@@ -279,10 +294,12 @@ function useEChart(
     },
     [],
   );
+
+  return chart;
 }
 
 // CostTimeline is the cost explorer's one persistent graph: daily spend
-// stacked by agent, on a real time axis, with wheel + slider zoom,
+// stacked by agent, on a real time axis, with range-select, wheel, and slider zoom,
 // following the page's date/agent/model filters. The rollup table below
 // it stays the accessible/table view of the same data.
 export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
@@ -311,7 +328,83 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
         : null,
     [series, theme],
   );
-  useEChart(el, option, [series, theme]);
+  const chart = useEChart(el, option, [series, theme]);
+  const [drag, setDrag] = useState<DragSelection | null>(null);
+  const [zoomed, setZoomed] = useState(false);
+
+  // Keep the contextual reset action in sync with direct selection, wheel,
+  // and slider zoom. setOption replaces the old dataZoom state whenever the
+  // filters or underlying series change, so sync immediately as well as on
+  // ECharts' datazoom event.
+  useEffect(() => {
+    const instance = chart.current;
+    if (!instance) return undefined;
+    const syncZoom = () => {
+      const raw = instance.getOption().dataZoom;
+      const zooms = Array.isArray(raw) ? raw : raw ? [raw] : [];
+      setZoomed(
+        zooms.some(
+          (zoom) =>
+            (typeof zoom.start === "number" && zoom.start > 0.001) ||
+            (typeof zoom.end === "number" && zoom.end < 99.999),
+        ),
+      );
+    };
+    instance.on("datazoom", syncZoom);
+    syncZoom();
+    return () => {
+      instance.off("datazoom", syncZoom);
+    };
+  }, [chart, series, theme]);
+
+  const pointInPlot = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.min(
+        Math.max(event.clientX - rect.left, CHART_GRID.left),
+        rect.width - CHART_GRID.right,
+      ),
+      y: event.clientY - rect.top,
+      height: rect.height,
+    };
+  };
+
+  const startSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const point = pointInPlot(event);
+    if (
+      point.y < CHART_GRID.top ||
+      point.y > point.height - CHART_GRID.bottom
+    ) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({ startX: point.x, currentX: point.x });
+  };
+
+  const moveSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const point = pointInPlot(event);
+    setDrag((current) =>
+      current ? { ...current, currentX: point.x } : current,
+    );
+  };
+
+  const finishSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const endX = pointInPlot(event).x;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    const left = Math.min(drag.startX, endX);
+    const right = Math.max(drag.startX, endX);
+    setDrag(null);
+    if (right - left < MIN_DRAG_PX || !chart.current) return;
+    const startValue = chart.current.convertFromPixel({ xAxisIndex: 0 }, left);
+    const endValue = chart.current.convertFromPixel({ xAxisIndex: 0 }, right);
+    chart.current.dispatchAction({ type: "dataZoom", startValue, endValue });
+  };
+
+  const resetZoom = () =>
+    chart.current?.dispatchAction({ type: "dataZoom", start: 0, end: 100 });
 
   return (
     <Panel
@@ -342,12 +435,55 @@ export function CostTimeline({ since, until, agent, model }: TimelineFilters) {
       {/* The container always mounts: unmounting it on an empty result
           made the whole page jump by the chart's height every time a
           filter emptied the range. */}
-      <div
-        ref={el}
-        className={`h-64 w-full ${series.length === 0 ? "hidden" : ""}`}
-        role="img"
-        aria-label="Daily API-equivalent cost stacked by agent; warning markers indicate incomplete cost coverage; the table below holds the same data"
-      />
+      <div className="relative">
+        <div
+          ref={el}
+          className={`h-64 w-full cursor-crosshair select-none ${series.length === 0 ? "hidden" : ""}`}
+          role="img"
+          aria-label="Daily API-equivalent cost stacked by agent; drag across the plot to zoom into a time range; warning markers indicate incomplete cost coverage; the table below holds the same data"
+          style={{ touchAction: "pan-y" }}
+          onPointerDown={startSelection}
+          onPointerMove={moveSelection}
+          onPointerUp={finishSelection}
+          onPointerCancel={() => setDrag(null)}
+        />
+        {drag && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute border border-accent bg-accent/15"
+            style={{
+              left: Math.min(drag.startX, drag.currentX),
+              top: CHART_GRID.top,
+              bottom: CHART_GRID.bottom,
+              width: Math.abs(drag.currentX - drag.startX),
+            }}
+          />
+        )}
+        {zoomed && (
+          <button
+            type="button"
+            onClick={resetZoom}
+            aria-label="Reset chart zoom"
+            title="Reset chart zoom"
+            className="absolute cursor-pointer top-3 right-3 z-10 flex h-[18px] w-[18px] items-center justify-center text-ink-dim hover:text-accent"
+          >
+            {/* ECharts' original dataZoom back icon, retained while direct
+                drag selection replaces its opt-in zoom control. */}
+            <svg
+              aria-hidden
+              viewBox="0 0 60 60"
+              className="h-3.5 w-3.5 fill-none stroke-current"
+            >
+              <path
+                d="M22 1.4 9.9 13.5l12.3 12.3M10.3 13.5h44.6v44.6H10.3v-26"
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        )}
+      </div>
       {series.length === 0 && (
         <EmptyNote>
           {isLoading ? "Loading…" : "No cost recorded in this range."}
