@@ -24,9 +24,11 @@ jobs:
       - name: Get version from flake.nix
         id: version
         run: |
-          # Match only the quoted assignment: the ccpeek-ui derivation
-          # carries an unquoted `version = self'...` reference above it.
-          VERSION=$(grep 'version = "' flake.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
+          # Anchor to the ccpeek derivation's pname: other quoted
+          # `version = "..."` assignments exist in the flake (e.g. the
+          # pinned Go override), and ccpeek-ui carries an unquoted
+          # `version = self'...` reference.
+          VERSION=$(grep -A1 'pname = "ccpeek";' flake.nix | sed -n 's/.*version = "\([^"]*\)".*/\1/p' | head -1)
           echo "version=$VERSION" >>$GITHUB_OUTPUT
       - name: Check if tag exists
         id: check_tag
