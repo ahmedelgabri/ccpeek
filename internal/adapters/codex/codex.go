@@ -406,7 +406,8 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					SourcePath: src.Path, Line: lineNo,
 					Detail: fmt.Sprintf(
 						"Codex input subsets exceed input total (%d cached + %d cache write > %d input); clamping ordinary input to zero",
-						delta.CachedInputTokens, delta.CacheWriteInputTokens, delta.InputTokens),
+						delta.CachedInputTokens, delta.CacheWriteInputTokens, delta.InputTokens,
+					),
 				}); err != nil {
 					return err
 				}

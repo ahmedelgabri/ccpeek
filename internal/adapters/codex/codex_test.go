@@ -220,7 +220,8 @@ func TestCacheSubsetsCannotCreateNegativeInput(t *testing.T) {
 }
 
 func TestSessionTitleSkipsInjectedContext(t *testing.T) {
-	src := writeRollout(t,
+	src := writeRollout(
+		t,
 		`{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"`+sessionID+`","cwd":"/tmp/demo"}}`,
 		`{"timestamp":"2026-07-06T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>synthetic context</recommended_plugins>"}]}}`,
 		`{"timestamp":"2026-07-06T09:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"explain the failing build"}]}}`,
