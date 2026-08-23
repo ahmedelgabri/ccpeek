@@ -17,12 +17,16 @@ ui:
 ui-dev:
     pnpm -C ui exec vite
 
-# The withui tag selects the full-product variant: the SPA's presence
-# is enforced at compile time (see internal/webui), so this recipe can
-# never ship a UI-less binary. Plain `go build` yields the API-only
-# variant instead.
-build: ui
+# Refresh pricing first, then exercise the updated snapshot through the full
+# test suite before compiling the full-product variant. The withui tag enforces
+# the SPA's presence at compile time (see internal/webui); plain `go build`
+# yields the API-only variant instead.
+build: update-pricing test
     go build -tags withui -o {{binary}} ./cmd/ccpeek/
+
+# Refresh the embedded LiteLLM pricing snapshot used by all build variants.
+update-pricing:
+    ./scripts/update-pricing.sh
 
 dev: ui
     go run -tags withui ./cmd/ccpeek --open --watch

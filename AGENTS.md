@@ -11,7 +11,7 @@ All tasks are managed via [just](https://github.com/casey/just). Install tools w
 | Command          | Purpose                                                                       |
 | ---------------- | ----------------------------------------------------------------------------- |
 | `just dev`       | Build the UI then run the server with `--open --watch`                        |
-| `just build`     | Build the UI then compile the Go binary to `cmd/ccpeek/ccpeek`                |
+| `just build`     | Refresh pricing, run all tests, then build the UI and compile the Go binary   |
 | `just ui`        | Build the SPA (`ui/` -> `internal/webui/dist`, embedded via go:embed)         |
 | `just ui-dev`    | Vite dev server with HMR, proxying `/api` to a running ccpeek server          |
 | `just test`      | Run all tests (unit + e2e)                                                    |

@@ -1,6 +1,6 @@
 {
   "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-  "fetched_at": "2026-08-22T11:39:57Z",
+  "fetched_at": "2026-08-23T07:44:00Z",
   "history": {
     "claude-sonnet-5": [
       {
@@ -1161,6 +1161,10 @@
       "input": 0.0000025,
       "output": 0.00001
     },
+    "azure/gpt-audio-mini": {
+      "input": 6e-7,
+      "output": 0.0000024
+    },
     "azure/gpt-audio-mini-2025-10-06": {
       "input": 6e-7,
       "output": 0.0000024
@@ -1197,6 +1201,11 @@
       "input": 0.000004,
       "output": 0.000016,
       "cache_read": 0.000004
+    },
+    "azure/gpt-realtime-mini": {
+      "input": 6e-7,
+      "output": 0.0000024,
+      "cache_read": 6e-8
     },
     "azure/gpt-realtime-mini-2025-10-06": {
       "input": 6e-7,
@@ -4457,18 +4466,6 @@
       "input": 0.000002,
       "output": 0.000012
     },
-    "gemini-3.1-flash-lite-image": {
-      "input": 2.5e-7,
-      "output": 0.0000015
-    },
-    "gemini/gemini-3.1-flash-lite-image": {
-      "input": 2.5e-7,
-      "output": 0.0000015
-    },
-    "vertex_ai/gemini-3.1-flash-lite-image": {
-      "input": 2.5e-7,
-      "output": 0.0000015
-    },
     "gemini-3.1-flash-image": {
       "input": 5e-7,
       "output": 0.000003
@@ -4476,6 +4473,11 @@
     "gemini-3.1-flash-image-preview": {
       "input": 5e-7,
       "output": 0.000003
+    },
+    "gemini-3.1-flash-lite-image": {
+      "input": 2.5e-7,
+      "output": 0.0000015,
+      "cache_read": 2.5e-8
     },
     "gemini-3.1-flash-lite-preview": {
       "input": 2.5e-7,
@@ -4773,6 +4775,10 @@
     "gemini/gemini-3.1-flash-image-preview": {
       "input": 5e-7,
       "output": 0.000003
+    },
+    "gemini/gemini-3.1-flash-lite-image": {
+      "input": 2.5e-7,
+      "output": 0.0000015
     },
     "gemini/deep-research-pro-preview-12-2025": {
       "input": 0.000002,
@@ -5498,32 +5504,32 @@
       "output": 0.000168
     },
     "gpt-5.6": {
-      "input": 0.000005,
-      "output": 0.00003,
-      "cache_write": 0.00000625,
-      "cache_read": 5e-7,
+      "input": 0.000004,
+      "output": 0.00002,
+      "cache_write": 0.000005,
+      "cache_read": 4e-7,
       "tiers": [
         {
           "above_input_tokens": 272000,
-          "input": 0.00001,
-          "output": 0.000045,
-          "cache_write": 0.0000125,
-          "cache_read": 0.000001
+          "input": 0.000008,
+          "output": 0.00003,
+          "cache_write": 0.00001,
+          "cache_read": 8e-7
         }
       ]
     },
     "gpt-5.6-sol": {
-      "input": 0.000005,
-      "output": 0.00003,
-      "cache_write": 0.00000625,
-      "cache_read": 5e-7,
+      "input": 0.000004,
+      "output": 0.00002,
+      "cache_write": 0.000005,
+      "cache_read": 4e-7,
       "tiers": [
         {
           "above_input_tokens": 272000,
-          "input": 0.00001,
-          "output": 0.000045,
-          "cache_write": 0.0000125,
-          "cache_read": 0.000001
+          "input": 0.000008,
+          "output": 0.00003,
+          "cache_write": 0.00001,
+          "cache_read": 8e-7
         }
       ]
     },
@@ -5588,17 +5594,17 @@
       ]
     },
     "daybreak-blue-latest": {
-      "input": 0.000005,
-      "output": 0.00003,
-      "cache_write": 0.00000625,
-      "cache_read": 5e-7,
+      "input": 0.000004,
+      "output": 0.00002,
+      "cache_write": 0.000005,
+      "cache_read": 4e-7,
       "tiers": [
         {
           "above_input_tokens": 272000,
-          "input": 0.00001,
-          "output": 0.000045,
-          "cache_write": 0.0000125,
-          "cache_read": 0.000001
+          "input": 0.000008,
+          "output": 0.00003,
+          "cache_write": 0.00001,
+          "cache_read": 8e-7
         }
       ]
     },
@@ -8388,6 +8394,16 @@
       "input": 3.8e-7,
       "output": 0.00000115
     },
+    "scx-ai/GLM-5.2": {
+      "input": 6.1e-7,
+      "output": 0.00000198,
+      "cache_read": 2.2e-7
+    },
+    "scx-ai/Qwen3.8-Max": {
+      "input": 0.00000165,
+      "output": 0.00000499,
+      "cache_read": 2.1e-7
+    },
     "snowflake/claude-3-5-sonnet": {
       "input": 0.000003,
       "output": 0.000015,
@@ -9622,6 +9638,11 @@
     "vertex_ai/gemini-3.1-flash-image-preview": {
       "input": 5e-7,
       "output": 0.000003
+    },
+    "vertex_ai/gemini-3.1-flash-lite-image": {
+      "input": 2.5e-7,
+      "output": 0.0000015,
+      "cache_read": 2.5e-8
     },
     "vertex_ai/gemini-3.1-flash-lite-preview": {
       "input": 2.5e-7,
@@ -12167,6 +12188,96 @@
         }
       ]
     },
+    "us.openai.gpt-5.6-sol": {
+      "input": 0.0000055,
+      "output": 0.000033,
+      "cache_write": 0.000006875,
+      "cache_read": 5.5e-7,
+      "tiers": [
+        {
+          "above_input_tokens": 272000,
+          "input": 0.000011,
+          "output": 0.0000495,
+          "cache_write": 0.00001375,
+          "cache_read": 0.0000011
+        }
+      ]
+    },
+    "global.openai.gpt-5.6-sol": {
+      "input": 0.000005,
+      "output": 0.00003,
+      "cache_write": 0.00000625,
+      "cache_read": 5e-7,
+      "tiers": [
+        {
+          "above_input_tokens": 272000,
+          "input": 0.00001,
+          "output": 0.000045,
+          "cache_write": 0.0000125,
+          "cache_read": 0.000001
+        }
+      ]
+    },
+    "us.openai.gpt-5.6-terra": {
+      "input": 0.0000022,
+      "output": 0.0000132,
+      "cache_write": 0.00000275,
+      "cache_read": 2.2e-7,
+      "tiers": [
+        {
+          "above_input_tokens": 272000,
+          "input": 0.0000044,
+          "output": 0.0000198,
+          "cache_write": 0.0000055,
+          "cache_read": 4.4e-7
+        }
+      ]
+    },
+    "global.openai.gpt-5.6-terra": {
+      "input": 0.000002,
+      "output": 0.000012,
+      "cache_write": 0.0000025,
+      "cache_read": 2e-7,
+      "tiers": [
+        {
+          "above_input_tokens": 272000,
+          "input": 0.000004,
+          "output": 0.000018,
+          "cache_write": 0.000005,
+          "cache_read": 4e-7
+        }
+      ]
+    },
+    "us.openai.gpt-5.6-luna": {
+      "input": 2.2e-7,
+      "output": 0.00000132,
+      "cache_write": 2.75e-7,
+      "cache_read": 2.2e-8,
+      "tiers": [
+        {
+          "above_input_tokens": 272000,
+          "input": 4.4e-7,
+          "output": 0.00000198,
+          "cache_write": 5.5e-7,
+          "cache_read": 4.4e-8
+        }
+      ]
+    },
+    "global.openai.gpt-5.6-luna": {
+      "input": 2e-7,
+      "output": 0.0000012,
+      "cache_write": 2.5e-7,
+      "cache_read": 2e-8,
+      "tiers": [
+        {
+          "above_input_tokens": 272000,
+          "input": 4e-7,
+          "output": 0.0000018,
+          "cache_write": 5e-7,
+          "cache_read": 4e-8
+        }
+      ]
+    },
     "bedrock_mantle/openai.gpt-5.5": {
       "input": 0.0000055,
       "output": 0.000033,
@@ -12383,6 +12494,11 @@
       "cache_read": 2e-7
     },
     "cognition/swe-1.7": {
+      "input": 5e-7,
+      "output": 0.0000025,
+      "cache_read": 2e-7
+    },
+    "cognition/swe-1.7-lightning": {
       "input": 0.0000025,
       "output": 0.0000125,
       "cache_read": 0.000001

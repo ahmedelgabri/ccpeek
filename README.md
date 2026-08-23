@@ -37,20 +37,19 @@ nix profile install github:ahmedelgabri/ccpeek
 
 ### Build from source (full product)
 
-Requires Go 1.25+, Node.js, and pnpm (for building the web UI):
+Requires Go 1.25+, Node.js, pnpm, curl, jq, and Playwright's Chromium browser:
 
 ```sh
 # Clone and build
 git clone https://github.com/ahmedelgabri/ccpeek.git
 cd ccpeek
 pnpm install
+pnpm exec playwright install chromium
 just build
 # Binary is at cmd/ccpeek/ccpeek
 ```
 
-The full product is compiled with the `withui` build tag, which
-enforces the embedded UI's presence at compile time — `just build` (and
-every release path) cannot produce a UI-less binary.
+`just build` refreshes the embedded pricing snapshot, runs the full test suite against it, and then compiles the product with the `withui` build tag. The tag enforces the embedded UI's presence at compile time, so `just build` (and every release path) cannot produce a UI-less binary.
 
 ### `go install` (API-only variant)
 
