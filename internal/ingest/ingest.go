@@ -56,6 +56,9 @@ type Options struct {
 	// timeout; this states it. Like Progress, it runs on the ingest
 	// goroutine: keep it cheap.
 	OnPass func(running bool)
+	// WatchPass runs after each successful watch pass, including unchanged
+	// passes, so interrupted downstream scans can retry without new files.
+	WatchPass func(*Report)
 }
 
 // Progress is one pipeline progress event.
@@ -201,6 +204,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 			// Only prune sources under roots that are still accessible now.
 			covered := false
 			for _, rr := range roots {
+				if rr.root.Agent != known[path].Agent {
+					continue
+				}
 				rel, err := filepath.Rel(rr.root.Path, path)
 				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 					continue
@@ -531,11 +537,15 @@ func (r *Runner) resolveRoots(opts Options) ([]resolvedRoot, []canon.Issue) {
 				// A missing default root just means the agent isn't
 				// installed; a missing explicit root is a user mistake that
 				// must surface (docs/v2-plan.md §5.1).
-				if root.Origin != agent.RootFromDefault {
+				if root.Origin != agent.RootFromDefault || !os.IsNotExist(err) {
+					severity := canon.SeverityWarn
+					if !os.IsNotExist(err) {
+						severity = canon.SeverityError
+					}
 					issues = append(issues, canon.Issue{
-						Agent: a.Slug(), Severity: canon.SeverityWarn,
+						Agent: a.Slug(), Severity: severity,
 						Category: "root", SourcePath: root.Path,
-						Detail: fmt.Sprintf("configured root (%s) not found", root.Origin),
+						Detail: fmt.Sprintf("root (%s) unavailable: %v", root.Origin, err),
 					})
 				}
 				continue

@@ -234,6 +234,9 @@ database is opened read-only and never modified.`,
 		if err != nil {
 			return err
 		}
+		if err := eng.runner.Reconcile(ctx); err != nil {
+			return err
+		}
 		return emit(report, false)
 	},
 }

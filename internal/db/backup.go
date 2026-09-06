@@ -22,6 +22,25 @@ func (s *Store) Backup(ctx context.Context, destination string) error {
 	return snapshot(ctx, s.db, destination)
 }
 
+// BackupFile snapshots an archive without first migrating it. The CLI uses
+// this path so an older database can be backed up before its first new-version open.
+func BackupFile(ctx context.Context, source, destination string) error {
+	ctx, unlock, err := lockPath(ctx, source)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	db, err := sql.Open("sqlite", sqliteutil.URI(source, "mode=ro&_pragma=busy_timeout(5000)"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := verifyBackup(ctx, db); err != nil {
+		return err
+	}
+	return snapshot(ctx, db, destination)
+}
+
 // Restore writes into a NEW archive path. Replacing a database that a running
 // server has open is unsafe, so overwrite is deliberately not supported.
 func Restore(ctx context.Context, source, destination string) error {

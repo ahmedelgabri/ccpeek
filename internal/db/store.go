@@ -7,8 +7,8 @@
 // databases; opening a current database performs no scans, no backfills,
 // no repairs. The store is an archive, not a cache — see schemaVersion
 // for the migration policy (none pre-release, mandatory after v2.0).
-// Derived data and user state are disjoint — ResetDerived (--rebuild)
-// never touches user_annotations.
+// Rebuild retains archive records and user state while reparsing available
+// sources. It does not use the low-level destructive ResetDerived helper.
 package db
 
 import (
@@ -265,7 +265,8 @@ func (s *Store) createAll(ctx context.Context) error {
 }
 
 // ResetDerived drops and recreates everything rebuildable from sources.
-// User state (user_annotations) survives — this is what --rebuild calls.
+// User state survives. This low-level destructive reset is not used by
+// --rebuild, which calls PrepareRebuild to retain irreplaceable history.
 //
 // Every drop and every recreate lives in a SINGLE transaction. Dropping
 // the search index outside it meant a failure (or a kill) between the two

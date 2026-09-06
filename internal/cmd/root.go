@@ -75,12 +75,14 @@ func init() {
 	rootCmd.PersistentFlags().String("data-file", defaultDataFile,
 		"Path of the LEGACY v1 database (imported once, never modified). The v2 index this ccpeek reads and writes lives at a sibling derived from this name — ccpeek2.db for the default ccpeek.db, <name>.v2.db otherwise. Do NOT point it at a v2 index")
 
+	rootCmd.PersistentFlags().String("index-file", "", "Use this v2 archive directly; --data-file may optionally name a legacy database to import")
+
 	rootCmd.Flags().IntP("port", "p", 3000, "Server port")
 	rootCmd.Flags().Bool("skip-index", false, "Skip indexing, serve existing data")
 	rootCmd.Flags().Bool("index-only", false, "Index and exit (don't start server)")
 	rootCmd.Flags().BoolP("open", "o", false, "Open browser after starting server")
 	rootCmd.Flags().BoolP("watch", "w", false, "Re-index while serving, on filesystem changes")
-	rootCmd.Flags().Bool("rebuild", false, "Force full rebuild (drop all data and re-index from scratch)")
+	rootCmd.Flags().Bool("rebuild", false, "Reparse available sources and regenerate derived data; retain missing-source history")
 	rootCmd.Flags().Bool("prune", false, "Remove data from source files that no longer exist on disk")
 	rootCmd.Flags().Bool("skip-scan", false, "Skip secret scanning after indexing")
 	rootCmd.Flags().BoolP("quiet", "q", false, "Suppress informational output")
@@ -310,7 +312,13 @@ func run(cmd *cobra.Command, args []string) error {
 	watchOpts.Prune = prune
 
 	var ready atomic.Bool
+	indexCtx, stopIndexing := context.WithCancel(ctx)
+	var indexing sync.WaitGroup
+	defer func() { stopIndexing(); indexing.Wait() }()
+	indexing.Add(1)
 	go func() {
+		defer indexing.Done()
+		ctx := indexCtx
 		if bootstrap != nil {
 			err := bootstrap(ctx)
 			if err != nil {
@@ -343,19 +351,24 @@ func run(cmd *cobra.Command, args []string) error {
 			events.Notify() // findings changed; refresh the scan views
 		} else {
 			ready.Store(true)
+			if err := runScan(ctx, nil); err != nil && ctx.Err() == nil {
+				logf("WARNING: %v\n", err)
+			}
+			events.Notify()
 		}
 		if watch {
 			logf("Watch mode enabled (re-indexing on changes)\n")
 			// Watch passes carry the prune policy the serve run started
 			// with, and re-scan what each pass changed — otherwise new
 			// secrets (and pruned sources) stay stale until a restart.
-			if err := eng.runner.Watch(ctx, watchOpts, 0, func(rep *ingest.Report) {
+			watchOpts.WatchPass = func(rep *ingest.Report) {
 				events.Notify() // fresh data first; the scan follows
 				if err := runScan(ctx, rep); err != nil && ctx.Err() == nil {
 					logf("WARNING: %v\n", err)
 				}
 				events.Notify()
-			}); err != nil && ctx.Err() == nil {
+			}
+			if err := eng.runner.Watch(ctx, watchOpts, 0, nil); err != nil && ctx.Err() == nil {
 				logf("WARNING: watch stopped: %v\n", err)
 			}
 		}
@@ -379,8 +392,12 @@ func run(cmd *cobra.Command, args []string) error {
 //
 // It returns errors rather than exiting: on a serving path a scan
 // problem must not take the server down.
-func scanChanged(ctx context.Context, eng *engine, ingestReport *ingest.Report, logf func(string, ...any)) error {
-	if ingestReport == nil || ingestReport.FilesChanged == 0 {
+func scanChanged(ctx context.Context, eng *engine, _ *ingest.Report, logf func(string, ...any)) error {
+	status, err := eng.query.ArchiveStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if !status.Scan.Pending {
 		return nil
 	}
 	logf("Scanning for secrets...\n")

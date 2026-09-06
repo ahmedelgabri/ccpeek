@@ -130,6 +130,14 @@ func TestRebuildRetainsArchivedSourcesAndCreatesBackup(t *testing.T) {
 	if _, err := runner.Run(context.Background(), opts); err != nil {
 		t.Fatal(err)
 	}
+	var archivePath string
+	if err := store.DB().QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&archivePath); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := filepath.Glob(archivePath + ".before-rebuild-*.db")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups=%v err=%v", backups, err)
+	}
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM sessions`); n != 2 {
 		t.Fatalf("sessions=%d", n)
 	}

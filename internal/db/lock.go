@@ -21,6 +21,9 @@ func (s *Store) LockMaintenance(ctx context.Context) (context.Context, func(), e
 }
 
 func lockPath(ctx context.Context, path string) (context.Context, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return ctx, nil, err
+	}
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return ctx, nil, err
@@ -40,6 +43,10 @@ func lockPath(ctx context.Context, path string) (context.Context, func(), error)
 	timer := time.NewTicker(50 * time.Millisecond)
 	defer timer.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			f.Close()
+			return ctx, nil, err
+		}
 		acquired, err := tryFileLock(f)
 		if err != nil {
 			f.Close()
