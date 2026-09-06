@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,28 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/agent/agenttest"
 )
+
+func TestWithPartsPreservesUnknownFields(t *testing.T) {
+	message := []byte(`{"role":"assistant","metadata":{"large":9007199254740993}}`)
+	part := json.RawMessage(`{"type":"text","text":"answer","unknown":{"large":9007199254740993}}`)
+	raw, err := withParts(message, "msg_1", "ses_1", []json.RawMessage{part})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var merged struct {
+		Metadata json.RawMessage   `json:"metadata"`
+		Parts    []json.RawMessage `json:"parts"`
+	}
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		t.Fatal(err)
+	}
+	if string(merged.Metadata) != `{"large":9007199254740993}` || len(merged.Parts) != 1 || string(merged.Parts[0]) != string(part) {
+		t.Fatalf("lost raw fields: %s", raw)
+	}
+	if _, err := withParts(message, "msg_1", "ses_1", []json.RawMessage{json.RawMessage(`{"type":`)}); err == nil {
+		t.Fatal("malformed part accepted")
+	}
+}
 
 func TestNativeSeparatePartStorage(t *testing.T) {
 	root := agent.Root{Agent: Slug, Path: t.TempDir()}

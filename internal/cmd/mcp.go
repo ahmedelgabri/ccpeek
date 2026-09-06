@@ -149,14 +149,14 @@ func liveIndex(ctx context.Context, eng *engine, bootstrap func(context.Context)
 			return
 		}
 		if err := index.during(func() error {
-			return scanChanged(ctx, eng, eng.report, logf)
+			return scanPending(ctx, eng, logf)
 		}); err != nil && ctx.Err() == nil {
 			logf("WARNING: %v\n", err)
 		}
 	}
-	opts.WatchPass = func(rep *ingest.Report) {
+	opts.WatchPass = func() {
 		if err := index.during(func() error {
-			return scanChanged(ctx, eng, rep, logf)
+			return scanPending(ctx, eng, logf)
 		}); err != nil && ctx.Err() == nil {
 			logf("WARNING: %v\n", err)
 		}

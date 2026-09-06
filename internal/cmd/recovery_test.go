@@ -5,8 +5,6 @@ import (
 	"io"
 	"path/filepath"
 	"testing"
-
-	"github.com/ahmedelgabri/ccpeek/internal/ingest"
 )
 
 func TestAutomaticScanCatchesUpAfterUnchangedIndex(t *testing.T) {
@@ -20,7 +18,7 @@ func TestAutomaticScanCatchesUpAfterUnchangedIndex(t *testing.T) {
 	defer eng.Close()
 	// No scan accompanied the first index. An unchanged later pass must still
 	// discover the scan backlog, rather than gate work on FilesChanged.
-	if err := scanChanged(context.Background(), eng, &ingest.Report{}, func(string, ...any) {}); err != nil {
+	if err := scanPending(context.Background(), eng, func(string, ...any) {}); err != nil {
 		t.Fatal(err)
 	}
 	var n int

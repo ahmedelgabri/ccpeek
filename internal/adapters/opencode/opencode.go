@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -142,29 +141,11 @@ type messageDoc struct {
 	Parts []part `json:"parts"`
 }
 type part struct {
-	Raw    json.RawMessage `json:"-"`
 	Type   string          `json:"type"`
 	Text   string          `json:"text"`
 	Tool   string          `json:"tool"`
 	CallID string          `json:"callID"`
 	State  json.RawMessage `json:"state"`
-}
-
-func (p *part) UnmarshalJSON(raw []byte) error {
-	type fields part
-	if err := json.Unmarshal(raw, (*fields)(p)); err != nil {
-		return err
-	}
-	p.Raw = append(p.Raw[:0], raw...)
-	return nil
-}
-
-func (p part) MarshalJSON() ([]byte, error) {
-	if len(p.Raw) > 0 {
-		return p.Raw, nil
-	}
-	type fields part
-	return json.Marshal(fields(p))
 }
 
 func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
@@ -200,7 +181,12 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		if err != nil {
 			return err
 		}
-		var md messageDoc
+		// Keep parts as raw JSON until emitSession decodes the merged message.
+		// Unknown fields survive without custom part marshal methods.
+		var md struct {
+			ID    string            `json:"id"`
+			Parts []json.RawMessage `json:"parts"`
+		}
 		if err := json.Unmarshal(raw, &md); err != nil {
 			return fmt.Errorf("invalid message JSON %s: %w", path, err)
 		}
@@ -224,11 +210,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			if err != nil {
 				return err
 			}
-			var part part
-			if err := json.Unmarshal(data, &part); err != nil {
-				return err
-			}
-			md.Parts = append(md.Parts, part)
+			md.Parts = append(md.Parts, json.RawMessage(data))
 		}
 		// Preserve unknown message fields; merge the native parts without losing
 		// raw provenance that a newer parser or the secret scanner may need.
@@ -241,7 +223,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 	return emitSession(ctx, src.Path, doc, msgs, sink)
 }
 
-func withParts(raw []byte, id, sessionID string, parts []part) ([]byte, error) {
+func withParts(raw []byte, id, sessionID string, parts []json.RawMessage) ([]byte, error) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {
 		return nil, err
@@ -251,7 +233,11 @@ func withParts(raw []byte, id, sessionID string, parts []part) ([]byte, error) {
 	}
 	object["id"], _ = json.Marshal(id)
 	object["sessionID"], _ = json.Marshal(sessionID)
-	object["parts"], _ = json.Marshal(parts)
+	encoded, err := json.Marshal(parts)
+	if err != nil {
+		return nil, err
+	}
+	object["parts"] = encoded
 	return json.Marshal(object)
 }
 
@@ -456,7 +442,7 @@ func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink a
 		if err != nil {
 			return fmt.Errorf("unsupported OpenCode part schema: %w", err)
 		}
-		byMessage := map[string][]part{}
+		byMessage := map[string][]json.RawMessage{}
 		for rows.Next() {
 			var id string
 			var raw []byte
@@ -464,18 +450,18 @@ func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink a
 				rows.Close()
 				return err
 			}
+			// Validate even parts without a matching message.
 			var p part
 			if err := json.Unmarshal(raw, &p); err != nil {
 				rows.Close()
 				return err
 			}
-			byMessage[id] = append(byMessage[id], p)
+			byMessage[id] = append(byMessage[id], json.RawMessage(raw))
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		sort.Strings(ids)
 		var messages []json.RawMessage
 		for _, id := range ids {
 			raw, err := withParts(rawByID[id], id, doc.ID, byMessage[id])

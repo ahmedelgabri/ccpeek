@@ -36,8 +36,6 @@ type engine struct {
 	pricing *pricing.Table
 	query   *query.Service
 	runner  *ingest.Runner
-	// report is the bootstrap ingest run's result (nil when skipped).
-	report *ingest.Report
 }
 
 // storeDBPath places the store next to the legacy v1 file (docs/v2-plan.md
@@ -206,7 +204,6 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 		if err != nil {
 			return fmt.Errorf("indexing: %w", err)
 		}
-		eng.report = report
 		if report.FilesChanged > 0 {
 			fmt.Fprintf(logw, "Indexed %d changed source(s): %d sessions, %d messages, %d artifacts (%s)\n",
 				report.FilesChanged, report.Sessions, report.Messages,

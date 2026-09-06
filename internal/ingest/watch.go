@@ -172,7 +172,7 @@ func (r *Runner) Watch(ctx context.Context, opts Options, debounce time.Duration
 				continue // transient failure: keep watching
 			}
 			if opts.WatchPass != nil {
-				opts.WatchPass(report)
+				opts.WatchPass()
 			}
 			if report.FilesChanged > 0 && onChange != nil {
 				onChange(report)
@@ -295,7 +295,7 @@ func (r *Runner) poll(ctx context.Context, opts Options, t pollTimings, onChange
 				continue
 			}
 			if opts.WatchPass != nil {
-				opts.WatchPass(report)
+				opts.WatchPass()
 			}
 			if report.FilesChanged > 0 {
 				lastChange = time.Now()

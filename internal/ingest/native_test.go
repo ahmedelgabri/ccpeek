@@ -40,6 +40,17 @@ func TestSQLiteSourceReconcilesDeletedSessions(t *testing.T) {
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM sessions`); n != 1 {
 		t.Fatalf("sessions=%d", n)
 	}
+	// A failed full parse must retain the previous source transaction.
+	if _, err := source.Exec(`UPDATE part SET data='{"type":false}'`); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runner.Run(context.Background(), opts)
+	if err != nil || report.Status != "partial" {
+		t.Fatalf("failed parse: %+v %v", report, err)
+	}
+	if text := queryString(t, store, `SELECT text_content FROM messages`); text != "WAL text" {
+		t.Fatalf("lost retained text: %q", text)
+	}
 	for _, q := range []string{`DELETE FROM part`, `DELETE FROM message`, `DELETE FROM session`} {
 		if _, err := source.Exec(q); err != nil {
 			t.Fatal(err)

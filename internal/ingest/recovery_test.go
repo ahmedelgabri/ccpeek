@@ -2,11 +2,13 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
@@ -31,6 +33,12 @@ func usageLine(tokens int) string {
 }
 
 func TestInterruptedPassRepairsPopulatedRollups(t *testing.T) {
+	t.Run("index", func(t *testing.T) { testInterruptedPassRepair(t, false) })
+	t.Run("repair without sources", func(t *testing.T) { testInterruptedPassRepair(t, true) })
+}
+
+func testInterruptedPassRepair(t *testing.T, repairOnly bool) {
+	t.Helper()
 	runner, store := newRunner(t)
 	root := t.TempDir()
 	path := filepath.Join(root, "projects", "project", "review.jsonl")
@@ -50,18 +58,52 @@ func TestInterruptedPassRepairsPopulatedRollups(t *testing.T) {
 	if _, err := runner.Run(ctx, opts); err == nil {
 		t.Fatal("expected interruption")
 	}
-	opts.Progress = nil
-	report, err := runner.Run(context.Background(), opts)
-	if err != nil {
-		t.Fatal(err)
+	if repairOnly {
+		// Recovery must use committed records, not re-open their sources.
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := runner.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		opts.Progress = nil
+		report, err := runner.Run(context.Background(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.FilesChanged != 0 {
+			t.Fatalf("unexpected reparse: %+v", report)
+		}
 	}
-	if report.FilesChanged != 0 {
-		t.Fatalf("unexpected reparse: %+v", report)
+	if dirty, err := store.DerivedDirty(context.Background()); err != nil || dirty {
+		t.Fatalf("derived state not repaired: dirty=%v err=%v", dirty, err)
 	}
 	raw := queryInt(t, store, `SELECT SUM(input_tokens) FROM message_usage`)
 	rolled := queryInt(t, store, `SELECT SUM(input_tokens) FROM rollup_usage_daily`)
 	if raw != 200 || rolled != raw {
 		t.Fatalf("raw=%d rolled=%d", raw, rolled)
+	}
+}
+
+func TestWatchPassRunsWithoutChangedSources(t *testing.T) {
+	runner, _ := newRunner(t)
+	opts := isolatedOptions(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	passes, changes := 0, 0
+	opts.WatchPass = func() {
+		passes++
+		if passes == 2 {
+			cancel()
+		}
+	}
+	err := runner.poll(ctx, opts, pollTimings{
+		idle: time.Millisecond, fast: time.Millisecond,
+		hotFor: time.Second, debounce: time.Millisecond,
+	}, func(*Report) { changes++ })
+	if !errors.Is(err, context.Canceled) || passes != 2 || changes != 0 {
+		t.Fatalf("watch passes=%d changes=%d err=%v", passes, changes, err)
 	}
 }
 

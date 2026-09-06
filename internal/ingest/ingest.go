@@ -58,7 +58,7 @@ type Options struct {
 	OnPass func(running bool)
 	// WatchPass runs after each successful watch pass, including unchanged
 	// passes, so interrupted downstream scans can retry without new files.
-	WatchPass func(*Report)
+	WatchPass func()
 }
 
 // Progress is one pipeline progress event.
@@ -117,12 +117,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		opts.OnPass(true)
 		defer opts.OnPass(false)
 	}
-	lockedCtx, unlock, err := r.store.LockMaintenance(ctx)
+	ctx, unlock, err := r.store.LockMaintenance(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	ctx = lockedCtx
 	started := time.Now()
 	if opts.Getenv == nil {
 		opts.Getenv = os.Getenv
@@ -197,7 +196,6 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		}
 	}
 
-	prunedSources := 0
 	if opts.Prune {
 		pruned, err := r.store.PruneMissingSources(ctx, func(path string) bool {
 			// An unavailable root is not evidence that its archive was deleted.
@@ -228,71 +226,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		if err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
-		if pruned > 0 {
-			prunedSources = pruned
-			report.FilesChanged += pruned // force facet/rollup regeneration
-		}
+		report.FilesChanged += pruned
 	}
 
-	// Parked links are always retried — a pass that changed nothing still
-	// reports how many are outstanding — but only a pass that INGESTED
-	// something is allowed to age them towards being dropped. Prune counts
-	// as changed (it is folded into FilesChanged above): it can delete the
-	// very endpoint a link was waiting for. Watch mode fires a pass per
-	// debounce, so ageing on every call made the attempt limit a measure of
-	// elapsed time rather than of ingest activity.
-	changed := report.FilesChanged > 0
-	if _, pending, err := r.store.ResolvePending(ctx, changed); err != nil {
-		return nil, r.fail(ctx, report, started, err)
-	} else {
-		report.LinksPending = pending
-	}
-	// Artifacts whose provenance lives in their CONTENT — a plan matched by
-	// its markdown, a memory by the path a tool call wrote — are linked by
-	// rules each adapter declares (agent.LinkRuler). The rules RECONCILE
-	// the complete (artifact, session) pair set every pass: a later session
-	// producing an already-linked artifact gains its link, and one
-	// rewritten under the same name loses the links whose evidence no
-	// longer holds.
-	//
-	// Gated on the pass having changed something. A rule reads every
-	// artifact of its kind and every call that could have produced one, so
-	// running them unconditionally made each watch-mode debounce — most of
-	// which change nothing relevant — pay a full pass over the corpus.
-	dirty, err := r.store.DerivedDirty(ctx)
+	report.LinksPending, err = r.reconcile(ctx, report.FilesChanged > 0)
 	if err != nil {
-		return nil, r.fail(ctx, report, started, err)
-	}
-	if report.FilesChanged > 0 || dirty {
-		if _, _, err := r.store.ResolveArtifactLinks(ctx, r.linkRules()); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-	}
-	// Workspaces and usage rollups derive from sessions and messages;
-	// sidecar-only passes (artifacts, history) leave both untouched and
-	// skip the rebuild. Prune can delete session rows without emitting
-	// records, so it always counts as dirty. Rollups also regenerate when
-	// they are empty despite indexed usage — schema migrations drop them
-	// (the split columns rebuild here) and this self-heals instead of
-	// leaving Usage blank until the next change.
-	needRollups := dirty || report.Sessions > 0 || report.Messages > 0 || prunedSources > 0
-	if !needRollups {
-		var err error
-		needRollups, err = r.store.RollupsNeedRegeneration(ctx, r.pricer)
-		if err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-	}
-	if needRollups {
-		if err := r.store.RefreshWorkspaces(ctx); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-		if err := r.store.RefreshRollups(ctx, r.pricer); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-	}
-
-	if err := r.store.SetMeta(ctx, "derived_dirty", "0"); err != nil {
 		return nil, r.fail(ctx, report, started, err)
 	}
 

@@ -259,17 +259,13 @@ func run(cmd *cobra.Command, args []string) error {
 			}
 	}
 
-	// The mutex serializes the bootstrap scan with watch-triggered
-	// rescans — the scanner's per-entity state updates must not
-	// interleave.
-	var scanMu sync.Mutex
-	runScan := func(ctx context.Context, ingestReport *ingest.Report) error {
+	// Scans run serially with watch passes and acquire the archive's
+	// maintenance lock themselves, including across processes.
+	runScan := func(ctx context.Context) error {
 		if skipScan {
 			return nil
 		}
-		scanMu.Lock()
-		defer scanMu.Unlock()
-		return scanChanged(ctx, eng, ingestReport, logf)
+		return scanPending(ctx, eng, logf)
 	}
 
 	if indexOnly {
@@ -278,7 +274,7 @@ func run(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
-		return runScan(ctx, eng.report)
+		return runScan(ctx)
 	}
 
 	// Serve first: the port is reachable immediately and the first index
@@ -335,35 +331,23 @@ func run(cmd *cobra.Command, args []string) error {
 				}
 				return
 			}
-			ready.Store(true)
-			events.Notify()
-			// The bootstrap scan runs to completion BEFORE watch starts:
-			// the scanner pages messages across several read snapshots, so
-			// a concurrent watch ingest could rewrite sessions mid-scan and
-			// leave scan state pairing a new content hash with a stale page
-			// set. The server is already serving; only watch pickup waits.
-			// Watch passes themselves scan inside their onChange callback,
-			// which the watch loop runs synchronously between passes — so
-			// ingest and scanning never overlap anywhere.
-			if err := runScan(ctx, eng.report); err != nil && ctx.Err() == nil {
-				logf("WARNING: %v\n", err)
-			}
-			events.Notify() // findings changed; refresh the scan views
-		} else {
-			ready.Store(true)
-			if err := runScan(ctx, nil); err != nil && ctx.Err() == nil {
-				logf("WARNING: %v\n", err)
-			}
-			events.Notify()
 		}
+		ready.Store(true)
+		events.Notify()
+		// Catch up on scans even when bootstrap indexing was skipped.
+		// Finish this scan before starting the watch loop.
+		if err := runScan(ctx); err != nil && ctx.Err() == nil {
+			logf("WARNING: %v\n", err)
+		}
+		events.Notify()
 		if watch {
 			logf("Watch mode enabled (re-indexing on changes)\n")
 			// Watch passes carry the prune policy the serve run started
 			// with, and re-scan what each pass changed — otherwise new
 			// secrets (and pruned sources) stay stale until a restart.
-			watchOpts.WatchPass = func(rep *ingest.Report) {
+			watchOpts.WatchPass = func() {
 				events.Notify() // fresh data first; the scan follows
-				if err := runScan(ctx, rep); err != nil && ctx.Err() == nil {
+				if err := runScan(ctx); err != nil && ctx.Err() == nil {
 					logf("WARNING: %v\n", err)
 				}
 				events.Notify()
@@ -386,13 +370,9 @@ func run(cmd *cobra.Command, args []string) error {
 	})))
 }
 
-// scanChanged scans what an ingest pass changed and reports through
-// logf. Both serving paths use it — HTTP and MCP index the same store
-// with the same passes, and a second copy of this would drift.
-//
-// It returns errors rather than exiting: on a serving path a scan
-// problem must not take the server down.
-func scanChanged(ctx context.Context, eng *engine, _ *ingest.Report, logf func(string, ...any)) error {
+// scanPending catches up from persisted scan coverage, independently of
+// whether the latest ingest changed files. HTTP and MCP share this path.
+func scanPending(ctx context.Context, eng *engine, logf func(string, ...any)) error {
 	status, err := eng.query.ArchiveStatus(ctx)
 	if err != nil {
 		return err
