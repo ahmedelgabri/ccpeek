@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 16
+const schemaVersion = 17
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -433,6 +433,8 @@ CREATE TRIGGER IF NOT EXISTS search_docs_au AFTER UPDATE ON search_docs BEGIN
 END;
 `
 
+const dirtySessionsSchema = `CREATE TABLE IF NOT EXISTS dirty_sessions (session_id INTEGER PRIMARY KEY);`
+
 // usageClaimsSchema preserves the best observation of a request independently
 // of whichever transcript copy currently owns its materialized usage row.
 const usageClaimsSchema = `
@@ -467,6 +469,7 @@ var derivedTables = []string{
 	"scan_state",
 	"rollup_session_days",
 	"rollup_usage_daily",
+	"dirty_sessions",
 	"ingest_issues",
 	"ingest_runs",
 	"source_files",
@@ -546,5 +549,13 @@ var migrations = []migration{
 			}
 		}
 		return seedUsageClaims(ctx, tx)
+	},
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, q := range []string{dirtySessionsSchema, `INSERT INTO dirty_sessions SELECT id FROM sessions`, `INSERT OR REPLACE INTO meta(key,value) VALUES ('derived_dirty','1'),('rollups_full','1')`} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
 	},
 }

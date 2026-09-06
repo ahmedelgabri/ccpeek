@@ -278,10 +278,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		}
 	}
 	if needRollups {
-		if err := r.store.RegenerateWorkspaces(ctx); err != nil {
+		if err := r.store.RefreshWorkspaces(ctx); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
-		if err := r.store.RegenerateRollups(ctx, r.pricer); err != nil {
+		if err := r.store.RefreshRollups(ctx, r.pricer); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
 	}

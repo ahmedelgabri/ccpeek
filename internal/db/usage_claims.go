@@ -49,6 +49,9 @@ func bestUsage(ctx context.Context, tx *sql.Tx, k usageKey, candidate canon.Usag
 // rememberUsage queues only keys whose owner this transaction is removing.
 // Ownership is restored after ALL deletions, never onto another doomed copy.
 func (w *Writer) rememberUsage(sessionID int64) error {
+	if err := w.markSessionDirty(sessionID); err != nil {
+		return err
+	}
 	rows, err := w.tx.QueryContext(w.ctx, `SELECT s.agent_id,m.content_id,u.request_id FROM message_usage u JOIN messages m ON m.id=u.message_id JOIN sessions s ON s.id=m.session_id WHERE s.id=? AND m.content_id<>''`, sessionID)
 	if err != nil {
 		return err
@@ -82,6 +85,9 @@ func (w *Writer) restoreUsageOwners() error {
 		}
 		var u canon.Usage
 		if err := json.Unmarshal([]byte(raw), &u); err != nil {
+			return err
+		}
+		if err := w.markMessageDirty(id); err != nil {
 			return err
 		}
 		if err := w.insertUsage(id, u); err != nil {

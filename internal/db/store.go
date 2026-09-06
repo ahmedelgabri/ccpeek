@@ -255,7 +255,7 @@ func (s *Store) createAll(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, derivedSchema); err != nil {
 		return fmt.Errorf("creating derived schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, userSchema+usageClaimsSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, userSchema+usageClaimsSchema+dirtySessionsSchema); err != nil {
 		return fmt.Errorf("creating user schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {
@@ -298,7 +298,7 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 			return fmt.Errorf("dropping %s: %w", table, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, derivedSchema+usageClaimsSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, derivedSchema+usageClaimsSchema+dirtySessionsSchema); err != nil {
 		return fmt.Errorf("recreating derived schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {

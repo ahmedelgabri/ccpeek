@@ -26,6 +26,8 @@ func (s *Store) PrepareRebuild(ctx context.Context) error {
 	defer tx.Rollback()
 	for _, q := range []string{
 		`UPDATE source_files SET stat_sig='',parse_version=0`,
+		`INSERT OR IGNORE INTO dirty_sessions SELECT id FROM sessions`,
+		`INSERT OR REPLACE INTO meta(key,value) VALUES ('rollups_full','1')`,
 		`INSERT OR REPLACE INTO meta(key,value) VALUES ('derived_dirty','1')`,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {

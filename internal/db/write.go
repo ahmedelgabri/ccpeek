@@ -19,11 +19,12 @@ import (
 // transaction, and routes links whose target session isn't ingested yet to
 // the pending tables for end-of-run resolution.
 type Writer struct {
-	tx          *sql.Tx
-	ctx         context.Context
-	agents      map[canon.AgentSlug]int64
-	sessions    map[sessionKey]int64
-	orphanUsage []usageKey
+	tx            *sql.Tx
+	ctx           context.Context
+	agents        map[canon.AgentSlug]int64
+	sessions      map[sessionKey]int64
+	orphanUsage   []usageKey
+	dirtySessions map[int64]bool
 }
 
 type sessionKey struct {
@@ -123,7 +124,7 @@ func (w *Writer) UpsertSession(sess canon.Session, contentHash string) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	return id, nil
+	return id, w.markSessionDirty(id)
 }
 
 // AdvanceSession updates an existing session from attributes folded out
@@ -156,7 +157,7 @@ func (w *Writer) AdvanceSession(sess canon.Session, contentHash string) (int64, 
 		sess.CWD, sess.SourcePath, contentHash, id); err != nil {
 		return 0, fmt.Errorf("advancing session %s/%s: %w", sess.Agent, sess.ExternalID, err)
 	}
-	return id, nil
+	return id, w.markSessionDirty(id)
 }
 
 // ClearSessionChildren removes messages, tool calls, and search documents
@@ -218,6 +219,9 @@ func (w *Writer) ClearArtifactSearchDocs(artifactID int64) error {
 // between sessions. The message row itself is always written so transcripts
 // stay complete.
 func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
+	if err := w.markSessionDirty(sessionID); err != nil {
+		return err
+	}
 	requestID := ""
 	if msg.Usage != nil {
 		requestID = msg.Usage.RequestID
@@ -286,6 +290,9 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 				(u.OutputTokens == existingOut && candidateTotal > existingTotal) ||
 				(u.OutputTokens == existingOut && candidateTotal == existingTotal && betterCost)
 			if moreComplete {
+				if err := w.markMessageDirty(existingID); err != nil {
+					return err
+				}
 				selectedCost := u.ReportedCostUSD
 				selectedNanos := reportedNanos
 				if existingReported.Valid &&

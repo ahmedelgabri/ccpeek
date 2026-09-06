@@ -16,10 +16,10 @@ func (r *Runner) Reconcile(ctx context.Context) error {
 	if _, _, err := r.store.ResolveArtifactLinks(ctx, r.linkRules()); err != nil {
 		return err
 	}
-	if err := r.store.RegenerateWorkspaces(ctx); err != nil {
+	if err := r.store.RefreshWorkspaces(ctx); err != nil {
 		return err
 	}
-	if err := r.store.RegenerateRollups(ctx, r.pricer); err != nil {
+	if err := r.store.RefreshRollups(ctx, r.pricer); err != nil {
 		return err
 	}
 	return r.store.SetMeta(ctx, "derived_dirty", "0")

@@ -287,8 +287,26 @@ func WorkspaceDisplayName(canonical string) string {
 // unreadable, and wrong for a cwd ending in '/', where it produced an
 // empty display name.
 func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
+	return s.refreshWorkspaces(ctx, true)
+}
+
+// RefreshWorkspaces updates changed sessions without renumbering other projects.
+func (s *Store) RefreshWorkspaces(ctx context.Context) error {
+	return s.refreshWorkspaces(ctx, false)
+}
+
+func (s *Store) refreshWorkspaces(ctx context.Context, full bool) error {
+	ctx, unlock, err := s.LockMaintenance(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	filter := ""
+	if !full {
+		filter = ` AND id IN (SELECT session_id FROM dirty_sessions)`
+	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, cwd FROM sessions WHERE cwd <> ''`)
+		`SELECT id, cwd FROM sessions WHERE cwd <> ''`+filter)
 	if err != nil {
 		return fmt.Errorf("reading session cwds: %w", err)
 	}
@@ -320,14 +338,16 @@ func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM session_workspaces`, `DELETE FROM workspaces`} {
-		if _, err := tx.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("regenerating workspaces: %w", err)
-		}
+	deleteFilter := ""
+	if !full {
+		deleteFilter = ` WHERE session_id IN (SELECT session_id FROM dirty_sessions)`
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session_workspaces`+deleteFilter); err != nil {
+		return fmt.Errorf("regenerating workspaces: %w", err)
 	}
 
 	insertWorkspace, err := tx.PrepareContext(ctx,
-		`INSERT INTO workspaces (canonical_path, display_name) VALUES (?, ?)`)
+		`INSERT INTO workspaces (canonical_path, display_name) VALUES (?, ?) ON CONFLICT(canonical_path) DO UPDATE SET display_name=excluded.display_name RETURNING id`)
 	if err != nil {
 		return err
 	}
@@ -345,19 +365,18 @@ func (s *Store) RegenerateWorkspaces(ctx context.Context) error {
 	for _, m := range members {
 		id, ok := ids[m.canonical]
 		if !ok {
-			res, err := insertWorkspace.ExecContext(ctx,
-				m.canonical, WorkspaceDisplayName(m.canonical))
-			if err != nil {
+			if err := insertWorkspace.QueryRowContext(ctx,
+				m.canonical, WorkspaceDisplayName(m.canonical)).Scan(&id); err != nil {
 				return fmt.Errorf("inserting workspace %s: %w", m.canonical, err)
-			}
-			if id, err = res.LastInsertId(); err != nil {
-				return err
 			}
 			ids[m.canonical] = id
 		}
 		if _, err := insertMember.ExecContext(ctx, m.sessionID, id); err != nil {
 			return fmt.Errorf("linking session %d to workspace: %w", m.sessionID, err)
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM workspaces WHERE id NOT IN (SELECT workspace_id FROM session_workspaces)`); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
