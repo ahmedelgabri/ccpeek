@@ -42,6 +42,8 @@ func (privateImages) RegisterFuncs(r renderer.NodeRendererFuncRegisterer) {
 
 // CSP does not prevent a document from navigating itself with meta refresh.
 // Strip active document elements as well as applying the response sandbox.
+// Drop noscript too: the parser treats its body as raw text, but a browser
+// with scripting disabled can interpret that text as active markup.
 func staticReport(content string) string {
 	doc, err := nethtml.Parse(strings.NewReader(content))
 	if err != nil {
@@ -51,7 +53,7 @@ func staticReport(content string) string {
 	clean = func(n *nethtml.Node) {
 		for child := n.FirstChild; child != nil; {
 			next := child.NextSibling
-			blocked := child.Type == nethtml.ElementNode && (child.Data == "meta" || child.Data == "base" || child.Data == "script" || child.Data == "iframe" || child.Data == "object" || child.Data == "embed" || child.Data == "link")
+			blocked := child.Type == nethtml.ElementNode && (child.Data == "meta" || child.Data == "noscript" || child.Data == "base" || child.Data == "script" || child.Data == "iframe" || child.Data == "object" || child.Data == "embed" || child.Data == "link")
 			if blocked {
 				n.RemoveChild(child)
 			} else {

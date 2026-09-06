@@ -26,6 +26,21 @@ func TestStaticReportRemovesNavigationAndActiveElements(t *testing.T) {
 	}
 }
 
+func TestStaticReportDropsNoscriptRawMarkup(t *testing.T) {
+	for _, content := range []string{
+		`<html><head><noscript><meta http-equiv="refresh" content="0;url=https://example.invalid/leak"></noscript></head><body><p>keep report</p></body></html>`,
+		`<body><noscript><iframe src="https://example.invalid/leak"></iframe></noscript><p>keep report</p></body>`,
+	} {
+		got := staticReport(content)
+		if strings.Contains(got, "noscript") || strings.Contains(got, "example.invalid") || !strings.Contains(got, "keep report") {
+			t.Fatal(got)
+		}
+		if again := staticReport(got); again != got {
+			t.Fatalf("unstable serialization: %s", again)
+		}
+	}
+}
+
 func TestMutationOriginMatchesExactServerOrigin(t *testing.T) {
 	for _, origin := range []string{"http://127.0.0.1:3000", "http://127.0.0.1:4000", "http://localhost:3000", "https://127.0.0.1:3000", "null", "http://127.0.0.1:3000/"} {
 		req := httptest.NewRequest("POST", "http://127.0.0.1:3000/api", nil)
