@@ -297,6 +297,8 @@ func emitSession(ctx context.Context, source string, doc sessionDoc, raws []json
 			msg.Usage = &canon.Usage{ReportedCostUSD: md.Cost, RequestID: md.ID}
 			if md.Tokens != nil {
 				msg.Usage.InputTokens = md.Tokens.Input
+				// OpenCode reports reasoning additively to output. Codex reports
+				// it as a subset, so its adapter must not perform this addition.
 				msg.Usage.OutputTokens = md.Tokens.Output + md.Tokens.Reasoning
 				msg.Usage.ReasoningTokens = md.Tokens.Reasoning
 				msg.Usage.CacheReadTokens = md.Tokens.Cache.Read

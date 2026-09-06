@@ -248,7 +248,10 @@ func runWithBrowser(cmd *cobra.Command, launchBrowser func(string)) error {
 	}
 
 	// Scans run serially with watch passes and acquire the archive's
-	// maintenance lock themselves, including across processes.
+	// maintenance lock themselves, including across processes. The scanner
+	// pages through several read snapshots: an interleaved ingest could pair
+	// a new content hash with stale pages. The lock keeps that view stable;
+	// finishing the startup scan before watch also preserves this ordering.
 	runScan := func(ctx context.Context, eng *engine) error {
 		if skipScan {
 			return nil

@@ -400,6 +400,9 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	defer w.Rollback()
 
 	w.UsageSource(src.Path, parseVersion)
+	// History sources reparse whole. Clear their prior rows in this same
+	// transaction to keep re-ingest idempotent, including when a source was
+	// emptied. A failed parse rolls the clear back with its other writes.
 	if err := w.ClearHistorySource(a.Slug(), src.Path); err != nil {
 		return err
 	}
