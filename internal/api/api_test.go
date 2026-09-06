@@ -288,7 +288,7 @@ func TestArtifactRawIsSandboxed(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("raw usage report = %d", rec.Code)
 	}
-	if csp := rec.Header().Get("Content-Security-Policy"); csp != "sandbox allow-scripts" {
-		t.Errorf("usage report CSP = %q, want sandbox allow-scripts", csp)
+	if csp := rec.Header().Get("Content-Security-Policy"); csp != "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'" {
+		t.Errorf("usage report CSP = %q, want network-restricted static sandbox", csp)
 	}
 }

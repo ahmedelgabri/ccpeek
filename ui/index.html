@@ -15,12 +15,7 @@
       content="#0a0d13"
     />
     <title>CCPeek</title>
-    <script>
-      // Apply a pinned theme before first paint so it never flashes.
-      const theme = localStorage.getItem("ccpeek-theme");
-      if (theme === "light" || theme === "dark")
-        document.documentElement.dataset.theme = theme;
-    </script>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>
