@@ -38,10 +38,11 @@ const FAILED = "failed";
 // v1 import: the server retries on every start, but until one succeeds
 // the failure must stay visible, not vanish into a startup log line.
 function ArchiveContent({ children }: { children: ReactNode }) {
-  const { data } = useQuery({
+  const { data, isError, refetch } = useQuery({
     queryKey: ["health"],
     queryFn: async () => {
       const res = await fetch("/api/v1/health");
+      if (!res.ok) throw new Error(`Health check failed (${res.status})`);
       const body: {
         data?: {
           indexing?: boolean;
@@ -52,14 +53,18 @@ function ArchiveContent({ children }: { children: ReactNode }) {
           archive?: ArchiveStatus;
         };
       } = await res.json();
-      return body.data ?? {};
+      if (!body.data) throw new Error("Missing archive health status");
+      return body.data;
     },
-    // Poll only while progress can actually arrive: a failed pass holds
+    // Unknown health and transport failures must retry without window focus.
+    // Once health is known, poll only while progress can arrive: a failed pass holds
     // indexing=true until a restart, and 1.5s polls against that state
     // would spin forever for no news.
     refetchInterval: (query) =>
-      query.state.data?.indexing &&
-      query.state.data?.bootstrap?.state !== FAILED
+      !query.state.data ||
+      query.state.status === "error" ||
+      (query.state.data.indexing &&
+        query.state.data.bootstrap?.state !== FAILED)
         ? 1500
         : false,
   });
@@ -130,11 +135,24 @@ function ArchiveContent({ children }: { children: ReactNode }) {
           )}
         </div>
       )}
-      {!data ? (
-        <div role="status">Connecting to archive…</div>
-      ) : (
-        !data.initializing && children
+      {!data && isError && (
+        <div
+          role="alert"
+          className="mb-6 rounded-md border border-warn/50 p-4 text-sm"
+        >
+          Unable to read archive status. Retrying automatically.{" "}
+          <button
+            type="button"
+            className="text-accent underline"
+            onClick={() => void refetch()}
+          >
+            Retry now
+          </button>
+        </div>
       )}
+      {!data
+        ? !isError && <div role="status">Connecting to archive…</div>
+        : !data.initializing && children}
     </>
   );
 }
