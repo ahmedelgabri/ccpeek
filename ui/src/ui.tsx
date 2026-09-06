@@ -483,7 +483,7 @@ export function useUrlText(
 // up: acting on the page behind a modal is a worse answer than doing
 // nothing.
 function inTypingContext(e: KeyboardEvent): boolean {
-  const target = e.target as HTMLElement | null;
+  const target = e.target instanceof HTMLElement ? e.target : null;
   if (
     target?.isContentEditable ||
     (target?.tagName &&

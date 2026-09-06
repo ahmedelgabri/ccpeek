@@ -69,21 +69,35 @@ func dayOf(value string) string {
 // different pricing snapshot/algorithm. Empty rollups with usage also rebuild,
 // preserving the migration self-heal behavior.
 func (s *Store) RollupsNeedRegeneration(ctx context.Context, p Pricer) (bool, error) {
-	var rollups, usage int
+	full, err := s.rollupsNeedFullRegeneration(ctx, p)
+	if err != nil || full {
+		return full, err
+	}
+	var dirty bool
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dirty_sessions)`).Scan(&dirty)
+	return dirty, err
+}
+
+func (s *Store) rollupsNeedFullRegeneration(ctx context.Context, p Pricer) (bool, error) {
+	var rollups, usage, full bool
 	var stored string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(*) FROM rollup_usage_daily),
-		       (SELECT COUNT(*) FROM message_usage),
+		SELECT EXISTS(SELECT 1 FROM rollup_usage_daily),
+		       EXISTS(SELECT 1 FROM message_usage),
+		       COALESCE((SELECT value FROM meta WHERE key = 'rollups_full'), '0') = '1',
 		       COALESCE((SELECT value FROM meta WHERE key = ?), '')`,
-		pricingFingerprintMeta).Scan(&rollups, &usage, &stored); err != nil {
+		pricingFingerprintMeta).Scan(&rollups, &usage, &full, &stored); err != nil {
 		return false, err
 	}
-	if usage == 0 {
+	if full {
+		return true, nil
+	}
+	if !usage {
 		// A source prune or manual cleanup can remove the final usage row.
 		// Any remaining rollup is then stale data and must be cleared.
-		return rollups > 0, nil
+		return rollups, nil
 	}
-	if rollups == 0 {
+	if !rollups {
 		return true, nil
 	}
 	fingerprint := PricerFingerprint(p)
@@ -94,16 +108,55 @@ func (s *Store) RollupsNeedRegeneration(ctx context.Context, p Pricer) (bool, er
 // non-zero costs win per row; missing and zero-with-usage reports are calculated.
 // Missing model or cache-bucket rates remain visible as unpriced.
 func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
+	return s.regenerateRollups(ctx, pricer, true)
+}
+
+// RefreshRollups reprices only days touched by changed or deleted sessions.
+// A pricing or schema change still requires a complete rebuild.
+func (s *Store) RefreshRollups(ctx context.Context, pricer Pricer) error {
+	ctx, unlock, err := s.LockMaintenance(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	full, err := s.rollupsNeedFullRegeneration(ctx, pricer)
+	if err != nil {
+		return err
+	}
+	return s.regenerateRollups(ctx, pricer, full)
+}
+
+func (s *Store) regenerateRollups(ctx context.Context, pricer Pricer, full bool) error {
+	ctx, unlock, err := s.LockMaintenance(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_usage_daily`); err != nil {
+	deleteFilter, usageFilter := "", ""
+	if !full {
+		for _, q := range []string{
+			`DROP TABLE IF EXISTS temp.ccpeek_dirty_days`,
+			`CREATE TEMP TABLE ccpeek_dirty_days(day TEXT PRIMARY KEY)`,
+			`INSERT OR IGNORE INTO ccpeek_dirty_days SELECT day FROM rollup_session_days WHERE session_id IN (SELECT session_id FROM dirty_sessions)`,
+			`INSERT OR IGNORE INTO ccpeek_dirty_days SELECT substr(COALESCE(m.created_at,s.created_at,''),1,10) FROM messages m JOIN sessions s ON s.id=m.session_id WHERE s.id IN (SELECT session_id FROM dirty_sessions)`,
+		} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		deleteFilter = ` WHERE day IN (SELECT day FROM ccpeek_dirty_days)`
+		usageFilter = ` WHERE substr(COALESCE(m.created_at,s.created_at,''),1,10) IN (SELECT day FROM ccpeek_dirty_days)`
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_usage_daily`+deleteFilter); err != nil {
 		return fmt.Errorf("clearing rollups: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_session_days`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rollup_session_days`+deleteFilter); err != nil {
 		return fmt.Errorf("clearing session days: %w", err)
 	}
 
@@ -122,7 +175,7 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions s ON s.id = m.session_id
-		LEFT JOIN session_workspaces sw ON sw.session_id = s.id
+		LEFT JOIN session_workspaces sw ON sw.session_id = s.id`+usageFilter+`
 		ORDER BY m.id`)
 	if err != nil {
 		return fmt.Errorf("reading usage for rollups: %w", err)
@@ -247,6 +300,11 @@ func (s *Store) RegenerateRollups(ctx context.Context, pricer Pricer) error {
 			ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 			pricingFingerprintMeta, fingerprint); err != nil {
 			return fmt.Errorf("recording pricing fingerprint: %w", err)
+		}
+	}
+	for _, q := range []string{`DELETE FROM dirty_sessions`, `INSERT OR REPLACE INTO meta(key,value) VALUES ('rollups_full','0')`, `DROP TABLE IF EXISTS temp.ccpeek_dirty_days`} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()

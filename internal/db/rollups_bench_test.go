@@ -45,6 +45,36 @@ func seedBig(t *testing.B, s *Store, sessions, msgsPerSession int) {
 	}
 }
 
+func BenchmarkRefreshRollupsOneSession(b *testing.B) {
+	ctx := context.Background()
+	s, err := Open(ctx, b.TempDir()+"/v2.db")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer s.Close()
+	seedBig(b, s, 4000, 25)
+	table := stubPricer{"claude-sonnet-5": {Input: 1e-6, Output: 1e-5}}
+	if err := s.RegenerateRollups(ctx, table); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		w, err := s.BeginWrite(ctx)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := w.markSessionDirty(1); err != nil {
+			b.Fatal(err)
+		}
+		if err := w.Commit(); err != nil {
+			b.Fatal(err)
+		}
+		if err := s.RefreshRollups(ctx, table); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkRegenerateRollups(b *testing.B) {
 	ctx := context.Background()
 	s, err := Open(ctx, b.TempDir()+"/v2.db")

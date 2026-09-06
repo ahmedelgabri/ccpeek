@@ -22,12 +22,17 @@ package secrets
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/zricethezav/gitleaks/v8/config"
 	"github.com/zricethezav/gitleaks/v8/detect"
 	"golang.org/x/sync/errgroup"
 
@@ -54,8 +59,9 @@ type Report struct {
 
 // Scanner runs gitleaks over the store.
 type Scanner struct {
-	detector *detect.Detector
-	store    *db.Store
+	detector    *detect.Detector
+	store       *db.Store
+	fingerprint string
 }
 
 // New builds a Scanner with the default gitleaks ruleset.
@@ -64,14 +70,38 @@ func New(store *db.Store) (*Scanner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initializing secret detector: %w", err)
 	}
-	return &Scanner{detector: d, store: store}, nil
+	return &Scanner{detector: d, store: store, fingerprint: RulesFingerprint()}, nil
 }
+
+// RulesFingerprint identifies both the detector rules and stored-content scan algorithm.
+func RulesFingerprint() string { return rulesFingerprint() }
+
+var rulesFingerprint = sync.OnceValue(func() string {
+	h := sha256.New()
+	fmt.Fprint(h, "scan-v3-canonical-text-tools-and-full-results\n", config.DefaultConfig)
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == "github.com/zricethezav/gitleaks/v8" {
+				fmt.Fprint(h, dep.Version, dep.Sum)
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+})
 
 // Run scans entities whose content changed since their last scan,
 // replaces their findings, and returns the complete stored findings set
 // with ignored state resolved from user_annotations.
 func (sc *Scanner) Run(ctx context.Context) ([]Finding, Report, error) {
 	var report Report
+	ctx, unlock, err := sc.store.LockMaintenance(ctx)
+	if err != nil {
+		return nil, report, err
+	}
+	defer unlock()
+	if err := sc.store.SetMeta(ctx, "scan_incomplete", "1"); err != nil {
+		return nil, report, err
+	}
 
 	state, err := sc.loadState(ctx)
 	if err != nil {
@@ -88,6 +118,12 @@ func (sc *Scanner) Run(ctx context.Context) ([]Finding, Report, error) {
 	}
 
 	findings, err := sc.allFindings(ctx)
+	if err != nil {
+		return nil, report, err
+	}
+	_, err = sc.store.DB().ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES
+		('scan_completed_at',?),('scan_rules_fingerprint',?),('scan_incomplete','0'),
+		('scan_generation',COALESCE((SELECT value FROM meta WHERE key='archive_generation'),'0'))`, time.Now().UTC().Format(time.RFC3339Nano), sc.fingerprint)
 	return findings, report, err
 }
 
@@ -96,11 +132,19 @@ func (sc *Scanner) Run(ctx context.Context) ([]Finding, Report, error) {
 // which changes what a scan would find without changing any content
 // hash).
 func (sc *Scanner) RunFull(ctx context.Context) ([]Finding, Report, error) {
+	ctx, unlock, err := sc.store.LockMaintenance(ctx)
+	if err != nil {
+		return nil, Report{}, err
+	}
+	defer unlock()
 	tx, err := sc.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, Report{}, err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES ('scan_incomplete','1')`); err != nil {
+		return nil, Report{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM scan_state`); err != nil {
 		return nil, Report{}, fmt.Errorf("clearing scan state: %w", err)
 	}
@@ -179,6 +223,7 @@ func (sc *Scanner) scanSessions(ctx context.Context, state map[string]*scanEntit
 			rows.Close()
 			return err
 		}
+		s.hash = sc.fingerprint + ":" + s.hash
 		s.key = slug + "/" + s.external
 		if markChanged(state, "session", s.key, s.hash) {
 			changed = append(changed, s)
@@ -195,7 +240,7 @@ func (sc *Scanner) scanSessions(ctx context.Context, state map[string]*scanEntit
 	// file scans out over one detector); writes serialize on the store's
 	// single writer connection.
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(runtime.GOMAXPROCS(0))
+	g.SetLimit(min(runtime.GOMAXPROCS(0), 8))
 	var scanned atomic.Int64
 	for _, s := range changed {
 		g.Go(func() error {
@@ -223,7 +268,10 @@ func (sc *Scanner) scanSessions(ctx context.Context, state map[string]*scanEntit
 // is regex work over every row — an open cursor for a big session's whole
 // scan would pin a read-pool connection; paging releases it between
 // batches.
-const scanBatchSize = 500
+const (
+	scanBatchSize  = 500
+	scanBatchBytes = 8 << 20
+)
 
 // detectSessionMessages runs the detector over one session's messages;
 // naturalKey is the agent-qualified finding key ("message/<agent>/<id>").
@@ -236,8 +284,9 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, n
 	lastSeq := -1
 	for {
 		batch := make([]row, 0, scanBatchSize)
+		batchBytes := 0
 		rows, err := sc.store.ReadDB().QueryContext(ctx, `
-			SELECT m.seq, m.content
+			SELECT m.seq, m.content || char(10) || m.text_content
 			FROM messages m
 			WHERE m.session_id = ? AND m.seq > ?
 			ORDER BY m.seq
@@ -252,6 +301,10 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, n
 				return nil, err
 			}
 			batch = append(batch, r)
+			batchBytes += len(r.content)
+			if batchBytes >= scanBatchBytes {
+				break
+			}
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -259,7 +312,7 @@ func (sc *Scanner) detectSessionMessages(ctx context.Context, sessionID int64, n
 		}
 		rows.Close()
 		if len(batch) == 0 {
-			return out, nil
+			return sc.detectSessionTools(ctx, sessionID, naturalKey, out)
 		}
 
 		for _, r := range batch {
@@ -321,6 +374,7 @@ func (sc *Scanner) scanArtifacts(ctx context.Context, state map[string]*scanEnti
 			rows.Close()
 			return err
 		}
+		r.hash = sc.fingerprint + ":" + r.hash
 		r.key = slug + "/" + kind + "/" + name
 		if markChanged(state, "artifact", r.key, r.hash) {
 			changed = append(changed, r)
@@ -366,7 +420,7 @@ func (sc *Scanner) scanArtifactPage(ctx context.Context, page []artifactRef, sca
 	defer rows.Close()
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(runtime.GOMAXPROCS(0))
+	g.SetLimit(min(runtime.GOMAXPROCS(0), 8))
 	for rows.Next() {
 		if err := gctx.Err(); err != nil {
 			break

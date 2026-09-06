@@ -63,9 +63,15 @@ func makeRoots(slug canon.AgentSlug, paths []string, origin RootOrigin, home str
 	roots := make([]Root, 0, len(paths))
 	seen := make(map[string]bool, len(paths))
 	for _, p := range paths {
+		if p == "" {
+			continue
+		}
 		p = expandHome(p, home)
 		p = filepath.Clean(p)
-		if p == "." || seen[p] {
+		if absolute, err := filepath.Abs(p); err == nil {
+			p = absolute
+		}
+		if seen[p] {
 			continue
 		}
 		seen[p] = true

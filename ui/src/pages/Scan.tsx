@@ -35,6 +35,11 @@ import {
 export function ScanPage() {
   const search = useSearch({ from: "/scan" });
   const navigate = useNavigate({ from: "/scan" });
+  const coverage = useQuery({
+    queryKey: ["scan", "coverage"],
+    queryFn: parityApi.archiveStatus,
+    refetchInterval: (query) => (query.state.data?.scan.pending ? 5000 : false),
+  });
   const showIgnored = search.ignored ?? false;
   const queryClient = useQueryClient();
 
@@ -117,7 +122,9 @@ export function ScanPage() {
         lede={
           <span className="font-mono text-meta text-ink-faint">
             {allFindings.length === 0
-              ? "nothing detected"
+              ? coverage.data?.scan.pending === false
+                ? "nothing detected in scanned stored content"
+                : "scan coverage pending"
               : `${plural(rules?.length ?? 0, "rule")} · ${plural(allFindings.length, "occurrence")}`}
           </span>
         }
@@ -138,7 +145,20 @@ export function ScanPage() {
         />
       </PageHeader>
 
-      {loadError && <LoadError error={loadError} />}
+      <p className="mb-4 text-sm text-ink-dim">
+        {coverage.data?.scan.pending && (
+          <>
+            Scan results may be incomplete or stale. Run{" "}
+            <code>ccpeek scan</code>.{" "}
+          </>
+        )}
+        Scans cover stored messages, tool inputs and results, and artifacts.
+        Unreadable, unsupported, omitted or truncated source content is not
+        covered.
+      </p>
+      {(loadError || coverage.error) && (
+        <LoadError error={loadError ?? coverage.error} />
+      )}
 
       {toggle.isError && (
         <div

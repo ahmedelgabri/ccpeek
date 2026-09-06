@@ -7,8 +7,8 @@
 // databases; opening a current database performs no scans, no backfills,
 // no repairs. The store is an archive, not a cache — see schemaVersion
 // for the migration policy (none pre-release, mandatory after v2.0).
-// Derived data and user state are disjoint — ResetDerived (--rebuild)
-// never touches user_annotations.
+// Rebuild retains archive records and user state while reparsing available
+// sources. It does not use the low-level destructive ResetDerived helper.
 package db
 
 import (
@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -36,13 +38,26 @@ type Store struct {
 // Open opens (creating or migrating as needed) the database at path.
 // Pass ":memory:" for an in-memory store (tests).
 func Open(ctx context.Context, path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
+	dsn := sqliteutil.URI(path, "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)")
 	if path == ":memory:" {
 		dsn = "file::memory:?_pragma=foreign_keys(1)"
 	} else if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("creating data directory: %w", err)
 	}
 
+	if path != ":memory:" {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Chmod(0o600); err != nil {
+			file.Close()
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
@@ -161,13 +176,45 @@ var ErrFutureSchema = errors.New("database schema is newer than this ccpeek vers
 var ErrNoMigrationPath = errors.New("no migration path from this database version")
 
 func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx,
-		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
-		return fmt.Errorf("creating meta table: %w", err)
-	}
 	current, err := s.readVersion(ctx)
 	if err != nil {
 		return err
+	}
+	if current == schemaVersion {
+		var mode string
+		if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
+			return err
+		}
+		if mode == "wal" || s.path == ":memory:" {
+			// Opening a reader must not wait for another process's index or scan.
+			return nil
+		}
+	}
+	if current > schemaVersion {
+		return fmt.Errorf("%w: database at v%d, binary supports v%d", ErrFutureSchema, current, schemaVersion)
+	}
+
+	ctx, unlock, err := s.LockMaintenance(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Another opener may have finished the migration while we waited.
+	current, err = s.readVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if current > schemaVersion {
+		return fmt.Errorf("%w: database at v%d, binary supports v%d", ErrFutureSchema, current, schemaVersion)
+	}
+	if s.path != ":memory:" {
+		if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
+			return fmt.Errorf("enabling WAL: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("creating meta table: %w", err)
 	}
 
 	switch {
@@ -177,10 +224,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		return s.writeVersion(ctx, schemaVersion)
-
-	case current > schemaVersion:
-		return fmt.Errorf("%w: database at v%d, binary supports v%d",
-			ErrFutureSchema, current, schemaVersion)
 
 	case current < baseVersion:
 		return fmt.Errorf("%w: database at v%d, this build upgrades from v%d — pre-release databases must be re-created (delete %s and its -wal/-shm files)",
@@ -234,7 +277,7 @@ func (s *Store) createAll(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, derivedSchema); err != nil {
 		return fmt.Errorf("creating derived schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, userSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, userSchema+usageClaimsSchema+usageClaimVersionsSchema+dirtySessionsSchema); err != nil {
 		return fmt.Errorf("creating user schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {
@@ -244,7 +287,8 @@ func (s *Store) createAll(ctx context.Context) error {
 }
 
 // ResetDerived drops and recreates everything rebuildable from sources.
-// User state (user_annotations) survives — this is what --rebuild calls.
+// User state survives. This low-level destructive reset is not used by
+// --rebuild, which calls PrepareRebuild to retain irreplaceable history.
 //
 // Every drop and every recreate lives in a SINGLE transaction. Dropping
 // the search index outside it meant a failure (or a kill) between the two
@@ -277,7 +321,7 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 			return fmt.Errorf("dropping %s: %w", table, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, derivedSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, derivedSchema+usageClaimsSchema+usageClaimVersionsSchema+dirtySessionsSchema); err != nil {
 		return fmt.Errorf("recreating derived schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {
@@ -287,6 +331,13 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 }
 
 func (s *Store) readVersion(ctx context.Context) (int, error) {
+	var hasMeta bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')`).Scan(&hasMeta); err != nil {
+		return 0, fmt.Errorf("checking schema: %w", err)
+	}
+	if !hasMeta {
+		return 0, nil
+	}
 	var raw string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&raw)

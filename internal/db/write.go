@@ -19,10 +19,14 @@ import (
 // transaction, and routes links whose target session isn't ingested yet to
 // the pending tables for end-of-run resolution.
 type Writer struct {
-	tx       *sql.Tx
-	ctx      context.Context
-	agents   map[canon.AgentSlug]int64
-	sessions map[sessionKey]int64
+	tx            *sql.Tx
+	ctx           context.Context
+	agents        map[canon.AgentSlug]int64
+	sessions      map[sessionKey]int64
+	orphanUsage   []usageKey
+	dirtySessions map[int64]bool
+	usageSource   string
+	usageVersion  int
 }
 
 type sessionKey struct {
@@ -49,7 +53,15 @@ func (s *Store) BeginWrite(ctx context.Context) (*Writer, error) {
 }
 
 // Commit commits the transaction.
-func (w *Writer) Commit() error { return w.tx.Commit() }
+func (w *Writer) Commit() error {
+	if err := w.restoreUsageOwners(); err != nil {
+		return err
+	}
+	if _, err := w.tx.ExecContext(w.ctx, `INSERT INTO meta(key,value) VALUES ('derived_dirty','1'),('archive_generation','1') ON CONFLICT(key) DO UPDATE SET value=CASE WHEN excluded.key='archive_generation' THEN CAST(meta.value AS INTEGER)+1 ELSE excluded.value END`); err != nil {
+		return err
+	}
+	return w.tx.Commit()
+}
 
 // Rollback aborts the transaction; safe to defer after Commit.
 func (w *Writer) Rollback() error {
@@ -114,7 +126,7 @@ func (w *Writer) UpsertSession(sess canon.Session, contentHash string) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	return id, nil
+	return id, w.markSessionDirty(id)
 }
 
 // AdvanceSession updates an existing session from attributes folded out
@@ -147,16 +159,21 @@ func (w *Writer) AdvanceSession(sess canon.Session, contentHash string) (int64, 
 		sess.CWD, sess.SourcePath, contentHash, id); err != nil {
 		return 0, fmt.Errorf("advancing session %s/%s: %w", sess.Agent, sess.ExternalID, err)
 	}
-	return id, nil
+	return id, w.markSessionDirty(id)
 }
 
 // ClearSessionChildren removes messages, tool calls, and search documents
 // for a session prior to re-inserting them when its source changed.
 func (w *Writer) ClearSessionChildren(sessionID int64) error {
+	if err := w.rememberUsage(sessionID); err != nil {
+		return err
+	}
 	for _, q := range []string{
 		`DELETE FROM search_docs WHERE session_id = ?`,
 		`DELETE FROM messages WHERE session_id = ?`,
 		`DELETE FROM tool_calls WHERE session_id = ?`,
+		`DELETE FROM session_relations WHERE from_session_id = ?`,
+		`DELETE FROM pending_relations WHERE (agent_id,from_external_id) IN (SELECT agent_id,external_id FROM sessions WHERE id=?)`,
 	} {
 		if _, err := w.tx.ExecContext(w.ctx, q, sessionID); err != nil {
 			return err
@@ -203,17 +220,39 @@ func (w *Writer) ClearArtifactSearchDocs(artifactID int64) error {
 // (content_id, request_id), with an empty request id retained as the legacy
 // key rather than disabling dedupe. The first-seen message owns the usage;
 // a more complete duplicate updates that row's values without moving cost
-// between sessions. The message row itself is always written so transcripts
+// between sessions. A newer parser interpretation can also correct that row
+// downward; prior interpretations remain in usage_claim_versions.
+// The message row itself is always written so transcripts
 // stay complete.
 func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
+	if err := w.markSessionDirty(sessionID); err != nil {
+		return err
+	}
+	requestID := ""
+	usageCorrected := false
+	if msg.Usage != nil {
+		requestID = msg.Usage.RequestID
+		if msg.ContentID != "" {
+			agentID, err := w.EnsureAgent(agent)
+			if err != nil {
+				return err
+			}
+			usage, corrected, err := w.selectUsage(usageKey{agentID, msg.ContentID, requestID}, *msg.Usage)
+			if err != nil {
+				return err
+			}
+			msg.Usage = &usage
+			usageCorrected = corrected
+		}
+	}
 	res, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO messages
 			(session_id, seq, external_id, parent_external_id, content_id,
-			 role, kind, created_at, provider, model, cwd, is_sidechain, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 role, kind, created_at, provider, model, cwd, is_sidechain, content, text_content, usage_request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, msg.Seq, msg.ExternalID, msg.ParentExternalID, msg.ContentID,
 		string(msg.Role), kindText(msg.Kind), timeText(msg.CreatedAt),
-		msg.Provider, msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content))
+		msg.Provider, msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content), msg.Text, requestID)
 	if err != nil {
 		return fmt.Errorf("inserting message seq %d: %w", msg.Seq, err)
 	}
@@ -258,10 +297,15 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 			moreComplete := u.OutputTokens > existingOut ||
 				(u.OutputTokens == existingOut && candidateTotal > existingTotal) ||
 				(u.OutputTokens == existingOut && candidateTotal == existingTotal && betterCost)
-			if moreComplete {
+			if moreComplete || usageCorrected {
+				if err := w.markMessageDirty(existingID); err != nil {
+					return err
+				}
 				selectedCost := u.ReportedCostUSD
 				selectedNanos := reportedNanos
-				if existingReported.Valid &&
+				// Same-version observations can fill missing reported costs. A
+				// newer parser's correction must not inherit the old cost again.
+				if !usageCorrected && existingReported.Valid &&
 					(selectedCost == nil || (*selectedCost == 0 && existingReported.Float64 != 0)) {
 					existing := existingReported.Float64
 					selectedCost = &existing
@@ -299,7 +343,14 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 	if err != nil {
 		return fmt.Errorf("message rowid: %w", err)
 	}
-	u := msg.Usage
+	return w.insertUsage(msgID, *msg.Usage)
+}
+
+func (w *Writer) insertUsage(msgID int64, u canon.Usage) error {
+	reportedNanos, err := exactReportedCost(u.ReportedCostUSD)
+	if err != nil {
+		return err
+	}
 	if _, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO message_usage
 			(message_id, input_tokens, output_tokens, cache_read_tokens,
@@ -309,7 +360,7 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		msgID, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
 		u.CacheWriteTokens, u.CacheWrite1hTokens, u.ReasoningTokens,
 		u.ServiceTier, u.ReportedCostUSD, reportedNanos, u.RequestID); err != nil {
-		return fmt.Errorf("inserting usage for message seq %d: %w", msg.Seq, err)
+		return fmt.Errorf("inserting usage for message seq %d: %w", msgID, err)
 	}
 	return nil
 }
@@ -360,9 +411,9 @@ func (w *Writer) InsertToolCall(sessionID int64, tc canon.ToolCall) error {
 // the external_id column or belong to source bytes that never parsed.
 func (w *Writer) UpdateToolCallResult(sessionID int64, res canon.ToolResult) error {
 	_, err := w.tx.ExecContext(w.ctx, `
-		UPDATE tool_calls SET result_status = ?, result_excerpt = ?
+		UPDATE tool_calls SET result_status = ?, result_excerpt = ?, result_content = ?
 		WHERE session_id = ? AND external_id = ?`,
-		res.Status, res.Excerpt, sessionID, res.CallExternalID)
+		res.Status, res.Excerpt, res.Content, sessionID, res.CallExternalID)
 	if err != nil {
 		return fmt.Errorf("updating tool call result %s: %w", res.CallExternalID, err)
 	}
@@ -419,11 +470,8 @@ var searchableArtifactKinds = map[canon.ArtifactKind]bool{
 
 // WriteMessage stores one message and its search document together.
 //
-// The transcript reads its text back out of search_docs — messages has no
-// text column — so a message written without its doc renders blank. Both
-// writer paths, live ingest and the v1 import, used to spell the pair out
-// for themselves, which is exactly the arrangement the artifact path had
-// before WriteArtifact (and there the two copies had already drifted).
+// Canonical text lives on messages, independently of the rebuildable search
+// index. This method updates both representations in the source transaction.
 func (w *Writer) WriteMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
 	if err := w.InsertMessage(sessionID, agent, msg); err != nil {
 		return err
@@ -449,6 +497,11 @@ func (w *Writer) WriteArtifact(a canon.Artifact, contentHash string) (id int64, 
 	}
 	if err := w.ClearArtifactSearchDocs(id); err != nil {
 		return 0, truncated, err
+	}
+	for _, q := range []string{`DELETE FROM artifact_sessions WHERE artifact_id=?`, `DELETE FROM pending_artifact_links WHERE artifact_id=?`} {
+		if _, err := w.tx.ExecContext(w.ctx, q, id); err != nil {
+			return 0, truncated, err
+		}
 	}
 	if searchableArtifactKinds[a.Kind] {
 		if err := w.InsertSearchDoc(0, id, string(a.Kind), 0, a.Name, a.Content); err != nil {
@@ -768,28 +821,9 @@ func boolInt(b bool) int {
 // Imported-v1 rows are exempt: their sources were already gone at import
 // time — that retention is the point.
 //
-// KNOWN HAZARD — usage attached to a deleted duplicate. InsertMessage
-// dedupes usage agent-wide by (content_id, request_id), so when a resumed
-// or forked transcript repeats an earlier session's assistant turns, the
-// single message_usage row lands on whichever copy was INGESTED FIRST,
-// while the other copies keep their message rows and carry no usage. If
-// that first copy's file is the one that later disappears, this prune
-// deletes its session, messages cascade, and message_usage cascades with
-// them (message_id REFERENCES messages(id) ON DELETE CASCADE) — so tokens
-// for turns that still exist verbatim in a surviving session drop out of
-// the rollups and out of every cost figure. The user sees a session whose
-// content is intact and whose cost fell.
-//
-// Re-homing those rows to a surviving copy before the cascade is the fix,
-// and it is deliberately NOT attempted here: message_usage is keyed by
-// message_id, so a target must be a same-content_id message that has no
-// usage row of its own (a copy sharing content_id under a DIFFERENT
-// request_id has one, and moving onto it would violate the primary key);
-// and with several stale paths in one run a chosen survivor can itself be
-// deleted by a later path, so target selection depends on processing
-// order. Getting either wrong silently misattributes cost, which is the
-// exact failure the dedupe exists to prevent. Retention (the default: no
-// --prune) does not have this problem.
+// Removed owners' request keys are queued before deletion. Writer.Commit
+// reassigns their durable usage claims only after all stale paths are gone,
+// choosing a surviving copy with the same agent, content and request id.
 func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string) bool) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path FROM source_files`)
 	if err != nil {
@@ -814,12 +848,35 @@ func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string
 		return 0, nil
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	w, err := s.BeginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer w.Rollback()
+	tx := w.tx
 	for _, p := range stale {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM sessions WHERE source_path = ? AND origin = 'ingest'`, p)
+		if err != nil {
+			return 0, err
+		}
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		for _, id := range ids {
+			if err := w.rememberUsage(id); err != nil {
+				return 0, err
+			}
+		}
 		for _, q := range []string{
 			`DELETE FROM search_docs WHERE session_id IN
 			   (SELECT id FROM sessions WHERE source_path = ? AND origin = 'ingest')`,
@@ -839,7 +896,7 @@ func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := w.Commit(); err != nil {
 		return 0, err
 	}
 	return len(stale), nil

@@ -96,19 +96,32 @@ them, so warm startups stay fast even on multi-GB histories.
 
 ### Flags
 
-| Flag            | Default                            | Description                                                                                                           |
-| --------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `-p`, `--port`  | `3000`                             | Server port                                                                                                           |
-| `--claude-dir`  | `~/.claude`                        | Source directory (Claude data)                                                                                        |
-| `--data-file`   | `$XDG_DATA_HOME/ccpeek/ccpeek2.db` | Database location — the index is derived from this path. A legacy database here is imported once; see the [FAQ](#faq) |
-| `--skip-index`  | `false`                            | Skip indexing, serve existing data                                                                                    |
-| `--index-only`  | `false`                            | Index and exit                                                                                                        |
-| `-o`, `--open`  | `false`                            | Open browser after starting                                                                                           |
-| `-w`, `--watch` | `false`                            | Re-index while serving, on filesystem changes                                                                         |
-| `--rebuild`     | `false`                            | Force full rebuild (drop all data and re-index)                                                                       |
-| `--prune`       | `false`                            | Remove data from source files that no longer exist                                                                    |
-| `--skip-scan`   | `false`                            | Skip secret scanning after indexing                                                                                   |
-| `-q`, `--quiet` | `false`                            | Suppress informational output                                                                                         |
+| Flag            | Default                           | Description                                                                                                  |
+| --------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `-p`, `--port`  | `3000`                            | Server port                                                                                                  |
+| `--claude-dir`  | `~/.claude`                       | Source directory (Claude data)                                                                               |
+| `--index-file`  | derived from `--data-file`        | Actual archive path. Used alone, skips default legacy import                                                 |
+| `--data-file`   | `$XDG_DATA_HOME/ccpeek/ccpeek.db` | Legacy import path and compatibility option; see the [FAQ](#faq)                                             |
+| `--skip-index`  | `false`                           | Skip indexing, serve existing data                                                                           |
+| `--index-only`  | `false`                           | Index and exit                                                                                               |
+| `-o`, `--open`  | `false`                           | Open browser after starting                                                                                  |
+| `-w`, `--watch` | `false`                           | Re-index while serving, on filesystem changes                                                                |
+| `--rebuild`     | `false`                           | Back up, reparse available sources and repair derived data; retain unavailable and v1-only history           |
+| `--prune`       | `false`                           | Remove verifiably missing sources under available roots; access errors and imported v1 sessions are retained |
+| `--skip-scan`   | `false`                           | Skip secret scanning after indexing                                                                          |
+| `-q`, `--quiet` | `false`                           | Suppress informational output                                                                                |
+
+### Archive maintenance
+
+v2.1 keeps the current archive and API. It adds verified backup and restore commands, non-destructive rebuilds, durable recovery after interrupted indexing, and scan-coverage status.
+
+```sh
+ccpeek backup /safe/location/archive-backup.db
+ccpeek restore /safe/location/archive-backup.db --index-file /path/to/restored.db
+ccpeek query archive-status --no-index
+```
+
+Restore only writes to a new path. Backups contain plaintext history and may contain credentials. See [archive maintenance](docs/archive-maintenance.md) for upgrade, retention, concurrency and coverage details.
 
 ### Shell completions
 
@@ -137,6 +150,8 @@ before the scan so newly written history is covered (`--no-index` opts out).
 ```sh
 ccpeek scan
 ```
+
+Scanning includes stored messages, tool inputs, full stored results and artifacts. Rules changes invalidate prior scan state, and automatic scanning catches up after `--skip-scan` even when no source files changed. A completed scan does not cover unreadable, unsupported, omitted or truncated source content. The scan page and `archive-status` report this limit.
 
 #### `ccpeek export commands`
 
@@ -170,13 +185,15 @@ ccpeek export commands --project myapp --from 2025-01-01 --to 2025-06-01
 
 ### Agent capability matrix
 
-| Agent       | Status           | Messages | Usage/cost | Tool calls | Notes                                                                                                                                 |
-| ----------- | ---------------- | -------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | supported        | ✓        | ✓          | ✓          | Sessions, all sidecar artifacts, prompt history, incremental tail parsing                                                             |
-| Pi          | supported        | ✓        | ✓          | ✓          | Documented session format; forks/branches; reported costs                                                                             |
-| Codex CLI   | supported        | ✓        | ✓          | ✓          | Cumulative token counts recovered per turn; reasoning is a subset of output                                                           |
-| OpenCode    | supported        | ✓        | ✓          | ✓          | Reported costs preferred; additive reasoning folded into billable output                                                              |
-| Cursor      | **experimental** | ✓        | ✓          | —          | Schema derived from fixtures, not yet validated against a real `store.db`; no tool extraction. Expect gaps until real-data validation |
+| Agent       | Status            | Messages | Usage/cost | Tool calls | Notes                                                                                                                                 |
+| ----------- | ----------------- | -------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | supported         | ✓        | ✓          | ✓          | Sessions, all sidecar artifacts, prompt history, incremental tail parsing                                                             |
+| Pi          | supported         | ✓        | ✓          | ✓          | Documented session format; forks/branches; reported costs                                                                             |
+| Codex CLI   | supported         | ✓        | ✓          | ✓          | Rollout JSONL; cumulative token counts; current `exec_command`/`shell_command` and older command arrays                               |
+| OpenCode    | supported formats | ✓        | ✓          | ✓          | Native SQLite with WAL, and legacy JSON with separate part directories; tested with generated format fixtures                         |
+| Cursor      | **experimental**  | ✓        | ✓          | —          | Schema derived from fixtures, not yet validated against a real `store.db`; no tool extraction. Expect gaps until real-data validation |
+
+Markdown images do not load automatically. HTML reports are static, sandboxed previews with scripts and external resources blocked, including on direct navigation. Original report content remains available through the artifact JSON API. Interactive charts may not work in the preview.
 
 ## Agent-facing surface
 
@@ -267,14 +284,8 @@ session-centric equivalent.
 
 ### Where is the database stored, and what is `--data-file`?
 
-The index lives at `$XDG_DATA_HOME/ccpeek/ccpeek2.db`. `--data-file`
-names the legacy database path; the
-current index is derived from it as a sibling (`ccpeek.db` →
-`ccpeek2.db`, `x.db` → `x.v2.db`). A legacy file at that path is
-imported once (read-only); don't point `--data-file` at a current
-index.
+The index lives at `$XDG_DATA_HOME/ccpeek/ccpeek2.db`. Use `--index-file` to select an existing or new archive directly. `--data-file` names the legacy database path and derives the current index as a sibling, mapping `ccpeek.db` to `ccpeek2.db` and `x.db` to `x.v2.db`. A legacy file at that path is imported once, read-only. Do not point `--data-file` at a current index.
 
 ### Why is `--watch-interval` ignored?
 
-It's accepted for backward compatibility only. ccpeek re-indexes on
-filesystem events (use `--watch`) rather than on a timer.
+It is accepted for backward compatibility only. `--watch` uses filesystem notifications and periodic rescans. On macOS it uses bounded per-file watches and adaptive polling rather than opening a descriptor for every historical file.

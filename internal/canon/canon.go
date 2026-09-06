@@ -254,6 +254,7 @@ type ToolResult struct {
 	CallExternalID    string
 	Status            string // ok | error
 	Excerpt           string
+	Content           string // full result when not retained in a message
 }
 
 // ArtifactKind names a sidecar artifact type.

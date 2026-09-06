@@ -26,6 +26,7 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/migrate"
 	"github.com/ahmedelgabri/ccpeek/internal/pricing"
 	"github.com/ahmedelgabri/ccpeek/internal/query"
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
 	"github.com/spf13/cobra"
 )
 
@@ -35,8 +36,6 @@ type engine struct {
 	pricing *pricing.Table
 	query   *query.Service
 	runner  *ingest.Runner
-	// report is the bootstrap ingest run's result (nil when skipped).
-	report *ingest.Report
 }
 
 // storeDBPath places the store next to the legacy v1 file (docs/v2-plan.md
@@ -117,7 +116,10 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 		return nil, nil, err
 	}
 
-	storePath := storeDBPath(dataFile)
+	storePath, err := resolveIndexFile(cmd, dataFile)
+	if err != nil {
+		return nil, nil, err
+	}
 	store, err := db.Open(ctx, storePath)
 	if err != nil {
 		return nil, nil, err
@@ -157,6 +159,15 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 	// so the usual cost is one meta read.
 	if skip.skip && !firstRun {
 		maybeImportV1(ctx, store, dataFile, logw)
+		if dirty, err := store.DerivedDirty(ctx); err != nil {
+			eng.Close()
+			return nil, nil, err
+		} else if dirty {
+			if err := eng.runner.Reconcile(ctx); err != nil {
+				eng.Close()
+				return nil, nil, err
+			}
+		}
 		return eng, nil, nil
 	}
 	if skip.skip && firstRun {
@@ -178,6 +189,14 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 	}
 
 	bootstrap := func(ctx context.Context) error {
+		ctx, unlock, err := store.LockMaintenance(ctx)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if err := store.SetMeta(ctx, metaBootstrapState, "running"); err != nil {
+			return err
+		}
 		if firstRun {
 			fmt.Fprintf(logw, "First start: building %s\n", storePath)
 		}
@@ -185,7 +204,6 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 		if err != nil {
 			return fmt.Errorf("indexing: %w", err)
 		}
-		eng.report = report
 		if report.FilesChanged > 0 {
 			fmt.Fprintf(logw, "Indexed %d changed source(s): %d sessions, %d messages, %d artifacts (%s)\n",
 				report.FilesChanged, report.Sessions, report.Messages,
@@ -201,12 +219,12 @@ func openEngineDeferred(ctx context.Context, cmd *cobra.Command, skip indexSkip,
 		// that binds the port (root.go and mcp.go run bootstrap in the
 		// background) and picks up a legacy database that appeared since
 		// the engine opened.
-		if rep := maybeImportV1(ctx, store, dataFile, logw); rep != nil && rep.OrphanSessions > 0 {
-			// The pass regenerated the derived facets before these sessions
-			// existed; without a rebuild they stay outside every workspace
-			// until some later pass happens to change something.
-			if err := store.RegenerateWorkspaces(ctx); err != nil {
-				fmt.Fprintf(logw, "WARNING: regenerating workspaces after the v1 import: %v\n", err)
+		maybeImportV1(ctx, store, dataFile, logw)
+		if dirty, err := store.DerivedDirty(ctx); err != nil {
+			return err
+		} else if dirty {
+			if err := eng.runner.Reconcile(ctx); err != nil {
+				return fmt.Errorf("repairing derived data after import: %w", err)
 			}
 		}
 		if firstRun {
@@ -249,6 +267,19 @@ const (
 // for /api/v1/health and the UI, and `ccpeek migrate` re-runs the import
 // with a non-zero exit on error.
 func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) *migrate.Report {
+	// Completed imports need no maintenance. Use the read pool so even a
+	// writer transaction in another process cannot delay --no-index queries.
+	meta, err := store.GetMetaMulti(ctx, metaV1ImportState)
+	if err == nil && (meta[metaV1ImportState] == v1ImportSuccess || meta[metaV1ImportState] == v1ImportNoLegacyDB) {
+		return nil
+	}
+	ctx, unlock, err := store.LockMaintenance(ctx)
+	if err != nil {
+		fmt.Fprintf(logw, "WARNING: waiting for import lock: %v\n", err)
+		return nil
+	}
+	defer unlock()
+	// Another process may have finished the import while this one waited.
 	state, _, err := store.GetMeta(ctx, metaV1ImportState)
 	if err == nil && (state == v1ImportSuccess || state == v1ImportNoLegacyDB) {
 		return nil
@@ -330,7 +361,7 @@ var errDataFileIsV2 = errors.New("--data-file points at a v2 index")
 // at all, answers false — those are the ordinary import path's errors to
 // report, and it retries them because they can change.
 func isV2Store(ctx context.Context, path string) bool {
-	conn, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	conn, err := sql.Open("sqlite", sqliteutil.URI(path, "mode=ro&_pragma=busy_timeout(5000)"))
 	if err != nil {
 		return false
 	}
@@ -349,6 +380,11 @@ func isV2Store(ctx context.Context, path string) bool {
 // records the error without a stamp. The v1 database is opened
 // read-only either way.
 func runV1Import(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) (*migrate.Report, error) {
+	ctx, unlock, err := store.LockMaintenance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	fmt.Fprintf(logw, "Importing v1 data from %s\n", dataFile)
 	mreport, err := migrate.ImportV1(ctx, store, dataFile)
 	if err != nil {
@@ -420,7 +456,12 @@ const (
 // writes would fail against the canceled context anyway.
 func recordOutcome(eng *engine, pass func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
-		err := pass(ctx)
+		ctx, unlock, err := eng.store.LockMaintenance(ctx)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		err = pass(ctx)
 		if ctx.Err() != nil {
 			return err
 		}
@@ -471,6 +512,14 @@ func ingestOptions(cmd *cobra.Command) (ingest.Options, error) {
 	}
 
 	if len(roots) > 0 {
+		home, _ := os.UserHomeDir()
+		for slug, paths := range roots {
+			resolved := agent.ResolveRoots(slug, agent.RootSpec{}, paths, os.Getenv, home)
+			roots[slug] = nil
+			for _, root := range resolved {
+				roots[slug] = append(roots[slug], root.Path)
+			}
+		}
 		opts.ConfigRoots = roots
 	}
 	return opts, nil
@@ -499,7 +548,11 @@ func checkExplicitRoots(roots map[canon.AgentSlug][]string) error {
 	// time rather than whichever the map iteration reached first.
 	for _, slug := range slices.Sorted(maps.Keys(roots)) {
 		for _, path := range roots[slug] {
-			if _, err := os.Stat(path); os.IsNotExist(err) {
+			info, err := os.Stat(path)
+			if err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("checking --root %s: %w", slug, err)
+			}
+			if os.IsNotExist(err) {
 				// --claude-dir is the Claude-specific alias for --root
 				// claude-code=<path>, and its own message names the flag the
 				// v1 CLI's users know.
@@ -507,6 +560,9 @@ func checkExplicitRoots(roots map[canon.AgentSlug][]string) error {
 					return fmt.Errorf("claude data directory not found: %s", path)
 				}
 				return fmt.Errorf("--root %s: data directory not found: %s", slug, path)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("--root %s: not a directory: %s", slug, path)
 			}
 		}
 	}
@@ -521,6 +577,9 @@ func checkExplicitRoots(roots map[canon.AgentSlug][]string) error {
 // to start costs the user one environment variable; the fallback cost
 // them their index without telling them.
 func resolveDataFile(cmd *cobra.Command) (string, error) {
+	if cmd.Flags().Changed("index-file") && !cmd.Flags().Changed("data-file") {
+		return "", nil
+	}
 	if v, _ := cmd.Flags().GetString("data-file"); v != "" {
 		return v, nil
 	}
@@ -528,6 +587,36 @@ func resolveDataFile(cmd *cobra.Command) (string, error) {
 		return "", dataDirErr
 	}
 	return "", fmt.Errorf("--data-file is empty: pass the database path, or unset the flag and let ccpeek use $XDG_DATA_HOME/ccpeek")
+}
+
+func resolveIndexFile(cmd *cobra.Command, legacy string) (string, error) {
+	path, _ := cmd.Flags().GetString("index-file")
+	if cmd.Flags().Changed("index-file") && path == "" {
+		return "", fmt.Errorf("--index-file cannot be empty")
+	}
+	if path == "" {
+		path = storeDBPath(legacy)
+	}
+	home, _ := os.UserHomeDir()
+	if path == "~" {
+		path = home
+	} else if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(home, path[2:])
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if legacy != "" {
+		old, err := filepath.Abs(legacy)
+		if err != nil {
+			return "", err
+		}
+		if old == absolute {
+			return "", fmt.Errorf("legacy database and v2 index must be different files")
+		}
+	}
+	return absolute, nil
 }
 
 // launchAdapters is THE launch set (docs/v2-plan.md §6): Claude Code, Pi,

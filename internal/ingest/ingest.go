@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -28,7 +29,7 @@ import (
 
 // Options configures one pipeline run.
 type Options struct {
-	// Rebuild drops all derived data first (user state survives).
+	// Rebuild reparses available sources and preserves retained archive records.
 	Rebuild bool
 	// Prune removes rows whose source files no longer exist on disk.
 	// Default is retention (deleted sources keep their data — that history
@@ -55,6 +56,9 @@ type Options struct {
 	// timeout; this states it. Like Progress, it runs on the ingest
 	// goroutine: keep it cheap.
 	OnPass func(running bool)
+	// WatchPass runs after each successful watch pass, including unchanged
+	// passes, so interrupted downstream scans can retry without new files.
+	WatchPass func()
 }
 
 // Progress is one pipeline progress event.
@@ -113,6 +117,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		opts.OnPass(true)
 		defer opts.OnPass(false)
 	}
+	ctx, unlock, err := r.store.LockMaintenance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	started := time.Now()
 	if opts.Getenv == nil {
 		opts.Getenv = os.Getenv
@@ -126,9 +135,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	roots, rootIssues := r.resolveRoots(opts)
 	report.Issues = append(report.Issues, rootIssues...)
 
-	// Reset before opening the run row — ResetDerived drops ingest_runs too.
+	// Back up the archive and invalidate parser fingerprints before the pass.
 	if opts.Rebuild {
-		if err := r.store.ResetDerived(ctx); err != nil {
+		if err := r.store.PrepareRebuild(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -145,18 +154,25 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, r.fail(ctx, report, started, err)
 	}
 
+	incompleteRoots := map[agent.Root]bool{}
 	for _, rr := range roots {
 		if err := ctx.Err(); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
 		sources, err := rr.adapter.Discover(ctx, rr.root)
 		if err != nil {
-			report.Issues = append(report.Issues, canon.Issue{
-				Agent: rr.adapter.Slug(), Severity: canon.SeverityError,
-				Category: "discover", SourcePath: rr.root.Path,
-				Detail: err.Error(),
-			})
-			continue
+			incompleteRoots[rr.root] = true
+			var partial *agent.IncompleteDiscovery
+			if errors.As(err, &partial) {
+				report.Issues = append(report.Issues, partial.Issues...)
+			} else {
+				report.Issues = append(report.Issues, canon.Issue{
+					Agent: rr.adapter.Slug(), Severity: canon.SeverityError,
+					Category: "discover", SourcePath: rr.root.Path,
+					Detail: err.Error(),
+				})
+				continue
+			}
 		}
 		sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
 		if opts.Progress != nil {
@@ -187,76 +203,48 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		}
 	}
 
-	prunedSources := 0
 	if opts.Prune {
 		pruned, err := r.store.PruneMissingSources(ctx, func(path string) bool {
+			// An unavailable root is not evidence that its archive was deleted.
+			// Only prune sources under roots that are still accessible now.
+			covered := false
+			for _, rr := range roots {
+				if rr.root.Agent != known[path].Agent || incompleteRoots[rr.root] {
+					continue
+				}
+				rel, err := filepath.Rel(rr.root.Path, path)
+				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					continue
+				}
+				if info, err := os.Stat(rr.root.Path); err == nil && info.IsDir() {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				return true
+			}
 			_, err := os.Stat(path)
-			return err == nil
+			if err != nil && !os.IsNotExist(err) {
+				report.Issues = append(report.Issues, canon.Issue{Severity: canon.SeverityError, Category: "prune", SourcePath: path, Detail: err.Error()})
+			}
+			return !os.IsNotExist(err)
 		})
 		if err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
-		if pruned > 0 {
-			prunedSources = pruned
-			report.FilesChanged += pruned // force facet/rollup regeneration
-		}
+		report.FilesChanged += pruned
 	}
 
-	// Parked links are always retried — a pass that changed nothing still
-	// reports how many are outstanding — but only a pass that INGESTED
-	// something is allowed to age them towards being dropped. Prune counts
-	// as changed (it is folded into FilesChanged above): it can delete the
-	// very endpoint a link was waiting for. Watch mode fires a pass per
-	// debounce, so ageing on every call made the attempt limit a measure of
-	// elapsed time rather than of ingest activity.
-	changed := report.FilesChanged > 0
-	if _, pending, err := r.store.ResolvePending(ctx, changed); err != nil {
+	report.LinksPending, err = r.reconcile(ctx, report.FilesChanged > 0)
+	if err != nil {
 		return nil, r.fail(ctx, report, started, err)
-	} else {
-		report.LinksPending = pending
-	}
-	// Artifacts whose provenance lives in their CONTENT — a plan matched by
-	// its markdown, a memory by the path a tool call wrote — are linked by
-	// rules each adapter declares (agent.LinkRuler). The rules RECONCILE
-	// the complete (artifact, session) pair set every pass: a later session
-	// producing an already-linked artifact gains its link, and one
-	// rewritten under the same name loses the links whose evidence no
-	// longer holds.
-	//
-	// Gated on the pass having changed something. A rule reads every
-	// artifact of its kind and every call that could have produced one, so
-	// running them unconditionally made each watch-mode debounce — most of
-	// which change nothing relevant — pay a full pass over the corpus.
-	if report.FilesChanged > 0 || prunedSources > 0 {
-		if _, _, err := r.store.ResolveArtifactLinks(ctx, r.linkRules()); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-	}
-	// Workspaces and usage rollups derive from sessions and messages;
-	// sidecar-only passes (artifacts, history) leave both untouched and
-	// skip the rebuild. Prune can delete session rows without emitting
-	// records, so it always counts as dirty. Rollups also regenerate when
-	// they are empty despite indexed usage — schema migrations drop them
-	// (the split columns rebuild here) and this self-heals instead of
-	// leaving Usage blank until the next change.
-	needRollups := report.Sessions > 0 || report.Messages > 0 || prunedSources > 0
-	if !needRollups {
-		var err error
-		needRollups, err = r.store.RollupsNeedRegeneration(ctx, r.pricer)
-		if err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-	}
-	if needRollups {
-		if err := r.store.RegenerateWorkspaces(ctx); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
-		if err := r.store.RegenerateRollups(ctx, r.pricer); err != nil {
-			return nil, r.fail(ctx, report, started, err)
-		}
 	}
 
 	report.Status = "ok"
+	if len(incompleteRoots) != 0 {
+		report.Status = "partial"
+	}
 	for _, is := range report.Issues {
 		if is.Severity == canon.SeverityError {
 			report.Status = "partial"
@@ -411,6 +399,13 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	}
 	defer w.Rollback()
 
+	w.UsageSource(src.Path, parseVersion)
+	// History sources reparse whole. Clear their prior rows in this same
+	// transaction to keep re-ingest idempotent, including when a source was
+	// emptied. A failed parse rolls the clear back with its other writes.
+	if err := w.ClearHistorySource(a.Slug(), src.Path); err != nil {
+		return err
+	}
 	sink := newSink(w, a.Slug(), src.Path, hash, false)
 	parseState := ""
 	if tp, ok := a.(agent.TailParser); ok {
@@ -422,6 +417,9 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 		parseState = marshalTailState(state)
 	} else if err := a.Parse(ctx, src, sink); err != nil {
 		sink.publishIssues(report)
+		return err
+	}
+	if err := sink.reconcile(); err != nil {
 		return err
 	}
 	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, parseState, parseVersion); err != nil {
@@ -444,6 +442,11 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 	}
 	defer w.Rollback()
 
+	parseVersion := 1
+	if v, ok := a.(agent.ParseVersioner); ok && v.ParseVersion() > 0 {
+		parseVersion = v.ParseVersion()
+	}
+	w.UsageSource(src.Path, parseVersion)
 	sink := newSink(w, a.Slug(), src.Path, hash, true)
 	newState, err := tp.ParseTail(ctx, src, state, sink)
 	if err != nil {
@@ -451,10 +454,6 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 		// source in full (which re-emits these diagnostics) or surfaces
 		// the error itself.
 		return err
-	}
-	parseVersion := 1
-	if v, ok := a.(agent.ParseVersioner); ok && v.ParseVersion() > 0 {
-		parseVersion = v.ParseVersion()
 	}
 	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig,
 		marshalTailState(newState), parseVersion); err != nil {
@@ -491,11 +490,15 @@ func (r *Runner) resolveRoots(opts Options) ([]resolvedRoot, []canon.Issue) {
 				// A missing default root just means the agent isn't
 				// installed; a missing explicit root is a user mistake that
 				// must surface (docs/v2-plan.md §5.1).
-				if root.Origin != agent.RootFromDefault {
+				if root.Origin != agent.RootFromDefault || !os.IsNotExist(err) {
+					severity := canon.SeverityWarn
+					if !os.IsNotExist(err) {
+						severity = canon.SeverityError
+					}
 					issues = append(issues, canon.Issue{
-						Agent: a.Slug(), Severity: canon.SeverityWarn,
+						Agent: a.Slug(), Severity: severity,
 						Category: "root", SourcePath: root.Path,
-						Detail: fmt.Sprintf("configured root (%s) not found", root.Origin),
+						Detail: fmt.Sprintf("root (%s) unavailable: %v", root.Origin, err),
 					})
 				}
 				continue

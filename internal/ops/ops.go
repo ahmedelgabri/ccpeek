@@ -112,6 +112,14 @@ func Registry() []Op {
 	untilParam := Param{Name: "until", Type: "string", Desc: "Inclusive YYYY-MM-DD upper bound"}
 	return []Op{
 		{
+			Name: "archive-status",
+			Desc: "Report archive generation, pending derived repairs, imported history, last index outcome and stored-content secret scan coverage.",
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.ArchiveStatus(ctx)
+				return out, false, err
+			},
+		},
+		{
 			Name: "sessions",
 			Desc: "List coding-agent sessions, newest first. Filter by agent slug, project path, model, date range (YYYY-MM-DD), or title substring. Returns tokens and estimated cost per session.",
 			Params: []Param{

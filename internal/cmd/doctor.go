@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +49,10 @@ var doctorCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		storePath := storeDBPath(dataFile)
+		storePath, err := resolveIndexFile(cmd, dataFile)
+		if err != nil {
+			return err
+		}
 		fmt.Println("\nDatabases:")
 		exists := func(p string) string {
 			if _, err := os.Stat(p); err != nil {
@@ -56,7 +60,9 @@ var doctorCmd = &cobra.Command{
 			}
 			return "ok"
 		}
-		fmt.Printf("  v1 (imported, never modified)  %-50s %s\n", dataFile, exists(dataFile))
+		if dataFile != "" {
+			fmt.Printf("  v1 (imported, never modified)  %-50s %s\n", dataFile, exists(dataFile))
+		}
 		fmt.Printf("  v2 store                       %-50s %s\n", storePath, exists(storePath))
 
 		if _, err := os.Stat(storePath); err != nil {
@@ -101,7 +107,7 @@ type storeState struct {
 // is the diagnostic truth. Absent or unreadable metadata renders as an
 // explicit note instead of failing the whole diagnosis.
 func readStoreState(storePath string) (*storeState, error) {
-	dbRO, err := sql.Open("sqlite", "file:"+storePath+"?mode=ro&_pragma=busy_timeout(2000)")
+	dbRO, err := sql.Open("sqlite", sqliteutil.URI(storePath, "mode=ro&_pragma=busy_timeout(2000)"))
 	if err != nil {
 		return nil, err
 	}

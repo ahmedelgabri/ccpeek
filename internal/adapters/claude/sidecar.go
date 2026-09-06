@@ -101,9 +101,7 @@ func discoverSidecars(root agent.Root) []agent.SourceRef {
 		matches, _ := filepath.Glob(filepath.Join(root.Path, glob))
 		for _, m := range matches {
 			if fi, err := os.Stat(m); err == nil && fi.IsDir() {
-				if empty, _ := isEffectivelyEmpty(m); !empty {
-					refs = append(refs, agent.SourceRef{Root: root, Path: m, Kind: agent.SourceDir})
-				}
+				refs = append(refs, agent.SourceRef{Root: root, Path: m, Kind: agent.SourceDir})
 			}
 		}
 	}
@@ -119,21 +117,6 @@ func discoverSidecars(root agent.Root) []agent.SourceRef {
 	addDirs("tasks/*")
 	addDirs("file-history/*")
 	return refs
-}
-
-// isEffectivelyEmpty reports whether a dir holds nothing but bookkeeping
-// files (.lock/.highwatermark) — such task dirs are skipped, matching v1.
-func isEffectivelyEmpty(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false, err
-	}
-	for _, e := range entries {
-		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // parseSidecar handles every non-session source kind.
@@ -275,9 +258,7 @@ func parseTaskDir(src agent.SourceRef, sink agent.RecordSink) error {
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", src.Path, err)
 	}
-	// Non-nil so an emptied directory marshals as "items": [] rather than
-	// "items": null.
-	items := []json.RawMessage{}
+	var items []json.RawMessage
 	var texts []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -285,7 +266,7 @@ func parseTaskDir(src agent.SourceRef, sink agent.RecordSink) error {
 		}
 		data, err := os.ReadFile(filepath.Join(src.Path, e.Name()))
 		if err != nil {
-			continue
+			return fmt.Errorf("reading task item %s: %w", e.Name(), err)
 		}
 		var item struct {
 			Subject     string `json:"subject"`
@@ -304,11 +285,13 @@ func parseTaskDir(src agent.SourceRef, sink agent.RecordSink) error {
 		items = append(items, json.RawMessage(data))
 		texts = append(texts, strings.TrimSpace(item.Subject+" "+item.Description))
 	}
-	// Emitted even when nothing parsed, for the same reason as todo lists:
-	// a directory whose items were removed must REPLACE its artifact, not
-	// leave the last populated version behind. (Discovery still skips
-	// directories holding nothing but .lock/.highwatermark bookkeeping, so
-	// this covers the emptied-but-still-discovered shape.)
+	// Empty directories must still be discovered: a successful parse with no
+	// artifact lets source reconciliation remove the previous populated group.
+	// Bookkeeping-only directories should not create artifacts of their own.
+	// If malformed items emitted warnings, reconciliation retains old records.
+	if len(items) == 0 {
+		return nil
+	}
 	dirName := filepath.Base(src.Path)
 	meta, _ := json.Marshal(map[string]any{"items": items})
 	if err := sink.Artifact(canon.Artifact{

@@ -1,72 +1,79 @@
-// Package opencode is the OpenCode adapter. OpenCode stores one JSON file
-// per session under storage/session/<project-hash>/ses_*.json and one per
-// message under storage/message/<sessionID>/msg_*.json
-// (docs/v2-plan.md §6). Messages natively carry tokens (with cache
-// read/write) AND a reported cost, so the automatic cost policy uses
-// OpenCode's own figures. The project-hash directory is opaque — cwd comes
-// from the session document.
+// Package opencode reads native OpenCode JSON storage and SQLite archives.
 package opencode
 
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
+	_ "modernc.org/sqlite"
 )
 
-// Slug identifies this adapter.
 const Slug = canon.AgentSlug("opencode")
 
-// Adapter implements agent.Adapter for OpenCode.
 type Adapter struct{}
 
-// New returns the OpenCode adapter.
-func New() *Adapter { return &Adapter{} }
-
-// Slug implements agent.Adapter.
+func New() *Adapter                    { return &Adapter{} }
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
-
-// ParseVersion forces one full reparse after provider identity became a
-// canonical message field.
-func (*Adapter) ParseVersion() int { return 2 }
-
-// RootSpec implements agent.Adapter. OPENCODE_DATA_DIR may hold a
-// comma-separated list of directories.
+func (*Adapter) ParseVersion() int     { return 3 }
 func (*Adapter) RootSpec() agent.RootSpec {
-	return agent.RootSpec{
-		EnvVars:   []string{"OPENCODE_DATA_DIR"},
-		EnvIsList: true,
-		Defaults:  []string{"~/.local/share/opencode"},
-	}
+	return agent.RootSpec{EnvVars: []string{"OPENCODE_DATA_DIR"}, EnvIsList: true, Defaults: []string{"~/.local/share/opencode"}}
 }
 
-// Discover treats each session document as ONE source, with the session's
-// message directory folded into its hash as a companion so message edits
-// re-index the session. The SourceRef points at the session JSON; Parse
-// locates the message dir.
-//
-// The message directory was previously discovered as a source of its own,
-// which meant Parse ran the whole session twice on every pass that touched
-// it — the same messages inserted twice and counted twice in
-// records_indexed — because either ref parses the complete session.
+// Database sessions take precedence over leftover JSON from migration. Legacy
+// sessions not present in any database are still discovered and retained.
 func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
+	var refs []agent.SourceRef
+	var issues []canon.Issue
+	warn := func(path string, err error) {
+		issues = append(issues, canon.Issue{Agent: Slug, Severity: canon.SeverityWarn, Category: "discover", SourcePath: path, Detail: err.Error()})
+	}
+	finish := func() ([]agent.SourceRef, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(issues) != 0 {
+			return refs, &agent.IncompleteDiscovery{Issues: issues}
+		}
+		return refs, nil
+	}
+	migrated := map[string]bool{}
+	databases, err := filepath.Glob(filepath.Join(root.Path, "opencode*.db"))
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range databases {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ids, err := databaseSessionIDs(ctx, path)
+		if err != nil {
+			warn(path, err)
+			continue
+		}
+		for _, id := range ids {
+			migrated[id] = true
+		}
+		refs = append(refs, agent.SourceRef{Root: root, Path: path, Kind: agent.SourceDatabase, CompanionPaths: []string{path + "-wal"}})
+	}
 	sessionDir := filepath.Join(root.Path, "storage", "session")
 	entries, err := os.ReadDir(sessionDir)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return finish()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", sessionDir, err)
+		warn(sessionDir, err)
+		return finish()
 	}
-	var refs []agent.SourceRef
 	for _, dir := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -74,42 +81,72 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 		if !dir.IsDir() {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(sessionDir, dir.Name()))
+		projectDir := filepath.Join(sessionDir, dir.Name())
+		files, err := os.ReadDir(projectDir)
 		if err != nil {
+			warn(projectDir, err)
 			continue
 		}
 		for _, f := range files {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
 				continue
 			}
-			docPath := filepath.Join(sessionDir, dir.Name(), f.Name())
-			refs = append(refs, agent.SourceRef{
-				Root: root,
-				Path: docPath,
-				Kind: agent.SourceFile,
-				// The id is the file name; a doc whose id disagrees is
-				// caught by Parse, and pairing it with a directory that
-				// does not exist is harmless (absent contributes a marker).
-				CompanionPaths: []string{filepath.Join(
-					root.Path, "storage", "message",
-					strings.TrimSuffix(f.Name(), ".json"),
-				)},
-			})
+			id := strings.TrimSuffix(f.Name(), ".json")
+			if migrated[id] {
+				continue
+			}
+			msgDir := filepath.Join(root.Path, "storage", "message", id)
+			companions := []string{msgDir}
+			msgs, err := os.ReadDir(msgDir)
+			if err != nil && !os.IsNotExist(err) {
+				warn(msgDir, err)
+				continue
+			}
+			for _, msg := range msgs {
+				if !msg.IsDir() && strings.HasSuffix(msg.Name(), ".json") {
+					companions = append(companions, filepath.Join(root.Path, "storage", "part", strings.TrimSuffix(msg.Name(), ".json")))
+				}
+			}
+			refs = append(refs, agent.SourceRef{Root: root, Path: filepath.Join(sessionDir, dir.Name(), f.Name()), Kind: agent.SourceFile, CompanionPaths: companions})
 		}
 	}
-	return refs, nil
+	return finish()
+}
+
+// Collect IDs before publishing precedence: an unreadable database cannot
+// suppress legacy sessions based on only the prefix of its session table.
+func databaseSessionIDs(ctx context.Context, path string) ([]string, error) {
+	database, err := openDatabase(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer database.Close()
+	rows, err := database.QueryContext(ctx, `SELECT id FROM session`)
+	if err != nil {
+		return nil, fmt.Errorf("reading OpenCode sessions: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 type sessionDoc struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Time  struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	ParentID  string `json:"parentID"`
+	Directory string `json:"directory"`
+	Time      struct {
 		Created int64 `json:"created"`
 		Updated int64 `json:"updated"`
 	} `json:"time"`
-	Directory string `json:"directory"`
 }
-
 type messageDoc struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionID"`
@@ -131,151 +168,157 @@ type messageDoc struct {
 	} `json:"tokens"`
 	Parts []part `json:"parts"`
 }
-
 type part struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text"`
-	Tool  string          `json:"tool"`
-	State json.RawMessage `json:"state"`
+	Type   string          `json:"type"`
+	Text   string          `json:"text"`
+	Tool   string          `json:"tool"`
+	CallID string          `json:"callID"`
+	State  json.RawMessage `json:"state"`
 }
 
-// Parse reads the session document and the messages it points at — one
-// source, one complete session.
 func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
-	return a.parseSession(ctx, src.Root, src.Path, sink)
-}
-
-func (a *Adapter) parseSession(ctx context.Context, root agent.Root, docPath string, sink agent.RecordSink) error {
-	data, err := os.ReadFile(docPath)
+	if src.Kind == agent.SourceDatabase {
+		return a.parseDatabase(ctx, src, sink)
+	}
+	data, err := os.ReadFile(src.Path)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", docPath, err)
+		return err
 	}
 	var doc sessionDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return sink.Issue(canon.Issue{
-			Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
-			SourcePath: docPath, Detail: fmt.Sprintf("invalid session JSON: %v", err),
-		})
+		return fmt.Errorf("invalid session JSON %s: %w", src.Path, err)
 	}
-	if doc.ID == "" {
-		return sink.Issue(canon.Issue{
-			Agent: Slug, Severity: canon.SeverityWarn, Category: "format",
-			SourcePath: docPath, Detail: "session document without id",
-		})
+	if doc.ID == "" || doc.ID != strings.TrimSuffix(filepath.Base(src.Path), ".json") {
+		return fmt.Errorf("session id %q disagrees with filename %s", doc.ID, src.Path)
 	}
-
-	title := strings.TrimSpace(doc.Title)
-	sess := canon.Session{
-		Agent:         Slug,
-		ExternalID:    doc.ID,
-		Title:         canon.TruncateBytes(title, canon.SessionTitleLimit),
-		TitleOverride: title != "",
-		CreatedAt:     millis(doc.Time.Created),
-		ModifiedAt:    millis(doc.Time.Updated),
-		CWD:           doc.Directory,
-		SourcePath:    docPath,
-	}
-	if err := sink.Session(sess); err != nil {
+	msgDir := filepath.Join(src.Root.Path, "storage", "message", doc.ID)
+	names, err := os.ReadDir(msgDir)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-
-	msgDir := filepath.Join(root.Path, "storage", "message", doc.ID)
-	entries, err := os.ReadDir(msgDir)
-	if os.IsNotExist(err) {
-		return nil // session without messages yet
-	}
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", msgDir, err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names) // msg_<ulid> sorts chronologically
-
-	seq := 0
-	toolSeq := 0
+	var msgs []json.RawMessage
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		raw, err := os.ReadFile(filepath.Join(msgDir, name))
-		if err != nil {
+		if name.IsDir() || !strings.HasSuffix(name.Name(), ".json") {
 			continue
+		}
+		path := filepath.Join(msgDir, name.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		// Keep parts as raw JSON until emitSession decodes the merged message.
+		// Unknown fields survive without custom part marshal methods.
+		var md struct {
+			ID    string            `json:"id"`
+			Parts []json.RawMessage `json:"parts"`
+		}
+		if err := json.Unmarshal(raw, &md); err != nil {
+			return fmt.Errorf("invalid message JSON %s: %w", path, err)
+		}
+		if md.ID == "" {
+			md.ID = strings.TrimSuffix(name.Name(), ".json")
+		}
+		// The filename, not an unchecked JSON id, selects a directory to read.
+		partDir := filepath.Join(src.Root.Path, "storage", "part", strings.TrimSuffix(name.Name(), ".json"))
+		parts, err := os.ReadDir(partDir)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if len(parts) > 0 {
+			md.Parts = nil
+		}
+		for _, p := range parts {
+			if p.IsDir() || !strings.HasSuffix(p.Name(), ".json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(partDir, p.Name()))
+			if err != nil {
+				return err
+			}
+			md.Parts = append(md.Parts, json.RawMessage(data))
+		}
+		// Preserve unknown message fields; merge the native parts without losing
+		// raw provenance that a newer parser or the secret scanner may need.
+		raw, err = withParts(raw, md.ID, doc.ID, md.Parts)
+		if err != nil {
+			return err
+		}
+		msgs = append(msgs, raw)
+	}
+	return emitSession(ctx, src.Path, doc, msgs, sink)
+}
+
+func withParts(raw []byte, id, sessionID string, parts []json.RawMessage) ([]byte, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, fmt.Errorf("message must be an object")
+	}
+	object["id"], _ = json.Marshal(id)
+	object["sessionID"], _ = json.Marshal(sessionID)
+	encoded, err := json.Marshal(parts)
+	if err != nil {
+		return nil, err
+	}
+	object["parts"] = encoded
+	return json.Marshal(object)
+}
+
+func emitSession(ctx context.Context, source string, doc sessionDoc, raws []json.RawMessage, sink agent.RecordSink) error {
+	title := strings.TrimSpace(doc.Title)
+	sess := canon.Session{Agent: Slug, ExternalID: doc.ID, Title: canon.TruncateBytes(title, canon.SessionTitleLimit), TitleOverride: title != "", CreatedAt: millis(doc.Time.Created), ModifiedAt: millis(doc.Time.Updated), CWD: doc.Directory, SourcePath: source}
+	if err := sink.Session(sess); err != nil {
+		return err
+	}
+	if doc.ParentID != "" {
+		if err := sink.SessionRelation(canon.SessionRelation{Agent: Slug, FromExternalID: doc.ID, ToExternalID: doc.ParentID, Kind: canon.RelForkOf}); err != nil {
+			return err
+		}
+	}
+	toolSeq := 0
+	for seq, raw := range raws {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		var md messageDoc
 		if err := json.Unmarshal(raw, &md); err != nil {
-			if serr := sink.Issue(canon.Issue{
-				Agent: Slug, Severity: canon.SeverityWarn, Category: "parse",
-				SourcePath: filepath.Join(msgDir, name),
-				Detail:     fmt.Sprintf("invalid message JSON: %v", err),
-			}); serr != nil {
-				return serr
-			}
-			continue
+			return err
 		}
-
-		msg := canon.Message{
-			SessionExternalID: doc.ID,
-			Seq:               seq,
-			ExternalID:        md.ID,
-			ContentID:         md.ID,
-			Role:              canon.Role(md.Role),
-			Kind:              canon.KindMessage,
-			CreatedAt:         millis(md.Time.Created),
-			Provider:          md.ProviderID,
-			Model:             md.ModelID,
-			CWD:               doc.Directory,
-			Content:           json.RawMessage(raw),
-			Text:              partsText(md.Parts),
+		if md.SessionID != "" && md.SessionID != doc.ID {
+			return fmt.Errorf("message %s belongs to session %s, not %s", md.ID, md.SessionID, doc.ID)
 		}
-		if md.Tokens != nil {
-			msg.Usage = &canon.Usage{
-				InputTokens: md.Tokens.Input,
-				// OpenCode reports tokens.reasoning ADDITIVELY beside
-				// tokens.output (unlike OpenAI/Codex, where reasoning is a
-				// subset of output); fold it into billable output per the
-				// canon.Usage contract so totals, rollups, and fallback
-				// pricing count it exactly once.
-				OutputTokens:     md.Tokens.Output + md.Tokens.Reasoning,
-				CacheReadTokens:  md.Tokens.Cache.Read,
-				CacheWriteTokens: md.Tokens.Cache.Write,
-				ReasoningTokens:  md.Tokens.Reasoning,
-				ReportedCostUSD:  md.Cost,
-				RequestID:        md.ID,
+		msg := canon.Message{SessionExternalID: doc.ID, Seq: seq, ExternalID: md.ID, ContentID: md.ID, Role: canon.Role(md.Role), Kind: canon.KindMessage, CreatedAt: millis(md.Time.Created), Provider: md.ProviderID, Model: md.ModelID, CWD: doc.Directory, Content: raw, Text: partsText(md.Parts)}
+		if md.Tokens != nil || md.Cost != nil {
+			msg.Usage = &canon.Usage{ReportedCostUSD: md.Cost, RequestID: md.ID}
+			if md.Tokens != nil {
+				msg.Usage.InputTokens = md.Tokens.Input
+				// OpenCode reports reasoning additively to output. Codex reports
+				// it as a subset, so its adapter must not perform this addition.
+				msg.Usage.OutputTokens = md.Tokens.Output + md.Tokens.Reasoning
+				msg.Usage.ReasoningTokens = md.Tokens.Reasoning
+				msg.Usage.CacheReadTokens = md.Tokens.Cache.Read
+				msg.Usage.CacheWriteTokens = md.Tokens.Cache.Write
 			}
 		}
 		if err := sink.Message(msg); err != nil {
 			return err
 		}
-
 		for _, p := range md.Parts {
 			if p.Type != "tool" || p.Tool == "" {
 				continue
 			}
 			st := decodeToolState(p.State)
-			tc := canon.ToolCall{
-				SessionExternalID: doc.ID,
-				MessageSeq:        seq,
-				Seq:               toolSeq,
-				Name:              p.Tool,
-				Kind:              normalizeTool(p.Tool),
-				Input:             st.rawInput(),
-				ResultStatus:      st.status(),
-				FilePath:          st.Args.FilePath,
-				Command:           st.Args.Command,
-				OldText:           st.Args.OldString,
-				NewText:           cmp.Or(st.Args.NewString, st.Args.Content),
-				StartedAt:         millis(md.Time.Created),
-			}
+			tc := canon.ToolCall{SessionExternalID: doc.ID, MessageSeq: seq, Seq: toolSeq, ExternalID: p.CallID, Name: p.Tool, Kind: normalizeTool(p.Tool), Input: st.rawInput(), ResultStatus: st.status(), ResultExcerpt: canon.TruncateBytes(st.Output, canon.ToolResultExcerptLimit), FilePath: st.Args.FilePath, Command: st.Args.Command, OldText: st.Args.OldString, NewText: cmp.Or(st.Args.NewString, st.Args.Content), StartedAt: millis(md.Time.Created)}
 			if err := sink.ToolCall(tc); err != nil {
 				return err
 			}
 			toolSeq++
 		}
-		seq++
 	}
 	return nil
 }
@@ -290,38 +333,31 @@ func partsText(parts []part) string {
 	return strings.Join(out, "\n")
 }
 
-// opencodeToolArgs is the subset of a tool part's arguments the canonical
-// record keeps beside the verbatim JSON. OpenCode nests them one level
-// deeper than the other agents — under state.input — which is exactly the
-// kind of shape the query layer should not have to know.
-type opencodeToolArgs struct {
-	FilePath  string `json:"filePath"`
-	Command   string `json:"command"`
-	OldString string `json:"oldString"`
-	NewString string `json:"newString"`
-	Content   string `json:"content"`
-}
+type (
+	opencodeToolArgs struct {
+		FilePath  string `json:"filePath"`
+		Command   string `json:"command"`
+		OldString string `json:"oldString"`
+		NewString string `json:"newString"`
+		Content   string `json:"content"`
+	}
+	toolState struct {
+		Status string           `json:"status"`
+		Input  json.RawMessage  `json:"input"`
+		Output string           `json:"output"`
+		Args   opencodeToolArgs `json:"-"`
+	}
+)
 
-// toolState is a tool part's state decoded ONCE. Its three consumers —
-// the raw input, the result status, and the normalized arguments — each
-// used to unmarshal the whole blob independently, and an OpenCode write
-// state carries the file's full contents.
-type toolState struct {
-	Status string           `json:"status"`
-	Input  json.RawMessage  `json:"input"`
-	Args   opencodeToolArgs `json:"-"`
-}
-
-func decodeToolState(state json.RawMessage) toolState {
-	var st toolState
-	if json.Unmarshal(state, &st) != nil {
+func decodeToolState(raw json.RawMessage) toolState {
+	var s toolState
+	if json.Unmarshal(raw, &s) != nil {
 		return toolState{}
 	}
-	_ = json.Unmarshal(st.Input, &st.Args)
-	return st
+	_ = json.Unmarshal(s.Input, &s.Args)
+	return s
 }
 
-// rawInput is the agent-native arguments, preserved verbatim on the record.
 func (s toolState) rawInput() json.RawMessage {
 	if len(s.Input) > 0 {
 		return s.Input
@@ -368,4 +404,105 @@ func millis(ms int64) time.Time {
 		return time.Time{}
 	}
 	return time.UnixMilli(ms).UTC()
+}
+
+func openDatabase(ctx context.Context, path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", sqliteutil.URI(path, "mode=ro&_pragma=busy_timeout(5000)"))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
+	db, err := openDatabase(ctx, src.Path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id,title,directory,time_created,time_updated,COALESCE(parent_id,'') FROM session ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("unsupported OpenCode session schema: %w", err)
+	}
+	var sessions []sessionDoc
+	for rows.Next() {
+		var d sessionDoc
+		if err := rows.Scan(&d.ID, &d.Title, &d.Directory, &d.Time.Created, &d.Time.Updated, &d.ParentID); err != nil {
+			rows.Close()
+			return err
+		}
+		sessions = append(sessions, d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, doc := range sessions {
+		rows, err := tx.QueryContext(ctx, `SELECT id,data FROM message WHERE session_id=? ORDER BY id`, doc.ID)
+		if err != nil {
+			return err
+		}
+		rawByID := map[string]json.RawMessage{}
+		var ids []string
+		for rows.Next() {
+			var id string
+			var raw []byte
+			if err := rows.Scan(&id, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+			rawByID[id] = raw
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT message_id,data FROM part WHERE session_id=? ORDER BY id`, doc.ID)
+		if err != nil {
+			return fmt.Errorf("unsupported OpenCode part schema: %w", err)
+		}
+		byMessage := map[string][]json.RawMessage{}
+		for rows.Next() {
+			var id string
+			var raw []byte
+			if err := rows.Scan(&id, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			// Validate even parts without a matching message.
+			var p part
+			if err := json.Unmarshal(raw, &p); err != nil {
+				rows.Close()
+				return err
+			}
+			byMessage[id] = append(byMessage[id], json.RawMessage(raw))
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		var messages []json.RawMessage
+		for _, id := range ids {
+			raw, err := withParts(rawByID[id], id, doc.ID, byMessage[id])
+			if err != nil {
+				return err
+			}
+			messages = append(messages, raw)
+		}
+		if err := emitSession(ctx, src.Path, doc, messages, sink); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

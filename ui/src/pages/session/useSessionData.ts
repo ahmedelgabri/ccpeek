@@ -138,7 +138,7 @@ export function useTranscriptWindow(
     }
     pendingSeq.current = undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [agent, sessionId]);
 
   // Deliberate navigation to a seq (anything but our own scroll-spy write):
   // focus it, and re-anchor when the target sits outside the loaded range,

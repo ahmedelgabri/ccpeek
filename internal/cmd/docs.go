@@ -26,9 +26,9 @@ var docsCmd = &cobra.Command{
 // from api.Routes(), so an endpoint can never go missing from the doc.
 var routeNotes = map[string]string{
 	"GET /api/v1/health":                              "server state: indexing progress, v1 import outcome",
-	"GET /api/v1/ready":                               "200 once the first index pass finished, 503 before",
+	"GET /api/v1/ready":                               "200 after a complete first pass; 503 while indexing or after a failed/partial pass",
 	"GET /api/v1/events":                              `SSE: "changed" when data updates`,
-	"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw": "stored bytes verbatim",
+	"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw": "static sandboxed HTML reports; other artifact kinds as plain text",
 	"GET /api/v1/commands":                            "format=zsh|bash|fish|plain streams a shell history file",
 	"POST /api/v1/scan/{id}/ignore":                   `write: {"ignored":true|false}`,
 }
@@ -90,6 +90,18 @@ Reading the results:
 ccpeek scan [--format text|json] [--full] [--no-index]
   Scan for leaked secrets, re-indexing incrementally first (--no-index
   to scan the index as it stands); exit 2 when active findings exist.
+  Scans stored content only. Unreadable, omitted or truncated source content
+  is not covered. Use archive-status to check generation and rules freshness.
+
+ccpeek backup DESTINATION
+  Snapshot the archive without re-indexing or migrating it, including WAL data.
+  Refuses an existing destination. Backups may contain plaintext credentials.
+
+ccpeek restore BACKUP --index-file NEW_ARCHIVE
+  Verify a backup and restore it to a new path; never overwrite a live archive.
+
+ccpeek --index-file ARCHIVE
+  Select the actual archive. --data-file remains the legacy import path.
 
 ccpeek migrate
   Rebuild the index and re-run the v1 import (also automatic on
