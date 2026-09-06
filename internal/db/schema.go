@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 17
+const schemaVersion = 18
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -435,6 +435,20 @@ END;
 
 const dirtySessionsSchema = `CREATE TABLE IF NOT EXISTS dirty_sessions (session_id INTEGER PRIMARY KEY);`
 
+// usageClaimVersionsSchema retains prior parser interpretations. Version zero
+// is legacy/unversioned provenance; never infer its source from the current
+// materialized owner, which may have inherited a pruned source's usage.
+const usageClaimVersionsSchema = `
+CREATE TABLE IF NOT EXISTS usage_claim_versions (
+ agent_id INTEGER NOT NULL REFERENCES agents(id),
+ content_id TEXT NOT NULL,
+ request_id TEXT NOT NULL,
+ parser_version INTEGER NOT NULL,
+ source_path TEXT NOT NULL DEFAULT '',
+ usage_json TEXT NOT NULL,
+ PRIMARY KEY(agent_id,content_id,request_id,parser_version)
+);`
+
 // usageClaimsSchema preserves the best observation of a request independently
 // of whichever transcript copy currently owns its materialized usage row.
 const usageClaimsSchema = `
@@ -481,6 +495,7 @@ var derivedTables = []string{
 	"artifacts",
 	"tool_calls",
 	"message_usage",
+	"usage_claim_versions",
 	"usage_claims",
 	"messages",
 	"pending_relations",
@@ -552,6 +567,17 @@ var migrations = []migration{
 	},
 	func(ctx context.Context, tx *sql.Tx) error {
 		for _, q := range []string{dirtySessionsSchema, `INSERT INTO dirty_sessions SELECT id FROM sessions`, `INSERT OR REPLACE INTO meta(key,value) VALUES ('derived_dirty','1'),('rollups_full','1')`} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, q := range []string{
+			usageClaimVersionsSchema,
+			`INSERT INTO usage_claim_versions(agent_id,content_id,request_id,parser_version,usage_json) SELECT agent_id,content_id,request_id,0,usage_json FROM usage_claims`,
+		} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				return err
 			}

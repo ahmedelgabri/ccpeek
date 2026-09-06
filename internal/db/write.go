@@ -25,6 +25,8 @@ type Writer struct {
 	sessions      map[sessionKey]int64
 	orphanUsage   []usageKey
 	dirtySessions map[int64]bool
+	usageSource   string
+	usageVersion  int
 }
 
 type sessionKey struct {
@@ -218,13 +220,16 @@ func (w *Writer) ClearArtifactSearchDocs(artifactID int64) error {
 // (content_id, request_id), with an empty request id retained as the legacy
 // key rather than disabling dedupe. The first-seen message owns the usage;
 // a more complete duplicate updates that row's values without moving cost
-// between sessions. The message row itself is always written so transcripts
+// between sessions. A newer parser interpretation can also correct that row
+// downward; prior interpretations remain in usage_claim_versions.
+// The message row itself is always written so transcripts
 // stay complete.
 func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon.Message) error {
 	if err := w.markSessionDirty(sessionID); err != nil {
 		return err
 	}
 	requestID := ""
+	usageCorrected := false
 	if msg.Usage != nil {
 		requestID = msg.Usage.RequestID
 		if msg.ContentID != "" {
@@ -232,11 +237,12 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 			if err != nil {
 				return err
 			}
-			usage, err := bestUsage(w.ctx, w.tx, usageKey{agentID, msg.ContentID, requestID}, *msg.Usage)
+			usage, corrected, err := w.selectUsage(usageKey{agentID, msg.ContentID, requestID}, *msg.Usage)
 			if err != nil {
 				return err
 			}
 			msg.Usage = &usage
+			usageCorrected = corrected
 		}
 	}
 	res, err := w.tx.ExecContext(w.ctx, `
@@ -291,13 +297,15 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 			moreComplete := u.OutputTokens > existingOut ||
 				(u.OutputTokens == existingOut && candidateTotal > existingTotal) ||
 				(u.OutputTokens == existingOut && candidateTotal == existingTotal && betterCost)
-			if moreComplete {
+			if moreComplete || usageCorrected {
 				if err := w.markMessageDirty(existingID); err != nil {
 					return err
 				}
 				selectedCost := u.ReportedCostUSD
 				selectedNanos := reportedNanos
-				if existingReported.Valid &&
+				// Same-version observations can fill missing reported costs. A
+				// newer parser's correction must not inherit the old cost again.
+				if !usageCorrected && existingReported.Valid &&
 					(selectedCost == nil || (*selectedCost == 0 && existingReported.Float64 != 0)) {
 					existing := existingReported.Float64
 					selectedCost = &existing

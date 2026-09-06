@@ -399,6 +399,7 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	}
 	defer w.Rollback()
 
+	w.UsageSource(src.Path, parseVersion)
 	if err := w.ClearHistorySource(a.Slug(), src.Path); err != nil {
 		return err
 	}
@@ -438,6 +439,11 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 	}
 	defer w.Rollback()
 
+	parseVersion := 1
+	if v, ok := a.(agent.ParseVersioner); ok && v.ParseVersion() > 0 {
+		parseVersion = v.ParseVersion()
+	}
+	w.UsageSource(src.Path, parseVersion)
 	sink := newSink(w, a.Slug(), src.Path, hash, true)
 	newState, err := tp.ParseTail(ctx, src, state, sink)
 	if err != nil {
@@ -445,10 +451,6 @@ func (r *Runner) ingestTail(ctx context.Context, a agent.Adapter, tp agent.TailP
 		// source in full (which re-emits these diagnostics) or surfaces
 		// the error itself.
 		return err
-	}
-	parseVersion := 1
-	if v, ok := a.(agent.ParseVersioner); ok && v.ParseVersion() > 0 {
-		parseVersion = v.ParseVersion()
 	}
 	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig,
 		marshalTailState(newState), parseVersion); err != nil {

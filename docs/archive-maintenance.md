@@ -1,6 +1,6 @@
 # Archive maintenance in v2.1
 
-CCPeek's database is an archive, not a disposable cache. It may hold the only remaining copy of a deleted transcript or imported v1 session. v2.1 keeps the existing CLI, `ccpeek/v1` response envelope and database location. Internal schema migrations 16 and 17 run in place. A v3 database or API is not required.
+CCPeek's database is an archive, not a disposable cache. It may hold the only remaining copy of a deleted transcript or imported v1 session. v2.1 keeps the existing CLI, `ccpeek/v1` response envelope and database location. Internal schema migrations 16 through 18 run in place. A v3 database or API is not required.
 
 ## Choose an archive explicitly
 
@@ -48,6 +48,8 @@ Available sources are reparsed transactionally. Missing and inaccessible sources
 Each source transaction marks derived data dirty and advances an archive generation. Changed sessions are recorded durably. If indexing stops after source commits but before links, workspaces or usage rollups finish, the next pass repairs them even when no source files changed. `--skip-index` can repair pending derived data without reparsing sources.
 
 Normal refreshes reprice affected usage days. Pricing changes and explicit rebuilds still trigger full regeneration. Workspace identities survive refreshes. Duplicate request observations have a separate usage ledger; deleting or reparsing the message that owned usage reassigns that claim to a surviving copy of the same agent, content and request.
+
+Usage corrections require an increased adapter parser version. For each request observed in an available source, the newest parser version takes precedence, even when its corrected counts or reported cost are lower. Within a version, the richest observation still wins. The ledger retains the best interpretation from each prior version with its source provenance; legacy claims use version zero and unknown provenance rather than guessing from a reassigned message owner. Requests absent from a reparse keep their existing claims. Rebuild does not wipe this history or permit older parsers to overwrite newer interpretations.
 
 Indexing, migrations, imports, scans and backups coordinate through an OS-backed `<index>.lock` file. Waiting is cancellable. Process exit releases the lock; the remaining file is not evidence of a held lock, and deleting it while a process runs can defeat coordination. Readers continue using SQLite WAL snapshots. Opening a current-schema WAL archive does not acquire the maintenance lock. Use a local filesystem with working SQLite and file-lock semantics.
 

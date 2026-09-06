@@ -15,8 +15,8 @@ type usageKey struct {
 	requestID string
 }
 
-// bestUsage retains the richest observation even if its original message is
-// subsequently reparsed or pruned. The ledger itself does not contribute cost.
+// bestUsage seeds the legacy ledger during migration 16, before versioned
+// claims exist. Normal writes use Writer.selectUsage instead.
 func bestUsage(ctx context.Context, tx *sql.Tx, k usageKey, candidate canon.Usage) (canon.Usage, error) {
 	var raw string
 	err := tx.QueryRowContext(ctx, `SELECT usage_json FROM usage_claims WHERE agent_id=? AND content_id=? AND request_id=?`, k.agentID, k.contentID, k.requestID).Scan(&raw)
@@ -28,15 +28,7 @@ func bestUsage(ctx context.Context, tx *sql.Tx, k usageKey, candidate canon.Usag
 		if err := json.Unmarshal([]byte(raw), &prior); err != nil {
 			return candidate, err
 		}
-		total := func(u canon.Usage) int64 {
-			return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
-		}
-		if prior.OutputTokens > candidate.OutputTokens || (prior.OutputTokens == candidate.OutputTokens && total(prior) > total(candidate)) {
-			prior, candidate = candidate, prior
-		}
-		if prior.ReportedCostUSD != nil && (candidate.ReportedCostUSD == nil || (*candidate.ReportedCostUSD == 0 && *prior.ReportedCostUSD != 0)) {
-			candidate.ReportedCostUSD = prior.ReportedCostUSD
-		}
+		candidate, _ = richerUsage(prior, candidate)
 	}
 	rawBytes, err := json.Marshal(candidate)
 	if err != nil {
@@ -44,6 +36,66 @@ func bestUsage(ctx context.Context, tx *sql.Tx, k usageKey, candidate canon.Usag
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO usage_claims(agent_id,content_id,request_id,usage_json) VALUES(?,?,?,?) ON CONFLICT(agent_id,content_id,request_id) DO UPDATE SET usage_json=excluded.usage_json`, k.agentID, k.contentID, k.requestID, string(rawBytes))
 	return candidate, err
+}
+
+// UsageSource identifies the parser interpretation for this source transaction.
+// Parser versions must increase for semantic corrections, even during rebuild.
+// Unversioned callers (including v1 import) cannot override a newer parser.
+func (w *Writer) UsageSource(path string, version int) {
+	w.usageSource, w.usageVersion = path, version
+}
+
+func richerUsage(prior, candidate canon.Usage) (canon.Usage, bool) {
+	total := func(u canon.Usage) int64 {
+		return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
+	}
+	useCandidate := !(prior.OutputTokens > candidate.OutputTokens || (prior.OutputTokens == candidate.OutputTokens && total(prior) > total(candidate)))
+	if !useCandidate {
+		prior, candidate = candidate, prior
+	}
+	if prior.ReportedCostUSD != nil && (candidate.ReportedCostUSD == nil || (*candidate.ReportedCostUSD == 0 && *prior.ReportedCostUSD != 0)) {
+		candidate.ReportedCostUSD = prior.ReportedCostUSD
+	}
+	return candidate, useCandidate
+}
+
+// selectUsage prefers the newest parser interpretation of this request, then
+// its richest observation. A correction can lower counts/cost without erasing
+// the older interpretation. Requests absent from a reparse are never reset.
+func (w *Writer) selectUsage(k usageKey, candidate canon.Usage) (canon.Usage, bool, error) {
+	var version int
+	var raw, source string
+	err := w.tx.QueryRowContext(w.ctx, `SELECT parser_version,usage_json,source_path FROM usage_claim_versions WHERE agent_id=? AND content_id=? AND request_id=? ORDER BY parser_version DESC LIMIT 1`, k.agentID, k.contentID, k.requestID).Scan(&version, &raw, &source)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return candidate, false, err
+	}
+	corrected := err == nil && w.usageVersion > version
+	selectedSource := w.usageSource
+	if err == nil {
+		var prior canon.Usage
+		if err := json.Unmarshal([]byte(raw), &prior); err != nil {
+			return candidate, false, err
+		}
+		if w.usageVersion < version {
+			return prior, false, nil
+		}
+		if w.usageVersion == version {
+			var useCandidate bool
+			candidate, useCandidate = richerUsage(prior, candidate)
+			if !useCandidate {
+				selectedSource = source
+			}
+		}
+	}
+	body, err := json.Marshal(candidate)
+	if err != nil {
+		return candidate, false, err
+	}
+	if _, err := w.tx.ExecContext(w.ctx, `INSERT INTO usage_claim_versions(agent_id,content_id,request_id,parser_version,source_path,usage_json) VALUES(?,?,?,?,?,?) ON CONFLICT(agent_id,content_id,request_id,parser_version) DO UPDATE SET source_path=excluded.source_path,usage_json=excluded.usage_json`, k.agentID, k.contentID, k.requestID, w.usageVersion, selectedSource, string(body)); err != nil {
+		return candidate, false, err
+	}
+	_, err = w.tx.ExecContext(w.ctx, `INSERT INTO usage_claims(agent_id,content_id,request_id,usage_json) VALUES(?,?,?,?) ON CONFLICT(agent_id,content_id,request_id) DO UPDATE SET usage_json=excluded.usage_json`, k.agentID, k.contentID, k.requestID, string(body))
+	return candidate, corrected, err
 }
 
 // rememberUsage queues only keys whose owner this transaction is removing.
