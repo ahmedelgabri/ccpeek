@@ -170,6 +170,8 @@ func (w *Writer) ClearSessionChildren(sessionID int64) error {
 		`DELETE FROM search_docs WHERE session_id = ?`,
 		`DELETE FROM messages WHERE session_id = ?`,
 		`DELETE FROM tool_calls WHERE session_id = ?`,
+		`DELETE FROM session_relations WHERE from_session_id = ?`,
+		`DELETE FROM pending_relations WHERE (agent_id,from_external_id) IN (SELECT agent_id,external_id FROM sessions WHERE id=?)`,
 	} {
 		if _, err := w.tx.ExecContext(w.ctx, q, sessionID); err != nil {
 			return err
@@ -487,6 +489,11 @@ func (w *Writer) WriteArtifact(a canon.Artifact, contentHash string) (id int64, 
 	}
 	if err := w.ClearArtifactSearchDocs(id); err != nil {
 		return 0, truncated, err
+	}
+	for _, q := range []string{`DELETE FROM artifact_sessions WHERE artifact_id=?`, `DELETE FROM pending_artifact_links WHERE artifact_id=?`} {
+		if _, err := w.tx.ExecContext(w.ctx, q, id); err != nil {
+			return 0, truncated, err
+		}
 	}
 	if searchableArtifactKinds[a.Kind] {
 		if err := w.InsertSearchDoc(0, id, string(a.Kind), 0, a.Name, a.Content); err != nil {

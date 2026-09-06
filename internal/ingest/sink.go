@@ -49,6 +49,23 @@ func newSink(w *db.Writer, slug canon.AgentSlug, sourcePath, sourceHash string, 
 	}
 }
 
+// reconcile removes vanished members of a successfully parsed source. A
+// partial parse retains unseen records rather than treating unread data as
+// evidence of deletion.
+func (s *dbSink) reconcile() error {
+	if s.append || len(s.report.Issues) != 0 {
+		return nil
+	}
+	sessions, artifacts := map[int64]bool{}, map[int64]bool{}
+	for _, id := range s.sessionIDs {
+		sessions[id] = true
+	}
+	for _, id := range s.artifactIDs {
+		artifacts[id] = true
+	}
+	return s.writer.ReconcileSource(s.agent, s.sourcePath, sessions, artifacts)
+}
+
 // commitTo publishes what this source actually wrote into the run report.
 // Callers invoke it after a successful Commit and never after a rollback.
 func (s *dbSink) commitTo(report *Report) {

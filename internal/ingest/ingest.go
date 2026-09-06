@@ -461,6 +461,9 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 		sink.publishIssues(report)
 		return err
 	}
+	if err := sink.reconcile(); err != nil {
+		return err
+	}
 	if err := w.RecordSourceFile(src.Path, a.Slug(), hash, statSig, parseState, parseVersion); err != nil {
 		return err
 	}
