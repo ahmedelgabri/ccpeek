@@ -49,7 +49,9 @@ Each source transaction marks derived data dirty and advances an archive generat
 
 Normal refreshes reprice affected usage days. Pricing changes and explicit rebuilds still trigger full regeneration. Workspace identities survive refreshes. Duplicate request observations have a separate usage ledger; deleting or reparsing the message that owned usage reassigns that claim to a surviving copy of the same agent, content and request.
 
-Indexing, migrations, imports, scans and backups coordinate through an OS-backed `<index>.lock` file. Waiting is cancellable. Process exit releases the lock; the remaining file is not evidence of a held lock, and deleting it while a process runs can defeat coordination. Readers continue using SQLite WAL snapshots. Use a local filesystem with working SQLite and file-lock semantics.
+Indexing, migrations, imports, scans and backups coordinate through an OS-backed `<index>.lock` file. Waiting is cancellable. Process exit releases the lock; the remaining file is not evidence of a held lock, and deleting it while a process runs can defeat coordination. Readers continue using SQLite WAL snapshots. Opening a current-schema WAL archive does not acquire the maintenance lock. Use a local filesystem with working SQLite and file-lock semantics.
+
+The HTTP server and `--open` browser launch do not wait for database initialization or migrations. The UI shows an initialization banner while `/api/v1/ready` returns 503 with `status: "initializing"`; health and SSE remain available. Data endpoints return 503 until the archive opens. Initialization failures stay visible in the UI, with details in the terminal. Once the archive opens, pages can read existing data while the background index pass waits for maintenance or processes sources.
 
 ## Check freshness and scan coverage
 

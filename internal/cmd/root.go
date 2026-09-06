@@ -129,6 +129,10 @@ func ExecuteContext(ctx context.Context) {
 }
 
 func run(cmd *cobra.Command, args []string) error {
+	return runWithBrowser(cmd, openURL)
+}
+
+func runWithBrowser(cmd *cobra.Command, launchBrowser func(string)) error {
 	// Cancellation arrives from ExecuteContext, not from a handler
 	// installed here. The nil guard is for tests that call run directly.
 	ctx := cmd.Context()
@@ -200,68 +204,52 @@ func run(cmd *cobra.Command, args []string) error {
 		return prog
 	}
 
-	// The engine owns indexing and serving. The legacy v1 database, when
-	// present, was imported on first run and stays untouched for rollback.
-	// It also validates the root flags — an explicitly-passed --claude-dir
-	// or --root that does not exist fails here, on every path. That check
-	// used to live in this function and only in this function, so the
-	// subcommands accepted a missing directory the root command rejected.
-	eng, bootstrap, err := openEngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
-		o.Rebuild = rebuild
-		o.Prune = prune
-		var logProgress func(ingest.Progress)
-		if !quiet {
-			logProgress = newProgressLogger(os.Stderr)
-		}
-		o.Progress = func(p ingest.Progress) {
-			progMu.Lock()
-			prog = api.IndexProgress{Agent: string(p.Agent), Seen: p.Seen, Changed: p.Changed}
-			notify := time.Since(lastNotify) > 2*time.Second
-			if notify {
-				lastNotify = time.Now()
-			}
-			progMu.Unlock()
-			if notify {
-				events.Notify()
-			}
-			if logProgress != nil {
-				logProgress(p)
-			}
-		}
-	})
+	// Validate flags before binding, but leave database opening and migrations
+	// off the path to the browser. Subcommands also validate in the engine.
+	watchOpts, err := ingestOptions(cmd)
 	if err != nil {
 		return err
 	}
-	defer eng.Close()
-
-	// Both recorded outcomes in ONE meta round trip, because health and
-	// readiness both want both: the v1 import outcome so a failed import
-	// stays visible in the UI instead of dissolving into a startup log line
-	// (the bootstrap retries it on every start until it succeeds), and the
-	// bootstrap outcome so /api/v1/ready can say WHY it is holding at 503
-	// (index-failed with the recorded error, not a perpetual "indexing").
-	// The SPA polls health every 1.5s for the whole first pass; two reads
-	// of the same table per poll was one too many.
-	readOutcomes := func() (api.V1ImportStatus, api.BootstrapStatus) {
-		meta, err := eng.store.GetMetaMulti(ctx,
-			metaV1ImportState, metaV1ImportError, metaV1ImportedAt,
-			metaBootstrapState, metaBootstrapError)
-		if err != nil {
-			return api.V1ImportStatus{}, api.BootstrapStatus{}
-		}
-		return api.V1ImportStatus{
-				State:      meta[metaV1ImportState],
-				Error:      meta[metaV1ImportError],
-				ImportedAt: meta[metaV1ImportedAt],
-			}, api.BootstrapStatus{
-				State: meta[metaBootstrapState],
-				Error: meta[metaBootstrapError],
+	if err := checkExplicitRoots(watchOpts.ConfigRoots); err != nil {
+		return err
+	}
+	watchOpts.Prune = prune
+	legacy, err := resolveDataFile(cmd)
+	if err != nil {
+		return err
+	}
+	if _, err := resolveIndexFile(cmd, legacy); err != nil {
+		return err
+	}
+	newEngine := func(ctx context.Context) (*engine, func(context.Context) error, error) {
+		return openEngineDeferred(ctx, cmd, skipIndex, os.Stderr, func(o *ingest.Options) {
+			o.Rebuild = rebuild
+			o.Prune = prune
+			var logProgress func(ingest.Progress)
+			if !quiet {
+				logProgress = newProgressLogger(os.Stderr)
 			}
+			o.Progress = func(p ingest.Progress) {
+				progMu.Lock()
+				prog = api.IndexProgress{Agent: string(p.Agent), Seen: p.Seen, Changed: p.Changed}
+				notify := time.Since(lastNotify) > 2*time.Second
+				if notify {
+					lastNotify = time.Now()
+				}
+				progMu.Unlock()
+				if notify {
+					events.Notify()
+				}
+				if logProgress != nil {
+					logProgress(p)
+				}
+			}
+		})
 	}
 
 	// Scans run serially with watch passes and acquire the archive's
 	// maintenance lock themselves, including across processes.
-	runScan := func(ctx context.Context) error {
+	runScan := func(ctx context.Context, eng *engine) error {
 		if skipScan {
 			return nil
 		}
@@ -269,12 +257,17 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	if indexOnly {
+		eng, bootstrap, err := newEngine(ctx)
+		if err != nil {
+			return err
+		}
+		defer eng.Close()
 		if bootstrap != nil {
 			if err := bootstrap(ctx); err != nil {
 				return err
 			}
 		}
-		return runScan(ctx)
+		return runScan(ctx, eng)
 	}
 
 	// Serve first: the port is reachable immediately and the first index
@@ -296,25 +289,56 @@ func run(cmd *cobra.Command, args []string) error {
 			colorYellow, colorReset)
 	}
 
-	// The watch pass reuses the run's root overrides, resolved here so a
-	// malformed --root fails the command rather than a background
-	// goroutine (openEngineDeferred has already validated them, so this
-	// cannot realistically fail — but the error has nowhere to go inside
-	// the goroutine).
-	watchOpts, err := ingestOptions(cmd)
-	if err != nil {
-		return err
-	}
-	watchOpts.Prune = prune
-
+	defer ln.Close()
 	var ready atomic.Bool
+	pending := &switchHandler{next: api.Handler(nil, api.Deps{Events: events})}
 	indexCtx, stopIndexing := context.WithCancel(ctx)
 	var indexing sync.WaitGroup
-	defer func() { stopIndexing(); indexing.Wait() }()
+	var eng *engine // Read on shutdown only after joining the initializer.
+	defer func() {
+		stopIndexing()
+		indexing.Wait()
+		if eng != nil {
+			eng.Close()
+		}
+	}()
 	indexing.Add(1)
 	go func() {
 		defer indexing.Done()
 		ctx := indexCtx
+		var bootstrap func(context.Context) error
+		var err error
+		eng, bootstrap, err = newEngine(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "ERROR: archive initialization failed: %v\n", err)
+				pending.set(api.Handler(nil, api.Deps{
+					Events: events,
+					Outcomes: func() (api.V1ImportStatus, api.BootstrapStatus) {
+						return api.V1ImportStatus{}, api.BootstrapStatus{State: "failed", Error: "Archive initialization failed. See the terminal for details and restart ccpeek to retry."}
+					},
+				}))
+				events.Notify()
+			}
+			return
+		}
+		// Publish only after migrations have committed. Existing SSE streams
+		// keep the same broadcaster and refresh when the database becomes usable.
+		pending.set(api.Handler(eng.query, api.Deps{
+			Events: events, Ready: ready.Load, Progress: readProgress,
+			Outcomes: func() (api.V1ImportStatus, api.BootstrapStatus) {
+				meta, err := eng.store.GetMetaMulti(ctx,
+					metaV1ImportState, metaV1ImportError, metaV1ImportedAt,
+					metaBootstrapState, metaBootstrapError)
+				if err != nil {
+					return api.V1ImportStatus{}, api.BootstrapStatus{}
+				}
+				return api.V1ImportStatus{
+					State: meta[metaV1ImportState], Error: meta[metaV1ImportError], ImportedAt: meta[metaV1ImportedAt],
+				}, api.BootstrapStatus{State: meta[metaBootstrapState], Error: meta[metaBootstrapError]}
+			},
+		}))
+		events.Notify()
 		if bootstrap != nil {
 			err := bootstrap(ctx)
 			if err != nil {
@@ -336,7 +360,7 @@ func run(cmd *cobra.Command, args []string) error {
 		events.Notify()
 		// Catch up on scans even when bootstrap indexing was skipped.
 		// Finish this scan before starting the watch loop.
-		if err := runScan(ctx); err != nil && ctx.Err() == nil {
+		if err := runScan(ctx, eng); err != nil && ctx.Err() == nil {
 			logf("WARNING: %v\n", err)
 		}
 		events.Notify()
@@ -347,7 +371,7 @@ func run(cmd *cobra.Command, args []string) error {
 			// secrets (and pruned sources) stay stale until a restart.
 			watchOpts.WatchPass = func() {
 				events.Notify() // fresh data first; the scan follows
-				if err := runScan(ctx); err != nil && ctx.Err() == nil {
+				if err := runScan(ctx, eng); err != nil && ctx.Err() == nil {
 					logf("WARNING: %v\n", err)
 				}
 				events.Notify()
@@ -359,15 +383,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}()
 
 	if openBrowser {
-		openURL(url)
+		launchBrowser(url)
 	}
 
-	return serve(ctx, ln, buildServeHandler(api.Handler(eng.query, api.Deps{
-		Events:   events,
-		Ready:    ready.Load,
-		Progress: readProgress,
-		Outcomes: readOutcomes,
-	})))
+	return serve(ctx, ln, buildServeHandler(pending))
 }
 
 // scanPending catches up from persisted scan coverage, independently of

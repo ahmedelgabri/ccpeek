@@ -130,7 +130,8 @@ type Deps struct {
 }
 
 // Handler mounts the API routes over svc, with d supplying the
-// server-state hooks (see Deps; the zero value is valid).
+// server-state hooks (see Deps; the zero value is valid). A nil svc serves
+// health, readiness and SSE while the archive opens; data routes answer 503.
 func Handler(svc *query.Service, d Deps) http.Handler {
 	mux := http.NewServeMux()
 	h := &handlers{svc: svc, deps: d}
@@ -156,7 +157,7 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 		"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw": h.artifactRaw,
 		"GET /api/v1/scan":                                h.scanFindings,
 		"GET /api/v1/scan/rules":                          h.scanRules,
-		"POST /api/v1/scan/{id}/ignore":                   sameOriginOnly(h.scanIgnore),
+		"POST /api/v1/scan/{id}/ignore":                   h.scanIgnore,
 		"GET /api/v1/blocks":                              h.blocks,
 	}
 	for _, r := range Routes() {
@@ -172,6 +173,19 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 			fn = rejectUnknownParams(AcceptedParams(r, op), fn)
 		} else if len(r.Extra) > 0 {
 			panic("api: route " + r.Pattern + " declares query parameters but is not an op route")
+		}
+		if svc == nil && r.Pattern != "GET /api/v1/health" && r.Pattern != "GET /api/v1/ready" && r.Pattern != "GET /api/v1/events" {
+			fn = func(w http.ResponseWriter, r *http.Request) {
+				if _, bootstrap := h.outcomes(); bootstrap.State == "failed" {
+					writeEnvelope(w, http.StatusServiceUnavailable, ops.Envelope{Error: "archive initialization failed"})
+					return
+				}
+				w.Header().Set("Retry-After", "1")
+				writeEnvelope(w, http.StatusServiceUnavailable, ops.Envelope{Error: "archive is initializing"})
+			}
+		}
+		if r.Kind == "write" {
+			fn = sameOriginOnly(fn)
 		}
 		mux.HandleFunc(r.Pattern, fn)
 		delete(byPattern, r.Pattern)
@@ -249,7 +263,7 @@ type handlers struct {
 }
 
 func (h *handlers) isReady() bool {
-	return h.deps.Ready == nil || h.deps.Ready()
+	return h.svc != nil && (h.deps.Ready == nil || h.deps.Ready())
 }
 
 // outcomes reads both recorded outcomes in ONE call, or zero values when
@@ -271,16 +285,20 @@ func (h *handlers) archiveStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
-	archive, err := h.svc.ArchiveStatus(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	indexing := !h.isReady()
 	payload := map[string]any{
 		"status":   "ok",
 		"indexing": indexing,
-		"archive":  archive,
+	}
+	if h.svc == nil {
+		payload["initializing"] = true
+	} else {
+		archive, err := h.svc.ArchiveStatus(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		payload["archive"] = archive
 	}
 	if indexing && h.deps.Progress != nil {
 		payload["progress"] = h.deps.Progress()
@@ -313,7 +331,11 @@ func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 				map[string]string{"status": "index-failed", "error": bootstrap.Error})
 			return
 		}
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "indexing"})
+		status := "indexing"
+		if h.svc == nil {
+			status = "initializing"
+		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": status})
 		return
 	}
 	if v1Import.State == "failed" {

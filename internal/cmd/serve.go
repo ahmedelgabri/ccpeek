@@ -5,11 +5,32 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/api"
 	"github.com/ahmedelgabri/ccpeek/internal/webui"
 )
+
+// switchHandler publishes the database-backed API after initialization.
+// Never hold the mutex while serving: SSE requests can live indefinitely.
+type switchHandler struct {
+	mu   sync.RWMutex
+	next http.Handler
+}
+
+func (h *switchHandler) set(next http.Handler) {
+	h.mu.Lock()
+	h.next = next
+	h.mu.Unlock()
+}
+
+func (h *switchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.RLock()
+	next := h.next
+	h.mu.RUnlock()
+	next.ServeHTTP(w, r)
+}
 
 // buildServeHandler assembles the v2.0 serving layout: the SPA at /, the
 // JSON API at /api/v1, and 301 redirects from every v1 UI route so
@@ -145,6 +166,8 @@ func listen(ctx context.Context, addr string) (net.Listener, error) {
 // serve runs the HTTP server on an already-bound listener, with graceful
 // shutdown, mirroring v1's timeouts.
 func serve(ctx context.Context, ln net.Listener, handler http.Handler) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,

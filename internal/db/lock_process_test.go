@@ -14,9 +14,14 @@ func TestMaintenanceLockAcrossProcesses(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 		store, err := Open(ctx, path)
+		if err != nil {
+			t.Fatalf("opening a current archive must not wait for maintenance: %v", err)
+		}
+		defer store.Close()
+		_, unlock, err := store.LockMaintenance(ctx)
 		if err == nil {
-			store.Close()
-			t.Fatal("opened archive while another process held its maintenance lock")
+			unlock()
+			t.Fatal("acquired maintenance lock while another process held it")
 		}
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("lock wait: %v", err)

@@ -38,7 +38,7 @@ type Store struct {
 // Open opens (creating or migrating as needed) the database at path.
 // Pass ":memory:" for an in-memory store (tests).
 func Open(ctx context.Context, path string) (*Store, error) {
-	dsn := sqliteutil.URI(path, "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)")
+	dsn := sqliteutil.URI(path, "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)")
 	if path == ":memory:" {
 		dsn = "file::memory:?_pragma=foreign_keys(1)"
 	} else if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -46,12 +46,6 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 
 	if path != ":memory:" {
-		lockedCtx, unlock, err := lockPath(ctx, path)
-		if err != nil {
-			return nil, err
-		}
-		defer unlock()
-		ctx = lockedCtx
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 		if err != nil {
 			return nil, err
@@ -182,13 +176,45 @@ var ErrFutureSchema = errors.New("database schema is newer than this ccpeek vers
 var ErrNoMigrationPath = errors.New("no migration path from this database version")
 
 func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx,
-		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
-		return fmt.Errorf("creating meta table: %w", err)
-	}
 	current, err := s.readVersion(ctx)
 	if err != nil {
 		return err
+	}
+	if current == schemaVersion {
+		var mode string
+		if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
+			return err
+		}
+		if mode == "wal" || s.path == ":memory:" {
+			// Opening a reader must not wait for another process's index or scan.
+			return nil
+		}
+	}
+	if current > schemaVersion {
+		return fmt.Errorf("%w: database at v%d, binary supports v%d", ErrFutureSchema, current, schemaVersion)
+	}
+
+	ctx, unlock, err := s.LockMaintenance(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Another opener may have finished the migration while we waited.
+	current, err = s.readVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if current > schemaVersion {
+		return fmt.Errorf("%w: database at v%d, binary supports v%d", ErrFutureSchema, current, schemaVersion)
+	}
+	if s.path != ":memory:" {
+		if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
+			return fmt.Errorf("enabling WAL: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("creating meta table: %w", err)
 	}
 
 	switch {
@@ -198,10 +224,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		return s.writeVersion(ctx, schemaVersion)
-
-	case current > schemaVersion:
-		return fmt.Errorf("%w: database at v%d, binary supports v%d",
-			ErrFutureSchema, current, schemaVersion)
 
 	case current < baseVersion:
 		return fmt.Errorf("%w: database at v%d, this build upgrades from v%d — pre-release databases must be re-created (delete %s and its -wal/-shm files)",
@@ -309,6 +331,13 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 }
 
 func (s *Store) readVersion(ctx context.Context) (int, error) {
+	var hasMeta bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')`).Scan(&hasMeta); err != nil {
+		return 0, fmt.Errorf("checking schema: %w", err)
+	}
+	if !hasMeta {
+		return 0, nil
+	}
 	var raw string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&raw)
