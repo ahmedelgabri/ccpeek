@@ -196,8 +196,21 @@ func TestEmptyHistoryAndTaskDirectoryReplacePriorContent(t *testing.T) {
 	task := filepath.Join(root, "tasks", "group", "1.json")
 	writeSource(t, history, "{\"display\":\"old prompt\",\"timestamp\":1751443200000}\n")
 	writeSource(t, task, `{"subject":"old task"}`)
+	writeSource(t, filepath.Join(root, "tasks", "bookkeeping", ".lock"), "")
+	writeSource(t, filepath.Join(root, "tasks", "group", ".highwatermark"), "1")
 	if _, err := runner.Run(context.Background(), opts); err != nil {
 		t.Fatal(err)
+	}
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM artifacts WHERE kind='task_group'`); n != 1 {
+		t.Fatalf("groups=%d", n)
+	}
+	// An incomplete parse cannot turn unread content into an empty group.
+	writeSource(t, task, `{broken`)
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if content := queryString(t, store, `SELECT content FROM artifacts WHERE kind='task_group'`); content != "old task" {
+		t.Fatalf("lost task=%q", content)
 	}
 	writeSource(t, history, "")
 	if err := os.Remove(task); err != nil {
@@ -209,7 +222,14 @@ func TestEmptyHistoryAndTaskDirectoryReplacePriorContent(t *testing.T) {
 	if n := queryInt(t, store, `SELECT COUNT(*) FROM history`); n != 0 {
 		t.Fatalf("stale history=%d", n)
 	}
-	if content := queryString(t, store, `SELECT content FROM artifacts WHERE kind='task_group'`); content != "" {
-		t.Fatalf("stale task=%q", content)
+	if n := queryInt(t, store, `SELECT COUNT(*) FROM artifacts WHERE kind='task_group'`); n != 0 {
+		t.Fatalf("stale/empty groups=%d", n)
+	}
+	writeSource(t, task, `{"subject":"new task"}`)
+	if _, err := runner.Run(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if content := queryString(t, store, `SELECT content FROM artifacts WHERE kind='task_group'`); content != "new task" {
+		t.Fatalf("new task=%q", content)
 	}
 }
