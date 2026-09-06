@@ -78,7 +78,7 @@
 
           ccpeek = (pkgs.buildGoModule.override {go = go_1_26_6;}) {
             pname = "ccpeek";
-            version = "2.0.3";
+            version = "2.1.0";
 
             src = lib.cleanSource ./.;
 
