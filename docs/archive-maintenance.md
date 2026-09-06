@@ -67,6 +67,8 @@ ccpeek scan --no-index
 
 `archive-status` is also available at `/api/v1/archive-status` and as an MCP tool. It reports schema and archive generation, pending derived repairs, imported-session counts, the last index outcome, and scan generation and rules fingerprint. HTTP health includes the same information. Readiness remains 503 after a partial index pass; the existing archive stays readable.
 
+OpenCode discovers files matching `opencode*.db`. Even an unrelated matching file that cannot be opened or lacks the expected schema makes discovery incomplete, so every pass remains partial and `/api/v1/ready` stays at 503 until discovery succeeds. Healthy sources still index, but pruning is withheld for that root. Repair the affected database or move an unrelated file out of the discovery path; a working UI does not imply complete discovery.
+
 Secret scanning covers stored raw and canonical messages, tool arguments and commands, full stored tool results, and artifacts. Tool findings link to the issuing transcript turn. Rules and scan-algorithm changes invalidate old scan state. Automatic scanning catches up after `--skip-scan` and retries interrupted scans on later watch passes, even if indexing found no changes.
 
 A completed scan is not proof that every original source was scanned. Unreadable or unsupported sources, parser omissions and truncated content are outside its coverage. Status reports warnings and truncations from the last index pass; those counts do not inventory all historical omissions. The scan page states this limit instead of presenting missing scan state as a clean result.
