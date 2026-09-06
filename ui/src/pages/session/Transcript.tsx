@@ -181,20 +181,34 @@ export function Transcript({
   useEffect(() => {
     setFocusDone(focusSeq === undefined);
   }, [focusSeq]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (focusSeq === undefined || focusDone) return;
     const idx = visible.findIndex((m) => m.seq === focusSeq);
     if (idx < 0) return;
-    // Programmatic: the scroll this fires must not be read back as the
-    // reader moving, or the spy below immediately rewrites ?seq to whatever
-    // ends up at the top of the viewport — destroying the very permalink
-    // that was just opened.
     quietSpy();
-    virtualizer.scrollToIndex(idx, { align: "center" });
-    setFocusDone(true);
-    // quietSpy only touches a ref.
+    const row = document.getElementById(`seq-${focusSeq}`);
+    if (row) {
+      // Align the mounted row before paint, then release the gate in the
+      // same layout commit. A delayed retry loop can steal the reader's
+      // first scroll after the target appears.
+      row.scrollIntoView({ block: "center", behavior: "instant" });
+      setFocusDone(true);
+    } else {
+      // Estimated scrolling only mounts the target. The next mounted
+      // window completes positioning against its actual DOM geometry.
+      virtualizer.scrollToIndex(idx, { align: "center" });
+    }
+    // quietSpy only touches a ref; window edges identify newly mounted rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusSeq, focusDone, visible, virtualizer]);
+  }, [
+    focusSeq,
+    focusDone,
+    visible,
+    virtualizer,
+    virtualItems[0]?.key,
+    virtualItems[virtualItems.length - 1]?.key,
+    virtualizer.options.scrollMargin,
+  ]);
 
   // Prepending older messages grows the document above the viewport, which
   // would jump the reader downward. Capture the height just before an older
@@ -225,11 +239,15 @@ export function Transcript({
   useEffect(() => {
     if (!hasOlder || loadingOlder || !focusDone || rangeStart === undefined)
       return;
-    if (rangeStart <= 4) {
+    // The virtual range can lag a programmatic scroll by a frame. Check
+    // the real list position too, or releasing the focus gate can prepend
+    // old pages while the reader is already at the middle-of-session target.
+    const top = listRef.current?.getBoundingClientRect().top;
+    if (rangeStart <= 4 && top !== undefined && top >= -window.innerHeight) {
       beforeOlder.current = document.documentElement.scrollHeight;
       onLoadOlder();
     }
-  }, [hasOlder, loadingOlder, focusDone, rangeStart, onLoadOlder]);
+  }, [hasOlder, loadingOlder, focusDone, rangeStart, onLoadOlder, listRef]);
 
   // Scroll-spy: keep the URL pointed at the topmost message in view so the
   // address bar is always a shareable link to the reader's spot. During a
