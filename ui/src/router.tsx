@@ -24,6 +24,7 @@ import { ErrorBoundary, ErrorPanel } from "./ErrorState";
 import { useThemePref, type ThemePref } from "./theme";
 import { PALETTE_KEY, isApple, openPalette, useKeyShortcut } from "./ui";
 import { useEffect } from "react";
+import type { ArchiveStatus } from "./api";
 
 // The health endpoint's terminal state for a pass that gave up. Both the
 // v1 import and the bootstrap index are read against it, in three places.
@@ -46,6 +47,7 @@ function IndexingBanner() {
           progress?: { agent: string; seen: number; changed: number };
           v1Import?: { state: string; error?: string };
           bootstrap?: { state: string; error?: string };
+          archive?: ArchiveStatus;
         };
       } = await res.json();
       return body.data ?? {};
@@ -64,10 +66,17 @@ function IndexingBanner() {
   // progress is coming until a restart retries it — an indefinite
   // "indexing…" banner would be a lie.
   const indexFailed = data?.bootstrap?.state === FAILED;
-  if (!data?.indexing && !importFailed) return null;
+  const partial = data?.archive?.lastRun?.status === "partial";
+  if (!data?.indexing && !importFailed && !indexFailed && !partial) return null;
   const p = data?.progress;
   return (
     <>
+      {partial && (
+        <div className="mb-6 rounded-md border border-warn/50 bg-warn/10 px-4 py-2 text-sm text-ink-dim">
+          Some sources could not be indexed. History may be incomplete. Run{" "}
+          <code>ccpeek ingest</code> to see the errors and retry.
+        </div>
+      )}
       {indexFailed && (
         <div className="mb-6 flex items-baseline gap-3 rounded-md border border-red-500/50 bg-surface-1 px-4 py-2 text-sm text-ink-dim">
           <span className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full bg-red-500" />
@@ -447,7 +456,12 @@ const routeTree = rootRoute.addChildren([
       const { tab } = pickStrings(s, ["tab"]);
       const out: { tab?: string; seq?: number } = {};
       if (tab !== undefined && tab !== "transcript") out.tab = tab;
-      if (typeof s.seq === "number") out.seq = s.seq;
+      if (
+        typeof s.seq === "number" &&
+        Number.isSafeInteger(s.seq) &&
+        s.seq >= 0
+      )
+        out.seq = s.seq;
       return out;
     },
   }),

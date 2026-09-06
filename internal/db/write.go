@@ -55,7 +55,7 @@ func (w *Writer) Commit() error {
 	if err := w.restoreUsageOwners(); err != nil {
 		return err
 	}
-	if _, err := w.tx.ExecContext(w.ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES ('derived_dirty','1')`); err != nil {
+	if _, err := w.tx.ExecContext(w.ctx, `INSERT INTO meta(key,value) VALUES ('derived_dirty','1'),('archive_generation','1') ON CONFLICT(key) DO UPDATE SET value=CASE WHEN excluded.key='archive_generation' THEN CAST(meta.value AS INTEGER)+1 ELSE excluded.value END`); err != nil {
 		return err
 	}
 	return w.tx.Commit()

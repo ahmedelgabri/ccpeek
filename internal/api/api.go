@@ -80,6 +80,7 @@ func Routes() []Route {
 		{"GET /api/v1/events", "", "transport", nil},
 		{"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", "", "transport", nil}, // raw bytes + CSP sandbox
 		{"GET /api/v1/stats", "stats", "op", nil},
+		{"GET /api/v1/archive-status", "archive-status", "op", nil},
 		{"GET /api/v1/sessions", "sessions", "op", nil},
 		{"GET /api/v1/sessions/{agent}/{id}", "session", "op", nil},
 		{"GET /api/v1/sessions/{agent}/{id}/transcript", "transcript", "op", nil},
@@ -137,6 +138,7 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 		"GET /api/v1/health":                              h.health,
 		"GET /api/v1/ready":                               h.readiness,
 		"GET /api/v1/stats":                               h.stats,
+		"GET /api/v1/archive-status":                      h.archiveStatus,
 		"GET /api/v1/sessions":                            h.sessions,
 		"GET /api/v1/sessions/{agent}/{id}":               h.session,
 		"GET /api/v1/sessions/{agent}/{id}/transcript":    h.transcript,
@@ -259,11 +261,26 @@ func (h *handlers) outcomes() (V1ImportStatus, BootstrapStatus) {
 	return h.deps.Outcomes()
 }
 
+func (h *handlers) archiveStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.svc.ArchiveStatus(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
+	archive, err := h.svc.ArchiveStatus(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	indexing := !h.isReady()
 	payload := map[string]any{
 		"status":   "ok",
 		"indexing": indexing,
+		"archive":  archive,
 	}
 	if indexing && h.deps.Progress != nil {
 		payload["progress"] = h.deps.Progress()
@@ -301,6 +318,15 @@ func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 	}
 	if v1Import.State == "failed" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "v1-import-failed"})
+		return
+	}
+	archive, err := h.svc.ArchiveStatus(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if archive.LastRun != nil && (archive.LastRun.Status == "partial" || archive.LastRun.Status == "failed") {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "index-partial"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
