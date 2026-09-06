@@ -154,18 +154,25 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, r.fail(ctx, report, started, err)
 	}
 
+	incompleteRoots := map[agent.Root]bool{}
 	for _, rr := range roots {
 		if err := ctx.Err(); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
 		sources, err := rr.adapter.Discover(ctx, rr.root)
 		if err != nil {
-			report.Issues = append(report.Issues, canon.Issue{
-				Agent: rr.adapter.Slug(), Severity: canon.SeverityError,
-				Category: "discover", SourcePath: rr.root.Path,
-				Detail: err.Error(),
-			})
-			continue
+			incompleteRoots[rr.root] = true
+			var partial *agent.IncompleteDiscovery
+			if errors.As(err, &partial) {
+				report.Issues = append(report.Issues, partial.Issues...)
+			} else {
+				report.Issues = append(report.Issues, canon.Issue{
+					Agent: rr.adapter.Slug(), Severity: canon.SeverityError,
+					Category: "discover", SourcePath: rr.root.Path,
+					Detail: err.Error(),
+				})
+				continue
+			}
 		}
 		sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
 		if opts.Progress != nil {
@@ -202,7 +209,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 			// Only prune sources under roots that are still accessible now.
 			covered := false
 			for _, rr := range roots {
-				if rr.root.Agent != known[path].Agent {
+				if rr.root.Agent != known[path].Agent || incompleteRoots[rr.root] {
 					continue
 				}
 				rel, err := filepath.Rel(rr.root.Path, path)
@@ -235,6 +242,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 
 	report.Status = "ok"
+	if len(incompleteRoots) != 0 {
+		report.Status = "partial"
+	}
 	for _, is := range report.Issues {
 		if is.Severity == canon.SeverityError {
 			report.Status = "partial"

@@ -33,45 +33,46 @@ func (*Adapter) RootSpec() agent.RootSpec {
 // sessions not present in any database are still discovered and retained.
 func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
 	var refs []agent.SourceRef
+	var issues []canon.Issue
+	warn := func(path string, err error) {
+		issues = append(issues, canon.Issue{Agent: Slug, Severity: canon.SeverityWarn, Category: "discover", SourcePath: path, Detail: err.Error()})
+	}
+	finish := func() ([]agent.SourceRef, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(issues) != 0 {
+			return refs, &agent.IncompleteDiscovery{Issues: issues}
+		}
+		return refs, nil
+	}
 	migrated := map[string]bool{}
 	databases, err := filepath.Glob(filepath.Join(root.Path, "opencode*.db"))
 	if err != nil {
 		return nil, err
 	}
 	for _, path := range databases {
-		db, err := openDatabase(ctx, path)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		rows, err := db.QueryContext(ctx, `SELECT id FROM session`)
+		ids, err := databaseSessionIDs(ctx, path)
 		if err != nil {
-			db.Close()
-			return nil, fmt.Errorf("unsupported OpenCode database %s: %w", path, err)
+			warn(path, err)
+			continue
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				db.Close()
-				return nil, err
-			}
+		for _, id := range ids {
 			migrated[id] = true
-		}
-		rows.Close()
-		err = rows.Err()
-		db.Close()
-		if err != nil {
-			return nil, err
 		}
 		refs = append(refs, agent.SourceRef{Root: root, Path: path, Kind: agent.SourceDatabase, CompanionPaths: []string{path + "-wal"}})
 	}
 	sessionDir := filepath.Join(root.Path, "storage", "session")
 	entries, err := os.ReadDir(sessionDir)
 	if os.IsNotExist(err) {
-		return refs, nil
+		return finish()
 	}
 	if err != nil {
-		return nil, err
+		warn(sessionDir, err)
+		return finish()
 	}
 	for _, dir := range entries {
 		if err := ctx.Err(); err != nil {
@@ -80,9 +81,11 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 		if !dir.IsDir() {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(sessionDir, dir.Name()))
+		projectDir := filepath.Join(sessionDir, dir.Name())
+		files, err := os.ReadDir(projectDir)
 		if err != nil {
-			return nil, err
+			warn(projectDir, err)
+			continue
 		}
 		for _, f := range files {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
@@ -96,7 +99,8 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			companions := []string{msgDir}
 			msgs, err := os.ReadDir(msgDir)
 			if err != nil && !os.IsNotExist(err) {
-				return nil, err
+				warn(msgDir, err)
+				continue
 			}
 			for _, msg := range msgs {
 				if !msg.IsDir() && strings.HasSuffix(msg.Name(), ".json") {
@@ -106,7 +110,31 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			refs = append(refs, agent.SourceRef{Root: root, Path: filepath.Join(sessionDir, dir.Name(), f.Name()), Kind: agent.SourceFile, CompanionPaths: companions})
 		}
 	}
-	return refs, nil
+	return finish()
+}
+
+// Collect IDs before publishing precedence: an unreadable database cannot
+// suppress legacy sessions based on only the prefix of its session table.
+func databaseSessionIDs(ctx context.Context, path string) ([]string, error) {
+	database, err := openDatabase(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer database.Close()
+	rows, err := database.QueryContext(ctx, `SELECT id FROM session`)
+	if err != nil {
+		return nil, fmt.Errorf("reading OpenCode sessions: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 type sessionDoc struct {

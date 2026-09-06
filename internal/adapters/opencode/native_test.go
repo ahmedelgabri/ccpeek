@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,15 @@ import (
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/agent/agenttest"
 )
+
+func TestDiscoveryCancellationIsNotAnIncompleteResult(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	refs, err := New().Discover(ctx, agent.Root{Agent: Slug, Path: t.TempDir()})
+	if !errors.Is(err, context.Canceled) || len(refs) != 0 {
+		t.Fatalf("canceled discovery: %+v %v", refs, err)
+	}
+}
 
 func TestWithPartsPreservesUnknownFields(t *testing.T) {
 	message := []byte(`{"role":"assistant","metadata":{"large":9007199254740993}}`)
@@ -102,6 +112,15 @@ func TestNativeSQLiteAndWAL(t *testing.T) {
 	refs, err := a.Discover(ctx, root)
 	if err != nil || len(refs) != 1 {
 		t.Fatalf("refs=%+v err=%v", refs, err)
+	}
+	// An unrelated broken database must not discard the usable native source.
+	if err := os.WriteFile(filepath.Join(root.Path, "opencode-broken.db"), []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	partialRefs, err := a.Discover(ctx, root)
+	var partial *agent.IncompleteDiscovery
+	if !errors.As(err, &partial) || len(partialRefs) != 1 || partialRefs[0].Path != path {
+		t.Fatalf("partial discovery: %+v %v", partialRefs, err)
 	}
 	if refs[0].Kind != agent.SourceDatabase || len(refs[0].CompanionPaths) != 1 || refs[0].CompanionPaths[0] != path+"-wal" {
 		t.Fatal(refs[0])
