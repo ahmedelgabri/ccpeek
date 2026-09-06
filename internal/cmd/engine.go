@@ -267,12 +267,19 @@ const (
 // for /api/v1/health and the UI, and `ccpeek migrate` re-runs the import
 // with a non-zero exit on error.
 func maybeImportV1(ctx context.Context, store *db.Store, dataFile string, logw io.Writer) *migrate.Report {
+	// Completed imports need no maintenance. Use the read pool so even a
+	// writer transaction in another process cannot delay --no-index queries.
+	meta, err := store.GetMetaMulti(ctx, metaV1ImportState)
+	if err == nil && (meta[metaV1ImportState] == v1ImportSuccess || meta[metaV1ImportState] == v1ImportNoLegacyDB) {
+		return nil
+	}
 	ctx, unlock, err := store.LockMaintenance(ctx)
 	if err != nil {
 		fmt.Fprintf(logw, "WARNING: waiting for import lock: %v\n", err)
 		return nil
 	}
 	defer unlock()
+	// Another process may have finished the import while this one waited.
 	state, _, err := store.GetMeta(ctx, metaV1ImportState)
 	if err == nil && (state == v1ImportSuccess || state == v1ImportNoLegacyDB) {
 		return nil
