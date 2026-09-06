@@ -28,6 +28,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
 	_ "modernc.org/sqlite"
 )
 
@@ -127,7 +128,7 @@ type blobUsage struct {
 
 // Parse opens the per-session database read-only and emits its records.
 func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
-	sdb, err := sql.Open("sqlite", "file:"+src.Path+"?mode=ro&_pragma=busy_timeout(5000)")
+	sdb, err := sql.Open("sqlite", sqliteutil.URI(src.Path, "mode=ro&_pragma=busy_timeout(5000)"))
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", src.Path, err)
 	}

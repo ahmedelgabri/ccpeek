@@ -101,9 +101,7 @@ func discoverSidecars(root agent.Root) []agent.SourceRef {
 		matches, _ := filepath.Glob(filepath.Join(root.Path, glob))
 		for _, m := range matches {
 			if fi, err := os.Stat(m); err == nil && fi.IsDir() {
-				if empty, _ := isEffectivelyEmpty(m); !empty {
-					refs = append(refs, agent.SourceRef{Root: root, Path: m, Kind: agent.SourceDir})
-				}
+				refs = append(refs, agent.SourceRef{Root: root, Path: m, Kind: agent.SourceDir})
 			}
 		}
 	}
@@ -119,21 +117,6 @@ func discoverSidecars(root agent.Root) []agent.SourceRef {
 	addDirs("tasks/*")
 	addDirs("file-history/*")
 	return refs
-}
-
-// isEffectivelyEmpty reports whether a dir holds nothing but bookkeeping
-// files (.lock/.highwatermark) — such task dirs are skipped, matching v1.
-func isEffectivelyEmpty(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false, err
-	}
-	for _, e := range entries {
-		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // parseSidecar handles every non-session source kind.

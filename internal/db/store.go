@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
+
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
 
@@ -36,13 +38,32 @@ type Store struct {
 // Open opens (creating or migrating as needed) the database at path.
 // Pass ":memory:" for an in-memory store (tests).
 func Open(ctx context.Context, path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
+	dsn := sqliteutil.URI(path, "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)")
 	if path == ":memory:" {
 		dsn = "file::memory:?_pragma=foreign_keys(1)"
 	} else if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("creating data directory: %w", err)
 	}
 
+	if path != ":memory:" {
+		lockedCtx, unlock, err := lockPath(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+		ctx = lockedCtx
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Chmod(0o600); err != nil {
+			file.Close()
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+	}
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
@@ -234,7 +255,7 @@ func (s *Store) createAll(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, derivedSchema); err != nil {
 		return fmt.Errorf("creating derived schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, userSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, userSchema+usageClaimsSchema); err != nil {
 		return fmt.Errorf("creating user schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {
@@ -277,7 +298,7 @@ func (s *Store) ResetDerived(ctx context.Context) error {
 			return fmt.Errorf("dropping %s: %w", table, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, derivedSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, derivedSchema+usageClaimsSchema); err != nil {
 		return fmt.Errorf("recreating derived schema: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, derivedVirtualSchema); err != nil {

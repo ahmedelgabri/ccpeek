@@ -118,19 +118,35 @@ func TestV13CostMigrationPreservesArchiveAndAddsColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Use the real table relationships rather than column stubs: later
+	// migrations legitimately need to recover data through those relationships.
+	if _, err := raw.ExecContext(ctx, derivedSchema+derivedVirtualSchema+userSchema); err != nil {
+		t.Fatal(err)
+	}
+	for table, columns := range map[string][]string{
+		"messages":           {"provider", "text_content", "usage_request_id"},
+		"tool_calls":         {"result_content"},
+		"message_usage":      {"cache_write_1h_tokens", "reported_cost_nanos"},
+		"source_files":       {"parse_version"},
+		"rollup_usage_daily": {"unpriced_input_tokens", "unpriced_output_tokens", "unpriced_cache_read_tokens", "unpriced_cache_write_tokens", "cost_nanos", "cost_reported_nanos", "cost_estimated_nanos"},
+	} {
+		for _, column := range columns {
+			if _, err := raw.ExecContext(ctx, "ALTER TABLE "+table+" DROP COLUMN "+column); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	for _, q := range []string{
 		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`INSERT INTO meta VALUES ('schema_version', '13')`,
-		`CREATE TABLE messages (id INTEGER PRIMARY KEY, provider_placeholder TEXT)`,
-		`INSERT INTO messages (id) VALUES (1)`,
-		`CREATE TABLE message_usage (message_id INTEGER PRIMARY KEY, reported_cost_usd REAL)`,
-		`INSERT INTO message_usage VALUES (1, 0.125)`,
-		`CREATE TABLE source_files (path TEXT PRIMARY KEY)`,
-		`INSERT INTO source_files VALUES ('kept')`,
-		`CREATE TABLE rollup_usage_daily (id INTEGER PRIMARY KEY)`,
-		`INSERT INTO rollup_usage_daily VALUES (1)`,
-		`CREATE TABLE rollup_session_days (id INTEGER PRIMARY KEY)`,
-		`INSERT INTO rollup_session_days VALUES (1)`,
+		`INSERT INTO agents(id,slug) VALUES(1,'claude-code')`,
+		`INSERT INTO sessions(id,agent_id,external_id) VALUES(1,1,'retained')`,
+		`INSERT INTO messages(id,session_id,seq,role,content_id) VALUES(1,1,0,'assistant','request-content')`,
+		`INSERT INTO search_docs(session_id,doc_type,seq,text_content) VALUES(1,'message',0,'retained text')`,
+		`INSERT INTO message_usage(message_id,reported_cost_usd,request_id) VALUES (1,0.125,'req1')`,
+		`INSERT INTO source_files(path,agent_id,content_hash,indexed_at) VALUES ('kept',1,'h','')`,
+		`INSERT INTO rollup_usage_daily(day,agent_id) VALUES ('2026-01-01',1)`,
+		`INSERT INTO rollup_session_days(day,agent_id,session_id) VALUES ('2026-01-01',1,1)`,
 	} {
 		if _, err := raw.ExecContext(ctx, q); err != nil {
 			raw.Close()

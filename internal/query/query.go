@@ -466,13 +466,15 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 	if err != nil {
 		return nil, err
 	}
+	contentExpr := "''"
+	if opts.Full {
+		contentExpr = "m.content"
+	}
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.seq, m.external_id, m.parent_external_id,
 		       m.role, m.kind, COALESCE(m.created_at, ''), m.provider, m.model,
-		       m.is_sidechain, d.text_content, m.content
+		       m.is_sidechain, m.text_content, `+contentExpr+`
 		FROM messages m
-		LEFT JOIN search_docs d ON d.session_id = m.session_id
-			AND d.doc_type = 'message' AND d.seq = m.seq
 		WHERE m.session_id = ? AND m.seq >= ?
 		ORDER BY m.seq LIMIT ?`, rowID, opts.FromSeq, opts.Limit)
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ahmedelgabri/ccpeek/internal/agent"
@@ -28,7 +29,7 @@ import (
 
 // Options configures one pipeline run.
 type Options struct {
-	// Rebuild drops all derived data first (user state survives).
+	// Rebuild reparses available sources and preserves retained archive records.
 	Rebuild bool
 	// Prune removes rows whose source files no longer exist on disk.
 	// Default is retention (deleted sources keep their data — that history
@@ -113,6 +114,12 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		opts.OnPass(true)
 		defer opts.OnPass(false)
 	}
+	lockedCtx, unlock, err := r.store.LockMaintenance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	ctx = lockedCtx
 	started := time.Now()
 	if opts.Getenv == nil {
 		opts.Getenv = os.Getenv
@@ -126,9 +133,9 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	roots, rootIssues := r.resolveRoots(opts)
 	report.Issues = append(report.Issues, rootIssues...)
 
-	// Reset before opening the run row — ResetDerived drops ingest_runs too.
+	// Back up the archive and invalidate parser fingerprints before the pass.
 	if opts.Rebuild {
-		if err := r.store.ResetDerived(ctx); err != nil {
+		if err := r.store.PrepareRebuild(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -190,8 +197,27 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	prunedSources := 0
 	if opts.Prune {
 		pruned, err := r.store.PruneMissingSources(ctx, func(path string) bool {
+			// An unavailable root is not evidence that its archive was deleted.
+			// Only prune sources under roots that are still accessible now.
+			covered := false
+			for _, rr := range roots {
+				rel, err := filepath.Rel(rr.root.Path, path)
+				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					continue
+				}
+				if info, err := os.Stat(rr.root.Path); err == nil && info.IsDir() {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				return true
+			}
 			_, err := os.Stat(path)
-			return err == nil
+			if err != nil && !os.IsNotExist(err) {
+				report.Issues = append(report.Issues, canon.Issue{Severity: canon.SeverityError, Category: "prune", SourcePath: path, Detail: err.Error()})
+			}
+			return !os.IsNotExist(err)
 		})
 		if err != nil {
 			return nil, r.fail(ctx, report, started, err)
@@ -227,7 +253,11 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	// artifact of its kind and every call that could have produced one, so
 	// running them unconditionally made each watch-mode debounce — most of
 	// which change nothing relevant — pay a full pass over the corpus.
-	if report.FilesChanged > 0 || prunedSources > 0 {
+	dirty, err := r.store.DerivedDirty(ctx)
+	if err != nil {
+		return nil, r.fail(ctx, report, started, err)
+	}
+	if report.FilesChanged > 0 || dirty {
 		if _, _, err := r.store.ResolveArtifactLinks(ctx, r.linkRules()); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
@@ -239,7 +269,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 	// they are empty despite indexed usage — schema migrations drop them
 	// (the split columns rebuild here) and this self-heals instead of
 	// leaving Usage blank until the next change.
-	needRollups := report.Sessions > 0 || report.Messages > 0 || prunedSources > 0
+	needRollups := dirty || report.Sessions > 0 || report.Messages > 0 || prunedSources > 0
 	if !needRollups {
 		var err error
 		needRollups, err = r.store.RollupsNeedRegeneration(ctx, r.pricer)
@@ -254,6 +284,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) (*Report, error) {
 		if err := r.store.RegenerateRollups(ctx, r.pricer); err != nil {
 			return nil, r.fail(ctx, report, started, err)
 		}
+	}
+
+	if err := r.store.SetMeta(ctx, "derived_dirty", "0"); err != nil {
+		return nil, r.fail(ctx, report, started, err)
 	}
 
 	report.Status = "ok"
@@ -411,6 +445,9 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	}
 	defer w.Rollback()
 
+	if err := w.ClearHistorySource(a.Slug(), src.Path); err != nil {
+		return err
+	}
 	sink := newSink(w, a.Slug(), src.Path, hash, false)
 	parseState := ""
 	if tp, ok := a.(agent.TailParser); ok {

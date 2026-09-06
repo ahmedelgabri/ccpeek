@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 15
+const schemaVersion = 16
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS messages (
 	cwd TEXT NOT NULL DEFAULT '',
 	is_sidechain INTEGER NOT NULL DEFAULT 0,
 	content TEXT NOT NULL DEFAULT '',
+	text_content TEXT NOT NULL DEFAULT '',
+	usage_request_id TEXT NOT NULL DEFAULT '',
 	UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
@@ -153,6 +155,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 	input_json TEXT NOT NULL DEFAULT '{}',
 	result_status TEXT NOT NULL DEFAULT '',
 	result_excerpt TEXT NOT NULL DEFAULT '',
+	result_content TEXT NOT NULL DEFAULT '',
 	-- Normalized arguments, lifted out of input_json by the adapter that
 	-- knows the agent's shape (see canon.ToolCall). Cross-agent surfaces
 	-- read these; input_json keeps the native form verbatim.
@@ -430,6 +433,18 @@ CREATE TRIGGER IF NOT EXISTS search_docs_au AFTER UPDATE ON search_docs BEGIN
 END;
 `
 
+// usageClaimsSchema preserves the best observation of a request independently
+// of whichever transcript copy currently owns its materialized usage row.
+const usageClaimsSchema = `
+CREATE TABLE IF NOT EXISTS usage_claims (
+ agent_id INTEGER NOT NULL REFERENCES agents(id),
+ content_id TEXT NOT NULL,
+ request_id TEXT NOT NULL,
+ usage_json TEXT NOT NULL,
+ PRIMARY KEY(agent_id, content_id, request_id)
+);
+`
+
 // userSchema holds user-created state. It is NEVER dropped by
 // ResetDerived / --rebuild. Rows attach to entities via natural keys
 // (e.g. "agent_slug/session_external_id") so they survive re-ingest.
@@ -463,6 +478,7 @@ var derivedTables = []string{
 	"artifacts",
 	"tool_calls",
 	"message_usage",
+	"usage_claims",
 	"messages",
 	"pending_relations",
 	"session_relations",
@@ -514,5 +530,21 @@ var migrations = []migration{
 			}
 		}
 		return nil
+	},
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, q := range []string{
+			`ALTER TABLE messages ADD COLUMN text_content TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE messages ADD COLUMN usage_request_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE tool_calls ADD COLUMN result_content TEXT NOT NULL DEFAULT ''`,
+			`UPDATE messages SET text_content = COALESCE((SELECT text_content FROM search_docs WHERE session_id = messages.session_id AND doc_type = 'message' AND seq = messages.seq LIMIT 1), '')`,
+			`UPDATE messages SET usage_request_id = COALESCE((SELECT request_id FROM message_usage WHERE message_id = messages.id), '')`,
+			usageClaimsSchema,
+			`INSERT OR REPLACE INTO meta(key,value) VALUES ('derived_dirty','1')`,
+		} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return seedUsageClaims(ctx, tx)
 	},
 }
