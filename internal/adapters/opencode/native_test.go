@@ -48,10 +48,10 @@ func TestWithPartsPreservesUnknownFields(t *testing.T) {
 func TestNativeSeparatePartStorage(t *testing.T) {
 	root := agent.Root{Agent: Slug, Path: t.TempDir()}
 	files := map[string]string{
-		"storage/session/project/ses_1.json": `{"id":"ses_1","title":"Native JSON","directory":"/project","time":{"created":1751443200000}}`,
+		"storage/session/project/ses_1.json": `{"id":"ses_1","parentID":"ses_parent","title":"Native JSON","directory":"/project","time":{"created":1751443200000}}`,
 		"storage/message/ses_1/msg_1.json":   `{"id":"msg_1","sessionID":"ses_1","role":"assistant","customMetadata":"preserved"}`,
 		"storage/part/msg_1/prt_1.json":      `{"type":"text","text":"native text","customField":"also preserved"}`,
-		"storage/part/msg_1/prt_2.json":      `{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."},"output":"done"}}`,
+		"storage/part/msg_1/prt_2.json":      `{"type":"tool","callID":"call_native","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."},"output":"done"}}`,
 	}
 	for path, content := range files {
 		path = filepath.Join(root.Path, path)
@@ -83,6 +83,10 @@ func TestNativeSeparatePartStorage(t *testing.T) {
 	if len(sink.ToolCalls) != 1 || sink.ToolCalls[0].Command != "go test ./..." {
 		t.Fatal(sink.ToolCalls)
 	}
+	if call := sink.ToolCalls[0]; call.ExternalID != "call_native" || call.ResultExcerpt != "done" || call.ResultStatus != "ok" {
+		t.Fatalf("call identity/result: %+v", call)
+	}
+	assertForkRelation(t, sink)
 }
 
 func TestNativeSQLiteAndWAL(t *testing.T) {
@@ -100,7 +104,7 @@ func TestNativeSQLiteAndWAL(t *testing.T) {
 		`CREATE TABLE session(id TEXT PRIMARY KEY,title TEXT,directory TEXT,time_created INTEGER,time_updated INTEGER,parent_id TEXT)`,
 		`CREATE TABLE message(id TEXT PRIMARY KEY,session_id TEXT,data TEXT)`,
 		`CREATE TABLE part(id TEXT PRIMARY KEY,session_id TEXT,message_id TEXT,data TEXT)`,
-		`INSERT INTO session VALUES('ses_1','SQLite session','/project',1751443200000,1751443200000,NULL)`,
+		`INSERT INTO session VALUES('ses_1','SQLite session','/project',1751443200000,1751443200000,'ses_parent')`,
 		`INSERT INTO message VALUES('msg_1','ses_1','{"role":"user"}')`,
 		`INSERT INTO part VALUES('prt_1','ses_1','msg_1','{"type":"text","text":"WAL text"}')`,
 	} {
@@ -132,6 +136,7 @@ func TestNativeSQLiteAndWAL(t *testing.T) {
 	if len(sink.Messages) != 1 || sink.Messages[0].Text != "WAL text" {
 		t.Fatal(sink.Messages)
 	}
+	assertForkRelation(t, sink)
 	if _, err := db.ExecContext(ctx, `UPDATE part SET data='{"type":"text","text":"updated"}'`); err != nil {
 		t.Fatal(err)
 	}
