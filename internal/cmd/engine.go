@@ -615,6 +615,20 @@ func resolveIndexFile(cmd *cobra.Command, legacy string) (string, error) {
 		if old == absolute {
 			return "", fmt.Errorf("legacy database and v2 index must be different files")
 		}
+		// Names are not identity: symlinks and hard links can expose the
+		// protected legacy inode to migrations under a different archive path.
+		// Check before db.Open can chmod it or create SQLite/lock sidecars.
+		oldInfo, oldErr := os.Stat(old)
+		if oldErr != nil && !os.IsNotExist(oldErr) {
+			return "", fmt.Errorf("checking legacy database identity: %w", oldErr)
+		}
+		indexInfo, indexErr := os.Stat(absolute)
+		if indexErr != nil && !os.IsNotExist(indexErr) {
+			return "", fmt.Errorf("checking archive identity: %w", indexErr)
+		}
+		if oldErr == nil && indexErr == nil && os.SameFile(oldInfo, indexInfo) {
+			return "", fmt.Errorf("legacy database and v2 index must be different files")
+		}
 	}
 	return absolute, nil
 }
