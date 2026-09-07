@@ -319,7 +319,9 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 // readiness at 503 ("v1-import-failed"): the index is genuinely
 // incomplete without the legacy data, and anything blocking on this
 // endpoint would otherwise read partial history as ready. Health keeps
-// answering 200 with the failure detail throughout.
+// answering 200 with the failure detail throughout. A durable running row
+// also holds readiness: another process may still be indexing, or a killed
+// pass may have left it unfinished even though this process is ready.
 func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 	v1Import, bootstrap := h.outcomes()
 	if !h.isReady() {
@@ -345,6 +347,10 @@ func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 	archive, err := h.svc.ArchiveStatus(r.Context())
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if archive.LastRun != nil && archive.LastRun.Status == "running" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "index-unfinished"})
 		return
 	}
 	if archive.LastRun != nil && (archive.LastRun.Status == "partial" || archive.LastRun.Status == "failed") {

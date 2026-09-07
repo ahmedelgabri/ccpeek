@@ -59,10 +59,13 @@ function ArchiveContent({ children }: { children: ReactNode }) {
     // Unknown health and transport failures must retry without window focus.
     // Once health is known, poll only while progress can arrive: a failed pass holds
     // indexing=true until a restart, and 1.5s polls against that state
-    // would spin forever for no news.
+    // would spin forever for no news. A durable running row may belong to
+    // another process or an interrupted pass; poll until a writer finishes
+    // or recovers it, since that process cannot send this server's SSE events.
     refetchInterval: (query) =>
       !query.state.data ||
       query.state.status === "error" ||
+      query.state.data.archive?.lastRun?.status === "running" ||
       (query.state.data.indexing &&
         query.state.data.bootstrap?.state !== FAILED)
         ? 1500
@@ -74,9 +77,20 @@ function ArchiveContent({ children }: { children: ReactNode }) {
   // "indexing…" banner would be a lie.
   const indexFailed = data?.bootstrap?.state === FAILED;
   const partial = data?.archive?.lastRun?.status === "partial";
+  const unfinished = data?.archive?.lastRun?.status === "running";
   const p = data?.progress;
   return (
     <>
+      {unfinished && !data?.indexing && (
+        <div
+          role="status"
+          className="mb-6 rounded-md border border-warn/50 bg-warn/10 px-4 py-2 text-sm text-ink-dim"
+        >
+          An index pass is running or was interrupted. History may be
+          incomplete. If no indexing process is active, run{" "}
+          <code>ccpeek ingest</code> to retry.
+        </div>
+      )}
       {partial && (
         <div className="mb-6 rounded-md border border-warn/50 bg-warn/10 px-4 py-2 text-sm text-ink-dim">
           Some sources could not be indexed. History may be incomplete. Run{" "}

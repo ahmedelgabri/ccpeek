@@ -79,6 +79,50 @@ for (const failure of ["network", "http"] as const) {
   });
 }
 
+test("unfinished archive runs warn and recover without local indexing or SSE", async ({
+  page,
+}) => {
+  let status = "running";
+  let healthRequests = 0;
+  let navigations = 0;
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+      navigations++;
+  });
+  await page.route("**/api/v1/events", (route) =>
+    route.fulfill({ status: 501, body: "disabled for this test" }),
+  );
+  await page.route("**/api/v1/health", (route) => {
+    healthRequests++;
+    return route.fulfill({
+      json: {
+        schema: "ccpeek/v1",
+        data: {
+          status: "ok",
+          indexing: false,
+          archive: { lastRun: { status } },
+        },
+      },
+    });
+  });
+  await page.goto("/sessions");
+  const warning = page
+    .getByRole("status")
+    .filter({ hasText: "An index pass is running or was interrupted." });
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("ccpeek ingest");
+  await expect(
+    page.getByRole("heading", { name: "Sessions", exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => healthRequests).toBeGreaterThanOrEqual(2);
+  status = "ok";
+  await expect(warning).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Sessions", exact: true }),
+  ).toBeVisible();
+  expect(navigations).toBe(1);
+});
+
 test("failed initialization keeps the shell and reports the failure", async ({
   page,
 }) => {
