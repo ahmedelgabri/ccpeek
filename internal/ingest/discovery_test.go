@@ -12,7 +12,7 @@ import (
 )
 
 func TestOpenCodeIncompleteDiscoveryRetainsPruneCandidates(t *testing.T) {
-	for _, failure := range []string{"bad-database", "missing-table", "unreadable-project"} {
+	for _, failure := range []string{"bad-database", "missing-table", "missing-session-column", "missing-message", "missing-part", "unreadable-project"} {
 		t.Run(failure, func(t *testing.T) {
 			runner, store := newRunner(t)
 			runner.adapters = append(runner.adapters, opencode.New())
@@ -28,6 +28,7 @@ func TestOpenCodeIncompleteDiscoveryRetainsPruneCandidates(t *testing.T) {
 			}
 			writeSource(t, filepath.Join(root, "storage", "session", "good", "new.json"), `{"id":"new","title":"healthy source"}`)
 			bad := filepath.Join(root, "opencode-bad.db")
+			var repairSQL string
 			switch failure {
 			case "bad-database":
 				writeSource(t, bad, "not sqlite")
@@ -39,6 +40,37 @@ func TestOpenCodeIncompleteDiscoveryRetainsPruneCandidates(t *testing.T) {
 				_, err = database.Exec(`CREATE TABLE unrelated(id INTEGER)`)
 				database.Close()
 				if err != nil {
+					t.Fatal(err)
+				}
+			case "missing-session-column", "missing-message", "missing-part":
+				database, err := sql.Open("sqlite", bad)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer database.Close()
+				for _, q := range []string{
+					`CREATE TABLE session(id TEXT PRIMARY KEY,title TEXT,directory TEXT,time_created INTEGER,time_updated INTEGER,parent_id TEXT)`,
+					`CREATE TABLE message(id TEXT PRIMARY KEY,session_id TEXT,data TEXT)`,
+					`CREATE TABLE part(id TEXT PRIMARY KEY,session_id TEXT,message_id TEXT,data TEXT)`,
+					`INSERT INTO session VALUES('new','native source','/project',1,1,NULL)`,
+				} {
+					if _, err := database.Exec(q); err != nil {
+						t.Fatal(err)
+					}
+				}
+				brokenSQL := `ALTER TABLE session RENAME COLUMN title TO missing`
+				repairSQL = `ALTER TABLE session RENAME COLUMN missing TO title`
+				if failure == "missing-message" {
+					brokenSQL = `DROP TABLE message`
+					repairSQL = `CREATE TABLE message(id TEXT PRIMARY KEY,session_id TEXT,data TEXT)`
+				} else if failure == "missing-part" {
+					brokenSQL = `DROP TABLE part`
+					repairSQL = `CREATE TABLE part(id TEXT PRIMARY KEY,session_id TEXT,message_id TEXT,data TEXT)`
+				}
+				if _, err := database.Exec(brokenSQL); err != nil {
+					t.Fatal(err)
+				}
+				if err := database.Close(); err != nil {
 					t.Fatal(err)
 				}
 			case "unreadable-project":
@@ -73,12 +105,25 @@ func TestOpenCodeIncompleteDiscoveryRetainsPruneCandidates(t *testing.T) {
 			if n := queryInt(t, store, `SELECT COUNT(*) FROM sessions`); n != 2 {
 				t.Fatalf("healthy or retained source lost: %d sessions", n)
 			}
+			if title := queryString(t, store, `SELECT title FROM sessions WHERE external_id='new'`); title != "healthy source" {
+				t.Fatalf("usable legacy JSON was suppressed: %q", title)
+			}
 			if failure == "unreadable-project" {
 				if err := os.Chmod(bad, 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := os.Remove(bad); err != nil {
+			if repairSQL != "" {
+				database, err := sql.Open("sqlite", bad)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = database.Exec(repairSQL)
+				database.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(bad); err != nil {
 				t.Fatal(err)
 			}
 			report, err = runner.Run(context.Background(), opts)
@@ -87,6 +132,11 @@ func TestOpenCodeIncompleteDiscoveryRetainsPruneCandidates(t *testing.T) {
 			}
 			if n := queryInt(t, store, `SELECT COUNT(*) FROM sessions`); n != 1 {
 				t.Fatalf("complete discovery did not prune: %d", n)
+			}
+			if repairSQL != "" {
+				if title := queryString(t, store, `SELECT title FROM sessions WHERE external_id='new'`); title != "native source" {
+					t.Fatalf("repaired database did not regain precedence: %q", title)
+				}
 			}
 		})
 	}

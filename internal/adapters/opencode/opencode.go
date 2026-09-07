@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,8 +30,9 @@ func (*Adapter) RootSpec() agent.RootSpec {
 	return agent.RootSpec{EnvVars: []string{"OPENCODE_DATA_DIR"}, EnvIsList: true, Defaults: []string{"~/.local/share/opencode"}}
 }
 
-// Database sessions take precedence over leftover JSON from migration. Legacy
-// sessions not present in any database are still discovered and retained.
+// Databases with the required schema take precedence over leftover JSON from
+// migration. Legacy sessions absent from those databases are still discovered
+// and retained.
 func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRef, error) {
 	var refs []agent.SourceRef
 	var issues []canon.Issue
@@ -113,15 +115,35 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 	return finish()
 }
 
-// Collect IDs before publishing precedence: an unreadable database cannot
-// suppress legacy sessions based on only the prefix of its session table.
+// Validate the parser's required schema and collect all IDs in one snapshot
+// before publishing precedence. A partial schema or unreadable session table
+// must not suppress usable legacy JSON.
 func databaseSessionIDs(ctx context.Context, path string) ([]string, error) {
 	database, err := openDatabase(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer database.Close()
-	rows, err := database.QueryContext(ctx, `SELECT id FROM session`)
+	tx, err := database.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	// Resolve the actual parser queries without loading message or part data.
+	// Checking only session IDs misses absent tables and required columns.
+	for _, probe := range []struct {
+		query string
+		args  []any
+	}{
+		{databaseSessionsQuery, nil},
+		{databaseMessagesQuery, []any{""}},
+		{databasePartsQuery, []any{""}},
+	} {
+		if err := tx.QueryRowContext(ctx, probe.query+" LIMIT 0", probe.args...).Scan(); !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("unsupported OpenCode database schema: %w", err)
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM session`)
 	if err != nil {
 		return nil, fmt.Errorf("reading OpenCode sessions: %w", err)
 	}
@@ -134,7 +156,13 @@ func databaseSessionIDs(ctx context.Context, path string) ([]string, error) {
 		}
 		ids = append(ids, id)
 	}
-	return ids, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 type sessionDoc struct {
@@ -419,6 +447,14 @@ func openDatabase(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// Discovery probes these same queries so native precedence requires every
+// table and column that parsing reads, including filter and ordering columns.
+const (
+	databaseSessionsQuery = `SELECT id,title,directory,time_created,time_updated,COALESCE(parent_id,'') FROM session ORDER BY id`
+	databaseMessagesQuery = `SELECT id,data FROM message WHERE session_id=? ORDER BY id`
+	databasePartsQuery    = `SELECT message_id,data FROM part WHERE session_id=? ORDER BY id`
+)
+
 func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
 	db, err := openDatabase(ctx, src.Path)
 	if err != nil {
@@ -430,7 +466,7 @@ func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink a
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id,title,directory,time_created,time_updated,COALESCE(parent_id,'') FROM session ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, databaseSessionsQuery)
 	if err != nil {
 		return fmt.Errorf("unsupported OpenCode session schema: %w", err)
 	}
@@ -448,7 +484,7 @@ func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink a
 		return err
 	}
 	for _, doc := range sessions {
-		rows, err := tx.QueryContext(ctx, `SELECT id,data FROM message WHERE session_id=? ORDER BY id`, doc.ID)
+		rows, err := tx.QueryContext(ctx, databaseMessagesQuery, doc.ID)
 		if err != nil {
 			return err
 		}
@@ -468,7 +504,7 @@ func (a *Adapter) parseDatabase(ctx context.Context, src agent.SourceRef, sink a
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		rows, err = tx.QueryContext(ctx, `SELECT message_id,data FROM part WHERE session_id=? ORDER BY id`, doc.ID)
+		rows, err = tx.QueryContext(ctx, databasePartsQuery, doc.ID)
 		if err != nil {
 			return fmt.Errorf("unsupported OpenCode part schema: %w", err)
 		}
