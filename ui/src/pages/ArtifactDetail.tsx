@@ -118,14 +118,13 @@ export function ArtifactDetailPage() {
         <figure>
           <iframe
             src={rawURL}
-            sandbox="allow-scripts"
+            sandbox=""
             title={`${a.name} (usage report)`}
             style={{ background: "light-dark(#ffffff, #e8e6e1)" }}
             className="h-[75vh] w-full rounded-md border border-edge"
           />
           <figcaption className="mt-1.5 font-mono text-micro text-ink-faint">
-            The agent's own HTML report, sandboxed and rendered on a light
-            canvas it was written for.
+            Static report preview. Scripts and external resources are blocked.
           </figcaption>
         </figure>
       ) : a.contentHTML ? (

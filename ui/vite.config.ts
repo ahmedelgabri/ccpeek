@@ -18,7 +18,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:3000",
+      // Keep the browser-facing Host aligned with Origin. The API rejects
+      // mutations from any other origin, including other loopback ports.
+      "/api": { target: "http://localhost:3000", changeOrigin: false },
     },
   },
 });

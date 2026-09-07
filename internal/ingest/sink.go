@@ -32,9 +32,8 @@ type dbSink struct {
 	report     *Report
 	append     bool
 
-	sessionIDs     map[string]int64 // session external id → row id
-	artifactIDs    map[artifactKey]int64
-	historyCleared bool
+	sessionIDs  map[string]int64 // session external id → row id
+	artifactIDs map[artifactKey]int64
 }
 
 // newSink builds a sink whose counts and issues are staged, not published.
@@ -47,6 +46,23 @@ func newSink(w *db.Writer, slug canon.AgentSlug, sourcePath, sourceHash string, 
 		report:     &Report{},
 		append:     appendMode,
 	}
+}
+
+// reconcile removes vanished members of a successfully parsed source. A
+// partial parse retains unseen records rather than treating unread data as
+// evidence of deletion.
+func (s *dbSink) reconcile() error {
+	if s.append || len(s.report.Issues) != 0 {
+		return nil
+	}
+	sessions, artifacts := map[int64]bool{}, map[int64]bool{}
+	for _, id := range s.sessionIDs {
+		sessions[id] = true
+	}
+	for _, id := range s.artifactIDs {
+		artifacts[id] = true
+	}
+	return s.writer.ReconcileSource(s.agent, s.sourcePath, sessions, artifacts)
 }
 
 // commitTo publishes what this source actually wrote into the run report.
@@ -190,14 +206,6 @@ func (s *dbSink) ArtifactLink(link canon.ArtifactLink) error {
 func (s *dbSink) History(h canon.HistoryEntry) error {
 	if h.Agent == "" {
 		h.Agent = s.agent
-	}
-	// History sources re-parse whole on change: replace this source's rows
-	// once per transaction so re-ingest stays idempotent.
-	if !s.historyCleared {
-		if err := s.writer.ClearHistorySource(h.Agent, s.sourcePath); err != nil {
-			return err
-		}
-		s.historyCleared = true
 	}
 	if err := s.writer.InsertHistory(h, s.sourcePath); err != nil {
 		return err

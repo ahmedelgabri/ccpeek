@@ -475,7 +475,30 @@ async function send<T>(
   );
 }
 
+export interface ArchiveStatus {
+  schemaVersion: number;
+  generation: number;
+  derivedDirty: boolean;
+  pendingSessions: number;
+  importedSessions: number;
+  scan: {
+    completedAt?: string;
+    pending: boolean;
+    scope: string;
+    generation: number;
+    rulesFingerprint?: string;
+    currentRulesFingerprint: string;
+  };
+  lastRun?: {
+    status: string;
+    warnings: number;
+    parseFailures: number;
+    truncations: number;
+  };
+}
+
 export const parityApi = {
+  archiveStatus: () => get<ArchiveStatus>("/archive-status"),
   artifacts: (kind?: string, agent?: string, limit = 100, offset = 0) =>
     get<ArtifactSummary[]>("/artifacts", {
       kind: kind ?? "",

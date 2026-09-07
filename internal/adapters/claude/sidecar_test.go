@@ -108,6 +108,32 @@ func TestSidecarArtifactsAndLinks(t *testing.T) {
 	}
 }
 
+func TestDiscoveryMarksOnlyWholeHistorySnapshots(t *testing.T) {
+	root := agent.Root{Agent: Slug, Path: t.TempDir()}
+	for _, rel := range []string{"history.jsonl", "projects/p/history.jsonl", "plans/history.md"} {
+		path := filepath.Join(root.Path, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs, err := New().Discover(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("sources=%+v", refs)
+	}
+	for _, ref := range refs {
+		want := ref.Path == filepath.Join(root.Path, "history.jsonl")
+		if ref.HistorySnapshot != want {
+			t.Errorf("%s: HistorySnapshot=%v want %v", ref.Path, ref.HistorySnapshot, want)
+		}
+	}
+}
+
 func TestHistoryEntries(t *testing.T) {
 	sink := parseAll(t)
 	if len(sink.HistoryItems) != 2 {
@@ -152,11 +178,11 @@ func TestEmptiedSidecarsStillEmitArtifacts(t *testing.T) {
 	}
 	const uuid = "12345678-aaaa-bbbb-cccc-1234567890ab"
 	// The emptied shapes: a cleared todo list, a task directory whose items
-	// are gone (a non-JSON file keeps it discoverable), and a file-history
+	// are gone (even bookkeeping-only directories stay discoverable), and a file-history
 	// directory left without any name@vN entries.
 	mkfile("todos/"+uuid+"-agent-99998888-aaaa-bbbb-cccc-777766665555.json", `[]`)
 	mkfile("tasks/"+uuid+"/.lock", "")
-	mkfile("tasks/"+uuid+"/notes.txt", "not an item")
+	mkfile("tasks/"+uuid+"/.highwatermark", "1")
 	mkfile("file-history/"+uuid+"/README", "not a version")
 
 	refs, err := New().Discover(context.Background(), agent.Root{Agent: Slug, Path: root})
@@ -175,7 +201,7 @@ func TestEmptiedSidecarsStillEmitArtifacts(t *testing.T) {
 		byKind[a.Kind] = a
 	}
 	for _, kind := range []canon.ArtifactKind{
-		canon.ArtifactTodoList, canon.ArtifactTaskGroup, canon.ArtifactFileHistory,
+		canon.ArtifactTodoList, canon.ArtifactFileHistory,
 	} {
 		a, ok := byKind[kind]
 		if !ok {
@@ -191,16 +217,25 @@ func TestEmptiedSidecarsStillEmitArtifacts(t *testing.T) {
 	if got := string(byKind[canon.ArtifactTodoList].Metadata); got != `[]` {
 		t.Errorf("todo metadata = %q, want []", got)
 	}
-	if got := string(byKind[canon.ArtifactTaskGroup].Metadata); got != `{"items":[]}` {
-		t.Errorf("task metadata = %q, want an empty items list", got)
+	if _, ok := byKind[canon.ArtifactTaskGroup]; ok {
+		t.Error("bookkeeping-only task directory emitted an artifact")
+	}
+	var taskDiscovered bool
+	for _, ref := range refs {
+		if ref.Path == filepath.Join(root, "tasks", uuid) {
+			taskDiscovered = true
+		}
+	}
+	if !taskDiscovered {
+		t.Error("empty task directory must be discovered to reconcile prior content")
 	}
 	if got := string(byKind[canon.ArtifactFileHistory].Metadata); got != `{"versions":[]}` {
 		t.Errorf("file-history metadata = %q, want an empty versions list", got)
 	}
 
 	// Provenance still holds — the artifact is empty, not orphaned.
-	if len(sink.ArtifactLinks) != 3 {
-		t.Errorf("links = %d, want 3 (one per emptied sidecar): %+v",
+	if len(sink.ArtifactLinks) != 2 {
+		t.Errorf("links = %d, want 2 (one per retained empty sidecar): %+v",
 			len(sink.ArtifactLinks), sink.ArtifactLinks)
 	}
 }

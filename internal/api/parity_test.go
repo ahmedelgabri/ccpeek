@@ -86,7 +86,7 @@ func TestScanEndpoints(t *testing.T) {
 		t.Errorf("cross-origin ignore = %d, want 403", code)
 	}
 	code, _ = post(t, h, "/api/v1/scan/1/ignore", `{"ignored": true}`,
-		map[string]string{"Origin": "http://localhost:3000"})
+		map[string]string{"Origin": "http://example.com"})
 	if code == 403 {
 		t.Errorf("loopback-origin ignore rejected as cross-origin = %d", code)
 	}

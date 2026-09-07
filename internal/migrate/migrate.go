@@ -22,6 +22,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
+	"github.com/ahmedelgabri/ccpeek/internal/sqliteutil"
 )
 
 // claudeSlug: every v1 row is Claude Code data by definition.
@@ -126,7 +127,12 @@ func (s v1Schema) sel(table, alias, column string) string {
 // store. Rows whose source_path still exists on disk are skipped — the
 // ingest pipeline owns them.
 func ImportV1(ctx context.Context, store *db.Store, v1Path string) (*Report, error) {
-	v1, err := sql.Open("sqlite", "file:"+v1Path+"?mode=ro&_pragma=busy_timeout(5000)")
+	ctx, unlock, err := store.LockMaintenance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	v1, err := sql.Open("sqlite", sqliteutil.URI(v1Path, "mode=ro&_pragma=busy_timeout(5000)"))
 	if err != nil {
 		return nil, fmt.Errorf("opening v1 database: %w", err)
 	}

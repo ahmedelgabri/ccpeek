@@ -44,6 +44,13 @@ export function SessionDetailPage() {
   const { agent, sessionId } = useParams({
     from: "/sessions/$agent/$sessionId",
   });
+  return <SessionContent key={`${agent}/${sessionId}`} />;
+}
+
+function SessionContent() {
+  const { agent, sessionId } = useParams({
+    from: "/sessions/$agent/$sessionId",
+  });
   const search = useSearch({ from: "/sessions/$agent/$sessionId" });
   const navigate = useNavigate({ from: "/sessions/$agent/$sessionId" });
   const tab: Tab = isTab(search.tab) ? search.tab : "transcript";

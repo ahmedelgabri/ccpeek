@@ -91,6 +91,8 @@ test.describe("transcript deep-link paging", () => {
     // Deep link into the middle: the anchor sits 100 before the target.
     await page.goto(`/sessions/claude-code/${bigSession}?seq=500`);
     await expect(page.getByText("deep link message 500")).toBeVisible();
+    // Overscan can mount the target without actually positioning it on screen.
+    await expect(page.getByText("deep link message 500")).toBeInViewport();
 
     // The anchored request covers from_seq=400 with a full page limit.
     expect(

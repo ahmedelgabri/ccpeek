@@ -154,7 +154,8 @@ func TestArgvRendersAsACommandLine(t *testing.T) {
 		{"plain argv joined", `{"command":["ls","-la"]}`, "ls -la"},
 		{"single element", `{"command":["pwd"]}`, "pwd"},
 		{"absent", `{}`, ""},
-		{"not an array", `{"command":"already a string"}`, ""},
+		{"shell_command string", `{"command":"already a string"}`, "already a string"},
+		{"exec_command cmd", `{"cmd":"go test ./..."}`, "go test ./..."},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := toolArgs(tt.argv).command(); got != tt.want {
@@ -253,8 +254,8 @@ func TestCodexPromptTitleSkipsInjectedContext(t *testing.T) {
 }
 
 func TestParseVersionIncludesLatestNormalization(t *testing.T) {
-	if got := New().ParseVersion(); got != 3 {
-		t.Fatalf("ParseVersion() = %d, want 3", got)
+	if got := New().ParseVersion(); got != 4 {
+		t.Fatalf("ParseVersion() = %d, want 4", got)
 	}
 }
 

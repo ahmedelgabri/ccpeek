@@ -23,7 +23,7 @@ func sameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
-			if err != nil || !isLoopbackHost(u.Hostname()) {
+			if err != nil || u.Scheme != "http" || u.Host != r.Host || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 				writeEnvelope(w, http.StatusForbidden, ops.Envelope{
 					Error: "cross-origin requests are not allowed",
 				})
@@ -141,14 +141,9 @@ func (h *handlers) artifact(w http.ResponseWriter, r *http.Request) {
 // in a sandboxed iframe; everything else is text/plain, never interpreted
 // in the app's own origin.
 //
-// The HTML response carries its own CSP sandbox: the iframe's sandbox
-// attribute does not protect a DIRECT navigation to this URL, where the
-// stored (agent-produced, untrusted) markup would otherwise run with the
-// app origin and could drive mutating endpoints. `sandbox allow-scripts`
-// keeps the report's charts working while the document gets an opaque
-// origin — its API requests carry "Origin: null" and fail the
-// same-origin guard. nosniff stops browsers promoting the text/plain
-// kinds to something executable.
+// Reports are static previews. Active document elements are removed and the
+// response's own CSP blocks scripts and network resources even on direct
+// navigation. The original content remains available through the JSON API.
 func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
 	detail, err := h.svc.Artifact(r.Context(),
@@ -160,7 +155,8 @@ func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if kind == "usage_report" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Security-Policy", "sandbox allow-scripts")
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'")
+		detail.Content = staticReport(detail.Content)
 	} else {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}

@@ -49,7 +49,7 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces existing recoverable rollouts through the latest usage
 // normalization and session-title enrichment.
-func (*Adapter) ParseVersion() int { return 3 }
+func (*Adapter) ParseVersion() int { return 4 }
 
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -383,6 +383,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					CallExternalID:    item.CallID,
 					Status:            "ok",
 					Excerpt:           out,
+					Content:           item.Output,
 				})
 			}
 
@@ -563,11 +564,12 @@ func codexPromptTitle(text string) string {
 // what the commands browser did before Command existed, so every Codex row
 // read as `["bash","-lc","go test ./..."]`.
 type codexToolArgs struct {
-	Command []string `json:"command"`
-	Path    string   `json:"path"`
-	OldText string   `json:"old_text"`
-	NewText string   `json:"new_text"`
-	Content string   `json:"content"`
+	Command json.RawMessage `json:"command"`
+	Cmd     string          `json:"cmd"`
+	Path    string          `json:"path"`
+	OldText string          `json:"old_text"`
+	NewText string          `json:"new_text"`
+	Content string          `json:"content"`
 }
 
 func toolArgs(raw string) codexToolArgs {
@@ -580,15 +582,21 @@ func toolArgs(raw string) codexToolArgs {
 // shell wrapper is unwrapped — `["bash","-lc","go test ./..."]` is the
 // script, not three arguments — and anything else is joined.
 func (a codexToolArgs) command() string {
-	switch {
-	case len(a.Command) == 0:
-		return ""
-	case len(a.Command) == 3 && strings.HasPrefix(a.Command[1], "-") &&
-		strings.Contains(a.Command[1], "c"):
-		return a.Command[2]
-	default:
-		return strings.Join(a.Command, " ")
+	if a.Cmd != "" {
+		return a.Cmd
 	}
+	var script string
+	if json.Unmarshal(a.Command, &script) == nil {
+		return script
+	}
+	var argv []string
+	if json.Unmarshal(a.Command, &argv) != nil {
+		return ""
+	}
+	if len(argv) == 3 && strings.HasPrefix(argv[1], "-") && strings.Contains(argv[1], "c") {
+		return argv[2]
+	}
+	return strings.Join(argv, " ")
 }
 
 // argumentsJSON keeps the function-call arguments as raw JSON; Codex
@@ -607,7 +615,7 @@ func argumentsJSON(args string) string {
 
 func normalizeTool(name string) canon.ToolKind {
 	switch name {
-	case "shell", "local_shell", "exec_command":
+	case "shell", "local_shell", "exec_command", "shell_command":
 		return canon.ToolShell
 	case "apply_patch":
 		return canon.ToolFileEdit

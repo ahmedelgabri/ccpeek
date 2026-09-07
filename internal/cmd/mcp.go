@@ -149,18 +149,19 @@ func liveIndex(ctx context.Context, eng *engine, bootstrap func(context.Context)
 			return
 		}
 		if err := index.during(func() error {
-			return scanChanged(ctx, eng, eng.report, logf)
+			return scanPending(ctx, eng, logf)
 		}); err != nil && ctx.Err() == nil {
 			logf("WARNING: %v\n", err)
 		}
 	}
-	if err := eng.runner.Watch(ctx, opts, debounce, func(rep *ingest.Report) {
+	opts.WatchPass = func() {
 		if err := index.during(func() error {
-			return scanChanged(ctx, eng, rep, logf)
+			return scanPending(ctx, eng, logf)
 		}); err != nil && ctx.Err() == nil {
 			logf("WARNING: %v\n", err)
 		}
-	}); err != nil && ctx.Err() == nil {
+	}
+	if err := eng.runner.Watch(ctx, opts, debounce, nil); err != nil && ctx.Err() == nil {
 		logf("WARNING: not watching for new sessions (serving the archive as last indexed): %v\n", err)
 	}
 }
