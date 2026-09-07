@@ -108,6 +108,32 @@ func TestSidecarArtifactsAndLinks(t *testing.T) {
 	}
 }
 
+func TestDiscoveryMarksOnlyWholeHistorySnapshots(t *testing.T) {
+	root := agent.Root{Agent: Slug, Path: t.TempDir()}
+	for _, rel := range []string{"history.jsonl", "projects/p/history.jsonl", "plans/history.md"} {
+		path := filepath.Join(root.Path, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs, err := New().Discover(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("sources=%+v", refs)
+	}
+	for _, ref := range refs {
+		want := ref.Path == filepath.Join(root.Path, "history.jsonl")
+		if ref.HistorySnapshot != want {
+			t.Errorf("%s: HistorySnapshot=%v want %v", ref.Path, ref.HistorySnapshot, want)
+		}
+	}
+}
+
 func TestHistoryEntries(t *testing.T) {
 	sink := parseAll(t)
 	if len(sink.HistoryItems) != 2 {

@@ -403,8 +403,12 @@ func (r *Runner) ingestSource(ctx context.Context, a agent.Adapter, src agent.So
 	// History sources reparse whole. Clear their prior rows in this same
 	// transaction to keep re-ingest idempotent, including when a source was
 	// emptied. A failed parse rolls the clear back with its other writes.
-	if err := w.ClearHistorySource(a.Slug(), src.Path); err != nil {
-		return err
+	// The explicit source signal is essential: unrelated sources must never
+	// trigger the same-agent cleanup of legacy history without provenance.
+	if src.HistorySnapshot {
+		if err := w.ClearHistorySource(a.Slug(), src.Path); err != nil {
+			return err
+		}
 	}
 	sink := newSink(w, a.Slug(), src.Path, hash, false)
 	parseState := ""

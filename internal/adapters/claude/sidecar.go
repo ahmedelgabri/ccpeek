@@ -93,7 +93,7 @@ func discoverSidecars(root agent.Root) []agent.SourceRef {
 		matches, _ := filepath.Glob(filepath.Join(root.Path, glob))
 		for _, m := range matches {
 			if fi, err := os.Stat(m); err == nil && !fi.IsDir() {
-				refs = append(refs, agent.SourceRef{Root: root, Path: m, Kind: kind})
+				refs = append(refs, agent.SourceRef{Root: root, Path: m, Kind: kind, HistorySnapshot: classify(root, m) == srcHistory})
 			}
 		}
 	}
@@ -415,11 +415,10 @@ func parseUsageFacet(src agent.SourceRef, sink agent.RecordSink) error {
 //
 // A single pathological line must cost that line and nothing more: past
 // a bufio.Scanner's ceiling the scan stops and every remaining entry is
-// lost, and because the sink clears this source's rows on the first
-// History record, the failing transaction rolls back and the file
-// contributes nothing at all — one pasted blob in a prompt would silently
-// empty the command index. jsonl.Scan is the shared reader with exactly
-// that policy, already used by the codex and pi adapters.
+// lost. Whole-source replacement is transactional, so a scan error rolls
+// back both the initial clear and new rows instead of indexing the valid
+// entries around the oversized line. jsonl.Scan skips that line and keeps
+// going, with the same policy already used by the codex and pi adapters.
 func parseHistory(ctx context.Context, src agent.SourceRef, sink agent.RecordSink) error {
 	f, err := os.Open(src.Path)
 	if err != nil {

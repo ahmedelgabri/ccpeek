@@ -599,18 +599,22 @@ func (w *Writer) AddSessionRelation(rel canon.SessionRelation) (resolved bool, e
 // re-inserts them — history files are parsed whole whenever they change,
 // and appends are the norm, so insert-only writes would duplicate every
 // existing entry each time. Rows with an empty source_path from builds
-// that predate this provenance are cleared for the same agent too (they
-// can only have come from this source and would otherwise duplicate
-// forever).
+// that predate this provenance are cleared for the same agent too. Callers
+// must identify a whole prompt-history source, even when empty, before doing
+// this legacy cleanup; an ordinary session or artifact parse is not evidence
+// that the agent's history was replaced.
 func (w *Writer) ClearHistorySource(agent canon.AgentSlug, sourcePath string) error {
+	if sourcePath == "" {
+		return fmt.Errorf("history replacement requires a source path")
+	}
 	agentID, err := w.EnsureAgent(agent)
 	if err != nil {
 		return err
 	}
 	_, err = w.tx.ExecContext(w.ctx, `
 		DELETE FROM history
-		WHERE source_path = ? OR (agent_id = ? AND source_path = '')`,
-		sourcePath, agentID)
+		WHERE agent_id = ? AND (source_path = ? OR source_path = '')`,
+		agentID, sourcePath)
 	if err != nil {
 		return fmt.Errorf("clearing history source %s: %w", sourcePath, err)
 	}

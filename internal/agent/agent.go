@@ -61,6 +61,9 @@ type SourceRef struct {
 	Path           string
 	Kind           SourceKind
 	CompanionPaths []string
+	// HistorySnapshot marks a whole prompt-history source, including an empty
+	// file. Only these sources may replace previously indexed history rows.
+	HistorySnapshot bool
 }
 
 // IncompleteDiscovery accompanies usable sources when some paths could not
