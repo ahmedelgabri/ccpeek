@@ -52,11 +52,13 @@
 
             nativeBuildInputs = with pkgs; [
               nodejs
-              pnpm_10.configHook
+              pnpmConfigHook
+              pnpm_10
             ];
 
-            pnpmDeps = pkgs.pnpm_10.fetchDeps {
+            pnpmDeps = pkgs.fetchPnpmDeps {
               inherit (finalAttrs) pname version src;
+              pnpm = pkgs.pnpm_10;
               fetcherVersion = 3;
               hash = "sha256-Ia1Wq128ZM7rAS3OED69TkjC4vG/k94UNqA5MC8egco=";
             };
