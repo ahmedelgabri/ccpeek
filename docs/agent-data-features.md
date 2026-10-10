@@ -134,3 +134,19 @@ Claude writes `system/compact_boundary` lines (`compactMetadata`: trigger, token
   - Insights gains a compaction tab: totals, manual count, average context before, compactions per agent, and the recent list.
 
 Local result: 46 Claude (all auto) and 74 Pi compactions. Codex records none.
+
+## Hooks
+
+Claude Code records every hook run as an `attachment` line: `hook_success` (hook event, hook name, command, exit code, duration), `async_hook_response` (exit code, no command or duration), and `hook_blocking_error`. That is about 55k runs locally, none of them visible.
+
+- New event kind `hook`.
+  - Label is the hook event (PreToolUse, Stop, …).
+  - Detail is the command, or the hook name for async responses, which record no command.
+  - Status is `ok`, `error` (non-zero exit) or `blocked`.
+  - The payload holds the hook name and exit code.
+- Hook stdout and stderr are never decoded or stored. They are arbitrary program output.
+- Claude `ParseVersion` is 11.
+- `event-stats` gains `group=detail` and a `failures` count (status error or blocked). `session-events` gains a `status` filter.
+- The Insights "hooks" tab shows runs, failures, time in hooks, runs per hook event, a per-command table (runs, failures, avg, max, total), and the failed or blocked runs linked to their transcripts.
+
+Local result: 55,226 hook runs taking 39 minutes in total. 846 failed, mostly async hooks exiting 127 (command not found), and 8 blocked the agent.

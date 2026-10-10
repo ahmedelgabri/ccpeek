@@ -52,8 +52,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // thinking text and image locators; v5: legacy subagent files' parent link;
 // v6: continued-session and fork-point lineage; v7: error, abort and
 // denial events; v8: pull-request links; v9: turn and tool timing;
-// v10: compactions).
-func (*Adapter) ParseVersion() int { return 10 }
+// v10: compactions; v11: hook runs).
+func (*Adapter) ParseVersion() int { return 11 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -153,6 +153,18 @@ type rawLine struct {
 		PostTokens int64  `json:"postTokens"`
 		DurationMs int64  `json:"durationMs"`
 	} `json:"compactMetadata"`
+
+	// type == "attachment": context Claude Code attached to the turn,
+	// including every hook run. Hook stdout/stderr are deliberately not
+	// decoded: they are arbitrary program output.
+	Attachment *struct {
+		Type       string `json:"type"`
+		HookEvent  string `json:"hookEvent"`
+		HookName   string `json:"hookName"`
+		Command    string `json:"command"`
+		ExitCode   *int   `json:"exitCode"`
+		DurationMs int64  `json:"durationMs"`
+	} `json:"attachment"`
 
 	// type == "pr-link": a pull request the session opened or checked.
 	PRNumber     int    `json:"prNumber"`
@@ -424,6 +436,18 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			continue
 		}
 		switch entry.Type {
+		case "attachment":
+			if ev, ok := hookEvent(entry); ok {
+				ev.SessionExternalID = sess.ExternalID
+				ev.MessageSeq = max(state.MessageSeq+messageCount-1, 0)
+				pendingEvents = append(pendingEvents, ev)
+				if emittedSession {
+					if err := flushEvents(); err != nil {
+						return state, err
+					}
+				}
+			}
+			continue
 		case "pr-link":
 			// Claude Code rewrites the link every time it checks the PR —
 			// up to 162 lines for one PR in one session locally — so one
@@ -795,6 +819,41 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 		}
 	}
 	return msg, calls, results
+}
+
+// hookEvent reads a hook run from an attachment line: completed runs
+// (synchronous or async) and runs that blocked the agent. Hook context
+// attachments repeat a run already recorded and are skipped.
+func hookEvent(raw rawLine) (canon.SessionEvent, bool) {
+	a := raw.Attachment
+	if a == nil {
+		return canon.SessionEvent{}, false
+	}
+	ev := canon.SessionEvent{
+		Kind:  canon.EventHook,
+		At:    raw.Timestamp,
+		Label: a.HookEvent,
+		// Async responses name the hook but not its command.
+		Detail:     cmp.Or(a.Command, a.HookName),
+		DurationMs: a.DurationMs,
+	}
+	payload := map[string]any{"hookName": a.HookName}
+	switch a.Type {
+	case "hook_success", "async_hook_response":
+		ev.Status = "ok"
+		if a.ExitCode != nil {
+			payload["exitCode"] = *a.ExitCode
+			if *a.ExitCode != 0 {
+				ev.Status = "error"
+			}
+		}
+	case "hook_blocking_error":
+		ev.Status = "blocked"
+	default:
+		return canon.SessionEvent{}, false
+	}
+	ev.Payload, _ = json.Marshal(payload)
+	return ev, true
 }
 
 // compactionDetail reads a compaction's token change; postTokens is often

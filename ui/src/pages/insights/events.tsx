@@ -12,6 +12,7 @@ export const EVENT_LABEL: Record<string, string> = {
   pr_link: "pull request",
   turn: "turn",
   compaction: "compaction",
+  hook: "hook",
 };
 
 // PullRequest is one PR with every session that linked it.

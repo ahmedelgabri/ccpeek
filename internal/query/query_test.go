@@ -1568,3 +1568,56 @@ func TestContextFillAndCompactions(t *testing.T) {
 		t.Errorf("compactions = %+v", got.Compactions)
 	}
 }
+
+// Every hook run is an attachment line; runs aggregate per command with
+// their failures, and failing runs list on their own. Hook output is
+// never stored.
+func TestHookRunsAggregatePerCommand(t *testing.T) {
+	const id = "cccccccc-0000-0000-0000-00000000000d"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
+	hook := func(uuid, typ, command string, exit string, ms int) string {
+		return `{"type":"attachment",` + head + `"uuid":"` + uuid + `","attachment":{"type":"` + typ + `","hookEvent":"PreToolUse","hookName":"PreToolUse:Bash","command":"` +
+			command + `","exitCode":` + exit + `,"durationMs":` + strconv.Itoa(ms) + `,"stdout":"SECRET-OUTPUT","stderr":""}}` + "\n"
+	}
+	body := `{"type":"user",` + head + `"uuid":"u","message":{"role":"user","content":"go"}}` + "\n" +
+		hook("h1", "hook_success", "lint.sh", "0", 40) + hook("h2", "hook_success", "lint.sh", "0", 60) +
+		hook("h3", "hook_success", "missing.sh", "127", 5) +
+		`{"type":"attachment",` + head + `"uuid":"h4","attachment":{"type":"hook_blocking_error","hookEvent":"Stop","hookName":"Stop","blockingError":{}}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+	stats, err := s.EventStats(ctx, EventStatsFilter{Kind: "hook", GroupBy: "detail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byCommand := map[string]EventStat{}
+	for _, st := range stats {
+		byCommand[st.Group] = st
+	}
+	if lint := byCommand["lint.sh"]; lint.Count != 2 || lint.Failures != 0 || lint.AvgMs != 50 {
+		t.Errorf("lint.sh = %+v, want 2 runs, no failures, 50ms average", lint)
+	}
+	if missing := byCommand["missing.sh"]; missing.Failures != 1 {
+		t.Errorf("missing.sh = %+v, want 1 failure", missing)
+	}
+	failing, err := s.Events(ctx, EventsFilter{Kind: "hook", Status: "error,blocked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failing) != 2 {
+		t.Errorf("failing hooks = %+v, want the 127 and the block", failing)
+	}
+	all, _ := s.Events(ctx, EventsFilter{Kind: "hook"})
+	for _, e := range all {
+		if strings.Contains(e.Detail+string(e.Payload), "SECRET-OUTPUT") {
+			t.Errorf("hook output stored: %+v", e)
+		}
+	}
+}

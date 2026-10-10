@@ -18,7 +18,7 @@ import { Link } from "@tanstack/react-router";
 import { fmtDuration, fmtWhen, fullWhen } from "../time";
 import { EventList, groupPRs, PRLink } from "./insights/events";
 
-const TABS = ["errors", "prs", "timing", "compaction"] as const;
+const TABS = ["errors", "prs", "timing", "compaction", "hooks"] as const;
 type Tab = (typeof TABS)[number];
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 
@@ -58,6 +58,7 @@ export function InsightsPage() {
       {tab === "prs" && <PRsTab f={f} />}
       {tab === "timing" && <TimingTab f={f} />}
       {tab === "compaction" && <CompactionTab f={f} />}
+      {tab === "hooks" && <HooksTab f={f} />}
     </div>
   );
 }
@@ -67,6 +68,7 @@ const TAB_LABEL: Record<Tab, string> = {
   prs: "pull requests",
   timing: "timing",
   compaction: "compaction",
+  hooks: "hooks",
 };
 
 const ERROR_KINDS = "api_error,aborted,tool_denied";
@@ -409,6 +411,128 @@ function CompactionTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="Recent">
         <EventList events={rows} empty="No compactions in this range." />
+      </Panel>
+    </div>
+  );
+}
+
+// HooksTab: what the configured hooks cost and where they fail — runs per
+// hook event, each command's run count, failures and time, and the
+// failing runs themselves. Hook output is never stored, only the outcome.
+function HooksTab({ f }: { f: InsightFilters }) {
+  const byEvent = useQuery({
+    queryKey: ["eventStats", "hook", "label", f],
+    queryFn: () => api.eventStats({ ...f, kind: "hook", group: "label" }),
+  });
+  const byCommand = useQuery({
+    queryKey: ["eventStats", "hook", "detail", f],
+    queryFn: () => api.eventStats({ ...f, kind: "hook", group: "detail" }),
+  });
+  const failing = useQuery({
+    queryKey: ["sessionEvents", "hook", "failing", f],
+    queryFn: () =>
+      api.sessionEvents({
+        ...f,
+        kind: "hook",
+        status: "error,blocked",
+        limit: 100,
+      }),
+  });
+  if (byEvent.error) return <LoadError error={byEvent.error} />;
+  const events = byEvent.data ?? [];
+  const runs = events.reduce((n, e) => n + e.count, 0);
+  const failures = events.reduce((n, e) => n + e.failures, 0);
+  const totalMs = events.reduce((n, e) => n + (e.totalMs ?? 0), 0);
+  const commands = byCommand.data ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="Hook runs" value={fmtCount(runs)} />
+        <StatTile
+          label="Failed or blocked"
+          value={fmtCount(failures)}
+          tone={failures > 0 ? "warn" : undefined}
+        />
+        <StatTile label="Time in hooks" value={fmtDuration(totalMs)} />
+        <StatTile label="Commands" value={fmtCount(commands.length)} />
+      </div>
+      <Panel label="Runs by hook event">
+        {byEvent.isLoading ? (
+          <SkeletonRows rows={4} />
+        ) : (
+          <KindBars
+            items={events.map((e) => ({ label: e.group, count: e.count }))}
+            fmt={fmtCount}
+            empty="No hook runs in this range."
+          />
+        )}
+      </Panel>
+      <Panel label="By command">
+        {byCommand.error ? (
+          <div className="px-3 py-3">
+            <LoadError error={byCommand.error} />
+          </div>
+        ) : commands.length === 0 ? (
+          <EmptyNote>No hook runs in this range.</EmptyNote>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left font-mono text-micro text-ink-faint">
+                <tr>
+                  <th className="px-3 py-1.5 font-normal">command</th>
+                  <th className="px-3 py-1.5 text-right font-normal">runs</th>
+                  <th className="px-3 py-1.5 text-right font-normal">failed</th>
+                  <th className="px-3 py-1.5 text-right font-normal">avg</th>
+                  <th className="px-3 py-1.5 text-right font-normal">max</th>
+                  <th className="px-3 py-1.5 text-right font-normal">total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+                {commands.map((c) => (
+                  <tr key={c.group}>
+                    <td
+                      className="max-w-md truncate px-3 py-1.5"
+                      title={c.group}
+                    >
+                      {c.group || "(no command recorded)"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {fmtCount(c.count)}
+                    </td>
+                    <td
+                      className={`px-3 py-1.5 text-right ${c.failures > 0 ? "text-warn" : "text-ink-faint"}`}
+                    >
+                      {fmtCount(c.failures)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {fmtDuration(c.avgMs ?? 0)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-ink-faint">
+                      {fmtDuration(c.maxMs ?? 0)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {fmtDuration(c.totalMs ?? 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+      <Panel label="Failed and blocked runs">
+        {failing.error ? (
+          <div className="px-3 py-3">
+            <LoadError error={failing.error} />
+          </div>
+        ) : failing.isLoading ? (
+          <SkeletonRows rows={4} />
+        ) : (
+          <EventList
+            events={failing.data ?? []}
+            empty="No failed hook runs in this range."
+          />
+        )}
       </Panel>
     </div>
   );

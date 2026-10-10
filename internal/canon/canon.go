@@ -305,6 +305,10 @@ const (
 	// Label is the trigger (auto, manual) where recorded; the payload
 	// carries the token counts before and after.
 	EventCompaction EventKind = "compaction"
+	// EventHook is one run of a user-configured hook. Label is the hook
+	// event (PreToolUse, Stop, …), Detail the command, Status ok, error
+	// (non-zero exit), or blocked (the hook stopped the agent).
+	EventHook EventKind = "hook"
 )
 
 // EventDetailLimit bounds SessionEvent.Detail: an error message or a

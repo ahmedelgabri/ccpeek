@@ -14,7 +14,7 @@ import (
 // mistake, not an empty answer.
 var eventKinds = []canon.EventKind{
 	canon.EventAPIError, canon.EventAborted, canon.EventToolDenied,
-	canon.EventPRLink, canon.EventTurn, canon.EventCompaction,
+	canon.EventPRLink, canon.EventTurn, canon.EventCompaction, canon.EventHook,
 }
 
 // parseKinds splits a comma-separated kind filter and validates it.
@@ -79,6 +79,7 @@ func whereClause(where []string) string {
 // first).
 type EventsFilter struct {
 	Kind    string
+	Status  string // comma-separated outcomes (ok, error, blocked, an HTTP status …)
 	Agent   string
 	Session string
 	Since   string
@@ -131,6 +132,13 @@ func (s *Service) Events(ctx context.Context, f EventsFilter) ([]EventRow, error
 		return nil, fmt.Errorf("%w: sort=%q (want time or duration)", ErrBadRequest, f.Sort)
 	}
 	where, args := eventWhere(kinds, f.Agent, f.Since, f.Until)
+	if f.Status != "" {
+		statuses := strings.Split(f.Status, ",")
+		where = append(where, "e.status IN ("+strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")+")")
+		for _, st := range statuses {
+			args = append(args, strings.TrimSpace(st))
+		}
+	}
 	if f.Session != "" {
 		if f.Agent == "" {
 			return nil, fmt.Errorf("%w: session needs agent (session ids are per agent)", ErrBadRequest)
@@ -183,11 +191,13 @@ type EventStatsFilter struct {
 	Limit   int
 }
 
-// EventStat is one (kind, group) aggregate.
+// EventStat is one (kind, group) aggregate. Failures counts events whose
+// status is error or blocked (hooks).
 type EventStat struct {
 	Kind     string  `json:"kind"`
 	Group    string  `json:"group"`
 	Count    int     `json:"count"`
+	Failures int     `json:"failures"`
 	Sessions int     `json:"sessions"`
 	TotalMs  int64   `json:"totalMs,omitempty"`
 	AvgMs    float64 `json:"avgMs,omitempty"`
@@ -199,6 +209,7 @@ var eventGroupExprs = map[string]string{
 	"status": "e.status",
 	"agent":  "a.slug",
 	"day":    "substr(COALESCE(e.at, ''), 1, 10)",
+	"detail": "e.detail",
 }
 
 // EventStats aggregates session events by kind and one more dimension,
@@ -215,7 +226,7 @@ func (s *Service) EventStats(ctx context.Context, f EventStatsFilter) ([]EventSt
 	}
 	groupExpr, ok := eventGroupExprs[f.GroupBy]
 	if !ok {
-		return nil, fmt.Errorf("%w: group=%q (want label, status, agent, or day)", ErrBadRequest, f.GroupBy)
+		return nil, fmt.Errorf("%w: group=%q (want label, status, agent, day, or detail)", ErrBadRequest, f.GroupBy)
 	}
 	kinds, err := parseKinds(f.Kind)
 	if err != nil {
@@ -232,7 +243,8 @@ func (s *Service) EventStats(ctx context.Context, f EventStatsFilter) ([]EventSt
 		args = append(args, f.Limit)
 	}
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT e.kind, `+groupExpr+` AS g, COUNT(*), COUNT(DISTINCT e.session_id),
+		SELECT e.kind, `+groupExpr+` AS g, COUNT(*), SUM(e.status IN ('error', 'blocked')),
+		       COUNT(DISTINCT e.session_id),
 		       SUM(e.duration_ms), AVG(e.duration_ms), MAX(e.duration_ms)
 		FROM session_events e
 		JOIN sessions se ON se.id = e.session_id
@@ -247,7 +259,7 @@ func (s *Service) EventStats(ctx context.Context, f EventStatsFilter) ([]EventSt
 	var out []EventStat
 	for rows.Next() {
 		var st EventStat
-		if err := rows.Scan(&st.Kind, &st.Group, &st.Count, &st.Sessions,
+		if err := rows.Scan(&st.Kind, &st.Group, &st.Count, &st.Failures, &st.Sessions,
 			&st.TotalMs, &st.AvgMs, &st.MaxMs); err != nil {
 			return nil, err
 		}

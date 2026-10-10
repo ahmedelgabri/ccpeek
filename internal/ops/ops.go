@@ -377,7 +377,8 @@ func Registry() []Op {
 			Name: "session-events",
 			Desc: "List session events newest first — API errors, aborted turns, refused tool calls, pull requests — each linked to its session and transcript seq. Filter by kind (comma-separated), agent, one session, or date range.",
 			Params: []Param{
-				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link, turn, compaction)"},
+				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link, turn, compaction, hook)"},
+				{Name: "status", Type: "string", Desc: "Comma-separated outcomes (e.g. error,blocked for failing hooks)"},
 				agentParam,
 				{Name: "session", Type: "string", Desc: "One session's external id (needs agent)"},
 				sinceParam, untilParam,
@@ -391,7 +392,7 @@ func Registry() []Op {
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Events(ctx, query.EventsFilter{
-					Kind: a.Str["kind"], Agent: a.Str["agent"], Session: a.Str["session"],
+					Kind: a.Str["kind"], Status: a.Str["status"], Agent: a.Str["agent"], Session: a.Str["session"],
 					Since: a.Str["since"], Until: a.Str["until"], Sort: a.Str["sort"],
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
 				})
@@ -400,13 +401,13 @@ func Registry() []Op {
 		},
 		{
 			Name: "event-stats",
-			Desc: "Session events counted by kind and one more dimension (label, status, agent, or day), with distinct sessions and duration totals — e.g. API errors by class, or per day.",
+			Desc: "Session events counted by kind and one more dimension (label, status, agent, day, or detail), with failures, distinct sessions and duration totals — e.g. API errors by class, or hook runs per command.",
 			Params: []Param{
 				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds to include"},
 				{
 					Name: "group", Type: "string", Default: "label",
-					Desc: "Second dimension: label | status | agent | day (default label)",
-					Enum: []string{"label", "status", "agent", "day"},
+					Desc: "Second dimension: label | status | agent | day | detail (default label)",
+					Enum: []string{"label", "status", "agent", "day", "detail"},
 				},
 				agentParam,
 				sinceParam, untilParam,

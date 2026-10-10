@@ -255,7 +255,7 @@ func (h *handlers) blocks(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.EventsFilter{
-		Kind: p.Str("kind"), Agent: p.Str("agent"), Session: p.Str("session"),
+		Kind: p.Str("kind"), Status: p.Str("status"), Agent: p.Str("agent"), Session: p.Str("session"),
 		Since: p.Str("since"), Until: p.Str("until"), Sort: p.Str("sort"),
 		Limit: p.Int("limit"), Offset: p.Int("offset"),
 	}

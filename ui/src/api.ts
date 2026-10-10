@@ -85,6 +85,8 @@ export interface EventStat {
   kind: string;
   group: string;
   count: number;
+  /** Events whose status is error or blocked. */
+  failures: number;
   sessions: number;
   totalMs?: number;
   avgMs?: number;
@@ -410,6 +412,7 @@ export const api = {
   sessionEvents: (
     f: InsightFilters & {
       kind?: string;
+      status?: string;
       session?: string;
       sort?: "time" | "duration";
       limit?: number;
