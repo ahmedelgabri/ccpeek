@@ -365,17 +365,22 @@ func Registry() []Op {
 			Name: "session-events",
 			Desc: "List session events newest first — API errors, aborted turns, refused tool calls, pull requests — each linked to its session and transcript seq. Filter by kind (comma-separated), agent, one session, or date range.",
 			Params: []Param{
-				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link)"},
+				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link, turn)"},
 				agentParam,
 				{Name: "session", Type: "string", Desc: "One session's external id (needs agent)"},
 				sinceParam, untilParam,
+				{
+					Name: "sort", Type: "string", Default: "time",
+					Desc: "time (newest first) | duration (longest first)",
+					Enum: []string{"time", "duration"},
+				},
 				limitParam("Maximum events", query.EventsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Events(ctx, query.EventsFilter{
 					Kind: a.Str["kind"], Agent: a.Str["agent"], Session: a.Str["session"],
-					Since: a.Str["since"], Until: a.Str["until"],
+					Since: a.Str["since"], Until: a.Str["until"], Sort: a.Str["sort"],
 					Limit: a.Int["limit"], Offset: a.Int["offset"],
 				})
 				return out, len(out) == 0, err
@@ -405,16 +410,21 @@ func Registry() []Op {
 		},
 		{
 			Name: "tool-stats",
-			Desc: "Tool calls and failed results per tool across sessions, most failures first — which tools break, and how often.",
+			Desc: "Tool calls, failed results, and run time per tool across sessions — which tools break, and where the time goes.",
 			Params: []Param{
 				agentParam,
 				sinceParam, untilParam,
+				{
+					Name: "sort", Type: "string", Default: "errors",
+					Desc: "errors (most failures) | total (most time) | avg (slowest on average)",
+					Enum: []string{"errors", "total", "avg"},
+				},
 				limitParam("Maximum tools", query.ToolStatsLimit),
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.ToolStats(ctx, query.ToolStatsFilter{
 					Agent: a.Str["agent"], Since: a.Str["since"], Until: a.Str["until"],
-					Limit: a.Int["limit"],
+					Sort: a.Str["sort"], Limit: a.Int["limit"],
 				})
 				return out, len(out) == 0, err
 			},

@@ -256,7 +256,7 @@ func (h *handlers) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.EventsFilter{
 		Kind: p.Str("kind"), Agent: p.Str("agent"), Session: p.Str("session"),
-		Since: p.Str("since"), Until: p.Str("until"),
+		Since: p.Str("since"), Until: p.Str("until"), Sort: p.Str("sort"),
 		Limit: p.Int("limit"), Offset: p.Int("offset"),
 	}
 	if err := p.Err(); err != nil {
@@ -293,7 +293,7 @@ func (h *handlers) toolStats(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.ToolStatsFilter{
 		Agent: p.Str("agent"), Since: p.Str("since"), Until: p.Str("until"),
-		Limit: p.Int("limit"),
+		Sort: p.Str("sort"), Limit: p.Int("limit"),
 	}
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)

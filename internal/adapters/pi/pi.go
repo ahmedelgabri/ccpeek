@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,9 +41,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces one full reparse after per-message provider/model,
 // summary-entry usage, fallback-title normalization, codemode scripts with
-// their nested calls, thinking text with image locators, and error/abort
-// events became canonical.
-func (*Adapter) ParseVersion() int { return 6 }
+// their nested calls, thinking text with image locators, error/abort
+// events, and tool timing became canonical.
+func (*Adapter) ParseVersion() int { return 7 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -158,11 +159,12 @@ type piNestedCalls struct {
 }
 
 type piNestedCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Status    string          `json:"status"`
-	Arguments json.RawMessage `json:"arguments"`
-	Error     string          `json:"error"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Status     string          `json:"status"`
+	Arguments  json.RawMessage `json:"arguments"`
+	Error      string          `json:"error"`
+	DurationMs float64         `json:"durationMs"`
 }
 
 type piUsage struct {
@@ -378,6 +380,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					CallExternalID:    dec.pm.ToolCallID,
 					Status:            status,
 					Excerpt:           canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.ToolResultExcerptLimit),
+					At:                e.Timestamp,
 				}); err != nil {
 					return err
 				}
@@ -390,6 +393,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 							nc.ID, nc.Name, nc.Arguments, e.Timestamp)
 						tc.ResultStatus = nc.Status
 						tc.ResultExcerpt = canon.TruncateBytes(strings.TrimSpace(nc.Error), canon.ToolResultExcerptLimit)
+						tc.DurationMs = int64(math.Round(nc.DurationMs))
 						if err := sink.ToolCall(tc); err != nil {
 							return err
 						}

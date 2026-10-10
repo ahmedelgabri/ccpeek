@@ -1498,3 +1498,38 @@ func TestErrorEventsAndToolFailuresAggregate(t *testing.T) {
 		t.Errorf("tool stats = %+v, want Bash 1 call 1 error", tools)
 	}
 }
+
+// A tool's run time is its result's arrival minus its call, to the
+// millisecond (stored timestamps are second-precision text), and a turn's
+// recorded wall time lands as a turn event.
+func TestToolAndTurnTiming(t *testing.T) {
+	const id = "aaaaaaaa-0000-0000-0000-000000000009"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	head := func(ts string) string { return `"sessionId":"` + id + `","timestamp":"` + ts + `",` }
+	body := `{"type":"assistant",` + head("2026-10-01T10:00:00.000Z") + `"uuid":"a","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"sleep 1"}}]}}` + "\n" +
+		`{"type":"user",` + head("2026-10-01T10:00:01.250Z") + `"uuid":"b","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n" +
+		`{"type":"system","subtype":"turn_duration","durationMs":21758,"messageCount":3,` + head("2026-10-01T10:00:02.000Z") + `"uuid":"c"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+	tools, err := s.ToolStats(ctx, ToolStatsFilter{Sort: "avg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 1 || tools[0].Timed != 1 || tools[0].AvgMs != 1250 || tools[0].MaxMs != 1250 {
+		t.Errorf("tool timing = %+v, want Bash at exactly 1250ms", tools)
+	}
+	turns, err := s.Events(ctx, EventsFilter{Kind: "turn", Sort: "duration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 || turns[0].DurationMs != 21758 {
+		t.Errorf("turns = %+v, want one 21758ms turn", turns)
+	}
+}

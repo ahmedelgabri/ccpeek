@@ -396,14 +396,14 @@ func (w *Writer) InsertToolCall(sessionID int64, tc canon.ToolCall) error {
 		INSERT INTO tool_calls
 			(session_id, message_seq, seq, external_id, name, kind, input_json,
 			 result_status, result_excerpt, file_path, command, old_text, new_text,
-			 started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 started_at, started_ms, duration_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, tc.MessageSeq, tc.Seq, tc.ExternalID, tc.Name, string(kind), input,
 		tc.ResultStatus, tc.ResultExcerpt, tc.FilePath,
 		tc.Command,
 		canon.TruncateBytes(tc.OldText, canon.ToolEditExcerptLimit),
 		canon.TruncateBytes(tc.NewText, canon.ToolEditExcerptLimit),
-		timeText(tc.StartedAt))
+		timeText(tc.StartedAt), unixMillis(tc.StartedAt), positive(tc.DurationMs))
 	if err != nil {
 		return fmt.Errorf("inserting tool call seq %d (%s): %w", tc.Seq, tc.Name, err)
 	}
@@ -433,10 +433,18 @@ func (w *Writer) InsertSessionEvent(sessionID int64, ev canon.SessionEvent) erro
 // its agent-native call id. A miss is not an error: the call may predate
 // the external_id column or belong to source bytes that never parsed.
 func (w *Writer) UpdateToolCallResult(sessionID int64, res canon.ToolResult) error {
+	// A result timestamp before its call's (clock skew, a rewritten line)
+	// is not a negative duration; the duration stays unknown.
 	_, err := w.tx.ExecContext(w.ctx, `
-		UPDATE tool_calls SET result_status = ?, result_excerpt = ?, result_content = ?
+		UPDATE tool_calls SET result_status = ?, result_excerpt = ?, result_content = ?,
+			duration_ms = CASE
+				WHEN ? IS NOT NULL AND started_ms IS NOT NULL AND ? >= started_ms THEN ? - started_ms
+				ELSE duration_ms
+			END
 		WHERE session_id = ? AND external_id = ?`,
-		res.Status, res.Excerpt, res.Content, sessionID, res.CallExternalID)
+		res.Status, res.Excerpt, res.Content,
+		unixMillis(res.At), unixMillis(res.At), unixMillis(res.At),
+		sessionID, res.CallExternalID)
 	if err != nil {
 		return fmt.Errorf("updating tool call result %s: %w", res.CallExternalID, err)
 	}
@@ -820,6 +828,22 @@ func (s *Store) ResolvePending(ctx context.Context, ageAttempts bool) (resolved,
 		return 0, 0, err
 	}
 	return int(nRel + nArt), left, nil
+}
+
+// unixMillis is t in Unix milliseconds, or NULL when unknown.
+func unixMillis(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UnixMilli()
+}
+
+// positive is n, or NULL when it is not a real measurement.
+func positive(n int64) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
 }
 
 func timeText(t time.Time) any {

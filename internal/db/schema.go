@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 20
+const schemaVersion = 21
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -168,6 +168,11 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 	old_text TEXT NOT NULL DEFAULT '',
 	new_text TEXT NOT NULL DEFAULT '',
 	started_at TEXT,
+	-- started_at is second-precision text; started_ms keeps the instant to
+	-- the millisecond so duration_ms (result arrival minus start, or the
+	-- agent's own figure) is exact. Both NULL when unknown.
+	started_ms INTEGER,
+	duration_ms INTEGER,
 	UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_kind ON tool_calls(kind, started_at DESC);
@@ -630,6 +635,15 @@ var migrations = []migration{
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, sessionEventsSchema)
 		return err
+	},
+	// v21: tool call timing, filled as sources reparse.
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, column := range []string{"started_ms", "duration_ms"} {
+			if err := addColumn(ctx, tx, "tool_calls", column, "INTEGER"); err != nil {
+				return err
+			}
+		}
+		return nil
 	},
 }
 

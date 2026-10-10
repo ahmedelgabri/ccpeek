@@ -48,8 +48,9 @@ func New() *Adapter { return &Adapter{threadNames: make(map[string]map[string]st
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces existing recoverable rollouts through the latest usage
-// normalization, session-title enrichment, and session_meta model fallback.
-func (*Adapter) ParseVersion() int { return 5 }
+// normalization, session-title enrichment, session_meta model fallback, and
+// turn and tool timing.
+func (*Adapter) ParseVersion() int { return 6 }
 
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -181,6 +182,14 @@ type responseItem struct {
 type eventMsg struct {
 	Type string          `json:"type"`
 	Info json.RawMessage `json:"info"`
+
+	// type == "task_complete": one turn. Older rollouts carry only the
+	// Unix-second bounds; newer ones the exact duration and first-token
+	// latency too.
+	StartedAt          int64  `json:"started_at"`
+	CompletedAt        int64  `json:"completed_at"`
+	DurationMs         *int64 `json:"duration_ms"`
+	TimeToFirstTokenMs *int64 `json:"time_to_first_token_ms"`
 }
 
 // tokenUsage mirrors Codex's token_count payloads. The response API reports
@@ -395,12 +404,31 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					Status:            "ok",
 					Excerpt:           out,
 					Content:           item.Output,
+					At:                line.Timestamp,
 				})
 			}
 
 		case "event_msg":
 			var ev eventMsg
-			if json.Unmarshal(line.Payload, &ev) != nil || ev.Type != "token_count" {
+			if json.Unmarshal(line.Payload, &ev) != nil {
+				return nil
+			}
+			if ev.Type == "task_complete" {
+				turn, ok := turnEvent(ev, line.Timestamp)
+				if !ok {
+					return nil
+				}
+				if err := flushPending(); err != nil {
+					return err
+				}
+				if err := emitSession(); err != nil {
+					return err
+				}
+				turn.SessionExternalID = sess.ExternalID
+				turn.MessageSeq = max(messageCount-1, 0)
+				return sink.SessionEvent(turn)
+			}
+			if ev.Type != "token_count" {
 				return nil
 			}
 			var info tokenCountInfo
@@ -472,6 +500,27 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 	// Final emit: the folded title, timestamps, cwd, and branch.
 	return sink.Session(sess)
+}
+
+// turnEvent reads a task_complete event's wall time: the exact duration
+// when recorded, else the Unix-second bounds. A turn with neither is not
+// measured, and one shorter than a second by its bounds is reported as
+// such rather than as zero.
+func turnEvent(ev eventMsg, at time.Time) (canon.SessionEvent, bool) {
+	var ms int64
+	switch {
+	case ev.DurationMs != nil:
+		ms = *ev.DurationMs
+	case ev.StartedAt > 0 && ev.CompletedAt >= ev.StartedAt:
+		ms = max((ev.CompletedAt-ev.StartedAt)*1000, 1)
+	default:
+		return canon.SessionEvent{}, false
+	}
+	turn := canon.SessionEvent{Kind: canon.EventTurn, At: at, DurationMs: ms}
+	if ev.TimeToFirstTokenMs != nil {
+		turn.Payload, _ = json.Marshal(map[string]int64{"timeToFirstTokenMs": *ev.TimeToFirstTokenMs})
+	}
+	return turn, true
 }
 
 // tokenState is one rollout's token_count bookkeeping: the last cumulative

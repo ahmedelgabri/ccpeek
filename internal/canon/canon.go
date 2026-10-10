@@ -251,6 +251,10 @@ type ToolCall struct {
 	NewText  string // file_edit/file_write: the replacement, bounded
 
 	StartedAt time.Time
+	// DurationMs is the call's run time when the agent records it directly
+	// (Pi's nested calls); otherwise the store derives it from the
+	// result's arrival (ToolResult.At).
+	DurationMs int64
 }
 
 // ToolResultExcerptLimit bounds ResultExcerpt — a tool result is a whole
@@ -273,7 +277,8 @@ type ToolResult struct {
 	CallExternalID    string
 	Status            string // ok | error
 	Excerpt           string
-	Content           string // full result when not retained in a message
+	Content           string    // full result when not retained in a message
+	At                time.Time // when the result arrived, if recorded
 }
 
 // EventKind names a session event: something an agent recorded about a
@@ -293,6 +298,9 @@ const (
 	// EventPRLink is a pull request the session opened or worked on.
 	// Label is the repository; Detail the URL.
 	EventPRLink EventKind = "pr_link"
+	// EventTurn is one completed turn — prompt to final reply — with its
+	// wall time in DurationMs.
+	EventTurn EventKind = "turn"
 )
 
 // EventDetailLimit bounds SessionEvent.Detail: an error message or a

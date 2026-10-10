@@ -51,8 +51,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // normalization that cannot be recovered from an append-only tail (v4:
 // thinking text and image locators; v5: legacy subagent files' parent link;
 // v6: continued-session and fork-point lineage; v7: error, abort and
-// denial events; v8: pull-request links).
-func (*Adapter) ParseVersion() int { return 8 }
+// denial events; v8: pull-request links; v9: turn and tool timing).
+func (*Adapter) ParseVersion() int { return 9 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -139,6 +139,11 @@ type rawLine struct {
 	} `json:"quotaLimits"`
 	// Set on the tool_result line of a call refused before it ran.
 	ToolDenialKind string `json:"toolDenialKind"`
+
+	// type == "system", subtype == "turn_duration": one turn's wall time.
+	Subtype      string `json:"subtype"`
+	DurationMs   int64  `json:"durationMs"`
+	MessageCount int    `json:"messageCount"`
 
 	// type == "pr-link": a pull request the session opened or checked.
 	PRNumber     int    `json:"prNumber"`
@@ -772,6 +777,7 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 				CallExternalID:    block.ToolUseID,
 				Status:            status,
 				Excerpt:           excerpt(block.Content),
+				At:                raw.Timestamp,
 			})
 		}
 	}
@@ -783,7 +789,8 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 const interruptMarker = "[Request interrupted by user"
 
 // lineEvent derives the session event a line records, if any: a failed
-// model request, an interrupted turn, or a refused tool call.
+// model request, an interrupted turn, a refused tool call, or a finished
+// turn's duration.
 func lineEvent(raw rawLine, msg canon.Message, results []canon.ToolResult) (canon.SessionEvent, bool) {
 	ev := canon.SessionEvent{
 		SessionExternalID: msg.SessionExternalID,
@@ -808,6 +815,10 @@ func lineEvent(raw rawLine, msg canon.Message, results []canon.ToolResult) (cano
 			ev.Detail = results[0].Excerpt
 			ev.Payload, _ = json.Marshal(map[string]string{"toolUseId": results[0].CallExternalID})
 		}
+	case raw.Type == "system" && raw.Subtype == "turn_duration" && raw.DurationMs > 0:
+		ev.Kind = canon.EventTurn
+		ev.DurationMs = raw.DurationMs
+		ev.Payload, _ = json.Marshal(map[string]int{"messageCount": raw.MessageCount})
 	case msg.Role == canon.RoleUser && strings.HasPrefix(strings.TrimSpace(msg.Text), interruptMarker):
 		ev.Kind = canon.EventAborted
 		ev.Label = "user"

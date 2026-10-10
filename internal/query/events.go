@@ -14,7 +14,7 @@ import (
 // mistake, not an empty answer.
 var eventKinds = []canon.EventKind{
 	canon.EventAPIError, canon.EventAborted, canon.EventToolDenied,
-	canon.EventPRLink,
+	canon.EventPRLink, canon.EventTurn,
 }
 
 // parseKinds splits a comma-separated kind filter and validates it.
@@ -75,14 +75,22 @@ func whereClause(where []string) string {
 
 // EventsFilter narrows the session-events op. Kind is a comma-separated
 // list; Session (an external id) scopes to one session and needs Agent.
+// Sort is "time" (newest first, the default) or "duration" (longest
+// first).
 type EventsFilter struct {
 	Kind    string
 	Agent   string
 	Session string
 	Since   string
 	Until   string
+	Sort    string
 	Limit   int
 	Offset  int
+}
+
+var eventOrders = map[string]string{
+	"time":     "e.at DESC, e.id DESC",
+	"duration": "e.duration_ms DESC, e.id DESC",
 }
 
 // EventRow is one session event with the session it belongs to.
@@ -115,6 +123,13 @@ func (s *Service) Events(ctx context.Context, f EventsFilter) ([]EventRow, error
 	if err != nil {
 		return nil, err
 	}
+	if f.Sort == "" {
+		f.Sort = "time"
+	}
+	order, ok := eventOrders[f.Sort]
+	if !ok {
+		return nil, fmt.Errorf("%w: sort=%q (want time or duration)", ErrBadRequest, f.Sort)
+	}
 	where, args := eventWhere(kinds, f.Agent, f.Since, f.Until)
 	if f.Session != "" {
 		if f.Agent == "" {
@@ -135,7 +150,7 @@ func (s *Service) Events(ctx context.Context, f EventsFilter) ([]EventRow, error
 		JOIN sessions se ON se.id = e.session_id
 		JOIN agents a ON a.id = se.agent_id
 		`+whereClause(where)+`
-		ORDER BY e.at DESC, e.id DESC
+		ORDER BY `+order+`
 		LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing session events: %w", err)
@@ -241,21 +256,36 @@ func (s *Service) EventStats(ctx context.Context, f EventStatsFilter) ([]EventSt
 	return out, rows.Err()
 }
 
-// ToolStatsFilter narrows the tool-stats op.
+// ToolStatsFilter narrows the tool-stats op. Sort is "errors" (most
+// failures first, the default), "total" (most time spent first), or "avg"
+// (slowest on average first).
 type ToolStatsFilter struct {
 	Agent string
 	Since string
 	Until string
+	Sort  string
 	Limit int
 }
 
-// ToolStat is one tool's call and failure counts.
+// ToolStat is one tool's call, failure, and timing figures. Timing covers
+// only the Timed calls whose duration is known (result timestamps or the
+// agent's own figure).
 type ToolStat struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	Calls    int    `json:"calls"`
-	Errors   int    `json:"errors"`
-	Sessions int    `json:"sessions"`
+	Name     string  `json:"name"`
+	Kind     string  `json:"kind"`
+	Calls    int     `json:"calls"`
+	Errors   int     `json:"errors"`
+	Sessions int     `json:"sessions"`
+	Timed    int     `json:"timed"`
+	TotalMs  int64   `json:"totalMs"`
+	AvgMs    float64 `json:"avgMs"`
+	MaxMs    int64   `json:"maxMs"`
+}
+
+var toolOrders = map[string]string{
+	"errors": "errors DESC, calls DESC, tc.name",
+	"total":  "total_ms DESC, tc.name",
+	"avg":    "avg_ms DESC, tc.name",
 }
 
 // ToolStats counts calls and failed results per tool, most failures first.
@@ -265,6 +295,13 @@ func (s *Service) ToolStats(ctx context.Context, f ToolStatsFilter) ([]ToolStat,
 	}
 	if err := ToolStatsLimit.apply(&f.Limit); err != nil {
 		return nil, err
+	}
+	if f.Sort == "" {
+		f.Sort = "errors"
+	}
+	order, ok := toolOrders[f.Sort]
+	if !ok {
+		return nil, fmt.Errorf("%w: sort=%q (want errors, total, or avg)", ErrBadRequest, f.Sort)
 	}
 	var where []string
 	var args []any
@@ -282,14 +319,17 @@ func (s *Service) ToolStats(ctx context.Context, f ToolStatsFilter) ([]ToolStat,
 	}
 	args = append(args, f.Limit)
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT tc.name, tc.kind, COUNT(*), SUM(tc.result_status = 'error'),
-		       COUNT(DISTINCT tc.session_id)
+		SELECT tc.name, tc.kind, COUNT(*) AS calls, SUM(tc.result_status = 'error') AS errors,
+		       COUNT(DISTINCT tc.session_id), COUNT(tc.duration_ms),
+		       COALESCE(SUM(tc.duration_ms), 0) AS total_ms,
+		       COALESCE(AVG(tc.duration_ms), 0) AS avg_ms,
+		       COALESCE(MAX(tc.duration_ms), 0)
 		FROM tool_calls tc
 		JOIN sessions se ON se.id = tc.session_id
 		JOIN agents a ON a.id = se.agent_id
 		`+whereClause(where)+`
 		GROUP BY tc.name, tc.kind
-		ORDER BY 4 DESC, 3 DESC, tc.name
+		ORDER BY `+order+`
 		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating tool calls: %w", err)
@@ -298,7 +338,8 @@ func (s *Service) ToolStats(ctx context.Context, f ToolStatsFilter) ([]ToolStat,
 	var out []ToolStat
 	for rows.Next() {
 		var st ToolStat
-		if err := rows.Scan(&st.Name, &st.Kind, &st.Calls, &st.Errors, &st.Sessions); err != nil {
+		if err := rows.Scan(&st.Name, &st.Kind, &st.Calls, &st.Errors, &st.Sessions,
+			&st.Timed, &st.TotalMs, &st.AvgMs, &st.MaxMs); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

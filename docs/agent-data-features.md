@@ -105,3 +105,18 @@ Claude Code writes a `pr-link` line (`prNumber`, `prUrl`, `prRepository`) each t
   - Only `http(s)` URLs render as links, since they come from transcripts.
 
 Local result: 31 PRs across 22 sessions.
+
+## Timing
+
+Claude Code writes a `system/turn_duration` line (`durationMs`, `messageCount`) after each turn. Codex `task_complete` events carry Unix-second `started_at`/`completed_at`, and newer rollouts add `duration_ms` and `time_to_first_token_ms`. Every agent timestamps tool calls and their results, but ccpeek stored only the call's start, as second-precision text.
+
+- New event kind `turn` with the wall time in `duration_ms`. Claude uses `turn_duration`. Codex uses the exact duration when recorded, otherwise the second bounds; the payload keeps first-token latency.
+- Schema v21 adds `tool_calls.started_ms` (millisecond start) and `duration_ms`.
+- `canon.ToolResult.At` carries the result's arrival time, and the writer sets `duration_ms` to arrival minus start, ignoring negative spans. Pi's nested codemode calls bring their own `durationMs` through `canon.ToolCall.DurationMs`.
+- `ParseVersion`: Claude 9, Pi 7, Codex 6.
+- `tool-stats` gains `timed`, `totalMs`, `avgMs`, `maxMs` and `sort=errors|total|avg`. `session-events` gains `sort=time|duration`.
+- The Insights "timing" tab shows timed turns, average and longest turn, average turn per agent, where tool time goes, and the longest turns (each linking to its transcript). The shared `fmtDuration` moved to `time.ts` and gained ms and tenth-of-a-second precision.
+
+Tool time is wall time from call to result. It includes waits for permission prompts and user answers, which is why `AskUserQuestion` and `ExitPlanMode` rank high. The panel says so.
+
+Local coverage: 68,020 of 76,431 Claude calls and 41,590 of 41,816 Pi calls are timed. Most Codex tool rows come from archived sessions with no source left. Codex `custom_tool_call` items are still not parsed (an existing gap). Turns: 2,354 Claude and 49 Codex. Pi records no turn durations.

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { EventRow } from "../../api";
-import { fmtWhen, fullWhen } from "../../time";
+import { fmtDuration, fmtWhen, fullWhen } from "../../time";
 import { AgentChip, EmptyNote } from "../../ui";
 
 // EVENT_LABEL names each event kind for reading; the stored slug is what
@@ -10,6 +10,7 @@ export const EVENT_LABEL: Record<string, string> = {
   aborted: "aborted",
   tool_denied: "tool refused",
   pr_link: "pull request",
+  turn: "turn",
 };
 
 // PullRequest is one PR with every session that linked it.
@@ -97,6 +98,11 @@ export function EventList({
           <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-micro text-accent">
             {EVENT_LABEL[e.kind] ?? e.kind}
           </span>
+          {e.durationMs !== undefined && (
+            <span className="shrink-0 font-mono text-meta text-ink tabular-nums">
+              {fmtDuration(e.durationMs)}
+            </span>
+          )}
           {(e.label || e.status) && (
             <span className="shrink-0 font-mono text-meta text-ink-dim">
               {[e.label, e.status].filter(Boolean).join(" · ")}

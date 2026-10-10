@@ -15,10 +15,10 @@ import {
   useSetFilter,
 } from "../ui";
 import { Link } from "@tanstack/react-router";
-import { fmtWhen, fullWhen } from "../time";
+import { fmtDuration, fmtWhen, fullWhen } from "../time";
 import { EventList, groupPRs, PRLink } from "./insights/events";
 
-const TABS = ["errors", "prs"] as const;
+const TABS = ["errors", "prs", "timing"] as const;
 type Tab = (typeof TABS)[number];
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 
@@ -56,6 +56,7 @@ export function InsightsPage() {
       </div>
       {tab === "errors" && <ErrorsTab f={f} />}
       {tab === "prs" && <PRsTab f={f} />}
+      {tab === "timing" && <TimingTab f={f} />}
     </div>
   );
 }
@@ -63,6 +64,7 @@ export function InsightsPage() {
 const TAB_LABEL: Record<Tab, string> = {
   errors: "errors",
   prs: "pull requests",
+  timing: "timing",
 };
 
 const ERROR_KINDS = "api_error,aborted,tool_denied";
@@ -241,5 +243,120 @@ function PRsTab({ f }: { f: InsightFilters }) {
         </ul>
       )}
     </Panel>
+  );
+}
+
+// TimingTab: how long turns take, per agent, and where tool time goes.
+// Tool timing covers calls whose result timestamp (or the agent's own
+// figure) is known; the table says how many that is.
+function TimingTab({ f }: { f: InsightFilters }) {
+  const byAgent = useQuery({
+    queryKey: ["eventStats", "turn", "agent", f],
+    queryFn: () => api.eventStats({ ...f, kind: "turn", group: "agent" }),
+  });
+  const tools = useQuery({
+    queryKey: ["toolStats", "total", f],
+    queryFn: () => api.toolStats({ ...f, sort: "total", limit: 15 }),
+  });
+  const longest = useQuery({
+    queryKey: ["sessionEvents", "turn", "duration", f],
+    queryFn: () =>
+      api.sessionEvents({ ...f, kind: "turn", sort: "duration", limit: 20 }),
+  });
+  if (byAgent.error) return <LoadError error={byAgent.error} />;
+  const agents = byAgent.data ?? [];
+  const turns = agents.reduce((n, a) => n + a.count, 0);
+  const totalMs = agents.reduce((n, a) => n + (a.totalMs ?? 0), 0);
+  const maxMs = Math.max(0, ...agents.map((a) => a.maxMs ?? 0));
+  const toolRows = (tools.data ?? []).filter((t) => t.timed > 0);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="Timed turns" value={fmtCount(turns)} />
+        <StatTile
+          label="Average turn"
+          value={turns > 0 ? fmtDuration(totalMs / turns) : "—"}
+        />
+        <StatTile
+          label="Longest turn"
+          value={maxMs > 0 ? fmtDuration(maxMs) : "—"}
+        />
+        <StatTile label="Time in turns" value={fmtDuration(totalMs)} />
+      </div>
+      <Panel label="Average turn by agent">
+        {byAgent.isLoading ? (
+          <SkeletonRows rows={3} />
+        ) : (
+          <KindBars
+            items={agents.map((a) => ({
+              label: a.group,
+              count: Math.round(a.avgMs ?? 0),
+            }))}
+            fmt={fmtDuration}
+            empty="No timed turns in this range."
+          />
+        )}
+      </Panel>
+      <Panel label="Where tool time goes — call to result, including waits for your approval or answer">
+        {tools.error ? (
+          <div className="px-3 py-3">
+            <LoadError error={tools.error} />
+          </div>
+        ) : toolRows.length === 0 ? (
+          <EmptyNote>No timed tool calls in this range.</EmptyNote>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-left font-mono text-micro text-ink-faint">
+              <tr>
+                <th className="px-3 py-1.5 font-normal">tool</th>
+                <th className="px-3 py-1.5 text-right font-normal">
+                  timed calls
+                </th>
+                <th className="px-3 py-1.5 text-right font-normal">total</th>
+                <th className="px-3 py-1.5 text-right font-normal">avg</th>
+                <th className="px-3 py-1.5 text-right font-normal">max</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+              {toolRows.map((t) => (
+                <tr key={`${t.name}/${t.kind}`}>
+                  <td className="px-3 py-1.5">{t.name}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    {fmtCount(t.timed)}
+                    <span className="text-ink-faint">
+                      {" "}
+                      / {fmtCount(t.calls)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {fmtDuration(t.totalMs)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {fmtDuration(t.avgMs)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-ink-faint">
+                    {fmtDuration(t.maxMs)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+      <Panel label="Longest turns">
+        {longest.error ? (
+          <div className="px-3 py-3">
+            <LoadError error={longest.error} />
+          </div>
+        ) : longest.isLoading ? (
+          <SkeletonRows rows={5} />
+        ) : (
+          <EventList
+            events={longest.data ?? []}
+            empty="No timed turns in this range."
+          />
+        )}
+      </Panel>
+    </div>
   );
 }

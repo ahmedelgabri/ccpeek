@@ -9,7 +9,7 @@ import {
   shortPath,
   type SessionDetail,
 } from "../api";
-import { fmtWhen } from "../time";
+import { fmtDuration, fmtWhen } from "../time";
 import {
   AgentChip,
   AgentDot,
@@ -474,19 +474,6 @@ function durationMs(session: SessionDetail): number {
   return Number.isFinite(start) && Number.isFinite(end)
     ? Math.max(0, end - start)
     : 0;
-}
-
-function fmtDuration(ms: number): string {
-  const seconds = Math.round(ms / 1_000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  if (hours < 24)
-    return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ${hours % 24}h`;
 }
 
 function useQueryDetail(agent: string | undefined, id: string | undefined) {

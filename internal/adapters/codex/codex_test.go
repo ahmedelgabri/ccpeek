@@ -254,8 +254,8 @@ func TestCodexPromptTitleSkipsInjectedContext(t *testing.T) {
 }
 
 func TestParseVersionIncludesLatestNormalization(t *testing.T) {
-	if got := New().ParseVersion(); got != 5 {
-		t.Fatalf("ParseVersion() = %d, want 5", got)
+	if got := New().ParseVersion(); got != 6 {
+		t.Fatalf("ParseVersion() = %d, want 6", got)
 	}
 }
 
@@ -386,4 +386,23 @@ func TestRepeatedLastTokenUsageCountsOnce(t *testing.T) {
 			t.Fatalf("usage entries = %d, want 3", len(usages))
 		}
 	})
+}
+
+// Codex records a turn's exact duration only in newer rollouts; older ones
+// carry Unix-second bounds, which still measure the turn.
+func TestTaskCompleteBecomesTurnEvent(t *testing.T) {
+	src := writeRollout(t,
+		`{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"`+sessionID+`","cwd":"/w"}}`,
+		`{"timestamp":"2026-07-06T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`,
+		`{"timestamp":"2026-07-06T09:03:00.000Z","type":"event_msg","payload":{"type":"task_complete","started_at":1789218201,"completed_at":1789218387,"duration_ms":185592,"time_to_first_token_ms":2940}}`,
+		`{"timestamp":"2026-07-06T09:04:00.000Z","type":"event_msg","payload":{"type":"task_complete","started_at":1789218500,"completed_at":1789218503}}`,
+	)
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Events) != 2 || sink.Events[0].DurationMs != 185592 || sink.Events[1].DurationMs != 3000 ||
+		!strings.Contains(string(sink.Events[0].Payload), "2940") {
+		t.Errorf("turn events = %+v", sink.Events)
+	}
 }

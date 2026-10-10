@@ -97,6 +97,11 @@ export interface ToolStat {
   calls: number;
   errors: number;
   sessions: number;
+  /** Calls whose duration is known; the timing figures cover only these. */
+  timed: number;
+  totalMs: number;
+  avgMs: number;
+  maxMs: number;
 }
 
 /** Filters shared by the Insights reads. */
@@ -391,6 +396,7 @@ export const api = {
     f: InsightFilters & {
       kind?: string;
       session?: string;
+      sort?: "time" | "duration";
       limit?: number;
     },
   ) =>
@@ -402,7 +408,9 @@ export const api = {
   eventStats: (f: InsightFilters & { kind?: string; group?: string }) =>
     get<EventStat[]>("/session-events/stats", f),
 
-  toolStats: (f: InsightFilters & { limit?: number }) =>
+  toolStats: (
+    f: InsightFilters & { sort?: "errors" | "total" | "avg"; limit?: number },
+  ) =>
     get<ToolStat[]>("/tool-stats", {
       ...f,
       limit: f.limit ? String(f.limit) : "",

@@ -87,3 +87,21 @@ export function todayUTC(): number {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
+
+/** fmtDuration renders a span of milliseconds at the precision it
+ *  deserves: a tool call reads in ms, a turn in seconds, a session in
+ *  hours. Zero stays "0s" — nothing measured, not a fast measurement. */
+export function fmtDuration(ms: number): string {
+  if (ms > 0 && ms < 1_000) return `${Math.round(ms)}ms`;
+  if (ms > 0 && ms < 10_000) return `${(ms / 1_000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours < 24)
+    return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
