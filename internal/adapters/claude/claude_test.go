@@ -727,3 +727,77 @@ func TestLegacyTopLevelSubagentLinksByLineSessionID(t *testing.T) {
 		t.Errorf("title = %q, want the first prompt", got)
 	}
 }
+
+// Resuming a session under a new id copies its history in, every line
+// still carrying the id it was written under; a chain of resumes copies
+// all ancestors, oldest first. The direct parent is the LAST foreign id,
+// and its last copied entry is where this session branched off. That is
+// lineage, not a renamed file, so it must not raise the identity warning.
+func TestCopiedHistoryLinksTheDirectParent(t *testing.T) {
+	const (
+		root1 = "11111111-0000-0000-0000-000000000001"
+		root2 = "22222222-0000-0000-0000-000000000002"
+		self  = "33333333-0000-0000-0000-000000000003"
+	)
+	dir := t.TempDir()
+	projects := filepath.Join(dir, "projects", "-w")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := func(session, uuid string) string {
+		return `{"type":"user","uuid":"` + uuid + `","sessionId":"` + session +
+			`","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"hi"}}` + "\n"
+	}
+	path := filepath.Join(projects, self+".jsonl")
+	if err := os.WriteFile(path, []byte(line(root1, "a")+line(root2, "b")+line(root2, "c")+line(self, "d")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	src := agent.SourceRef{Root: agent.Root{Agent: Slug, Path: dir}, Path: path, Kind: agent.SourceFile}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Relations) != 1 {
+		t.Fatalf("relations = %+v, want one resumed_from edge", sink.Relations)
+	}
+	rel := sink.Relations[0]
+	var ev struct {
+		BranchUUID string `json:"branchUuid"`
+	}
+	_ = json.Unmarshal(rel.Evidence, &ev)
+	if rel.Kind != canon.RelResumedFrom || rel.FromExternalID != self || rel.ToExternalID != root2 || ev.BranchUUID != "c" {
+		t.Errorf("relation = %+v (branch %q), want %s resumed_from %s at c", rel, ev.BranchUUID, self, root2)
+	}
+	if len(sink.Issues) != 0 {
+		t.Errorf("issues = %+v, want none for copied history", sink.Issues)
+	}
+}
+
+// A legacy subagent can outlive a resume of its parent, so its lines name
+// two parent ids. Neither is copied history: no resume edge, no warning.
+func TestSubagentSpanningAParentResumeIsNotACopy(t *testing.T) {
+	const parent, resumed = "12121212-0000-0000-0000-000000000001", "12121212-0000-0000-0000-000000000002"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := func(session, uuid string) string {
+		return `{"type":"user","isSidechain":true,"sessionId":"` + session + `","uuid":"` + uuid +
+			`","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"go"}}` + "\n"
+	}
+	path := filepath.Join(dir, "agent-feed123.jsonl")
+	if err := os.WriteFile(path, []byte(line(parent, "a")+line(resumed, "b")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{Root: agent.Root{Agent: Slug, Path: root}, Path: path, Kind: agent.SourceFile}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Relations) != 1 || sink.Relations[0].Kind != canon.RelSubagentOf || sink.Relations[0].ToExternalID != parent {
+		t.Errorf("relations = %+v, want only subagent_of the first parent", sink.Relations)
+	}
+	if len(sink.Issues) != 0 {
+		t.Errorf("issues = %+v, want none", sink.Issues)
+	}
+}

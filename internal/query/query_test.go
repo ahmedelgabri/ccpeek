@@ -1370,15 +1370,7 @@ func TestSubagentSessionsRollUpUnderTheirParent(t *testing.T) {
 	write("subagents/workflows/wf_1/agent-b2.jsonl", turn("b", "msg_b", "2026-10-01T10:02:00Z"))
 	write("subagents/workflows/wf_1/agent-b2.meta.json", `{"agentType":"workflow-subagent","parentAgentId":"a1"}`)
 
-	store, table := newStore(t)
-	if _, err := ingest.New(store, table, claude.New()).Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{claude.Slug: {root}},
-		Getenv:      func(string) string { return "" },
-		Home:        "/nonexistent",
-	}); err != nil {
-		t.Fatalf("ingest: %v", err)
-	}
-	s := New(store, table)
+	s := claudeRootService(t, root)
 	ctx := context.Background()
 
 	listed, err := s.Sessions(ctx, SessionsFilter{})
@@ -1408,5 +1400,57 @@ func TestSubagentSessionsRollUpUnderTheirParent(t *testing.T) {
 	if total == nil || total.Sessions != 2 || total.Tokens.Input != 2000 ||
 		total.CostUSD <= 0 || total.CostUSD != 2*detail.CostUSD {
 		t.Fatalf("subagent total = %+v (own cost %v), want both descendants at twice the parent's cost", total, detail.CostUSD)
+	}
+}
+
+// claudeRootService ingests a Claude Code root built by a test.
+func claudeRootService(t *testing.T, root string) *Service {
+	t.Helper()
+	store, table := newStore(t)
+	if _, err := ingest.New(store, table, claude.New()).Run(context.Background(), ingest.Options{
+		ConfigRoots: map[canon.AgentSlug][]string{claude.Slug: {root}},
+		Getenv:      func(string) string { return "" },
+		Home:        "/nonexistent",
+	}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	return New(store, table)
+}
+
+// A resumed session names its parent and the parent entry it branched
+// after, so either side can jump to the branch point.
+func TestResumedSessionRelationCarriesBranchSeq(t *testing.T) {
+	const (
+		parent = "55555555-0000-0000-0000-000000000001"
+		child  = "55555555-0000-0000-0000-000000000002"
+	)
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := func(session, uuid string) string {
+		return `{"type":"user","uuid":"` + uuid + `","sessionId":"` + session +
+			`","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"hi"}}` + "\n"
+	}
+	for name, body := range map[string]string{
+		parent: line(parent, "p0") + line(parent, "p1") + line(parent, "p2"),
+		child:  line(parent, "p0") + line(parent, "p1") + line(child, "c0"),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+	for id, want := range map[string]string{child: "out", parent: "in"} {
+		d, err := s.Session(ctx, string(claude.Slug), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(d.Relations) != 1 || d.Relations[0].Kind != "resumed_from" ||
+			d.Relations[0].Direction != want || d.Relations[0].AtSeq == nil || *d.Relations[0].AtSeq != 1 {
+			t.Errorf("%s relations = %+v, want one %s resumed_from edge at parent seq 1", id, d.Relations, want)
+		}
 	}
 }

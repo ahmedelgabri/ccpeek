@@ -6,7 +6,7 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { api, fmtCount, fmtTokens, shortPath } from "../api";
+import { api, fmtCount, fmtTokens, shortPath, type Relation } from "../api";
 import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
@@ -48,6 +48,21 @@ const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 // transcript, commands, tool calls, files touched, usage, relations, and
 // linked artifacts — each facet a deep-linkable tab (?tab=). The paging
 // and anchoring machinery all lives in ./session/useSessionData.
+// relationLabel reads an edge from this session's side.
+function relationLabel(r: Relation, subagentType?: string): string {
+  const out = r.direction === "out";
+  switch (r.kind) {
+    case "subagent_of":
+      return `${subagentType || "subagent"} of`;
+    case "resumed_from":
+      return out ? "resumed from" : "continued in";
+    case "fork_of":
+      return out ? "fork of" : "forked into";
+    default:
+      return out ? r.kind : `${r.kind} (incoming)`;
+  }
+}
+
 export function SessionDetailPage() {
   const { agent, sessionId } = useParams({
     from: "/sessions/$agent/$sessionId",
@@ -241,17 +256,26 @@ function SessionContent() {
           ))}
           {relations?.map((r) => (
             <Link
-              key={`${r.kind}-${r.sessionId}`}
+              key={`${r.kind}-${r.direction}-${r.sessionId}`}
               to="/sessions/$agent/$sessionId"
               params={{ agent: s.agent, sessionId: r.sessionId }}
+              // atSeq is a seq in the PARENT: the link opens the parent at
+              // the branch point; from the parent's side, at the child's
+              // start.
+              search={
+                r.direction === "out" && r.atSeq !== undefined
+                  ? { seq: r.atSeq }
+                  : {}
+              }
+              title={
+                r.atSeq !== undefined
+                  ? `Branched after message #${r.atSeq} of the parent`
+                  : undefined
+              }
               className="rounded border border-accent/40 px-2 py-0.5 font-mono text-accent hover:bg-surface-2"
             >
-              {r.kind === "subagent_of"
-                ? `${s.subagentType || "subagent"} of`
-                : r.direction === "out"
-                  ? r.kind
-                  : `${r.kind} (incoming)`}{" "}
-              → {r.sessionId.slice(0, 8)}
+              {relationLabel(r, s.subagentType)} → {r.sessionId.slice(0, 8)}
+              {r.atSeq !== undefined && ` @#${r.atSeq}`}
             </Link>
           ))}
         </div>

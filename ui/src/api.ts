@@ -46,6 +46,8 @@ export interface Relation {
   kind: string;
   direction: "in" | "out";
   sessionId: string;
+  /** Seq in the parent session where the child branched off. */
+  atSeq?: number;
 }
 
 export interface LinkedArtifact {

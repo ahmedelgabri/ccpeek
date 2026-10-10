@@ -49,8 +49,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces a full reparse after the adapter learns metadata or
 // normalization that cannot be recovered from an append-only tail (v4:
-// thinking text and image locators; v5: legacy subagent files' parent link).
-func (*Adapter) ParseVersion() int { return 5 }
+// thinking text and image locators; v5: legacy subagent files' parent link;
+// v6: continued-session and fork-point lineage).
+func (*Adapter) ParseVersion() int { return 6 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -123,6 +124,10 @@ type rawLine struct {
 	AITitle     string          `json:"aiTitle"`
 	Content     json.RawMessage `json:"content"` // system lines
 	Message     json.RawMessage `json:"message"`
+
+	// type == "fork-context-ref": the parent entry a forked agent's
+	// context ends at.
+	ParentLastUUID string `json:"parentLastUuid"`
 }
 
 // rawMessage is the Anthropic message payload inside a line.
@@ -248,7 +253,17 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 	// instead of an in-memory index, the same mechanism late results
 	// already used.
 	emittedSession := false
-	warnedIDMismatch := false
+	// Lines carrying ANOTHER session's id are history copied in when that
+	// session was resumed under a new id; a chain of resumes copies every
+	// ancestor's lines, oldest first, so the last foreign id seen is the
+	// direct parent and its last copied entry is where this one branched.
+	var (
+		copiedFrom, branchUUID string
+		copiedEntries          int
+		firstForeignID         string
+		firstForeignLine       int
+		sawOwnID               bool
+	)
 	emitSession := func() error {
 		if emittedSession {
 			return nil
@@ -374,6 +389,11 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			// replace a title already chosen by the user or an earlier prompt.
 			metadataChanged = setTitle(entry.AITitle, 2, false) || metadataChanged
 			continue
+		case "fork-context-ref":
+			if isSubagent {
+				sub.branchUUID = entry.ParentLastUUID
+			}
+			continue
 		case "user", "assistant", "system":
 		default:
 			continue // progress lines and future types are not transcript entries
@@ -382,9 +402,9 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		// before a single line parses, so children can be emitted from the
 		// first entry onward. The sessionId inside the JSONL is therefore
 		// never a fallback — it used to be guarded by an ExternalID == ""
-		// test that could not fire. A disagreement is worth saying out
-		// loud though: it means the transcript was copied or renamed, and
-		// it will index under a different id than the agent recorded.
+		// test that could not fire. A disagreement is copied history (see
+		// copiedFrom); a file made ONLY of other sessions' lines is a copy or
+		// rename, which is worth saying out loud once parsing ends.
 		// A subagent's lines carry its PARENT's sessionId by design; for the
 		// legacy layout that sessionId is the only record of the parent.
 		if isSubagent && sub.legacy && sub.parentSession == "" {
@@ -394,16 +414,20 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		if isSubagent {
 			expectedID = sub.parentSession
 		}
-		if entry.SessionID != "" && entry.SessionID != expectedID && !warnedIDMismatch {
-			warnedIDMismatch = true
-			if serr := sink.Issue(canon.Issue{
-				Agent: Slug, Severity: canon.SeverityWarn, Category: "identity",
-				SourcePath: src.Path, Line: lineNo,
-				Detail: fmt.Sprintf("entry sessionId %q differs from the file name %q; indexing under the file name",
-					entry.SessionID, sessionID),
-			}); serr != nil {
-				return state, serr
+		switch {
+		case entry.SessionID == "":
+		case isSubagent:
+			// A subagent's lines name its parent, which can itself be
+			// resumed under a new id while the agent runs; that is not
+			// copied history.
+		case entry.SessionID == expectedID:
+			sawOwnID = true
+		default:
+			if firstForeignID == "" {
+				firstForeignID, firstForeignLine = entry.SessionID, lineNo
 			}
+			copiedFrom, branchUUID = entry.SessionID, entry.UUID
+			copiedEntries++
 		}
 
 		msg, calls, results := a.convertLine(entry, state.MessageSeq+messageCount, sessionID)
@@ -458,6 +482,31 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		// creation attributes. Metadata-only tails of existing sessions do
 		// emit below so a rename takes effect immediately.
 		return newState, nil
+	}
+
+	if copiedFrom != "" {
+		evidence, _ := json.Marshal(map[string]any{
+			"source": "copied-history", "branchUuid": branchUUID, "copiedEntries": copiedEntries,
+		})
+		if err := sink.SessionRelation(canon.SessionRelation{
+			Agent:          Slug,
+			FromExternalID: sess.ExternalID,
+			ToExternalID:   copiedFrom,
+			Kind:           canon.RelResumedFrom,
+			Evidence:       evidence,
+		}); err != nil {
+			return state, err
+		}
+	}
+	if firstForeignID != "" && !sawOwnID {
+		if err := sink.Issue(canon.Issue{
+			Agent: Slug, Severity: canon.SeverityWarn, Category: "identity",
+			SourcePath: src.Path, Line: firstForeignLine,
+			Detail: fmt.Sprintf("entry sessionId %q differs from the file name %q; indexing under the file name",
+				firstForeignID, sessionID),
+		}); err != nil {
+			return state, err
+		}
 	}
 
 	// Final emit: the folded metadata (title, created/modified, cwd,

@@ -35,6 +35,9 @@ type subagent struct {
 	// legacy marks the top-level agent-<id>.jsonl layout, whose parent is
 	// known only once the first line's sessionId has been read.
 	legacy bool
+	// branchUUID is the parent entry a forked agent's context ends at, from
+	// its fork-context-ref line.
+	branchUUID string
 }
 
 type subagentMeta struct {
@@ -65,6 +68,7 @@ func (s subagent) evidence() json.RawMessage {
 		"description": s.meta.Description,
 		"toolUseId":   s.meta.ToolUseID,
 		"workflow":    s.workflow,
+		"branchUuid":  s.branchUUID,
 	})
 	return b
 }

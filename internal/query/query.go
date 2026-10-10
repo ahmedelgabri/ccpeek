@@ -358,6 +358,10 @@ type Relation struct {
 	Kind      string `json:"kind"`
 	Direction string `json:"direction"` // out: this→other, in: other→this
 	SessionID string `json:"sessionId"` // the other endpoint's external id
+	// AtSeq is the seq, in the PARENT session (the edge's target), of the
+	// entry the child branched off after — a resumed session's last copied
+	// entry, a forked agent's context end — when the agent records it.
+	AtSeq *int `json:"atSeq,omitempty"`
 }
 
 // LinkedArtifact is an artifact attached to a session.
@@ -417,12 +421,15 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		}
 	}
 
+	const branchSeq = `(SELECT m.seq FROM messages m
+		WHERE m.session_id = r.to_session_id AND m.external_id <> ''
+		  AND m.external_id = json_extract(r.evidence_json, '$.branchUuid'))`
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
-		SELECT r.kind, 'out', other.external_id
+		SELECT r.kind, 'out', other.external_id, `+branchSeq+`
 		FROM session_relations r JOIN sessions other ON other.id = r.to_session_id
 		WHERE r.from_session_id = ?
 		UNION ALL
-		SELECT r.kind, 'in', other.external_id
+		SELECT r.kind, 'in', other.external_id, `+branchSeq+`
 		FROM session_relations r JOIN sessions other ON other.id = r.from_session_id
 		WHERE r.to_session_id = ?`, rowID, rowID)
 	if err != nil {
@@ -431,7 +438,7 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 	defer rows.Close()
 	for rows.Next() {
 		var rel Relation
-		if err := rows.Scan(&rel.Kind, &rel.Direction, &rel.SessionID); err != nil {
+		if err := rows.Scan(&rel.Kind, &rel.Direction, &rel.SessionID, &rel.AtSeq); err != nil {
 			return nil, err
 		}
 		detail.Relations = append(detail.Relations, rel)

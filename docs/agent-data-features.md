@@ -54,3 +54,20 @@ The oldest Claude Code layout kept subagents beside their parent as `projects/<p
 - Claude `ParseVersion` is 5, so already-indexed legacy files gain the link.
 
 Local result: 239 legacy subagent sessions linked, none pending.
+
+## Session graph: resumes and fork points
+
+Resuming a Claude session under a new id copies its history into the new file, and every copied line keeps the session id it was written under. A chain of resumes copies every ancestor, oldest first. ccpeek flagged these lines as an identity mismatch (51 warnings locally) and recorded no lineage. Forked agents (`agentType: fork`) carry a `fork-context-ref` line that names the parent entry their context ends at.
+
+- The adapter tracks copied lines instead of warning. The last foreign session id is the direct parent, and its last copied entry is the branch point. It emits `resumed_from` with evidence `branchUuid` and `copiedEntries`.
+- The identity warning stays only for a file made entirely of other sessions' lines: a copy or rename.
+- Fork agents add `branchUuid` to their `subagent_of` evidence.
+- Claude `ParseVersion` is 6.
+- `session` relations gain `atSeq`: the seq, in the parent session, of the branch entry.
+- UI: relation chips read "resumed from / continued in / fork of / forked into". An outgoing chip opens the parent at the branch point (`@#N`).
+
+Local result: 10 `resumed_from` edges (one pending: its parent file is gone), 56 edges with a branch point (10 resumes and 46 fork agents), and 0 identity warnings.
+
+A subagent's lines always name its parent, and a legacy subagent can outlive a resume of that parent, so its lines carry two parent ids. Subagent files are therefore excluded from resume detection. Without that exclusion, 40 legacy agent files produced false "continued in" edges.
+
+Known existing behavior, not changed here: usage dedupe gives a copied turn's cost to whichever copy indexed first, so a continued session can show less cost than its own turns made.
