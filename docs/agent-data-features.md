@@ -202,3 +202,22 @@ Current Pi sends every replacement of an edit in one `edits: [{oldText, newText}
 - Pi `ParseVersion` is 11. Locally, 4 Pi edits still have no diff text; their arguments were too large for Pi to record.
 
 The 395 `claude-code` "Edit" calls with an `edits` array, and 1,510 more with Pi-shaped arguments, come from 68 v1-imported sessions. They are Pi sessions that v1 stored under `claude-code`. They duplicate sessions v2 indexes under `pi` (same file, same id), and they carry no usage, so cost is not double-counted. They are archive rows and cannot be reparsed, so this fix does not reach them.
+
+## Codex custom tools and patches
+
+Researched against the codex-rs source (`protocol/src/models.rs` `ResponseItem`, `apply-patch/src/parser.rs`, `rollout/src/policy.rs`) and real rollouts published by other projects:
+
+- `custom_tool_call` (`name`, freeform string `input`) and `custom_tool_call_output` carry Codex's freeform tools. Current Codex sends `apply_patch` this way, with the patch as the input, and code mode as the `exec` tool with JavaScript as the input. Neither was parsed.
+- Tool outputs (`function_call_output.output`, `custom_tool_call_output.output`) are a string or an array of content items. The adapter decoded `output` as a string, which failed the whole item, so array outputs were dropped. Locally that was 11 of 12 function outputs.
+- Older Codex sent `apply_patch` as a `function_call` with `{"input": patch}`.
+
+Changes:
+
+- Both item types are parsed. Outputs flatten to text: a string, or the content items' text joined by newlines. Images are dropped, as Codex's own `to_text` does.
+- `apply_patch` in either form becomes a `file_edit` on the patch's first file (`*** Add/Update/Delete File:`), sized by its `+`/`-` lines. The input keeps every file the patch touches.
+- Code-mode `exec` becomes a `script`, with its source shown and formatted like Pi codemode.
+- Codex `ParseVersion` is 8.
+
+Locally: 25 code-mode scripts are now visible, and every `js`/`wait` call is paired with its result and timed. No local rollout contains `apply_patch`, so the test uses the real shapes found in public rollouts.
+
+Not done: code mode's inner commands. Paginated rollouts record each one as an `item_completed` `CommandExecution`, and they record directly called commands that way too. Indexing those items could double-count shell calls, and the local data cannot confirm how their ids relate to `call_id`.

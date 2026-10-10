@@ -254,8 +254,8 @@ func TestCodexPromptTitleSkipsInjectedContext(t *testing.T) {
 }
 
 func TestParseVersionIncludesLatestNormalization(t *testing.T) {
-	if got := New().ParseVersion(); got != 7 {
-		t.Fatalf("ParseVersion() = %d, want 7", got)
+	if got := New().ParseVersion(); got != 8 {
+		t.Fatalf("ParseVersion() = %d, want 8", got)
 	}
 }
 
@@ -404,5 +404,45 @@ func TestTaskCompleteBecomesTurnEvent(t *testing.T) {
 	if len(sink.Events) != 2 || sink.Events[0].DurationMs != 185592 || sink.Events[1].DurationMs != 3000 ||
 		!strings.Contains(string(sink.Events[0].Payload), "2940") {
 		t.Errorf("turn events = %+v", sink.Events)
+	}
+}
+
+// Current Codex sends apply_patch and code mode as freeform custom tools,
+// and most tool outputs as arrays of content items; older Codex sent
+// apply_patch as a JSON function. The line shapes below come from real
+// rollouts (codex-rs ResponseItem / FunctionCallOutputPayload).
+func TestCustomToolsPatchesAndContentItemOutputs(t *testing.T) {
+	src := writeRollout(t,
+		`{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"`+sessionID+`","cwd":"/w"}}`,
+		`{"timestamp":"2026-07-06T09:00:01.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"p1","name":"apply_patch","input":"*** Begin Patch\n*** Add File: docs/gen.py\n+#!/usr/bin/env python3\n+print('hi')\n*** End Patch"}}`,
+		`{"timestamp":"2026-07-06T09:00:02.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"p1","output":[{"type":"input_text","text":"Success. Updated the following files:"},{"type":"input_text","text":"A docs/gen.py"}]}}`,
+		`{"timestamp":"2026-07-06T09:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** Update File: src/auth.ts\\n@@\\n-old\\n+new\\n*** End Patch\\n\"}","call_id":"p2"}}`,
+		`{"timestamp":"2026-07-06T09:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"x1","name":"exec","input":"text(await tools.exec_command({cmd:\"jj status\"}))"}}`,
+		`{"timestamp":"2026-07-06T09:00:05.000Z","type":"response_item","payload":{"type":"function_call","name":"js","arguments":"{}","call_id":"f1"}}`,
+		`{"timestamp":"2026-07-06T09:00:06.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"f1","output":[{"type":"input_text","text":"done"}]}}`,
+	)
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.ToolCalls) != 4 {
+		t.Fatalf("tool calls = %d, want 4", len(sink.ToolCalls))
+	}
+	add, update, exec := sink.ToolCalls[0], sink.ToolCalls[1], sink.ToolCalls[2]
+	if add.Kind != canon.ToolFileEdit || add.FilePath != "docs/gen.py" || add.Lines == nil || add.Lines.Added != 2 {
+		t.Errorf("freeform apply_patch = %+v", add)
+	}
+	if update.FilePath != "src/auth.ts" || update.Lines == nil || update.Lines.Added != 1 || update.Lines.Removed != 1 {
+		t.Errorf("JSON apply_patch = %+v", update)
+	}
+	if exec.Kind != canon.ToolScript || !strings.Contains(exec.Command, "exec_command") {
+		t.Errorf("code mode exec = %+v", exec)
+	}
+	results := map[string]canon.ToolResult{}
+	for _, r := range sink.ToolResults {
+		results[r.CallExternalID] = r
+	}
+	if !strings.Contains(results["p1"].Excerpt, "A docs/gen.py") || results["f1"].Excerpt != "done" {
+		t.Errorf("content-item outputs = %+v", results)
 	}
 }

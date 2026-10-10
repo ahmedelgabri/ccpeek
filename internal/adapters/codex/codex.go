@@ -49,8 +49,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces existing recoverable rollouts through the latest usage
 // normalization, session-title enrichment, session_meta model fallback,
-// turn and tool timing, and reasoning effort.
-func (*Adapter) ParseVersion() int { return 7 }
+// turn and tool timing, reasoning effort, and custom (freeform) tools with
+// content-item outputs.
+func (*Adapter) ParseVersion() int { return 8 }
 
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -168,16 +169,45 @@ type turnContext struct {
 }
 
 type responseItem struct {
-	Type    string `json:"type"` // message | function_call | function_call_output
+	// message | function_call | function_call_output |
+	// custom_tool_call | custom_tool_call_output
+	Type    string `json:"type"`
 	Role    string `json:"role"`
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
 	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Arguments string `json:"arguments"` // function_call: JSON in a string
+	Input     string `json:"input"`     // custom_tool_call: freeform text
 	CallID    string `json:"call_id"`
-	Output    string `json:"output"`
+	// Either a string or an array of content items (codex-rs
+	// FunctionCallOutputPayload); decoding it as a string failed the whole
+	// item, which dropped most results.
+	Output json.RawMessage `json:"output"`
+}
+
+// outputText flattens a tool output: the string itself, or the text of
+// its content items joined by newlines (images are dropped, as Codex's own
+// to_text does).
+func outputText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var items []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &items) != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.Text != "" {
+			parts = append(parts, it.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type eventMsg struct {
@@ -379,6 +409,13 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}
 				argsJSON := argumentsJSON(item.Arguments)
 				args := toolArgs(argsJSON)
+				if item.Name == "apply_patch" {
+					// Older Codex sent the patch as a JSON function argument.
+					tc := patchCall(sess.ExternalID, max(messageCount-1, 0), toolCount,
+						item, json.RawMessage(argsJSON), args.Input, line.Timestamp)
+					toolCount++
+					return sink.ToolCall(tc)
+				}
 				tc := canon.ToolCall{
 					SessionExternalID: sess.ExternalID,
 					MessageSeq:        max(messageCount-1, 0),
@@ -396,20 +433,53 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				toolCount++
 				return sink.ToolCall(tc)
 
-			case "function_call_output":
+			case "custom_tool_call":
+				if err := flushPending(); err != nil {
+					return err
+				}
+				if err := emitSession(); err != nil {
+					return err
+				}
+				input, _ := json.Marshal(map[string]string{"input": item.Input})
+				if item.Name == "apply_patch" {
+					tc := patchCall(sess.ExternalID, max(messageCount-1, 0), toolCount,
+						item, input, item.Input, line.Timestamp)
+					toolCount++
+					return sink.ToolCall(tc)
+				}
+				tc := canon.ToolCall{
+					SessionExternalID: sess.ExternalID,
+					MessageSeq:        max(messageCount-1, 0),
+					Seq:               toolCount,
+					ExternalID:        item.CallID,
+					Name:              item.Name,
+					Kind:              normalizeTool(item.Name),
+					Input:             input,
+					StartedAt:         line.Timestamp,
+				}
+				if item.Name == "exec" {
+					// Code mode: model-written JavaScript calling Codex's
+					// tools, like Pi's codemode.
+					tc.Kind = canon.ToolScript
+					tc.Command = item.Input
+				}
+				toolCount++
+				return sink.ToolCall(tc)
+
+			case "function_call_output", "custom_tool_call_output":
 				if item.CallID == "" {
 					return nil
 				}
 				if err := emitSession(); err != nil {
 					return err
 				}
-				out := canon.TruncateBytes(strings.TrimSpace(item.Output), canon.ToolResultExcerptLimit)
+				text := outputText(item.Output)
 				return sink.ToolResult(canon.ToolResult{
 					SessionExternalID: sess.ExternalID,
 					CallExternalID:    item.CallID,
 					Status:            "ok",
-					Excerpt:           out,
-					Content:           item.Output,
+					Excerpt:           canon.TruncateBytes(strings.TrimSpace(text), canon.ToolResultExcerptLimit),
+					Content:           text,
 					At:                line.Timestamp,
 				})
 			}
@@ -623,6 +693,39 @@ func codexPromptTitle(text string) string {
 	return title
 }
 
+// patchCall records an apply_patch call: a file change on the patch's
+// first file, sized by its +/- lines (one patch can touch several files;
+// the input keeps them all).
+func patchCall(sessionID string, messageSeq, seq int, item responseItem, input json.RawMessage, patch string, at time.Time) canon.ToolCall {
+	lines := strings.Split(patch, "\n")
+	c := canon.CountDiffLines(lines)
+	return canon.ToolCall{
+		SessionExternalID: sessionID,
+		MessageSeq:        messageSeq,
+		Seq:               seq,
+		ExternalID:        item.CallID,
+		Name:              item.Name,
+		Kind:              canon.ToolFileEdit,
+		Input:             input,
+		FilePath:          patchFile(lines),
+		Lines:             &c,
+		StartedAt:         at,
+	}
+}
+
+// patchFile is the first file an apply_patch touches.
+func patchFile(lines []string) string {
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		for _, marker := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: "} {
+			if path, ok := strings.CutPrefix(l, marker); ok {
+				return strings.TrimSpace(path)
+			}
+		}
+	}
+	return ""
+}
+
 // codexToolArgs is the subset of a function call's arguments the
 // canonical record keeps beside the verbatim JSON.
 //
@@ -637,6 +740,7 @@ type codexToolArgs struct {
 	OldText string          `json:"old_text"`
 	NewText string          `json:"new_text"`
 	Content string          `json:"content"`
+	Input   string          `json:"input"` // apply_patch (older JSON form)
 }
 
 func toolArgs(raw string) codexToolArgs {
