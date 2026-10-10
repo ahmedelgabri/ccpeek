@@ -87,6 +87,7 @@
   --color-tool-discovery: light-dark(#177a68, #73daca);
   --color-tool-web: light-dark(#b23a68, #d55181);
   --color-tool-subagent: light-dark(#6d4fc4, #bb9af7);
+  --color-tool-script: light-dark(#3760bf, #7aa2f7);
 }
 
 /* Theme selection: the system preference by default; data-theme (set by

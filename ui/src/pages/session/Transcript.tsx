@@ -580,11 +580,12 @@ function MessageTools({
         {tools.map((t) => {
           // Expand only when there is more than the chip already shows: a
           // diff (edits and writes carry payloads behind the detail
-          // lookup), a full shell command, or a truncated detail.
+          // lookup), a full shell command or script, or a truncated detail.
+          const isCode = t.kind === "shell" || t.kind === "script";
           const expandable =
             t.kind === "file_edit" ||
             t.kind === "file_write" ||
-            (t.kind === "shell" && Boolean(t.detail)) ||
+            (isCode && Boolean(t.detail)) ||
             Boolean(t.detail && t.detail.length > 80);
           const isOpen = open.has(t.seq);
           return (
@@ -607,7 +608,7 @@ function MessageTools({
               <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
               {t.detail && (
                 <span className="truncate text-ink-dim">
-                  {t.kind === "shell"
+                  {isCode
                     ? t.detail.split("\n")[0].slice(0, 80)
                     : shortPath(t.detail)}
                 </span>
@@ -625,7 +626,9 @@ function MessageTools({
           <div key={t.seq} className="mt-2">
             <div className="mb-1 font-mono text-micro text-ink-faint">
               <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
-              {t.detail && t.kind !== "shell" && <> · {shortPath(t.detail)}</>}
+              {t.detail && t.kind !== "shell" && t.kind !== "script" && (
+                <> · {shortPath(t.detail)}</>
+              )}
             </div>
             <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
           </div>

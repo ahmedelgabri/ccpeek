@@ -127,9 +127,9 @@ func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
 	}
 }
 
-func TestParseVersionIncludesTitleNormalization(t *testing.T) {
-	if got := New().ParseVersion(); got != 3 {
-		t.Fatalf("ParseVersion() = %d, want 3", got)
+func TestParseVersionIncludesCodemode(t *testing.T) {
+	if got := New().ParseVersion(); got != 4 {
+		t.Fatalf("ParseVersion() = %d, want 4", got)
 	}
 }
 
@@ -331,5 +331,49 @@ func TestToolResultRoleNormalized(t *testing.T) {
 	// The fixture answers both tool calls.
 	if toolRoled != 2 {
 		t.Errorf("tool-roled messages = %d, want 2", toolRoled)
+	}
+}
+
+// A codemode call's script is its whole meaning, and the tools it ran
+// exist only in the result's nestedCalls record — without both, a session
+// that edits files through scripts shows no script and no file changes.
+func TestParseCodemodeScriptAndNestedCalls(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "--home-u-demo--")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"session","version":3,"id":"cm-1","timestamp":"2026-10-08T20:00:00.000Z","cwd":"/home/u/demo"}`,
+		`{"type":"message","id":"m1","parentId":null,"timestamp":"2026-10-08T20:00:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_cm","name":"codemode","arguments":{"code":"await tools.edit({path:\"a.go\",oldText:\"x\",newText:\"y\"});\nawait tools.bash({command:\"go test ./...\"});"}}]}}`,
+		`{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-10-08T20:00:02.000Z","message":{"role":"toolResult","toolCallId":"call_cm","toolName":"codemode","isError":false,"content":[{"type":"text","text":"Script completed"}],"nestedCalls":{"complete":true,"calls":[` +
+			`{"id":"call_cm/1","name":"edit","status":"ok","arguments":{"path":"a.go","oldText":"x","newText":"y"},"durationMs":3},` +
+			`{"id":"call_cm/2","name":"bash","status":"error","arguments":{"command":"go test ./..."},"durationMs":90,"error":"exit 1"}]}}}`,
+	}
+	path := filepath.Join(dir, "2026-10-08T20-00-00-000Z_cm-1.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	src := agent.SourceRef{Path: path, Root: agent.Root{Agent: Slug, Path: root}}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if len(sink.ToolCalls) != 3 {
+		t.Fatalf("tool calls = %d, want 3 (script + 2 nested)", len(sink.ToolCalls))
+	}
+	script, edit, bash := sink.ToolCalls[0], sink.ToolCalls[1], sink.ToolCalls[2]
+	if script.Kind != canon.ToolScript || !strings.Contains(script.Command, "tools.edit") {
+		t.Errorf("script = %s/%q, want script kind carrying the code", script.Kind, script.Command)
+	}
+	resultSeq := sink.Messages[1].Seq
+	if edit.Kind != canon.ToolFileEdit || edit.FilePath != "a.go" || edit.NewText != "y" ||
+		edit.ResultStatus != "ok" || edit.MessageSeq != resultSeq || edit.ExternalID != "call_cm/1" {
+		t.Errorf("nested edit = %+v", edit)
+	}
+	if bash.Kind != canon.ToolShell || bash.Command != "go test ./..." ||
+		bash.ResultStatus != "error" || bash.ResultExcerpt != "exit 1" {
+		t.Errorf("nested bash = %+v", bash)
 	}
 }

@@ -28,6 +28,9 @@ importers:
       echarts:
         specifier: ^6.1.0
         version: 6.1.0
+      prettier:
+        specifier: 3.8.3
+        version: 3.8.3
       react:
         specifier: ^19.2.7
         version: 19.2.7
@@ -1075,6 +1078,14 @@ packages:
       }
     engines: { node: ^10 || ^12 || >=14 }
 
+  prettier@3.8.3:
+    resolution:
+      {
+        integrity: sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==,
+      }
+    engines: { node: ">=14" }
+    hasBin: true
+
   property-information@7.2.0:
     resolution:
       {
@@ -1808,6 +1819,8 @@ snapshots:
       nanoid: 3.3.15
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  prettier@3.8.3: {}
 
   property-information@7.2.0: {}
 

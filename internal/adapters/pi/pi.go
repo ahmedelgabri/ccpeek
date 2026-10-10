@@ -39,8 +39,9 @@ func New() *Adapter { return &Adapter{} }
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces one full reparse after per-message provider/model,
-// summary-entry usage, and fallback-title normalization became canonical.
-func (*Adapter) ParseVersion() int { return 3 }
+// summary-entry usage, fallback-title normalization, and codemode scripts
+// with their nested calls became canonical.
+func (*Adapter) ParseVersion() int { return 4 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -136,9 +137,26 @@ type piMessage struct {
 
 	// role == "toolResult": the outcome of an earlier toolCall block,
 	// delivered as its own message entry.
-	ToolCallID string `json:"toolCallId"`
-	ToolName   string `json:"toolName"`
-	IsError    bool   `json:"isError"`
+	ToolCallID  string         `json:"toolCallId"`
+	ToolName    string         `json:"toolName"`
+	IsError     bool           `json:"isError"`
+	NestedCalls *piNestedCalls `json:"nestedCalls"`
+}
+
+// piNestedCalls is Pi's bounded record of the tools a tool ran itself
+// (codemode's tools.read, tools.edit, …). Pi keeps no transcript entries
+// for them, so this is the only trace of what a script did. Results are
+// never recorded; arguments may be omitted when they are too large.
+type piNestedCalls struct {
+	Calls []piNestedCall `json:"calls"`
+}
+
+type piNestedCall struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Status    string          `json:"status"`
+	Arguments json.RawMessage `json:"arguments"`
+	Error     string          `json:"error"`
 }
 
 type piUsage struct {
@@ -197,6 +215,8 @@ func normalizeTool(name string) canon.ToolKind {
 		return canon.ToolDiscovery
 	case "web_search", "web_fetch", "fetch":
 		return canon.ToolWeb
+	case "codemode":
+		return canon.ToolScript
 	default:
 		return canon.ToolOther
 	}
@@ -226,12 +246,30 @@ type piToolArgs struct {
 	OldText string `json:"oldText"`
 	NewText string `json:"newText"`
 	Content string `json:"content"` // write
+	Code    string `json:"code"`    // codemode
 }
 
-func toolArgs(arguments json.RawMessage) piToolArgs {
+// toolCall builds the canonical record for one Pi tool invocation, either
+// a model-issued toolCall block or a nested call a tool made itself.
+func toolCall(sessionID string, messageSeq, seq int, id, name string,
+	arguments json.RawMessage, at time.Time,
+) canon.ToolCall {
 	var a piToolArgs
 	_ = json.Unmarshal(arguments, &a)
-	return a
+	return canon.ToolCall{
+		SessionExternalID: sessionID,
+		MessageSeq:        messageSeq,
+		Seq:               seq,
+		ExternalID:        id,
+		Name:              name,
+		Kind:              normalizeTool(name),
+		Input:             arguments,
+		FilePath:          a.Path,
+		Command:           cmp.Or(a.Command, a.Code),
+		OldText:           a.OldText,
+		NewText:           cmp.Or(a.NewText, a.Content),
+		StartedAt:         at,
+	}
 }
 
 // Parse reads one Pi session file: header first, then tree entries.
@@ -332,26 +370,28 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}); err != nil {
 					return err
 				}
+				// Nested calls anchor to the result message that records
+				// them, so the transcript shows what a script did right
+				// under its output.
+				if dec.pm.NestedCalls != nil {
+					for _, nc := range dec.pm.NestedCalls.Calls {
+						tc := toolCall(sess.ExternalID, msg.Seq, toolCount,
+							nc.ID, nc.Name, nc.Arguments, e.Timestamp)
+						tc.ResultStatus = nc.Status
+						tc.ResultExcerpt = canon.TruncateBytes(strings.TrimSpace(nc.Error), canon.ToolResultExcerptLimit)
+						if err := sink.ToolCall(tc); err != nil {
+							return err
+						}
+						toolCount++
+					}
+				}
 			default:
 				for _, b := range dec.blocks {
 					if b.Type != "toolCall" {
 						continue
 					}
-					args := toolArgs(b.Arguments)
-					if err := sink.ToolCall(canon.ToolCall{
-						SessionExternalID: sess.ExternalID,
-						MessageSeq:        msg.Seq,
-						Seq:               toolCount,
-						ExternalID:        b.ID,
-						Name:              b.Name,
-						Kind:              normalizeTool(b.Name),
-						Input:             b.Arguments,
-						FilePath:          args.Path,
-						Command:           args.Command,
-						OldText:           args.OldText,
-						NewText:           cmp.Or(args.NewText, args.Content),
-						StartedAt:         e.Timestamp,
-					}); err != nil {
+					if err := sink.ToolCall(toolCall(sess.ExternalID, msg.Seq, toolCount,
+						b.ID, b.Name, b.Arguments, e.Timestamp)); err != nil {
 						return err
 					}
 					toolCount++

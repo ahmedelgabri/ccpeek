@@ -4,6 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { DiffView } from "../../Diff";
 import { useHighlight } from "../../highlight";
 import { api } from "../../api";
+import { formatScript } from "../../formatScript";
+
+// Kinds whose detail is source code rather than a path.
+const CODE_LANGUAGE: Record<string, string> = {
+  shell: "language-bash",
+  script: "language-javascript",
+};
 
 // ToolExpansion mounts only when a chip or row is opened: opening is
 // what fetches the full payload — the 16 KiB diff excerpts never ride
@@ -26,9 +33,18 @@ export function ToolExpansion({
   // each ran (or did not run) their own pass over a container, and none of
   // them could have known when this fetch resolved, so a shell command
   // opened in the tools or files tab stayed unstyled.
+  const isScript = q.data?.kind === "script";
+  const script = useQuery({
+    queryKey: ["toolscript", agent, sessionId, seq],
+    queryFn: () => formatScript(q.data?.detail ?? ""),
+    enabled: isScript,
+    staleTime: Infinity,
+  });
   const body = useRef<HTMLDivElement>(null);
-  useHighlight(body, [q.data]);
-  if (q.isLoading)
+  useHighlight(body, [q.data, script.data]);
+  // A script renders only once formatted: the highlighter rewrites the
+  // block in place, so swapping its text afterwards would fight React.
+  if (q.isLoading || (isScript && script.isPending))
     return <p className="font-mono text-meta text-ink-dim">Loading…</p>;
   const d = q.data;
   if (!d) return <LoadError error={q.error ?? "not found"} compact />;
@@ -39,15 +55,13 @@ export function ToolExpansion({
   }
   return (
     <div ref={body}>
-      <pre className="max-h-64 overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-meta leading-relaxed">
+      <pre
+        className={`${isScript ? "max-h-[32rem]" : "max-h-64"} overflow-auto rounded-md border border-edge bg-surface px-3 py-2 text-meta leading-relaxed`}
+      >
         <code
-          className={
-            d.kind === "shell"
-              ? "language-bash block whitespace-pre-wrap"
-              : "block whitespace-pre-wrap"
-          }
+          className={`block whitespace-pre-wrap ${CODE_LANGUAGE[d.kind] ?? ""}`}
         >
-          {d.detail}
+          {isScript ? (script.data ?? d.detail) : d.detail}
         </code>
       </pre>
     </div>

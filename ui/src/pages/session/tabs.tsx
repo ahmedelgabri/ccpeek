@@ -172,6 +172,8 @@ function ToolRow({
   onJump: (seq: number) => void;
 }) {
   const hasDiff = t.kind === "file_edit" || t.kind === "file_write";
+  // A script's first line is rarely telling, so its row opens the source.
+  const expandable = hasDiff || t.kind === "script";
   return (
     <div className="border-b border-edge">
       {/* Focusable and operable from the keyboard when it opens something:
@@ -179,7 +181,7 @@ function ToolRow({
           takes the tab stop and the enter/space keys itself. */}
       <div
         role="row"
-        {...(hasDiff
+        {...(expandable
           ? {
               tabIndex: 0,
               "aria-expanded": open,
@@ -188,7 +190,7 @@ function ToolRow({
                 onDisclosureKey(e, onToggle),
             }
           : {})}
-        className={`${TOOL_COLUMNS} ${hasDiff ? "cursor-pointer hover:bg-surface-2/40" : ""}`}
+        className={`${TOOL_COLUMNS} ${expandable ? "cursor-pointer hover:bg-surface-2/40" : ""}`}
       >
         <span
           role="cell"
@@ -219,11 +221,13 @@ function ToolRow({
           className="truncate px-3 py-1.5 font-mono text-xs text-ink-dim"
           title={t.detail}
         >
-          {hasDiff && (
-            <span className="mr-1.5 text-accent">{open ? "▾" : "▸"} diff</span>
+          {expandable && (
+            <span className="mr-1.5 text-accent">
+              {open ? "▾" : "▸"} {hasDiff ? "diff" : "script"}
+            </span>
           )}
           {t.detail &&
-            (t.kind === "shell"
+            (t.kind === "shell" || t.kind === "script"
               ? clipCommand(t.detail, 72)
               : clipPath(t.detail, 56))}
         </span>
@@ -238,7 +242,7 @@ function ToolRow({
           {localClock(t.at ?? "")}
         </span>
       </div>
-      {hasDiff && open && (
+      {expandable && open && (
         <div className="px-3 py-2">
           <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
         </div>

@@ -199,7 +199,10 @@ const (
 	ToolDiscovery ToolKind = "discovery"
 	ToolSubagent  ToolKind = "subagent"
 	ToolWeb       ToolKind = "web"
-	ToolOther     ToolKind = "other"
+	// ToolScript is a tool that runs model-written code which calls other
+	// tools (Pi's codemode). Its source rides in ToolCall.Command.
+	ToolScript ToolKind = "script"
+	ToolOther  ToolKind = "other"
 )
 
 // ToolCall belongs to exactly one session, anchored to the message that
@@ -227,7 +230,7 @@ type ToolCall struct {
 	// then rendered as raw JSON. FilePath already established the pattern;
 	// these are its siblings.
 	FilePath string // primary file argument, when the tool has one
-	Command  string // shell command as a user would run it
+	Command  string // shell command as a user would run it; script source for ToolScript
 	OldText  string // file_edit: the replaced text, bounded
 	NewText  string // file_edit/file_write: the replacement, bounded
 
