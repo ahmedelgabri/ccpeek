@@ -28,3 +28,20 @@ Claude Code writes each subagent to its own transcript beside the parent session
   - The session detail has a Subagents tab and a "Subagent cost" tile.
 
 Local result: 1,721 subagent sessions linked, none pending. Claude cost went from $6,776 to $8,087 (+$1,311), and no usage dedupe key is duplicated. Several recent subagent sessions use models newer than the pricing snapshot, so the added cost is a lower bound.
+
+## Thinking and images in the transcript
+
+Raw message payloads already held the model's reasoning (`thinking` blocks in Claude and Pi, `reasoning` parts in OpenCode) and base64 images (pasted screenshots, plus screenshots returned inside tool results). Only text reached the transcript.
+
+- Adapters lift reasoning text into `canon.Message.Thinking` and record each image as a `canon.ImageRef`: its media type plus an RFC 6901 JSON pointer to the base64 data inside the stored payload. The bytes are not copied a second time.
+- Schema v19 adds `messages.thinking_text` and `messages.images_json`. The migration uses a conditional column add, which keeps it safe against a database that already has the latest shape, like the `IF NOT EXISTS` migrations before it.
+- ParseVersion bumps: Claude 4, Pi 5, OpenCode 4. Archived sessions whose source is gone keep empty columns, but their raw payloads still hold both.
+- Codex reasoning is encrypted in every local rollout, so Codex has no thinking text to show.
+- The `transcript` op takes `thinking=true` (off by default, for token budget) and always lists `images` with index and media type.
+- `GET /api/v1/sessions/{agent}/{id}/transcript/{seq}/images/{index}` serves the decoded bytes. It serves only PNG, JPEG, GIF and WebP, with `nosniff` and a sandbox CSP. An SVG or other document type returns 404, never content in the app's origin.
+- UI: thinking renders folded to one dim line above the reply, and images render as fixed-height thumbnails that open full size.
+- The deep-link anchor now waits for the range's tool chips. Chips arrive after the messages and grow the rows they land in. Before this change, targets were usually tool-only rows that appeared only once chips loaded, so the race stayed hidden. Rows that carry thinking or images appear at once, and the anchor landed 30+ rows off.
+
+Local result: thinking on 2,028 Claude and 17,814 Pi messages. Most Claude thinking blocks are empty: 7,028 of 7,772 carry only a signature. Images: 1,486 Claude and 153 Pi.
+
+A full reparse exposed an existing slow path: `restoreUsageOwners` scanned every message of the agent per usage key. It is fixed in its own revision ("perf(db): seek by content id when restoring usage owners"). The reparse went from ~45 minutes to under 2 minutes.

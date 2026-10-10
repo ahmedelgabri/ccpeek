@@ -11,6 +11,7 @@ package claude
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -47,8 +48,9 @@ func New() *Adapter { return &Adapter{} }
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces a full reparse after the adapter learns metadata or
-// normalization that cannot be recovered from an append-only tail.
-func (*Adapter) ParseVersion() int { return 3 }
+// normalization that cannot be recovered from an append-only tail (v4:
+// thinking text and image locators).
+func (*Adapter) ParseVersion() int { return 4 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -147,12 +149,29 @@ type rawUsage struct {
 type contentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	Source    *imageSource    `json:"source"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
 	IsError   bool            `json:"is_error"`
+}
+
+// imageSource is an image block's payload. Only its shape is decoded here;
+// the base64 data stays in the stored content and is located by pointer.
+type imageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+}
+
+// imageRef locates a base64 image block found at pointer prefix.
+func imageRef(b contentBlock, prefix string) (canon.ImageRef, bool) {
+	if b.Type != "image" || b.Source == nil || b.Source.Type != "base64" {
+		return canon.ImageRef{}, false
+	}
+	return canon.ImageRef{MediaType: b.Source.MediaType, Pointer: prefix + "/source/data"}, true
 }
 
 // Parse dispatches a source by shape: session transcripts here, sidecars
@@ -562,6 +581,33 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 
 	content := blocks(payload.Content)
 	msg.Text = extractText(payload.Content, content, raw.Content)
+	var thinking []string
+	for i, block := range content {
+		prefix := fmt.Sprintf("/content/%d", i)
+		switch block.Type {
+		case "thinking":
+			if t := strings.TrimSpace(block.Thinking); t != "" {
+				thinking = append(thinking, t)
+			}
+		case "image":
+			if ref, ok := imageRef(block, prefix); ok {
+				msg.Images = append(msg.Images, ref)
+			}
+		case "tool_result":
+			// Screenshots come back inside tool results. The nested array
+			// is decoded only when it can hold an image at all: this runs
+			// on every tool result of every transcript.
+			if !bytes.Contains(block.Content, []byte(`"image"`)) {
+				continue
+			}
+			for j, inner := range blocks(block.Content) {
+				if ref, ok := imageRef(inner, fmt.Sprintf("%s/content/%d", prefix, j)); ok {
+					msg.Images = append(msg.Images, ref)
+				}
+			}
+		}
+	}
+	msg.Thinking = strings.Join(thinking, "\n\n")
 
 	var (
 		calls   []canon.ToolCall

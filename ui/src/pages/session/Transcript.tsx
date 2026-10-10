@@ -13,6 +13,7 @@ import {
   plural,
   shortPath,
   type ToolCallRow,
+  messageImageUrl,
   type TranscriptMessage,
 } from "../../api";
 import { fullWhen, localClock } from "../../time";
@@ -54,6 +55,7 @@ export function Transcript({
   const {
     msgs,
     chipRows: tools,
+    chipsSettled,
     focusSeq,
     loading,
     error,
@@ -75,6 +77,9 @@ export function Transcript({
   // Meta entries (toolResult, system, …) render as one-line excerpts;
   // clicking reveals the full stored text.
   const [openMeta, toggleMeta] = useToggleSet<number>();
+  // Thinking starts folded: it is usually longer than the reply it led to.
+  // Held at the list level for the same reason as the two sets beside it.
+  const [openThinking, toggleThinking] = useToggleSet<number>();
   // Which tool chips are expanded, keyed by call seq. This lives at the
   // LIST level, not inside the row: rows are virtualized, so state held in
   // one unmounts the moment the reader scrolls it off screen — an opened
@@ -104,6 +109,8 @@ export function Transcript({
       msgs.filter(
         (m) =>
           m.text.trim() !== "" ||
+          Boolean(m.thinking) ||
+          (m.images?.length ?? 0) > 0 ||
           (toolsByMsg.get(m.seq)?.length ?? 0) > 0 ||
           m.seq === focusSeq,
       ),
@@ -182,7 +189,10 @@ export function Transcript({
     setFocusDone(focusSeq === undefined);
   }, [focusSeq]);
   useLayoutEffect(() => {
-    if (focusSeq === undefined || focusDone) return;
+    // Wait for the range's tool chips: they arrive after the messages and
+    // grow every row they land in, so an anchor taken before them was
+    // pushed off screen by thousands of pixels of chips above it.
+    if (focusSeq === undefined || focusDone || !chipsSettled) return;
     const idx = visible.findIndex((m) => m.seq === focusSeq);
     if (idx < 0) return;
     quietSpy();
@@ -203,6 +213,7 @@ export function Transcript({
   }, [
     focusSeq,
     focusDone,
+    chipsSettled,
     visible,
     virtualizer,
     virtualItems[0]?.key,
@@ -492,6 +503,13 @@ export function Transcript({
                       {m.text}
                     </pre>
                   )}
+                  {m.thinking && (
+                    <Thinking
+                      text={m.thinking}
+                      open={openThinking.has(m.seq)}
+                      onToggle={() => toggleThinking(m.seq)}
+                    />
+                  )}
                   {!isMeta &&
                     m.text.trim() !== "" &&
                     (m.html ? (
@@ -504,6 +522,9 @@ export function Transcript({
                         {m.text}
                       </div>
                     ))}
+                  {(m.images?.length ?? 0) > 0 && (
+                    <MessageImages agent={agent} sessionId={sessionId} m={m} />
+                  )}
                   {msgTools.length > 0 && (
                     <MessageTools
                       agent={agent}
@@ -552,6 +573,81 @@ export function Transcript({
     </div>
   );
 }
+// Thinking is the model's reasoning, folded to one dim line until opened.
+function Thinking({
+  text,
+  open,
+  onToggle,
+}: {
+  text: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-baseline gap-2 text-left font-mono text-meta text-ink-faint hover:text-ink-dim"
+      >
+        <span className="shrink-0 text-assistant/70">
+          {open ? "▾" : "▸"} thinking
+        </span>
+        {!open && (
+          <span className="min-w-0 truncate italic">{text.split("\n")[0]}</span>
+        )}
+      </button>
+      {open && (
+        <div className="measure mt-1 border-l-2 border-assistant/30 pl-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-dim italic">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// MessageImages shows an entry's images (pasted screenshots, tool
+// screenshots) as thumbnails that open full size in a new tab. No
+// loading="lazy": the virtualizer already mounts only the rows on screen,
+// and native lazy loading never fired inside its transformed rows. The
+// fixed thumbnail height keeps the row's height known before the bytes
+// arrive: a row that grows on load pushed a ?seq= deep link's target off
+// screen after the anchor had already scrolled to it.
+function MessageImages({
+  agent,
+  sessionId,
+  m,
+}: {
+  agent: string;
+  sessionId: string;
+  m: TranscriptMessage;
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {m.images?.map((img) => {
+        const src = messageImageUrl(agent, sessionId, m.seq, img.index);
+        return (
+          <a
+            key={img.index}
+            href={src}
+            target="_blank"
+            rel="noreferrer"
+            title={`Open image ${img.index + 1} (${img.mediaType})`}
+            className="block overflow-hidden rounded border border-edge hover:border-edge-strong"
+          >
+            <img
+              src={src}
+              alt={`Image ${img.index + 1} of message #${m.seq}`}
+              className="block h-48 w-auto max-w-xs object-contain"
+            />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 // MessageTools renders a message's tool calls as kind-colored chips;
 // expandable chips fetch their full payload (diff excerpts, complete
 // command) only when opened — chip rows never carry them.

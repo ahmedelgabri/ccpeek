@@ -164,10 +164,12 @@ func Registry() []Op {
 				{Name: "from_seq", Type: "integer", Desc: "Start at this entry seq"},
 				limitParam("Maximum entries", query.TranscriptLimit),
 				{Name: "full", Type: "boolean", Desc: "Include raw agent payloads"},
+				{Name: "thinking", Type: "boolean", Desc: "Include the model's reasoning text where the agent recorded it"},
 			},
 			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
 				out, err := svc.Transcript(ctx, a.Str["agent"], a.Str["id"], query.TranscriptOptions{
 					FromSeq: a.Int["from_seq"], Limit: a.Int["limit"], Full: a.Bool["full"],
+					Thinking: a.Bool["thinking"],
 				})
 				return out, len(out) == 0, err
 			},

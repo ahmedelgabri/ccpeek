@@ -76,6 +76,19 @@ export interface TranscriptMessage {
   text: string;
   html?: string;
   content?: string;
+  thinking?: string;
+  images?: { index: number; mediaType: string }[];
+}
+
+/** messageImageUrl addresses one image of a transcript entry; the server
+ *  streams the bytes out of the stored payload. */
+export function messageImageUrl(
+  agent: string,
+  id: string,
+  seq: number,
+  index: number,
+): string {
+  return `/api/v1/sessions/${encodeURIComponent(agent)}/${encodeURIComponent(id)}/transcript/${seq}/images/${index}`;
 }
 
 export interface AgentStat {
@@ -271,12 +284,18 @@ export const api = {
   transcript: (
     agent: string,
     id: string,
-    opts?: { fromSeq?: string; limit?: string; full?: string },
+    opts?: {
+      fromSeq?: string;
+      limit?: string;
+      full?: string;
+      thinking?: string;
+    },
   ) =>
     get<TranscriptMessage[]>(`/sessions/${agent}/${id}/transcript`, {
       from_seq: opts?.fromSeq,
       limit: opts?.limit,
       full: opts?.full,
+      thinking: opts?.thinking,
     }),
 
   usage: (filters: {

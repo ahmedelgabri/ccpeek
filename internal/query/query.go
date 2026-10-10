@@ -497,6 +497,18 @@ type TranscriptMessage struct {
 	HTML string `json:"html,omitempty"`
 	// Content carries the raw agent payload only when the caller opts in.
 	Content string `json:"content,omitempty"`
+	// Thinking is the model's reasoning text, only when the caller opts in:
+	// it is often longer than the reply itself.
+	Thinking string `json:"thinking,omitempty"`
+	// Images lists the entry's images; fetch one's bytes with MessageImage
+	// (HTTP: .../transcript/{seq}/images/{index}).
+	Images []TranscriptImage `json:"images,omitempty"`
+}
+
+// TranscriptImage describes one image of a transcript entry.
+type TranscriptImage struct {
+	Index     int    `json:"index"`
+	MediaType string `json:"mediaType"`
 }
 
 // TranscriptOptions bound the transcript op (token-budget friendly).
@@ -504,6 +516,9 @@ type TranscriptOptions struct {
 	FromSeq int
 	Limit   int
 	Full    bool // include raw content payloads
+	// Thinking includes reasoning text. Off by default for the same reason
+	// raw payloads are: token budget.
+	Thinking bool
 }
 
 // Transcript returns a session's entries in seq order.
@@ -528,10 +543,14 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 	if opts.Full {
 		contentExpr = "m.content"
 	}
+	thinkingExpr := "''"
+	if opts.Thinking {
+		thinkingExpr = "m.thinking_text"
+	}
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.seq, m.external_id, m.parent_external_id,
 		       m.role, m.kind, COALESCE(m.created_at, ''), m.provider, m.model,
-		       m.is_sidechain, m.text_content, `+contentExpr+`
+		       m.is_sidechain, m.text_content, `+contentExpr+`, `+thinkingExpr+`, m.images_json
 		FROM messages m
 		WHERE m.session_id = ? AND m.seq >= ?
 		ORDER BY m.seq LIMIT ?`, rowID, opts.FromSeq, opts.Limit)
@@ -544,11 +563,14 @@ func (s *Service) Transcript(ctx context.Context, agentSlug, externalID string, 
 		var tm TranscriptMessage
 		var sidechain int
 		var text sql.NullString
-		var content string
+		var content, images string
 		if err := rows.Scan(&tm.Seq, &tm.ExternalID, &tm.ParentID,
 			&tm.Role, &tm.Kind, &tm.CreatedAt, &tm.Provider,
-			&tm.Model, &sidechain, &text, &content); err != nil {
+			&tm.Model, &sidechain, &text, &content, &tm.Thinking, &images); err != nil {
 			return nil, err
+		}
+		for i, ref := range imageRefs(images) {
+			tm.Images = append(tm.Images, TranscriptImage{Index: i, MediaType: ref.MediaType})
 		}
 		tm.IsSidechain = sidechain != 0
 		tm.Text = text.String

@@ -160,7 +160,20 @@ type Message struct {
 	IsSidechain bool   // subagent branch entries (Claude sidechains)
 	Content     json.RawMessage
 	Text        string
-	Usage       *Usage // assistant entries that report usage
+	// Thinking is the model's reasoning text where the agent records it in
+	// the clear. Kept apart from Text so search and titles stay on what
+	// was said, not on what was considered.
+	Thinking string
+	Images   []ImageRef // images carried inside Content
+	Usage    *Usage     // assistant entries that report usage
+}
+
+// ImageRef locates one image inside Message.Content. Pointer is an RFC
+// 6901 JSON pointer to the base64 data, so the bytes are served from the
+// payload already stored rather than copied a second time.
+type ImageRef struct {
+	MediaType string `json:"mediaType"`
+	Pointer   string `json:"pointer"`
 }
 
 // Usage is per-message token accounting as reported by the agent.

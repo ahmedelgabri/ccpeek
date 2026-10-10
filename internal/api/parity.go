@@ -163,6 +163,34 @@ func (h *handlers) artifactRaw(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(detail.Content))
 }
 
+// messageImage serves one image of a transcript entry. The bytes come from
+// an agent transcript, so they ship with a fixed raster type (the query
+// layer refuses SVG and anything else a browser would treat as a
+// document), nosniff, and a sandbox CSP even when opened directly.
+func (h *handlers) messageImage(w http.ResponseWriter, r *http.Request) {
+	seq, err := strconv.Atoi(r.PathValue("seq"))
+	if err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	index, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	mediaType, data, err := h.svc.MessageImage(r.Context(),
+		r.PathValue("agent"), r.PathValue("id"), seq, index)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = w.Write(data)
+}
+
 // scanRules is the rule-first reading of the scan: which rules fired, how
 // many occurrences are still active, and in how many entities.
 func (h *handlers) scanRules(w http.ResponseWriter, r *http.Request) {

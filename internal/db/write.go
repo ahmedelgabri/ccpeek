@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -248,11 +249,13 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 	res, err := w.tx.ExecContext(w.ctx, `
 		INSERT INTO messages
 			(session_id, seq, external_id, parent_external_id, content_id,
-			 role, kind, created_at, provider, model, cwd, is_sidechain, content, text_content, usage_request_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 role, kind, created_at, provider, model, cwd, is_sidechain, content, text_content, usage_request_id,
+			 thinking_text, images_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, msg.Seq, msg.ExternalID, msg.ParentExternalID, msg.ContentID,
 		string(msg.Role), kindText(msg.Kind), timeText(msg.CreatedAt),
-		msg.Provider, msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content), msg.Text, requestID)
+		msg.Provider, msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content), msg.Text, requestID,
+		msg.Thinking, imagesJSON(msg.Images))
 	if err != nil {
 		return fmt.Errorf("inserting message seq %d: %w", msg.Seq, err)
 	}
@@ -904,4 +907,12 @@ func (s *Store) PruneMissingSources(ctx context.Context, exists func(path string
 		return 0, err
 	}
 	return len(stale), nil
+}
+
+func imagesJSON(images []canon.ImageRef) string {
+	if len(images) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(images)
+	return string(b)
 }

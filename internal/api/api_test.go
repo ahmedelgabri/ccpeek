@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -290,5 +292,82 @@ func TestArtifactRawIsSandboxed(t *testing.T) {
 	}
 	if csp := rec.Header().Get("Content-Security-Policy"); csp != "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'" {
 		t.Errorf("usage report CSP = %q, want network-restricted static sandbox", csp)
+	}
+}
+
+// Thinking and images were in every stored payload but never reached a
+// reader. Thinking is opt-in (token budget); images are listed on the entry
+// and served as bytes with a fixed raster type — an SVG an agent saw must
+// never be served as a document from the app's own origin.
+func TestTranscriptThinkingAndImages(t *testing.T) {
+	const (
+		sessionID = "44444444-aaaa-bbbb-cccc-444444444444"
+		png       = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+	)
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := `{"type":"user","sessionId":"` + sessionID + `","uuid":"u1","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":[` +
+		`{"type":"text","text":"what is this?"},` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + png + `"}},` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/svg+xml","data":"PHN2Zy8+"}}]}}` + "\n" +
+		`{"type":"assistant","sessionId":"` + sessionID + `","uuid":"a1","timestamp":"2026-10-01T10:00:01Z","message":{"id":"m1","role":"assistant","content":[` +
+		`{"type":"thinking","thinking":"It is a single pixel.","signature":"s"},{"type":"text","text":"A pixel."}]}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	table, err := pricing.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingest.New(store, table, claude.New()).Run(context.Background(), ingest.Options{
+		ConfigRoots: map[canon.AgentSlug][]string{claude.Slug: {root}},
+		Getenv:      func(string) string { return "" },
+		Home:        "/nonexistent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(query.New(store, table), Deps{})
+	base := "/api/v1/sessions/claude-code/" + sessionID + "/transcript"
+
+	transcript := func(path string) []query.TranscriptMessage {
+		t.Helper()
+		code, env := get(t, h, path)
+		if code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, code, env.Error)
+		}
+		raw, _ := json.Marshal(env.Data)
+		var msgs []query.TranscriptMessage
+		if err := json.Unmarshal(raw, &msgs); err != nil {
+			t.Fatal(err)
+		}
+		return msgs
+	}
+	if msgs := transcript(base); msgs[1].Thinking != "" || len(msgs[0].Images) != 2 {
+		t.Errorf("default transcript: thinking=%q images=%v, want no thinking and both images listed", msgs[1].Thinking, msgs[0].Images)
+	}
+	if msgs := transcript(base + "?thinking=true"); msgs[1].Thinking != "It is a single pixel." {
+		t.Errorf("thinking = %q", msgs[1].Thinking)
+	}
+
+	fetch := func(index string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, base+"/0/images/"+index, nil))
+		return rec
+	}
+	rec := fetch("0")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" ||
+		rec.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.HasPrefix(rec.Body.Bytes(), []byte("\x89PNG")) {
+		t.Errorf("png: code=%d type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Bytes()[:min(8, rec.Body.Len())])
+	}
+	if rec := fetch("1"); rec.Code != http.StatusNotFound {
+		t.Errorf("svg served with %d, want 404", rec.Code)
 	}
 }

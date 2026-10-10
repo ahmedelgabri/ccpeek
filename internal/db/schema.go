@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 18
+const schemaVersion = 19
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS messages (
 	content TEXT NOT NULL DEFAULT '',
 	text_content TEXT NOT NULL DEFAULT '',
 	usage_request_id TEXT NOT NULL DEFAULT '',
+	-- Reasoning text and image locators (canon.ImageRef JSON) lifted out
+	-- of content by the adapter; '' when the entry has none.
+	thinking_text TEXT NOT NULL DEFAULT '',
+	images_json TEXT NOT NULL DEFAULT '',
 	UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
@@ -584,4 +588,33 @@ var migrations = []migration{
 		}
 		return nil
 	},
+	// v19: thinking text and image locators. Existing rows stay empty until
+	// their source reparses (the adapters' ParseVersion bumps force that);
+	// archived sessions whose source is gone keep their raw content, which
+	// still holds both.
+	func(ctx context.Context, tx *sql.Tx) error {
+		for _, column := range []string{"thinking_text", "images_json"} {
+			if err := addColumn(ctx, tx, "messages", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}
+
+// addColumn adds a column unless it already exists. Like the CREATE ...
+// IF NOT EXISTS statements of the migrations before it, this keeps a
+// migration safe to run against a database that already has the latest
+// shape.
+func addColumn(ctx context.Context, tx *sql.Tx, table, column, decl string) error {
+	var n int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+decl)
+	return err
 }

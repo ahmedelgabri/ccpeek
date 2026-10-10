@@ -30,6 +30,8 @@ export interface TranscriptWindow {
   focusSeq: number | undefined;
   /** Compact tool chips covering exactly the loaded transcript range. */
   chipRows: ToolCallRow[];
+  /** The chips for the current range have answered; see the return. */
+  chipsSettled: boolean;
   loading: boolean;
   /** The transcript request failed — distinct from a session with no
    *  entries, which the reader must not be told they have. */
@@ -87,6 +89,7 @@ export function useTranscriptWindow(
       api.transcript(agent, sessionId, {
         fromSeq: String(pageParam.from),
         limit: String(pageParam.limit),
+        thinking: "true",
       }),
     initialPageParam: { from: anchor, limit: TRANSCRIPT_PAGE },
     // A full page implies more ahead, continuing just past the last seq.
@@ -236,6 +239,10 @@ export function useTranscriptWindow(
     msgs,
     focusSeq,
     chipRows: chips.data ?? [],
+    // The chips for the CURRENT range have answered (a failure counts: the
+    // rows will not grow any further). Placeholder rows from the previous
+    // range do not.
+    chipsSettled: chips.isFetched && !chips.isPlaceholderData,
     loading: transcript.isLoading,
     error: transcript.error,
     hasMore: transcript.hasNextPage,

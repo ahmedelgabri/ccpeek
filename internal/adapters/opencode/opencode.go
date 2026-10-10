@@ -25,7 +25,7 @@ type Adapter struct{}
 
 func New() *Adapter                    { return &Adapter{} }
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
-func (*Adapter) ParseVersion() int     { return 3 }
+func (*Adapter) ParseVersion() int     { return 4 } // v4: reasoning parts as thinking text
 func (*Adapter) RootSpec() agent.RootSpec {
 	return agent.RootSpec{EnvVars: []string{"OPENCODE_DATA_DIR"}, EnvIsList: true, Defaults: []string{"~/.local/share/opencode"}}
 }
@@ -320,7 +320,7 @@ func emitSession(ctx context.Context, source string, doc sessionDoc, raws []json
 		if md.SessionID != "" && md.SessionID != doc.ID {
 			return fmt.Errorf("message %s belongs to session %s, not %s", md.ID, md.SessionID, doc.ID)
 		}
-		msg := canon.Message{SessionExternalID: doc.ID, Seq: seq, ExternalID: md.ID, ContentID: md.ID, Role: canon.Role(md.Role), Kind: canon.KindMessage, CreatedAt: millis(md.Time.Created), Provider: md.ProviderID, Model: md.ModelID, CWD: doc.Directory, Content: raw, Text: partsText(md.Parts)}
+		msg := canon.Message{SessionExternalID: doc.ID, Seq: seq, ExternalID: md.ID, ContentID: md.ID, Role: canon.Role(md.Role), Kind: canon.KindMessage, CreatedAt: millis(md.Time.Created), Provider: md.ProviderID, Model: md.ModelID, CWD: doc.Directory, Content: raw, Text: partsText(md.Parts), Thinking: partsThinking(md.Parts)}
 		if md.Tokens != nil || md.Cost != nil {
 			msg.Usage = &canon.Usage{ReportedCostUSD: md.Cost, RequestID: md.ID}
 			if md.Tokens != nil {
@@ -349,6 +349,17 @@ func emitSession(ctx context.Context, source string, doc sessionDoc, raws []json
 		}
 	}
 	return nil
+}
+
+// partsThinking collects reasoning parts, which OpenCode stores as text.
+func partsThinking(parts []part) string {
+	var out []string
+	for _, p := range parts {
+		if p.Type == "reasoning" && strings.TrimSpace(p.Text) != "" {
+			out = append(out, strings.TrimSpace(p.Text))
+		}
+	}
+	return strings.Join(out, "\n\n")
 }
 
 func partsText(parts []part) string {

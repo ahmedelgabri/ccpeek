@@ -78,7 +78,8 @@ func Routes() []Route {
 		{"GET /api/v1/health", "", "transport", nil},
 		{"GET /api/v1/ready", "", "transport", nil},
 		{"GET /api/v1/events", "", "transport", nil},
-		{"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", "", "transport", nil}, // raw bytes + CSP sandbox
+		{"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw", "", "transport", nil},                   // raw bytes + CSP sandbox
+		{"GET /api/v1/sessions/{agent}/{id}/transcript/{seq}/images/{index}", "", "transport", nil}, // image bytes
 		{"GET /api/v1/stats", "stats", "op", nil},
 		{"GET /api/v1/archive-status", "archive-status", "op", nil},
 		{"GET /api/v1/sessions", "sessions", "op", nil},
@@ -136,29 +137,30 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 	mux := http.NewServeMux()
 	h := &handlers{svc: svc, deps: d}
 	byPattern := map[string]http.HandlerFunc{
-		"GET /api/v1/health":                              h.health,
-		"GET /api/v1/ready":                               h.readiness,
-		"GET /api/v1/stats":                               h.stats,
-		"GET /api/v1/archive-status":                      h.archiveStatus,
-		"GET /api/v1/sessions":                            h.sessions,
-		"GET /api/v1/sessions/{agent}/{id}":               h.session,
-		"GET /api/v1/sessions/{agent}/{id}/transcript":    h.transcript,
-		"GET /api/v1/sessions/{agent}/{id}/tools":         h.sessionTools,
-		"GET /api/v1/sessions/{agent}/{id}/tools/{seq}":   h.sessionTool,
-		"GET /api/v1/commands":                            h.commands,
-		"GET /api/v1/history":                             h.history,
-		"GET /api/v1/usage":                               h.usage,
-		"GET /api/v1/pricing":                             h.pricing,
-		"GET /api/v1/search":                              h.search,
-		"GET /api/v1/events":                              h.events,
-		"GET /api/v1/artifacts":                           h.artifacts,
-		"GET /api/v1/artifacts/kinds":                     h.artifactKinds,
-		"GET /api/v1/artifacts/{agent}/{kind}/{name}":     h.artifact,
-		"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw": h.artifactRaw,
-		"GET /api/v1/scan":                                h.scanFindings,
-		"GET /api/v1/scan/rules":                          h.scanRules,
-		"POST /api/v1/scan/{id}/ignore":                   h.scanIgnore,
-		"GET /api/v1/blocks":                              h.blocks,
+		"GET /api/v1/health":                           h.health,
+		"GET /api/v1/ready":                            h.readiness,
+		"GET /api/v1/stats":                            h.stats,
+		"GET /api/v1/archive-status":                   h.archiveStatus,
+		"GET /api/v1/sessions":                         h.sessions,
+		"GET /api/v1/sessions/{agent}/{id}":            h.session,
+		"GET /api/v1/sessions/{agent}/{id}/transcript": h.transcript,
+		"GET /api/v1/sessions/{agent}/{id}/transcript/{seq}/images/{index}": h.messageImage,
+		"GET /api/v1/sessions/{agent}/{id}/tools":                           h.sessionTools,
+		"GET /api/v1/sessions/{agent}/{id}/tools/{seq}":                     h.sessionTool,
+		"GET /api/v1/commands":                                              h.commands,
+		"GET /api/v1/history":                                               h.history,
+		"GET /api/v1/usage":                                                 h.usage,
+		"GET /api/v1/pricing":                                               h.pricing,
+		"GET /api/v1/search":                                                h.search,
+		"GET /api/v1/events":                                                h.events,
+		"GET /api/v1/artifacts":                                             h.artifacts,
+		"GET /api/v1/artifacts/kinds":                                       h.artifactKinds,
+		"GET /api/v1/artifacts/{agent}/{kind}/{name}":                       h.artifact,
+		"GET /api/v1/artifacts/{agent}/{kind}/{name}/raw":                   h.artifactRaw,
+		"GET /api/v1/scan":                                                  h.scanFindings,
+		"GET /api/v1/scan/rules":                                            h.scanRules,
+		"POST /api/v1/scan/{id}/ignore":                                     h.scanIgnore,
+		"GET /api/v1/blocks":                                                h.blocks,
 	}
 	for _, r := range Routes() {
 		fn, ok := byPattern[r.Pattern]
@@ -397,9 +399,10 @@ func (h *handlers) session(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) transcript(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	opts := query.TranscriptOptions{
-		FromSeq: p.Int("from_seq"),
-		Limit:   p.Int("limit"),
-		Full:    p.Bool("full"),
+		FromSeq:  p.Int("from_seq"),
+		Limit:    p.Int("limit"),
+		Full:     p.Bool("full"),
+		Thinking: p.Bool("thinking"),
 	}
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)

@@ -39,9 +39,9 @@ func New() *Adapter { return &Adapter{} }
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces one full reparse after per-message provider/model,
-// summary-entry usage, fallback-title normalization, and codemode scripts
-// with their nested calls became canonical.
-func (*Adapter) ParseVersion() int { return 4 }
+// summary-entry usage, fallback-title normalization, codemode scripts with
+// their nested calls, and thinking text with image locators became canonical.
+func (*Adapter) ParseVersion() int { return 5 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -190,6 +190,11 @@ func canonicalUsage(u *piUsage) *canon.Usage {
 type piBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+
+	// type == "thinking" | "image". An image's base64 data is deliberately
+	// not decoded: it stays in the stored content, located by pointer.
+	Thinking string `json:"thinking"`
+	MimeType string `json:"mimeType"`
 
 	// type == "toolCall" (assistant content blocks).
 	ID        string          `json:"id"`
@@ -487,6 +492,7 @@ func (a *Adapter) convertEntry(e entry, seq int, sess *canon.Session, currentPro
 		base.Role = normalizeRole(pm.Role)
 		base.Content = e.Message
 		base.Text = piText(pm.Content, dec.blocks)
+		base.Thinking, base.Images = piThinkingAndImages(dec.blocks)
 		if pm.Usage != nil {
 			// Pi branches in place and forks reference their parent without
 			// copying entries, so its lack of a request-id dedupe key is safe.
@@ -564,6 +570,28 @@ func piBlocks(content json.RawMessage) []piBlock {
 		return nil
 	}
 	return arr
+}
+
+// piThinkingAndImages lifts reasoning text and image locators out of the
+// decoded blocks. Pointers are relative to the message payload stored as
+// Content.
+func piThinkingAndImages(decoded []piBlock) (string, []canon.ImageRef) {
+	var thinking []string
+	var images []canon.ImageRef
+	for i, b := range decoded {
+		switch b.Type {
+		case "thinking":
+			if t := strings.TrimSpace(b.Thinking); t != "" {
+				thinking = append(thinking, t)
+			}
+		case "image":
+			images = append(images, canon.ImageRef{
+				MediaType: b.MimeType,
+				Pointer:   fmt.Sprintf("/content/%d/data", i),
+			})
+		}
+	}
+	return strings.Join(thinking, "\n\n"), images
 }
 
 // piText takes the content array ALREADY decoded by the caller.
