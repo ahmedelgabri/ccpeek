@@ -11,6 +11,7 @@ export const NAV: { to: string; label: string; exact?: boolean }[] = [
   { to: "/", label: "Overview", exact: true },
   { to: "/sessions", label: "Sessions" },
   { to: "/usage", label: "Usage" },
+  { to: "/insights", label: "Insights" },
   { to: "/commands", label: "Commands" },
   { to: "/artifacts", label: "Artifacts" },
   { to: "/scan", label: "Scan" },

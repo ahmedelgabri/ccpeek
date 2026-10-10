@@ -801,3 +801,41 @@ func TestSubagentSpanningAParentResumeIsNotACopy(t *testing.T) {
 		t.Errorf("issues = %+v, want none", sink.Issues)
 	}
 }
+
+// Failed requests, interrupted turns and refused tool calls are written as
+// ordinary-looking transcript lines; each must also surface as an event
+// anchored to its line, so errors can be counted across sessions.
+func TestErrorAbortAndDenialLinesBecomeEvents(t *testing.T) {
+	const id = "77777777-0000-0000-0000-000000000001"
+	dir := t.TempDir()
+	projects := filepath.Join(dir, "projects", "-w")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
+	body := `{"type":"assistant",` + head + `"uuid":"e1","isApiErrorMessage":true,"apiErrorStatus":429,"error":"rate_limit","quotaLimits":{"rateLimitType":"five_hour"},"message":{"id":"x","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You've hit your session limit"}]}}` + "\n" +
+		`{"type":"user",` + head + `"uuid":"e2","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}` + "\n" +
+		`{"type":"user",` + head + `"uuid":"e3","toolDenialKind":"user-rejected","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"The user doesn't want to proceed"}]}}` + "\n"
+	path := filepath.Join(projects, id+".jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{Root: agent.Root{Agent: Slug, Path: dir}, Path: path, Kind: agent.SourceFile}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Events) != 3 {
+		t.Fatalf("events = %+v, want 3", sink.Events)
+	}
+	apiErr, abort, denial := sink.Events[0], sink.Events[1], sink.Events[2]
+	if apiErr.Kind != canon.EventAPIError || apiErr.Label != "rate_limit" || apiErr.Status != "429" ||
+		apiErr.MessageSeq != 0 || !strings.Contains(string(apiErr.Payload), "five_hour") {
+		t.Errorf("api error = %+v", apiErr)
+	}
+	if abort.Kind != canon.EventAborted || abort.MessageSeq != 1 {
+		t.Errorf("abort = %+v", abort)
+	}
+	if denial.Kind != canon.EventToolDenied || denial.Label != "user-rejected" || !strings.Contains(denial.Detail, "proceed") {
+		t.Errorf("denial = %+v", denial)
+	}
+}

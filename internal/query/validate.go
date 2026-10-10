@@ -82,11 +82,14 @@ var (
 	BlocksLimit     = Limit{Default: 24, Max: 200}
 	ArtifactsLimit  = Limit{Default: 100}
 	HistoryLimit    = Limit{Default: 100}
-	// Tools and usage answer in FULL unless the caller bounds them: a
-	// session's tool list and a usage aggregate are bounded by their own
+	EventsLimit     = Limit{Default: 100, Max: 1000}
+	ToolStatsLimit  = Limit{Default: 100, Max: 1000}
+	// Tools, usage and event stats answer in FULL unless the caller bounds
+	// them: a session's tool list and an aggregate are bounded by their own
 	// cardinality, and a partial aggregate is a wrong total.
-	ToolsLimit = Limit{}
-	UsageLimit = Limit{}
+	ToolsLimit      = Limit{}
+	UsageLimit      = Limit{}
+	EventStatsLimit = Limit{}
 )
 
 // apply turns a caller's limit into the one the query runs, IN PLACE:

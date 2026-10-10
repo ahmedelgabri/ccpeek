@@ -50,8 +50,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // ParseVersion forces a full reparse after the adapter learns metadata or
 // normalization that cannot be recovered from an append-only tail (v4:
 // thinking text and image locators; v5: legacy subagent files' parent link;
-// v6: continued-session and fork-point lineage).
-func (*Adapter) ParseVersion() int { return 6 }
+// v6: continued-session and fork-point lineage; v7: error, abort and
+// denial events).
+func (*Adapter) ParseVersion() int { return 7 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -128,6 +129,16 @@ type rawLine struct {
 	// type == "fork-context-ref": the parent entry a forked agent's
 	// context ends at.
 	ParentLastUUID string `json:"parentLastUuid"`
+
+	// Failed model requests are written as synthetic assistant lines.
+	IsAPIErrorMessage bool   `json:"isApiErrorMessage"`
+	APIErrorStatus    int    `json:"apiErrorStatus"`
+	Error             string `json:"error"`
+	QuotaLimits       *struct {
+		RateLimitType string `json:"rateLimitType"`
+	} `json:"quotaLimits"`
+	// Set on the tool_result line of a call refused before it ran.
+	ToolDenialKind string `json:"toolDenialKind"`
 }
 
 // rawMessage is the Anthropic message payload inside a line.
@@ -464,6 +475,11 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		if err := sink.Message(msg); err != nil {
 			return state, err
 		}
+		if ev, ok := lineEvent(entry, msg, results); ok {
+			if err := sink.SessionEvent(ev); err != nil {
+				return state, err
+			}
+		}
 		messageCount++
 	}
 
@@ -704,6 +720,46 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 		}
 	}
 	return msg, calls, results
+}
+
+// interruptMarker opens the user line Claude Code writes when a turn is
+// cut short ("… by user]" or "… by user for tool use]").
+const interruptMarker = "[Request interrupted by user"
+
+// lineEvent derives the session event a line records, if any: a failed
+// model request, an interrupted turn, or a refused tool call.
+func lineEvent(raw rawLine, msg canon.Message, results []canon.ToolResult) (canon.SessionEvent, bool) {
+	ev := canon.SessionEvent{
+		SessionExternalID: msg.SessionExternalID,
+		MessageSeq:        msg.Seq,
+		At:                raw.Timestamp,
+	}
+	switch {
+	case raw.IsAPIErrorMessage:
+		ev.Kind = canon.EventAPIError
+		ev.Label = cmp.Or(raw.Error, "error")
+		if raw.APIErrorStatus != 0 {
+			ev.Status = fmt.Sprint(raw.APIErrorStatus)
+		}
+		ev.Detail = strings.TrimSpace(msg.Text)
+		if raw.QuotaLimits != nil && raw.QuotaLimits.RateLimitType != "" {
+			ev.Payload, _ = json.Marshal(map[string]string{"rateLimitType": raw.QuotaLimits.RateLimitType})
+		}
+	case raw.ToolDenialKind != "":
+		ev.Kind = canon.EventToolDenied
+		ev.Label = raw.ToolDenialKind
+		if len(results) > 0 {
+			ev.Detail = results[0].Excerpt
+			ev.Payload, _ = json.Marshal(map[string]string{"toolUseId": results[0].CallExternalID})
+		}
+	case msg.Role == canon.RoleUser && strings.HasPrefix(strings.TrimSpace(msg.Text), interruptMarker):
+		ev.Kind = canon.EventAborted
+		ev.Label = "user"
+		ev.Detail = strings.TrimSpace(msg.Text)
+	default:
+		return canon.SessionEvent{}, false
+	}
+	return ev, true
 }
 
 // foldSession accumulates session attributes from entries: first

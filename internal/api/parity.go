@@ -251,3 +251,58 @@ func (h *handlers) blocks(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, blocks)
 }
+
+func (h *handlers) sessionEvents(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.EventsFilter{
+		Kind: p.Str("kind"), Agent: p.Str("agent"), Session: p.Str("session"),
+		Since: p.Str("since"), Until: p.Str("until"),
+		Limit: p.Int("limit"), Offset: p.Int("offset"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	out, err := h.svc.Events(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *handlers) eventStats(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.EventStatsFilter{
+		Kind: p.Str("kind"), GroupBy: p.Str("group"), Agent: p.Str("agent"),
+		Since: p.Str("since"), Until: p.Str("until"), Limit: p.Int("limit"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	out, err := h.svc.EventStats(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *handlers) toolStats(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.ToolStatsFilter{
+		Agent: p.Str("agent"), Since: p.Str("since"), Until: p.Str("until"),
+		Limit: p.Int("limit"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	out, err := h.svc.ToolStats(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

@@ -154,6 +154,14 @@ func (s *dbSink) ToolResult(res canon.ToolResult) error {
 	return s.writer.UpdateToolCallResult(id, res)
 }
 
+func (s *dbSink) SessionEvent(ev canon.SessionEvent) error {
+	id, ok := s.sessionIDs[ev.SessionExternalID]
+	if !ok {
+		return fmt.Errorf("adapter emitted session event before session %q", ev.SessionExternalID)
+	}
+	return s.writer.InsertSessionEvent(id, ev)
+}
+
 func (s *dbSink) SessionRelation(rel canon.SessionRelation) error {
 	if rel.Agent == "" {
 		rel.Agent = s.agent

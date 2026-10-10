@@ -209,6 +209,9 @@ func TestListContractsEncodeEmptyAsArray(t *testing.T) {
 		"/api/v1/artifacts",
 		"/api/v1/scan",
 		"/api/v1/blocks",
+		"/api/v1/session-events",
+		"/api/v1/session-events/stats",
+		"/api/v1/tool-stats",
 	}
 	for _, path := range lists {
 		code, body := rawGet(t, h, path)
@@ -246,6 +249,11 @@ func TestParamContractsRejectMalformedInput(t *testing.T) {
 		"/api/v1/sessions/claude-code/x/tools?compact=yes",
 		"/api/v1/sessions/claude-code/x/transcript?full=maybe",
 		"/api/v1/scan?ignored=2",
+		"/api/v1/session-events?kind=nonsense",
+		"/api/v1/session-events?session=x",
+		"/api/v1/session-events?since=yesterday",
+		"/api/v1/session-events/stats?group=week",
+		"/api/v1/tool-stats?limit=-1",
 	}
 	for _, path := range bad {
 		code, body := rawGet(t, h, path)
@@ -279,6 +287,8 @@ func TestOverCapLimitsAreRejected(t *testing.T) {
 		"/api/v1/search?query=x&limit=101":                     100,
 		"/api/v1/commands?limit=1001":                          1000,
 		"/api/v1/blocks?limit=201":                             200,
+		"/api/v1/session-events?limit=1001":                    1000,
+		"/api/v1/tool-stats?limit=1001":                        1000,
 	}
 	for path, max := range overCap {
 		code, body := rawGet(t, h, path)

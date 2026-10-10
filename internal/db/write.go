@@ -173,6 +173,7 @@ func (w *Writer) ClearSessionChildren(sessionID int64) error {
 		`DELETE FROM search_docs WHERE session_id = ?`,
 		`DELETE FROM messages WHERE session_id = ?`,
 		`DELETE FROM tool_calls WHERE session_id = ?`,
+		`DELETE FROM session_events WHERE session_id = ?`,
 		`DELETE FROM session_relations WHERE from_session_id = ?`,
 		`DELETE FROM pending_relations WHERE (agent_id,from_external_id) IN (SELECT agent_id,external_id FROM sessions WHERE id=?)`,
 	} {
@@ -405,6 +406,25 @@ func (w *Writer) InsertToolCall(sessionID int64, tc canon.ToolCall) error {
 		timeText(tc.StartedAt))
 	if err != nil {
 		return fmt.Errorf("inserting tool call seq %d (%s): %w", tc.Seq, tc.Name, err)
+	}
+	return nil
+}
+
+// InsertSessionEvent writes one event for an already-upserted session. The
+// detail bound is applied here, where every adapter's events converge.
+func (w *Writer) InsertSessionEvent(sessionID int64, ev canon.SessionEvent) error {
+	payload := string(ev.Payload)
+	if payload == "" {
+		payload = "{}"
+	}
+	_, err := w.tx.ExecContext(w.ctx, `
+		INSERT INTO session_events
+			(session_id, message_seq, kind, at, label, status, duration_ms, detail, payload_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, ev.MessageSeq, string(ev.Kind), timeText(ev.At), ev.Label, ev.Status,
+		ev.DurationMs, canon.TruncateBytes(ev.Detail, canon.EventDetailLimit), payload)
+	if err != nil {
+		return fmt.Errorf("inserting %s event: %w", ev.Kind, err)
 	}
 	return nil
 }

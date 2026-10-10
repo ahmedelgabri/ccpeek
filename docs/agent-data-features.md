@@ -71,3 +71,23 @@ Local result: 10 `resumed_from` edges (one pending: its parent file is gone), 56
 A subagent's lines always name its parent, and a legacy subagent can outlive a resume of that parent, so its lines carry two parent ids. Subagent files are therefore excluded from resume detection. Without that exclusion, 40 legacy agent files produced false "continued in" edges.
 
 Known existing behavior, not changed here: usage dedupe gives a copied turn's cost to whichever copy indexed first, so a continued session can show less cost than its own turns made.
+
+## Errors and the Insights page
+
+Transcripts record failed model requests (Claude's synthetic `isApiErrorMessage` lines with `error`, `apiErrorStatus` and `quotaLimits`), interrupted turns (`[Request interrupted by user…]`), refused tool calls (`toolDenialKind` on the tool_result line), and Pi turns ending in `stopReason: error | aborted` with `errorMessage`. None of these were countable.
+
+- New `session_events` table (schema v20): session, transcript anchor (`message_seq`), `kind`, `at`, `label`, `status`, `duration_ms`, `detail` (bounded at 400 bytes), and `payload_json` for kind-specific data. It is cleared with a session's other children on full reparse. Later features add kinds instead of tables.
+- `RecordSink` gains `SessionEvent`.
+- Event kinds: `api_error` (label = error class), `aborted`, `tool_denied` (label = denial kind).
+- Pi's free-text errors map onto Claude's classes: `rate_limit`, `connection`, `invalid_request`, `authentication_failed`, `server_error`, with `error` as the fallback.
+- Claude `ParseVersion` is 7 and Pi's is 6.
+- New ops (CLI, MCP and HTTP, generated from the registry):
+  - `session-events` lists events newest first. Filters: kind list, agent, one session, dates.
+  - `event-stats` counts events by kind and one of label, status, agent or day, with distinct sessions and duration totals.
+  - `tool-stats` gives calls and failed results per tool.
+- `session` reports per-kind event counts.
+- UI:
+  - A new Insights page (`/insights`, URL-held tab, agent and date filters). Its Errors tab shows totals, error classes, denial reasons, the tools that fail most, and a recent list that links into each transcript at the event.
+  - Sessions with events get an Events tab.
+
+Local result: 638 API errors (521 rate limits), 393 aborted turns, 150 refused tool calls, and a 4.3% tool failure rate across 118k calls.

@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 19
+const schemaVersion = 20
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -197,6 +197,8 @@ CREATE INDEX IF NOT EXISTS ` + IdxToolCallsRecentFiles + `
 CREATE INDEX IF NOT EXISTS ` + IdxToolCallsFileWrites + `
 	ON tool_calls(file_path, session_id, message_seq, name, kind, input_json)
 	WHERE kind IN ('file_write', 'file_edit');
+
+` + sessionEventsSchema + `
 
 -- Artifacts stand alone; sessions attach via artifact_sessions with
 -- explicit relation + evidence.
@@ -437,6 +439,28 @@ CREATE TRIGGER IF NOT EXISTS search_docs_au AFTER UPDATE ON search_docs BEGIN
 END;
 `
 
+// sessionEventsSchema is shared by the initial schema and migration v20.
+const sessionEventsSchema = `
+-- Things an agent recorded about a session that are neither messages nor
+-- tool calls (API errors, denials, PR links, turn timings, compactions,
+-- hooks, effort changes). The typed columns are what surfaces filter and
+-- aggregate on; payload_json holds the kind-specific rest.
+CREATE TABLE IF NOT EXISTS session_events (
+	id INTEGER PRIMARY KEY,
+	session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+	message_seq INTEGER NOT NULL DEFAULT 0,
+	kind TEXT NOT NULL,
+	at TEXT,
+	label TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	detail TEXT NOT NULL DEFAULT '',
+	payload_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_session_events_kind ON session_events(kind, at);
+CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, kind);
+`
+
 const dirtySessionsSchema = `CREATE TABLE IF NOT EXISTS dirty_sessions (session_id INTEGER PRIMARY KEY);`
 
 // usageClaimVersionsSchema retains prior parser interpretations. Version zero
@@ -497,6 +521,7 @@ var derivedTables = []string{
 	"pending_artifact_links",
 	"artifact_sessions",
 	"artifacts",
+	"session_events",
 	"tool_calls",
 	"message_usage",
 	"usage_claim_versions",
@@ -599,6 +624,12 @@ var migrations = []migration{
 			}
 		}
 		return nil
+	},
+	// v20: session_events. Rows appear as sources reparse (the adapters'
+	// ParseVersion bumps force that).
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, sessionEventsSchema)
+		return err
 	},
 }
 

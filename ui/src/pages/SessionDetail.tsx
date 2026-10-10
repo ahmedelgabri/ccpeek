@@ -21,6 +21,7 @@ import {
   TokenMixBar,
 } from "../ui";
 import { Transcript } from "./session/Transcript";
+import { EventList } from "./insights/events";
 import {
   ArtifactsTab,
   CommandsTab,
@@ -38,6 +39,7 @@ const TABS = [
   "files",
   "artifacts",
   "subagents",
+  "events",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -48,6 +50,35 @@ const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 // transcript, commands, tool calls, files touched, usage, relations, and
 // linked artifacts — each facet a deep-linkable tab (?tab=). The paging
 // and anchoring machinery all lives in ./session/useSessionData.
+// SessionEvents lists the session's events, fetched when the tab opens.
+function SessionEvents({
+  agent,
+  sessionId,
+  onJump,
+}: {
+  agent: string;
+  sessionId: string;
+  onJump: (seq: number) => void;
+}) {
+  const q = useQuery({
+    queryKey: ["sessionEvents", agent, sessionId],
+    queryFn: () =>
+      api.sessionEvents({ agent, session: sessionId, limit: 1000 }),
+  });
+  if (q.isLoading) return <SkeletonRows rows={4} />;
+  if (q.error) return <LoadError error={q.error} />;
+  return (
+    <div className="overflow-hidden rounded-md border border-edge">
+      <EventList
+        events={q.data ?? []}
+        showSession={false}
+        onJump={onJump}
+        empty="No events recorded for this session."
+      />
+    </div>
+  );
+}
+
 // relationLabel reads an edge from this session's side.
 function relationLabel(r: Relation, subagentType?: string): string {
   const out = r.direction === "out";
@@ -127,6 +158,7 @@ function SessionContent() {
       </div>
     );
   const s = detail.data!;
+  const eventCount = Object.values(s.events ?? {}).reduce((a, b) => a + b, 0);
   // Badge counts for the tab bar; transcript carries none. The
   // tool-derived counts are withheld until the rows have actually loaded —
   // they load lazily, so rendering the not-yet-known value would label a
@@ -153,10 +185,14 @@ function SessionContent() {
     files: toolCountsKnown ? files.length : null,
     artifacts: s.artifacts?.length ?? 0,
     subagents: s.subagentCount ?? 0,
+    events: eventCount,
   };
-  // Most sessions spawn nothing; the tab appears only when there is one.
+  // Most sessions spawn nothing and record no events; those tabs appear
+  // only when there is something in them.
   const tabs = TABS.filter(
-    (t) => t !== "subagents" || (s.subagentCount ?? 0) > 0,
+    (t) =>
+      (t !== "subagents" || (s.subagentCount ?? 0) > 0) &&
+      (t !== "events" || eventCount > 0),
   );
   // The subagent_of edges are the subagents tab; only the outgoing one (a
   // subagent naming its parent) belongs beside the models.
@@ -345,6 +381,13 @@ function SessionContent() {
       )}
       {tab === "subagents" && (
         <SubagentsTab subagents={s.subagents ?? []} total={s.subagentTotal} />
+      )}
+      {tab === "events" && (
+        <SessionEvents
+          agent={agent}
+          sessionId={sessionId}
+          onJump={win.jumpToSeq}
+        />
       )}
     </div>
   );

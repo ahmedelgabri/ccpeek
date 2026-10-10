@@ -18,6 +18,7 @@ import { ArtifactsPage } from "./pages/Artifacts";
 import { ArtifactDetailPage } from "./pages/ArtifactDetail";
 import { ScanPage } from "./pages/Scan";
 import { ComparePage } from "./pages/Compare";
+import { InsightsPage } from "./pages/Insights";
 import { Palette } from "./Palette";
 import { NAV } from "./nav";
 import { ErrorBoundary, ErrorPanel } from "./ErrorState";
@@ -211,6 +212,7 @@ const NAV_ABBR: Record<string, string> = {
   Overview: "O",
   Sessions: "Se",
   Usage: "U",
+  Insights: "In",
   Commands: "Co",
   Artifacts: "A",
   Scan: "Sc",
@@ -535,6 +537,14 @@ const routeTree = rootRoute.addChildren([
     // "day" is the default grouping and stays out of the URL.
     validateSearch: (s: Record<string, unknown>) =>
       pickStrings(s, ["group", "agent", "model", "since", "until"]),
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/insights",
+    component: InsightsPage,
+    // The first tab is the default and stays out of the URL.
+    validateSearch: (s: Record<string, unknown>) =>
+      pickStrings(s, ["tab", "agent", "since", "until"]),
   }),
   // /search has no page of its own any more — searching is the palette,
   // reachable from every view. The ROUTE survives because the v1

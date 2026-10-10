@@ -95,6 +95,7 @@ func (discardSink) SessionRelation(canon.SessionRelation) error { return nil }
 func (discardSink) Message(canon.Message) error                 { return nil }
 func (discardSink) ToolCall(canon.ToolCall) error               { return nil }
 func (discardSink) ToolResult(canon.ToolResult) error           { return nil }
+func (discardSink) SessionEvent(canon.SessionEvent) error       { return nil }
 func (discardSink) Artifact(canon.Artifact) error               { return nil }
 func (discardSink) ArtifactLink(canon.ArtifactLink) error       { return nil }
 func (discardSink) History(canon.HistoryEntry) error            { return nil }

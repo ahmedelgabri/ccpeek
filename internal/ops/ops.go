@@ -362,6 +362,64 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "session-events",
+			Desc: "List session events newest first — API errors, aborted turns, refused tool calls — each linked to its session and transcript seq. Filter by kind (comma-separated), agent, one session, or date range.",
+			Params: []Param{
+				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied)"},
+				agentParam,
+				{Name: "session", Type: "string", Desc: "One session's external id (needs agent)"},
+				sinceParam, untilParam,
+				limitParam("Maximum events", query.EventsLimit),
+				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.Events(ctx, query.EventsFilter{
+					Kind: a.Str["kind"], Agent: a.Str["agent"], Session: a.Str["session"],
+					Since: a.Str["since"], Until: a.Str["until"],
+					Limit: a.Int["limit"], Offset: a.Int["offset"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
+			Name: "event-stats",
+			Desc: "Session events counted by kind and one more dimension (label, status, agent, or day), with distinct sessions and duration totals — e.g. API errors by class, or per day.",
+			Params: []Param{
+				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds to include"},
+				{
+					Name: "group", Type: "string", Default: "label",
+					Desc: "Second dimension: label | status | agent | day (default label)",
+					Enum: []string{"label", "status", "agent", "day"},
+				},
+				agentParam,
+				sinceParam, untilParam,
+				limitParam("Maximum groups", query.EventStatsLimit),
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.EventStats(ctx, query.EventStatsFilter{
+					Kind: a.Str["kind"], GroupBy: a.Str["group"], Agent: a.Str["agent"],
+					Since: a.Str["since"], Until: a.Str["until"], Limit: a.Int["limit"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
+			Name: "tool-stats",
+			Desc: "Tool calls and failed results per tool across sessions, most failures first — which tools break, and how often.",
+			Params: []Param{
+				agentParam,
+				sinceParam, untilParam,
+				limitParam("Maximum tools", query.ToolStatsLimit),
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.ToolStats(ctx, query.ToolStatsFilter{
+					Agent: a.Str["agent"], Since: a.Str["since"], Until: a.Str["until"],
+					Limit: a.Int["limit"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
 			Name: "tool",
 			Desc: "Get one tool call of a session with its full payload, including diff excerpts (old/new for edits, written content for writes).",
 			Params: []Param{

@@ -40,8 +40,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces one full reparse after per-message provider/model,
 // summary-entry usage, fallback-title normalization, codemode scripts with
-// their nested calls, and thinking text with image locators became canonical.
-func (*Adapter) ParseVersion() int { return 5 }
+// their nested calls, thinking text with image locators, and error/abort
+// events became canonical.
+func (*Adapter) ParseVersion() int { return 6 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -137,6 +138,11 @@ type piMessage struct {
 
 	// role == "toolResult": the outcome of an earlier toolCall block,
 	// delivered as its own message entry.
+	// role == "assistant": why the turn ended; "error" and "aborted" carry
+	// errorMessage.
+	StopReason   string `json:"stopReason"`
+	ErrorMessage string `json:"errorMessage"`
+
 	ToolCallID  string         `json:"toolCallId"`
 	ToolName    string         `json:"toolName"`
 	IsError     bool           `json:"isError"`
@@ -411,6 +417,13 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		if err := sink.Message(msg); err != nil {
 			return err
 		}
+		if dec.ok {
+			if ev, ok := stopEvent(dec.pm, msg); ok {
+				if err := sink.SessionEvent(ev); err != nil {
+					return err
+				}
+			}
+		}
 		messageCount++
 		return nil
 	}, func(lineNo int, size int64) error {
@@ -429,6 +442,51 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 	// Final emit: the folded title and ModifiedAt.
 	return sink.Session(sess)
+}
+
+// stopEvent turns an assistant turn that ended in error or was aborted
+// into a session event.
+func stopEvent(pm piMessage, msg canon.Message) (canon.SessionEvent, bool) {
+	ev := canon.SessionEvent{
+		SessionExternalID: msg.SessionExternalID,
+		MessageSeq:        msg.Seq,
+		At:                msg.CreatedAt,
+		Detail:            strings.TrimSpace(pm.ErrorMessage),
+	}
+	switch pm.StopReason {
+	case "error":
+		ev.Kind = canon.EventAPIError
+		ev.Label = errorClass(pm.ErrorMessage)
+	case "aborted":
+		ev.Kind = canon.EventAborted
+		ev.Label = "user"
+	default:
+		return canon.SessionEvent{}, false
+	}
+	return ev, true
+}
+
+// errorClass maps Pi's free-text provider errors onto the classes Claude
+// Code records natively, so errors group the same way across agents.
+func errorClass(message string) string {
+	m := strings.ToLower(message)
+	switch {
+	case strings.Contains(m, "rate limit"), strings.Contains(m, "usage limit"), strings.Contains(m, "quota"):
+		return "rate_limit"
+	case strings.Contains(m, "context window"), strings.Contains(m, "context_length"):
+		return "invalid_request"
+	case strings.Contains(m, "oauth"), strings.Contains(m, "unauthorized"), strings.Contains(m, "api key"),
+		strings.Contains(m, "authentication"):
+		return "authentication_failed"
+	case strings.Contains(m, "socket"), strings.Contains(m, "connection"), strings.Contains(m, "fetch failed"),
+		strings.Contains(m, "unable to connect"), strings.Contains(m, "timed out"):
+		return "connection"
+	case strings.Contains(m, "overloaded"), strings.Contains(m, "server error"),
+		strings.Contains(m, "internal error"), strings.Contains(m, "service unavailable"):
+		return "server_error"
+	default:
+		return "error"
+	}
 }
 
 // piPromptTitle rejects skill envelopes injected as synthetic user messages.

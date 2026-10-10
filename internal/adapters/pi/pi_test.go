@@ -128,8 +128,8 @@ func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
 }
 
 func TestParseVersionIncludesCodemode(t *testing.T) {
-	if got := New().ParseVersion(); got != 5 {
-		t.Fatalf("ParseVersion() = %d, want 5", got)
+	if got := New().ParseVersion(); got != 6 {
+		t.Fatalf("ParseVersion() = %d, want 6", got)
 	}
 }
 
@@ -375,5 +375,38 @@ func TestParseCodemodeScriptAndNestedCalls(t *testing.T) {
 	if bash.Kind != canon.ToolShell || bash.Command != "go test ./..." ||
 		bash.ResultStatus != "error" || bash.ResultExcerpt != "exit 1" {
 		t.Errorf("nested bash = %+v", bash)
+	}
+}
+
+// Pi marks a failed or aborted turn on the assistant message itself; the
+// free-text error is classed like Claude's so both agents group together.
+func TestStopReasonsBecomeEvents(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "--w--")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"session","version":3,"id":"ev-1","timestamp":"2026-10-08T20:00:00.000Z","cwd":"/w"}`,
+		`{"type":"message","id":"m1","parentId":null,"timestamp":"2026-10-08T20:00:01.000Z","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Rate limit reached for gpt-6"}}`,
+		`{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-10-08T20:00:02.000Z","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Operation aborted"}}`,
+		`{"type":"message","id":"m3","parentId":"m2","timestamp":"2026-10-08T20:00:03.000Z","message":{"role":"assistant","content":[],"stopReason":"stop"}}`,
+	}
+	path := filepath.Join(dir, "2026-10-08T20-00-00-000Z_ev-1.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{Path: path, Root: agent.Root{Agent: Slug, Path: root}}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Events) != 2 {
+		t.Fatalf("events = %+v, want error + abort", sink.Events)
+	}
+	if e := sink.Events[0]; e.Kind != canon.EventAPIError || e.Label != "rate_limit" || e.MessageSeq != 0 {
+		t.Errorf("error event = %+v", e)
+	}
+	if e := sink.Events[1]; e.Kind != canon.EventAborted || e.MessageSeq != 1 {
+		t.Errorf("abort event = %+v", e)
 	}
 }

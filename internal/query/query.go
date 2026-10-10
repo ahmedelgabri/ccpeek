@@ -383,6 +383,9 @@ type SessionDetail struct {
 	// the session's own cost covers only its own turns.
 	Subagents     []SessionSummary `json:"subagents,omitempty"`
 	SubagentTotal *SubagentTotal   `json:"subagentTotal,omitempty"`
+	// Events counts the session's events by kind; list them with the
+	// session-events op.
+	Events map[string]int `json:"events,omitempty"`
 }
 
 // SubagentTotal is the usage and cost of all of a session's descendant
@@ -419,6 +422,9 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		if err := s.attachSubagents(ctx, rowID, detail); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.attachEventCounts(ctx, rowID, detail); err != nil {
+		return nil, err
 	}
 
 	const branchSeq = `(SELECT m.seq FROM messages m

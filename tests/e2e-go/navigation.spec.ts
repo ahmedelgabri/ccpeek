@@ -14,6 +14,7 @@ test.describe("navigation", () => {
       { text: "Sessions", url: "/sessions" },
       { text: "Commands", url: "/commands" },
       { text: "Usage", url: "/usage" },
+      { text: "Insights", url: "/insights" },
       { text: "Artifacts", url: "/artifacts" },
       { text: "Scan", url: "/scan" },
       { text: "Compare", url: "/compare" },
@@ -35,6 +36,9 @@ test.describe("navigation", () => {
 
     await page.goto("/commands");
     await expect(page.getByRole("heading", { name: "Commands" })).toBeVisible();
+
+    await page.goto("/insights");
+    await expect(page.getByRole("heading", { name: "Insights" })).toBeVisible();
 
     await page.goto("/scan");
     await expect(

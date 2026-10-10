@@ -276,6 +276,41 @@ type ToolResult struct {
 	Content           string // full result when not retained in a message
 }
 
+// EventKind names a session event: something an agent recorded about a
+// session that is neither a message nor a tool call.
+type EventKind string
+
+const (
+	// EventAPIError is a model request that failed (rate limit, overload,
+	// connection, auth). Label is the error class; Status the HTTP status
+	// when the agent records one.
+	EventAPIError EventKind = "api_error"
+	// EventAborted is a turn the user or the agent cut short.
+	EventAborted EventKind = "aborted"
+	// EventToolDenied is a tool call refused before it ran — by the user,
+	// a permission rule, or an automatic mode. Label is the denial kind.
+	EventToolDenied EventKind = "tool_denied"
+)
+
+// EventDetailLimit bounds SessionEvent.Detail: an error message or a
+// command line, not a payload.
+const EventDetailLimit = 400
+
+// SessionEvent belongs to one session, anchored to the transcript entry it
+// arrived with. The few columns every surface filters or aggregates on are
+// typed; anything kind-specific rides in Payload.
+type SessionEvent struct {
+	SessionExternalID string
+	MessageSeq        int
+	Kind              EventKind
+	At                time.Time
+	Label             string // the kind's category: error class, denial kind, …
+	Status            string // outcome where the kind has one
+	DurationMs        int64
+	Detail            string // short human-readable text, bounded
+	Payload           json.RawMessage
+}
+
 // ArtifactKind names a sidecar artifact type.
 type ArtifactKind string
 

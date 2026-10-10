@@ -83,6 +83,7 @@ type RecordSink interface {
 	Message(canon.Message) error
 	ToolCall(canon.ToolCall) error
 	ToolResult(canon.ToolResult) error
+	SessionEvent(canon.SessionEvent) error
 	Artifact(canon.Artifact) error
 	ArtifactLink(canon.ArtifactLink) error
 	History(canon.HistoryEntry) error

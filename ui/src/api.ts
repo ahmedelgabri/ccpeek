@@ -63,7 +63,48 @@ export interface SessionDetail extends SessionSummary {
   models?: string[];
   subagents?: SessionSummary[];
   subagentTotal?: SubagentTotal;
+  /** Session events by kind (api_error, aborted, tool_denied, …). */
+  events?: Record<string, number>;
 }
+
+export interface EventRow {
+  agent: string;
+  sessionId: string;
+  sessionTitle: string;
+  messageSeq: number;
+  kind: string;
+  at?: string;
+  label?: string;
+  status?: string;
+  durationMs?: number;
+  detail?: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface EventStat {
+  kind: string;
+  group: string;
+  count: number;
+  sessions: number;
+  totalMs?: number;
+  avgMs?: number;
+  maxMs?: number;
+}
+
+export interface ToolStat {
+  name: string;
+  kind: string;
+  calls: number;
+  errors: number;
+  sessions: number;
+}
+
+/** Filters shared by the Insights reads. */
+export type InsightFilters = {
+  agent?: string;
+  since?: string;
+  until?: string;
+};
 
 export interface TranscriptMessage {
   seq: number;
@@ -345,6 +386,27 @@ export const api = {
 
   sessionToolDetail: (agent: string, id: string, seq: number) =>
     get<ToolCallDetail>(`/sessions/${agent}/${id}/tools/${seq}`),
+
+  sessionEvents: (
+    f: InsightFilters & {
+      kind?: string;
+      session?: string;
+      limit?: number;
+    },
+  ) =>
+    get<EventRow[]>("/session-events", {
+      ...f,
+      limit: f.limit ? String(f.limit) : "",
+    }),
+
+  eventStats: (f: InsightFilters & { kind?: string; group?: string }) =>
+    get<EventStat[]>("/session-events/stats", f),
+
+  toolStats: (f: InsightFilters & { limit?: number }) =>
+    get<ToolStat[]>("/tool-stats", {
+      ...f,
+      limit: f.limit ? String(f.limit) : "",
+    }),
 };
 
 // The validated per-agent palette (also defined as CSS vars in

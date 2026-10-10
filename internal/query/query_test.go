@@ -1454,3 +1454,47 @@ func TestResumedSessionRelationCarriesBranchSeq(t *testing.T) {
 		}
 	}
 }
+
+// Errors recorded in transcripts surface as events the Insights page can
+// count by class and list with their transcript anchor, beside per-tool
+// failure counts.
+func TestErrorEventsAndToolFailuresAggregate(t *testing.T) {
+	const id = "88888888-0000-0000-0000-000000000001"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
+	body := `{"type":"assistant",` + head + `"uuid":"a","isApiErrorMessage":true,"apiErrorStatus":429,"error":"rate_limit","message":{"id":"x1","role":"assistant","content":[{"type":"text","text":"limit"}]}}` + "\n" +
+		`{"type":"assistant",` + head + `"uuid":"b","isApiErrorMessage":true,"error":"server_error","message":{"id":"x2","role":"assistant","content":[{"type":"text","text":"boom"}]}}` + "\n" +
+		`{"type":"assistant",` + head + `"uuid":"c","message":{"id":"x3","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"false"}}]}}` + "\n" +
+		`{"type":"user",` + head + `"uuid":"d","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"exit 1"}]}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+
+	stats, err := s.EventStats(ctx, EventStatsFilter{Kind: "api_error"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 2 || stats[0].Count != 1 || stats[0].Sessions != 1 {
+		t.Errorf("api_error by label = %+v, want rate_limit and server_error once each", stats)
+	}
+	events, err := s.Events(ctx, EventsFilter{Agent: string(claude.Slug), Session: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].SessionID != id {
+		t.Errorf("session events = %+v", events)
+	}
+	tools, err := s.ToolStats(ctx, ToolStatsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 1 || tools[0].Name != "Bash" || tools[0].Calls != 1 || tools[0].Errors != 1 {
+		t.Errorf("tool stats = %+v, want Bash 1 call 1 error", tools)
+	}
+}

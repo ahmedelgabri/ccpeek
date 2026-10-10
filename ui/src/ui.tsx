@@ -420,7 +420,8 @@ export function dropEmpty(
 }
 
 /** The routes whose search IS their filter state. */
-type FilterRoute = "/sessions" | "/commands" | "/usage" | "/artifacts";
+type FilterRoute =
+  "/sessions" | "/commands" | "/usage" | "/artifacts" | "/insights";
 
 /** useSetFilter is the one way those routes change a filter: merge the
  *  patch into the URL's search through dropEmpty, and REPLACE rather than
@@ -745,12 +746,14 @@ export function kindLabel(kind: string): string {
 export function KindBars({
   items,
   fmt = String,
+  empty = "No tool calls recorded.",
 }: {
   items: { label: string; count: number }[];
   fmt?: (n: number) => string;
+  empty?: string;
 }) {
   if (items.length === 0) {
-    return <EmptyNote>No tool calls recorded.</EmptyNote>;
+    return <EmptyNote>{empty}</EmptyNote>;
   }
   const max = Math.max(...items.map((i) => i.count), 1);
   return (

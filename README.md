@@ -208,6 +208,7 @@ ccpeek query session claude-code <session-id>
 ccpeek query transcript pi <session-id> --limit 50
 ccpeek query usage --group model
 ccpeek query search "rate limiting"
+ccpeek query event-stats --kind api_error   # errors by class (also on the Insights page)
 
 # Serve the UI + API (--watch adds fsnotify re-indexing + SSE live updates)
 ccpeek --watch

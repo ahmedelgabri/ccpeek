@@ -95,6 +95,7 @@ func TestRegistryShape(t *testing.T) {
 		"archive-status", "sessions", "session", "transcript", "usage", "pricing", "search",
 		"commands", "history", "stats", "blocks", "scan", "scan-rules",
 		"artifacts", "artifact-kinds", "artifact", "tools", "tool",
+		"session-events", "event-stats", "tool-stats",
 	}
 	for _, name := range want {
 		if _, found := byName[name]; !found {
@@ -147,15 +148,18 @@ func TestLimitPolicyIsDeclaredWhereItIsEnforced(t *testing.T) {
 	// The pinned policy. Changing a limit is a contract change and must
 	// be a deliberate edit here as well as in query.
 	want := map[string]struct{ def, max int }{
-		"sessions":   {50, 500},
-		"transcript": {200, 1000},
-		"search":     {20, 100},
-		"commands":   {100, 1000},
-		"history":    {100, 0},
-		"blocks":     {24, 200},
-		"artifacts":  {100, 0},
-		"tools":      {0, 0},
-		"usage":      {0, 0},
+		"sessions":       {50, 500},
+		"transcript":     {200, 1000},
+		"search":         {20, 100},
+		"commands":       {100, 1000},
+		"history":        {100, 0},
+		"blocks":         {24, 200},
+		"artifacts":      {100, 0},
+		"tools":          {0, 0},
+		"usage":          {0, 0},
+		"session-events": {100, 1000},
+		"event-stats":    {0, 0},
+		"tool-stats":     {100, 1000},
 	}
 
 	svc := newService(t)
