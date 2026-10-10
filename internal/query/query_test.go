@@ -1746,3 +1746,45 @@ func TestEffortSplitsCostByLevel(t *testing.T) {
 		t.Errorf("effort cost %v does not add up to the session's %v", total, d.CostUSD)
 	}
 }
+
+// Resuming copies a session's history into the new file, so a turn exists
+// in every session of the chain; it is charged where it happened — the
+// session that ended first — whichever copy indexed first. Here the
+// resumed file sorts (and indexes) before its parent.
+func TestResumedTurnsAreChargedWhereTheyHappened(t *testing.T) {
+	const (
+		parent  = "ffffffff-0000-0000-0000-000000000001"
+		resumed = "00000000-0000-0000-0000-000000000002"
+	)
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	turn := func(session, n, ts string) string {
+		return `{"type":"assistant","sessionId":"` + session + `","timestamp":"` + ts + `","uuid":"u` + n + `","requestId":"req` + n + `",` +
+			`"message":{"id":"msg` + n + `","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1000,"output_tokens":100}}}` + "\n"
+	}
+	files := map[string]string{
+		parent:  turn(parent, "1", "2026-10-01T10:00:00Z") + turn(parent, "2", "2026-10-01T10:01:00Z"),
+		resumed: turn(parent, "1", "2026-10-01T10:00:00Z") + turn(parent, "2", "2026-10-01T10:01:00Z") + turn(resumed, "3", "2026-10-02T09:00:00Z"),
+	}
+	for id, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+	inputs := map[string]int64{}
+	for _, id := range []string{parent, resumed} {
+		d, err := s.Session(ctx, string(claude.Slug), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inputs[id] = d.Tokens.Input
+	}
+	if inputs[parent] != 2000 || inputs[resumed] != 1000 {
+		t.Errorf("input tokens = %v, want the parent charged its 2 turns and the resumed session its 1", inputs)
+	}
+}

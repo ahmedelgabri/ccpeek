@@ -31,6 +31,11 @@ func (r *Runner) reconcile(ctx context.Context, changed bool) (int, error) {
 		if _, _, err := r.store.ResolveArtifactLinks(ctx, r.linkRules()); err != nil {
 			return pending, err
 		}
+		// Before rollups: moving a turn's usage between sessions changes
+		// both sessions' days.
+		if _, err := r.store.AssignUsageOwners(ctx); err != nil {
+			return pending, err
+		}
 	}
 	// Even unchanged sources need repricing when the pricing snapshot changes
 	// or a migration leaves empty rollups. RefreshRollups chooses full versus
