@@ -48,8 +48,8 @@ func New() *Adapter { return &Adapter{threadNames: make(map[string]map[string]st
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces existing recoverable rollouts through the latest usage
-// normalization and session-title enrichment.
-func (*Adapter) ParseVersion() int { return 4 }
+// normalization, session-title enrichment, and session_meta model fallback.
+func (*Adapter) ParseVersion() int { return 5 }
 
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -150,6 +150,14 @@ type sessionMeta struct {
 	Git       struct {
 		Branch string `json:"branch"`
 	} `json:"git"`
+	// Current Codex writes the session's model only here; turn_context,
+	// the older carrier, appears in a minority of rollouts. Without this
+	// most Codex messages had no model and so no price.
+	BaseInstructions struct {
+		Provenance struct {
+			Model string `json:"model"`
+		} `json:"provenance"`
+	} `json:"base_instructions"`
 }
 
 type turnContext struct {
@@ -301,6 +309,9 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}
 				sess.CWD = meta.CWD
 				sess.GitBranch = meta.Git.Branch
+				// A turn_context seen later still wins: it records model
+				// switches within the session.
+				currentModel = cmp.Or(currentModel, meta.BaseInstructions.Provenance.Model)
 				if !meta.Timestamp.IsZero() {
 					sess.CreatedAt = meta.Timestamp
 				}

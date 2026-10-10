@@ -254,8 +254,33 @@ func TestCodexPromptTitleSkipsInjectedContext(t *testing.T) {
 }
 
 func TestParseVersionIncludesLatestNormalization(t *testing.T) {
-	if got := New().ParseVersion(); got != 4 {
-		t.Fatalf("ParseVersion() = %d, want 4", got)
+	if got := New().ParseVersion(); got != 5 {
+		t.Fatalf("ParseVersion() = %d, want 5", got)
+	}
+}
+
+// Current Codex rollouts name the model only in session_meta's
+// base_instructions provenance; most carry no turn_context at all. Messages
+// with no model cannot be priced, so the session_meta model must reach
+// them — while a later turn_context still records a switch.
+func TestSessionMetaModelReachesMessages(t *testing.T) {
+	src := writeRollout(t,
+		`{"timestamp":"2026-07-06T09:00:00.000Z","type":"session_meta","payload":{"id":"`+sessionID+`","cwd":"/w","base_instructions":{"provenance":{"type":"model","model":"gpt-6-astra"}}}}`,
+		`{"timestamp":"2026-07-06T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`,
+		`{"timestamp":"2026-07-06T09:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}`,
+		`{"timestamp":"2026-07-06T09:00:03.000Z","type":"turn_context","payload":{"model":"gpt-6-mini"}}`,
+		`{"timestamp":"2026-07-06T09:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"switched"}]}}`,
+	)
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var models []string
+	for _, m := range sink.Messages {
+		models = append(models, m.Model)
+	}
+	if want := []string{"gpt-6-astra", "gpt-6-astra", "gpt-6-mini"}; strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Errorf("message models = %v, want %v", models, want)
 	}
 }
 
