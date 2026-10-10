@@ -52,8 +52,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // thinking text and image locators; v5: legacy subagent files' parent link;
 // v6: continued-session and fork-point lineage; v7: error, abort and
 // denial events; v8: pull-request links; v9: turn and tool timing;
-// v10: compactions; v11: hook runs).
-func (*Adapter) ParseVersion() int { return 11 }
+// v10: compactions; v11: hook runs; v12: file change line counts).
+func (*Adapter) ParseVersion() int { return 12 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -165,6 +165,10 @@ type rawLine struct {
 		ExitCode   *int   `json:"exitCode"`
 		DurationMs int64  `json:"durationMs"`
 	} `json:"attachment"`
+
+	// The tool result's structured payload, on the line carrying the
+	// tool_result. Decoded only for file changes (see changeLines).
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
 
 	// type == "pr-link": a pull request the session opened or checked.
 	PRNumber     int    `json:"prNumber"`
@@ -818,7 +822,40 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 			})
 		}
 	}
+	// One tool result per line is the norm; the line-level payload belongs
+	// to it. With several, which one it describes is unknowable.
+	if len(results) == 1 {
+		results[0].Lines = changeLines(raw.ToolUseResult)
+	}
 	return msg, calls, results
+}
+
+// changeLines sizes a file change from its tool result: a new file by its
+// content, an edit or overwrite by its structured patch. Anything else
+// (reads, shell output, errors written as a bare string) is not a change.
+func changeLines(raw json.RawMessage) *canon.LineCounts {
+	if jsonl.FirstByte(raw) != '{' || !bytes.Contains(raw, []byte(`"structuredPatch"`)) {
+		return nil
+	}
+	var r struct {
+		Type            string `json:"type"`
+		Content         string `json:"content"`
+		StructuredPatch []struct {
+			Lines []string `json:"lines"`
+		} `json:"structuredPatch"`
+	}
+	if json.Unmarshal(raw, &r) != nil {
+		return nil
+	}
+	if r.Type == "create" {
+		return &canon.LineCounts{Added: canon.CountTextLines(r.Content)}
+	}
+	var lines []string
+	for _, h := range r.StructuredPatch {
+		lines = append(lines, h.Lines...)
+	}
+	c := canon.CountDiffLines(lines)
+	return &c
 }
 
 // hookEvent reads a hook run from an attachment line: completed runs

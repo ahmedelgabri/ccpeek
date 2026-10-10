@@ -95,7 +95,7 @@ func TestRegistryShape(t *testing.T) {
 		"archive-status", "sessions", "session", "transcript", "usage", "pricing", "search",
 		"commands", "history", "stats", "blocks", "scan", "scan-rules",
 		"artifacts", "artifact-kinds", "artifact", "tools", "tool",
-		"session-events", "event-stats", "tool-stats", "context",
+		"session-events", "event-stats", "tool-stats", "context", "changes",
 	}
 	for _, name := range want {
 		if _, found := byName[name]; !found {
@@ -160,6 +160,7 @@ func TestLimitPolicyIsDeclaredWhereItIsEnforced(t *testing.T) {
 		"session-events": {100, 1000},
 		"event-stats":    {0, 0},
 		"tool-stats":     {100, 1000},
+		"changes":        {0, 0},
 	}
 
 	svc := newService(t)

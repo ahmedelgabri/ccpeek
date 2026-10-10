@@ -315,3 +315,21 @@ func (h *handlers) sessionContext(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+func (h *handlers) changes(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.ChangesFilter{
+		GroupBy: p.Str("group"), Agent: p.Str("agent"),
+		Since: p.Str("since"), Until: p.Str("until"), Limit: p.Int("limit"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	out, err := h.svc.Changes(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

@@ -1621,3 +1621,85 @@ func TestHookRunsAggregatePerCommand(t *testing.T) {
 		}
 	}
 }
+
+// An edit's size comes from its structured patch, a new file's from its
+// content; both roll up per file and onto the session.
+func TestFileChangeLinesRollUp(t *testing.T) {
+	const id = "dddddddd-0000-0000-0000-00000000000e"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
+	call := func(uuid, tool, name, path string) string {
+		return `{"type":"assistant",` + head + `"uuid":"` + uuid + `","message":{"id":"m` + uuid + `","role":"assistant","content":[{"type":"tool_use","id":"` + tool + `","name":"` + name + `","input":{"file_path":"` + path + `"}}]}}` + "\n"
+	}
+	result := func(uuid, tool, payload string) string {
+		return `{"type":"user",` + head + `"uuid":"` + uuid + `","toolUseResult":` + payload + `,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + tool + `","content":"ok"}]}}` + "\n"
+	}
+	body := call("a", "t1", "Edit", "/w/a.go") +
+		result("b", "t1", `{"filePath":"/w/a.go","structuredPatch":[{"oldStart":1,"oldLines":2,"newStart":1,"newLines":3,"lines":[" keep","-old","+new","+more"]}]}`) +
+		call("c", "t2", "Write", "/w/b.go") +
+		result("d", "t2", `{"type":"create","filePath":"/w/b.go","content":"one\ntwo\nthree\n","structuredPatch":[]}`) +
+		call("e", "t3", "Read", "/w/a.go") +
+		result("f", "t3", `{"type":"text","file":{"filePath":"/w/a.go"}}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+	files, err := s.Changes(ctx, ChangesFilter{GroupBy: "file"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]ChangeRow{}
+	for _, f := range files {
+		got[f.Group] = f
+	}
+	if len(files) != 2 || got["/w/a.go"].Added != 2 || got["/w/a.go"].Removed != 1 || got["/w/b.go"].Added != 3 {
+		t.Errorf("changes by file = %+v", files)
+	}
+	d, err := s.Session(ctx, string(claude.Slug), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Lines == nil || d.Lines.Added != 5 || d.Lines.Removed != 1 || d.Lines.Files != 2 {
+		t.Errorf("session lines = %+v", d.Lines)
+	}
+}
+
+// Agents that pass relative paths would merge every repository's README.md
+// into one row; changed files resolve against the session's directory.
+func TestChangedFilesResolveAgainstSessionCWD(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "--w--")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i, cwd := range []string{"/repo/one", "/repo/two"} {
+		id := "rel-" + strconv.Itoa(i)
+		lines := []string{
+			`{"type":"session","version":3,"id":"` + id + `","timestamp":"2026-10-08T20:00:00.000Z","cwd":"` + cwd + `"}`,
+			`{"type":"message","id":"m1","parentId":null,"timestamp":"2026-10-08T20:00:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"write","arguments":{"path":"README.md","content":"hi\n"}}]}}`,
+		}
+		if err := os.WriteFile(filepath.Join(dir, "2026-10-08T20-00-00-000Z_"+id+".jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, table := newStore(t)
+	if _, err := ingest.New(store, table, pi.New()).Run(context.Background(), ingest.Options{
+		ConfigRoots: map[canon.AgentSlug][]string{pi.Slug: {root}},
+		Getenv:      func(string) string { return "" },
+		Home:        "/nonexistent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	files, err := New(store, table).Changes(context.Background(), ChangesFilter{GroupBy: "file"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Group == files[1].Group || !strings.HasPrefix(files[0].Group, "/repo/") {
+		t.Errorf("files = %+v, want /repo/one/README.md and /repo/two/README.md apart", files)
+	}
+}

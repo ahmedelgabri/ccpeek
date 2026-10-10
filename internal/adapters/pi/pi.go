@@ -42,8 +42,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // ParseVersion forces one full reparse after per-message provider/model,
 // summary-entry usage, fallback-title normalization, codemode scripts with
 // their nested calls, thinking text with image locators, error/abort
-// events, tool timing, and compaction events became canonical.
-func (*Adapter) ParseVersion() int { return 8 }
+// events, tool timing, compaction events, and file change line counts
+// became canonical.
+func (*Adapter) ParseVersion() int { return 9 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -148,6 +149,9 @@ type piMessage struct {
 	ToolName    string         `json:"toolName"`
 	IsError     bool           `json:"isError"`
 	NestedCalls *piNestedCalls `json:"nestedCalls"`
+	// Tool-specific; decoded on demand (editLines) because its shape
+	// varies by tool.
+	Details json.RawMessage `json:"details"`
 }
 
 // piNestedCalls is Pi's bounded record of the tools a tool ran itself
@@ -269,7 +273,14 @@ func toolCall(sessionID string, messageSeq, seq int, id, name string,
 ) canon.ToolCall {
 	var a piToolArgs
 	_ = json.Unmarshal(arguments, &a)
+	var lines *canon.LineCounts
+	if name == "write" {
+		// Pi's write result carries no diff; the content is the new file.
+		// An overwrite's removed lines are not recorded anywhere.
+		lines = &canon.LineCounts{Added: canon.CountTextLines(a.Content)}
+	}
 	return canon.ToolCall{
+		Lines:             lines,
 		SessionExternalID: sessionID,
 		MessageSeq:        messageSeq,
 		Seq:               seq,
@@ -381,6 +392,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					Status:            status,
 					Excerpt:           canon.TruncateBytes(strings.TrimSpace(msg.Text), canon.ToolResultExcerptLimit),
 					At:                e.Timestamp,
+					Lines:             editLines(dec.pm),
 				}); err != nil {
 					return err
 				}
@@ -459,6 +471,21 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 	// Final emit: the folded title and ModifiedAt.
 	return sink.Session(sess)
+}
+
+// editLines sizes an edit from its result's unified patch.
+func editLines(pm piMessage) *canon.LineCounts {
+	if pm.ToolName != "edit" || len(pm.Details) == 0 {
+		return nil
+	}
+	var d struct {
+		Patch string `json:"patch"`
+	}
+	if json.Unmarshal(pm.Details, &d) != nil || d.Patch == "" {
+		return nil
+	}
+	c := canon.CountDiffLines(strings.Split(d.Patch, "\n"))
+	return &c
 }
 
 // stopEvent turns an assistant turn that ended in error or was aborted

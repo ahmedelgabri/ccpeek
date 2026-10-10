@@ -65,6 +65,17 @@ export interface SessionDetail extends SessionSummary {
   subagentTotal?: SubagentTotal;
   /** Session events by kind (api_error, aborted, tool_denied, …). */
   events?: Record<string, number>;
+  /** File churn, where change sizes are known. */
+  lines?: { added: number; removed: number; files: number };
+}
+
+export interface ChangeRow {
+  group: string;
+  added: number;
+  removed: number;
+  changes: number;
+  files: number;
+  sessions: number;
 }
 
 export interface EventRow {
@@ -405,6 +416,14 @@ export const api = {
 
   sessionToolDetail: (agent: string, id: string, seq: number) =>
     get<ToolCallDetail>(`/sessions/${agent}/${id}/tools/${seq}`),
+
+  changes: (
+    f: InsightFilters & { group?: "day" | "agent" | "file"; limit?: number },
+  ) =>
+    get<ChangeRow[]>("/changes", {
+      ...f,
+      limit: f.limit ? String(f.limit) : "",
+    }),
 
   sessionContext: (agent: string, id: string) =>
     get<SessionContext>(`/sessions/${agent}/${id}/context`),

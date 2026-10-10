@@ -128,8 +128,8 @@ func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
 }
 
 func TestParseVersionIncludesCodemode(t *testing.T) {
-	if got := New().ParseVersion(); got != 8 {
-		t.Fatalf("ParseVersion() = %d, want 8", got)
+	if got := New().ParseVersion(); got != 9 {
+		t.Fatalf("ParseVersion() = %d, want 9", got)
 	}
 }
 

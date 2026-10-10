@@ -362,6 +362,27 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "changes",
+			Desc: "File churn — lines added and removed by agents' edits and writes — grouped by day, agent, or file (the most-changed files). Covers changes whose size the agent recorded.",
+			Params: []Param{
+				{
+					Name: "group", Type: "string", Default: "day",
+					Desc: "Group by: day | agent | file (default day)",
+					Enum: []string{"day", "agent", "file"},
+				},
+				agentParam,
+				sinceParam, untilParam,
+				limitParam("Maximum groups", query.ChangesLimit),
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.Changes(ctx, query.ChangesFilter{
+					GroupBy: a.Str["group"], Agent: a.Str["agent"],
+					Since: a.Str["since"], Until: a.Str["until"], Limit: a.Int["limit"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
 			Name: "context",
 			Desc: "One session's context fill: prompt tokens (input plus cache reads and writes) per model request in order, with the compactions that emptied it.",
 			Params: []Param{

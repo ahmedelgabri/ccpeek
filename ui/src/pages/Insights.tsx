@@ -1,6 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
-import { api, fmtCount, fmtTokens, type InsightFilters } from "../api";
+import {
+  api,
+  fmtCount,
+  fmtTokens,
+  shortPath,
+  type InsightFilters,
+} from "../api";
 import {
   AgentChip,
   EmptyNote,
@@ -18,7 +24,14 @@ import { Link } from "@tanstack/react-router";
 import { fmtDuration, fmtWhen, fullWhen } from "../time";
 import { EventList, groupPRs, PRLink } from "./insights/events";
 
-const TABS = ["errors", "prs", "timing", "compaction", "hooks"] as const;
+const TABS = [
+  "errors",
+  "prs",
+  "timing",
+  "compaction",
+  "hooks",
+  "changes",
+] as const;
 type Tab = (typeof TABS)[number];
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 
@@ -59,6 +72,7 @@ export function InsightsPage() {
       {tab === "timing" && <TimingTab f={f} />}
       {tab === "compaction" && <CompactionTab f={f} />}
       {tab === "hooks" && <HooksTab f={f} />}
+      {tab === "changes" && <ChangesTab f={f} />}
     </div>
   );
 }
@@ -69,6 +83,7 @@ const TAB_LABEL: Record<Tab, string> = {
   timing: "timing",
   compaction: "compaction",
   hooks: "hooks",
+  changes: "lines changed",
 };
 
 const ERROR_KINDS = "api_error,aborted,tool_denied";
@@ -532,6 +547,114 @@ function HooksTab({ f }: { f: InsightFilters }) {
             events={failing.data ?? []}
             empty="No failed hook runs in this range."
           />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+// ChangesTab: how much code the agents changed and where — lines added
+// and removed per agent, and the most-changed files. Sizes come from the
+// diffs agents record; changes without one are not counted.
+function ChangesTab({ f }: { f: InsightFilters }) {
+  const byAgent = useQuery({
+    queryKey: ["changes", "agent", f],
+    queryFn: () => api.changes({ ...f, group: "agent" }),
+  });
+  const files = useQuery({
+    queryKey: ["changes", "file", f],
+    queryFn: () => api.changes({ ...f, group: "file", limit: 50 }),
+  });
+  if (byAgent.error) return <LoadError error={byAgent.error} />;
+  const agents = byAgent.data ?? [];
+  const added = agents.reduce((n, a) => n + a.added, 0);
+  const removed = agents.reduce((n, a) => n + a.removed, 0);
+  const changes = agents.reduce((n, a) => n + a.changes, 0);
+  const fileRows = files.data ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile
+          label="Lines added"
+          value={<span className="text-ok">+{fmtCount(added)}</span>}
+        />
+        <StatTile
+          label="Lines removed"
+          value={<span className="text-warn">−{fmtCount(removed)}</span>}
+        />
+        <StatTile label="File changes" value={fmtCount(changes)} />
+        <StatTile
+          label="Net"
+          value={`${added - removed >= 0 ? "+" : "−"}${fmtCount(Math.abs(added - removed))}`}
+        />
+      </div>
+      <Panel label="Lines changed by agent">
+        {byAgent.isLoading ? (
+          <SkeletonRows rows={3} />
+        ) : (
+          <KindBars
+            items={agents.map((a) => ({
+              label: a.group,
+              count: a.added + a.removed,
+            }))}
+            fmt={fmtCount}
+            empty="No sized file changes in this range."
+          />
+        )}
+      </Panel>
+      <Panel label="Most-changed files">
+        {files.error ? (
+          <div className="px-3 py-3">
+            <LoadError error={files.error} />
+          </div>
+        ) : fileRows.length === 0 ? (
+          <EmptyNote>No sized file changes in this range.</EmptyNote>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left font-mono text-micro text-ink-faint">
+                <tr>
+                  <th className="px-3 py-1.5 font-normal">file</th>
+                  <th className="px-3 py-1.5 text-right font-normal">
+                    changes
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-normal">added</th>
+                  <th className="px-3 py-1.5 text-right font-normal">
+                    removed
+                  </th>
+                  <th className="px-3 py-1.5 text-right font-normal">
+                    sessions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+                {fileRows.map((r) => (
+                  <tr key={r.group}>
+                    <td
+                      className="max-w-lg truncate px-3 py-1.5"
+                      title={r.group}
+                    >
+                      {shortPath(r.group)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {fmtCount(r.changes)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-ok">
+                      +{fmtCount(r.added)}
+                    </td>
+                    <td
+                      className={`px-3 py-1.5 text-right ${r.removed > 0 ? "text-warn" : "text-ink-faint"}`}
+                    >
+                      {r.removed > 0 ? `−${fmtCount(r.removed)}` : "0"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-ink-faint">
+                      {fmtCount(r.sessions)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
     </div>

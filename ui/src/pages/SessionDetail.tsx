@@ -6,7 +6,14 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { api, fmtCount, fmtTokens, shortPath, type Relation } from "../api";
+import {
+  api,
+  fmtCount,
+  fmtTokens,
+  plural,
+  shortPath,
+  type Relation,
+} from "../api";
 import { ErrorPanel } from "../ErrorState";
 import {
   AgentChip,
@@ -281,6 +288,18 @@ function SessionContent() {
         )}
         <StatTile label="Messages" value={fmtCount(s.messages)} />
         <StatTile label="Tool calls" value={fmtCount(s.toolCalls)} />
+        {s.lines && (
+          <StatTile
+            label="Lines changed"
+            value={
+              <span className="tabular-nums">
+                <span className="text-ok">+{fmtCount(s.lines.added)}</span>{" "}
+                <span className="text-warn">−{fmtCount(s.lines.removed)}</span>
+              </span>
+            }
+            detail={plural(s.lines.files, "file")}
+          />
+        )}
         {s.subagentTotal && (
           <StatTile
             label="Subagent cost"

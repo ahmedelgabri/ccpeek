@@ -102,6 +102,7 @@ func Routes() []Route {
 		{"GET /api/v1/session-events", "session-events", "op", nil},
 		{"GET /api/v1/session-events/stats", "event-stats", "op", nil},
 		{"GET /api/v1/tool-stats", "tool-stats", "op", nil},
+		{"GET /api/v1/changes", "changes", "op", nil},
 		{"POST /api/v1/scan/{id}/ignore", "", "write", nil},
 	}
 }
@@ -169,6 +170,7 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 		"GET /api/v1/session-events":                                        h.sessionEvents,
 		"GET /api/v1/session-events/stats":                                  h.eventStats,
 		"GET /api/v1/tool-stats":                                            h.toolStats,
+		"GET /api/v1/changes":                                               h.changes,
 	}
 	for _, r := range Routes() {
 		fn, ok := byPattern[r.Pattern]

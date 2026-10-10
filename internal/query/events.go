@@ -435,3 +435,122 @@ func (s *Service) Context(ctx context.Context, agentSlug, externalID string) (*S
 	}
 	return out, err
 }
+
+// ChangesFilter narrows the changes op. GroupBy is day, agent, or file.
+type ChangesFilter struct {
+	GroupBy string
+	Agent   string
+	Since   string
+	Until   string
+	Limit   int
+}
+
+// ChangeRow is the size of the file changes in one group: lines added
+// and removed, how many changes, across how many files and sessions.
+type ChangeRow struct {
+	Group    string `json:"group"`
+	Added    int64  `json:"added"`
+	Removed  int64  `json:"removed"`
+	Changes  int    `json:"changes"`
+	Files    int    `json:"files"`
+	Sessions int    `json:"sessions"`
+}
+
+// changedFileExpr resolves a changed file against its session's working
+// directory: agents that pass relative paths (Pi) would otherwise merge
+// every repository's README.md into one row.
+const changedFileExpr = `CASE WHEN tc.file_path LIKE '/%' OR se.cwd = '' THEN tc.file_path
+	ELSE rtrim(se.cwd, '/') || '/' || tc.file_path END`
+
+var changeGroupExprs = map[string]string{
+	"day":   "substr(COALESCE(tc.started_at, ''), 1, 10)",
+	"agent": "a.slug",
+	"file":  changedFileExpr,
+}
+
+// Changes aggregates file changes whose size is known (tool calls with
+// line counts): churn per day, per agent, or the most-changed files.
+func (s *Service) Changes(ctx context.Context, f ChangesFilter) ([]ChangeRow, error) {
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return nil, err
+	}
+	if err := ChangesLimit.apply(&f.Limit); err != nil {
+		return nil, err
+	}
+	if f.GroupBy == "" {
+		f.GroupBy = "day"
+	}
+	groupExpr, ok := changeGroupExprs[f.GroupBy]
+	if !ok {
+		return nil, fmt.Errorf("%w: group=%q (want day, agent, or file)", ErrBadRequest, f.GroupBy)
+	}
+	where := []string{"tc.lines_added IS NOT NULL"}
+	var args []any
+	if f.Agent != "" {
+		where = append(where, "a.slug = ?")
+		args = append(args, f.Agent)
+	}
+	if f.Since != "" {
+		where = append(where, "tc.started_at >= ?")
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		where = append(where, "tc.started_at < ?")
+		args = append(args, exclusiveUntil(f.Until))
+	}
+	order := "SUM(tc.lines_added + tc.lines_removed) DESC, g"
+	if f.GroupBy == "day" {
+		order = "g"
+	}
+	limit := ""
+	if f.Limit > 0 {
+		limit = "LIMIT ?"
+		args = append(args, f.Limit)
+	}
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
+		SELECT `+groupExpr+` AS g, SUM(tc.lines_added), SUM(tc.lines_removed), COUNT(*),
+		       COUNT(DISTINCT `+changedFileExpr+`), COUNT(DISTINCT tc.session_id)
+		FROM tool_calls tc
+		JOIN sessions se ON se.id = tc.session_id
+		JOIN agents a ON a.id = se.agent_id
+		`+whereClause(where)+`
+		GROUP BY g
+		ORDER BY `+order+` `+limit, args...)
+	if err != nil {
+		return nil, fmt.Errorf("aggregating file changes: %w", err)
+	}
+	defer rows.Close()
+	var out []ChangeRow
+	for rows.Next() {
+		var r ChangeRow
+		if err := rows.Scan(&r.Group, &r.Added, &r.Removed, &r.Changes, &r.Files, &r.Sessions); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// LineTotals is one session's file churn.
+type LineTotals struct {
+	Added   int64 `json:"added"`
+	Removed int64 `json:"removed"`
+	Files   int   `json:"files"`
+}
+
+// attachLineTotals fills a session detail's file churn, when any change
+// in it has a known size.
+func (s *Service) attachLineTotals(ctx context.Context, rowID int64, detail *SessionDetail) error {
+	var t LineTotals
+	var n int
+	err := s.store.ReadDB().QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(lines_added), 0), COALESCE(SUM(lines_removed), 0),
+		       COUNT(DISTINCT file_path)
+		FROM tool_calls WHERE session_id = ? AND lines_added IS NOT NULL`, rowID).
+		Scan(&n, &t.Added, &t.Removed, &t.Files)
+	if err != nil || n == 0 {
+		return err
+	}
+	detail.Lines = &t
+	return nil
+}

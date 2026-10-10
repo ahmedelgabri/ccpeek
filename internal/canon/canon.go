@@ -11,6 +11,7 @@ package canon
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -255,6 +256,45 @@ type ToolCall struct {
 	// (Pi's nested calls); otherwise the store derives it from the
 	// result's arrival (ToolResult.At).
 	DurationMs int64
+	// Lines counts the lines a file change added and removed, when the
+	// call itself says (Codex patches, writes of a new file); nil when
+	// unknown. The result can supply it instead (ToolResult.Lines).
+	Lines *LineCounts
+}
+
+// LineCounts is a file change's size in lines.
+type LineCounts struct {
+	Added   int
+	Removed int
+}
+
+// CountDiffLines counts added and removed lines in diff text — unified
+// diffs, Codex patches, or Claude's structured patch lines — by their
+// +/- prefix. File headers ("+++ ", "--- ", "*** ") are not changes.
+func CountDiffLines(lines []string) LineCounts {
+	var c LineCounts
+	for _, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "+++ "), strings.HasPrefix(l, "--- "), strings.HasPrefix(l, "*** "):
+		case strings.HasPrefix(l, "+"):
+			c.Added++
+		case strings.HasPrefix(l, "-"):
+			c.Removed++
+		}
+	}
+	return c
+}
+
+// CountTextLines is the number of lines in text, as a new file's size.
+func CountTextLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	n := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		n++
+	}
+	return n
 }
 
 // ToolResultExcerptLimit bounds ResultExcerpt — a tool result is a whole
@@ -277,8 +317,9 @@ type ToolResult struct {
 	CallExternalID    string
 	Status            string // ok | error
 	Excerpt           string
-	Content           string    // full result when not retained in a message
-	At                time.Time // when the result arrived, if recorded
+	Content           string      // full result when not retained in a message
+	At                time.Time   // when the result arrived, if recorded
+	Lines             *LineCounts // a file change's size, when the result reports it
 }
 
 // EventKind names a session event: something an agent recorded about a

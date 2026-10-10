@@ -90,6 +90,7 @@ var (
 	ToolsLimit      = Limit{}
 	UsageLimit      = Limit{}
 	EventStatsLimit = Limit{}
+	ChangesLimit    = Limit{}
 )
 
 // apply turns a caller's limit into the one the query runs, IN PLACE:

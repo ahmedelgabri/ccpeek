@@ -386,6 +386,8 @@ type SessionDetail struct {
 	// Events counts the session's events by kind; list them with the
 	// session-events op.
 	Events map[string]int `json:"events,omitempty"`
+	// Lines is the session's file churn, where change sizes are known.
+	Lines *LineTotals `json:"lines,omitempty"`
 }
 
 // SubagentTotal is the usage and cost of all of a session's descendant
@@ -424,6 +426,9 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		}
 	}
 	if err := s.attachEventCounts(ctx, rowID, detail); err != nil {
+		return nil, err
+	}
+	if err := s.attachLineTotals(ctx, rowID, detail); err != nil {
 		return nil, err
 	}
 

@@ -150,3 +150,23 @@ Claude Code records every hook run as an `attachment` line: `hook_success` (hook
 - The Insights "hooks" tab shows runs, failures, time in hooks, runs per hook event, a per-command table (runs, failures, avg, max, total), and the failed or blocked runs linked to their transcripts.
 
 Local result: 55,226 hook runs taking 39 minutes in total. 846 failed, mostly async hooks exiting 127 (command not found), and 8 blocked the agent.
+
+## Lines changed
+
+Claude's edit and write results carry `toolUseResult.structuredPatch` (and the full content for a new file), and Pi's edit results carry a unified `details.patch`. ccpeek could not say how much code an agent changed, or where.
+
+- `canon.CountDiffLines` counts `+`/`-` lines in any of these diff shapes, skipping file headers. `canon.CountTextLines` sizes a new file.
+- Schema v22 adds `tool_calls.lines_added` and `lines_removed`, NULL when unknown. A size comes either with the call (`ToolCall.Lines`) or with its result (`ToolResult.Lines`).
+- Claude sizes a `create` by its content and an edit or overwrite by its patch. Pi sizes edits by their patch and writes by their content.
+- `ParseVersion`: Claude 12, Pi 9.
+- New `changes` op: lines added and removed, change count, files and sessions, grouped by day, agent or file. Relative paths resolve against the session's working directory; otherwise every repository's `README.md` would merge into one row.
+- `session` reports `lines` (added, removed, files).
+- UI: sessions with sized changes get a "Lines changed" tile. The Insights "lines changed" tab shows totals, net, lines per agent, and the 50 most-changed files.
+
+Coverage and limits:
+
+- Sized locally: 8,360 of 11,238 Claude edits, 2,749 of 3,344 Claude writes, 3,528 of 6,283 Pi edits, and all 1,597 Pi writes. Older Claude versions and some Pi edits record no patch.
+- A Pi write that overwrites a file records no removed lines anywhere, so its removals count as zero.
+- Codex `apply_patch` was not sized: no local rollout contains one to verify the format against.
+
+Local result: +529,888 / −71,085 lines across 16,234 sized changes.

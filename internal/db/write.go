@@ -396,14 +396,15 @@ func (w *Writer) InsertToolCall(sessionID int64, tc canon.ToolCall) error {
 		INSERT INTO tool_calls
 			(session_id, message_seq, seq, external_id, name, kind, input_json,
 			 result_status, result_excerpt, file_path, command, old_text, new_text,
-			 started_at, started_ms, duration_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 started_at, started_ms, duration_ms, lines_added, lines_removed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, tc.MessageSeq, tc.Seq, tc.ExternalID, tc.Name, string(kind), input,
 		tc.ResultStatus, tc.ResultExcerpt, tc.FilePath,
 		tc.Command,
 		canon.TruncateBytes(tc.OldText, canon.ToolEditExcerptLimit),
 		canon.TruncateBytes(tc.NewText, canon.ToolEditExcerptLimit),
-		timeText(tc.StartedAt), unixMillis(tc.StartedAt), positive(tc.DurationMs))
+		timeText(tc.StartedAt), unixMillis(tc.StartedAt), positive(tc.DurationMs),
+		linesAdded(tc.Lines), linesRemoved(tc.Lines))
 	if err != nil {
 		return fmt.Errorf("inserting tool call seq %d (%s): %w", tc.Seq, tc.Name, err)
 	}
@@ -440,10 +441,13 @@ func (w *Writer) UpdateToolCallResult(sessionID int64, res canon.ToolResult) err
 			duration_ms = CASE
 				WHEN ? IS NOT NULL AND started_ms IS NOT NULL AND ? >= started_ms THEN ? - started_ms
 				ELSE duration_ms
-			END
+			END,
+			lines_added = COALESCE(?, lines_added),
+			lines_removed = COALESCE(?, lines_removed)
 		WHERE session_id = ? AND external_id = ?`,
 		res.Status, res.Excerpt, res.Content,
 		unixMillis(res.At), unixMillis(res.At), unixMillis(res.At),
+		linesAdded(res.Lines), linesRemoved(res.Lines),
 		sessionID, res.CallExternalID)
 	if err != nil {
 		return fmt.Errorf("updating tool call result %s: %w", res.CallExternalID, err)
@@ -828,6 +832,20 @@ func (s *Store) ResolvePending(ctx context.Context, ageAttempts bool) (resolved,
 		return 0, 0, err
 	}
 	return int(nRel + nArt), left, nil
+}
+
+func linesAdded(c *canon.LineCounts) any {
+	if c == nil {
+		return nil
+	}
+	return c.Added
+}
+
+func linesRemoved(c *canon.LineCounts) any {
+	if c == nil {
+		return nil
+	}
+	return c.Removed
 }
 
 // unixMillis is t in Unix milliseconds, or NULL when unknown.

@@ -212,6 +212,7 @@ func TestListContractsEncodeEmptyAsArray(t *testing.T) {
 		"/api/v1/session-events",
 		"/api/v1/session-events/stats",
 		"/api/v1/tool-stats",
+		"/api/v1/changes",
 	}
 	for _, path := range lists {
 		code, body := rawGet(t, h, path)
@@ -256,6 +257,7 @@ func TestParamContractsRejectMalformedInput(t *testing.T) {
 		"/api/v1/tool-stats?limit=-1",
 		"/api/v1/session-events?sort=random",
 		"/api/v1/tool-stats?sort=random",
+		"/api/v1/changes?group=week",
 	}
 	for _, path := range bad {
 		code, body := rawGet(t, h, path)
