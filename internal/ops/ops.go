@@ -383,6 +383,26 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "effort",
+			Desc: "Model requests, tokens and cost split by the reasoning effort or thinking level they ran at (Claude effort, Pi thinking level, Codex effort), per agent or per day. Level is empty where the agent recorded none.",
+			Params: []Param{
+				{
+					Name: "group", Type: "string", Default: "level",
+					Desc: "Group by: level (per agent) | day (default level)",
+					Enum: []string{"level", "day"},
+				},
+				agentParam,
+				sinceParam, untilParam,
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.Effort(ctx, query.EffortFilter{
+					GroupBy: a.Str["group"], Agent: a.Str["agent"],
+					Since: a.Str["since"], Until: a.Str["until"],
+				})
+				return out, len(out) == 0, err
+			},
+		},
+		{
 			Name: "context",
 			Desc: "One session's context fill: prompt tokens (input plus cache reads and writes) per model request in order, with the compactions that emptied it.",
 			Params: []Param{

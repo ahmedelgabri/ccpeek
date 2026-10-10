@@ -554,3 +554,118 @@ func (s *Service) attachLineTotals(ctx context.Context, rowID int64, detail *Ses
 	detail.Lines = &t
 	return nil
 }
+
+// EffortFilter narrows the effort op. GroupBy is level (per agent, the
+// default) or day.
+type EffortFilter struct {
+	GroupBy string
+	Agent   string
+	Since   string
+	Until   string
+}
+
+// EffortRow is the model requests run at one effort level — per agent, or
+// per day — with their tokens and cost. Level is "" where the agent did
+// not record one.
+type EffortRow struct {
+	Agent          string      `json:"agent,omitempty"`
+	Day            string      `json:"day,omitempty"`
+	Level          string      `json:"level"`
+	Requests       int         `json:"requests"`
+	Tokens         TokenTotals `json:"tokens"`
+	CostUSD        float64     `json:"costUSD"`
+	CostUSDExact   string      `json:"costUSDExact"`
+	UnpricedTokens int64       `json:"unpricedTokens,omitempty"`
+}
+
+// effortSep joins a group's two parts into one key; it cannot appear in a
+// slug, a date, or an effort level.
+const effortSep = "\x1f"
+
+// Effort splits model requests, tokens and cost by the reasoning effort or
+// thinking level they ran at.
+func (s *Service) Effort(ctx context.Context, f EffortFilter) ([]EffortRow, error) {
+	if err := checkWindow(f.Since, f.Until); err != nil {
+		return nil, err
+	}
+	if f.GroupBy == "" {
+		f.GroupBy = "level"
+	}
+	var first string
+	switch f.GroupBy {
+	case "level":
+		first = "a.slug"
+	case "day":
+		first = "substr(COALESCE(m.created_at, ''), 1, 10)"
+	default:
+		return nil, fmt.Errorf("%w: group=%q (want level or day)", ErrBadRequest, f.GroupBy)
+	}
+	key := first + " || char(31) || m.effort"
+	where := []string{"m.role = 'assistant'"}
+	var args []any
+	if f.Agent != "" {
+		where = append(where, "a.slug = ?")
+		args = append(args, f.Agent)
+	}
+	if f.Since != "" {
+		where = append(where, "m.created_at >= ?")
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		where = append(where, "m.created_at < ?")
+		args = append(args, exclusiveUntil(f.Until))
+	}
+	from := `FROM message_usage u
+		JOIN messages m ON m.id = u.message_id
+		JOIN sessions se ON se.id = m.session_id
+		JOIN agents a ON a.id = se.agent_id
+		` + whereClause(where)
+
+	keyRows, err := s.store.ReadDB().QueryContext(ctx, `SELECT DISTINCT `+key+` AS k `+from+` ORDER BY k`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing effort groups: %w", err)
+	}
+	slots := map[string]int{}
+	var out []EffortRow
+	for keyRows.Next() {
+		var k string
+		if err := keyRows.Scan(&k); err != nil {
+			keyRows.Close()
+			return nil, err
+		}
+		head, level, _ := strings.Cut(k, effortSep)
+		row := EffortRow{Level: level}
+		if f.GroupBy == "day" {
+			row.Day = head
+		} else {
+			row.Agent = head
+		}
+		slots[k] = len(out)
+		out = append(out, row)
+	}
+	keyRows.Close()
+	if err := keyRows.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.store.ReadDB().QueryContext(ctx, `SELECT `+key+`, `+usageCostColumns+` `+from, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pricing effort groups: %w", err)
+	}
+	sums := make([]SessionSummary, len(out))
+	counts, err := s.priceUsageRows(rows, func(k string) (int, bool) {
+		i, ok := slots[k]
+		return i, ok
+	}, sums)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Requests = counts[i]
+		out[i].Tokens = sums[i].Tokens
+		out[i].CostUSD = sums[i].CostUSD
+		out[i].CostUSDExact = sums[i].CostUSDExact
+		out[i].UnpricedTokens = sums[i].UnpricedTokens
+	}
+	return out, nil
+}

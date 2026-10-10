@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 22
+const schemaVersion = 23
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS messages (
 	-- of content by the adapter; '' when the entry has none.
 	thinking_text TEXT NOT NULL DEFAULT '',
 	images_json TEXT NOT NULL DEFAULT '',
+	-- Reasoning effort / thinking level in effect (canon.Message.Effort).
+	effort TEXT NOT NULL DEFAULT '',
 	UNIQUE (session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
@@ -656,6 +658,10 @@ var migrations = []migration{
 			}
 		}
 		return nil
+	},
+	// v23: per-message effort, filled as sources reparse.
+	func(ctx context.Context, tx *sql.Tx) error {
+		return addColumn(ctx, tx, "messages", "effort", "TEXT NOT NULL DEFAULT ''")
 	},
 }
 

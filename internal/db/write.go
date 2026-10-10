@@ -251,12 +251,12 @@ func (w *Writer) InsertMessage(sessionID int64, agent canon.AgentSlug, msg canon
 		INSERT INTO messages
 			(session_id, seq, external_id, parent_external_id, content_id,
 			 role, kind, created_at, provider, model, cwd, is_sidechain, content, text_content, usage_request_id,
-			 thinking_text, images_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 thinking_text, images_json, effort)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, msg.Seq, msg.ExternalID, msg.ParentExternalID, msg.ContentID,
 		string(msg.Role), kindText(msg.Kind), timeText(msg.CreatedAt),
 		msg.Provider, msg.Model, msg.CWD, boolInt(msg.IsSidechain), string(msg.Content), msg.Text, requestID,
-		msg.Thinking, imagesJSON(msg.Images))
+		msg.Thinking, imagesJSON(msg.Images), msg.Effort)
 	if err != nil {
 		return fmt.Errorf("inserting message seq %d: %w", msg.Seq, err)
 	}

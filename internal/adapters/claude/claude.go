@@ -52,8 +52,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // thinking text and image locators; v5: legacy subagent files' parent link;
 // v6: continued-session and fork-point lineage; v7: error, abort and
 // denial events; v8: pull-request links; v9: turn and tool timing;
-// v10: compactions; v11: hook runs; v12: file change line counts).
-func (*Adapter) ParseVersion() int { return 12 }
+// v10: compactions; v11: hook runs; v12: file change line counts;
+// v13: per-turn effort).
+func (*Adapter) ParseVersion() int { return 13 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -165,6 +166,11 @@ type rawLine struct {
 		ExitCode   *int   `json:"exitCode"`
 		DurationMs int64  `json:"durationMs"`
 	} `json:"attachment"`
+
+	// Assistant lines: the session's effort setting and, when the turn
+	// overrode it, the turn's own.
+	Effort        string `json:"effort"`
+	PerTurnEffort string `json:"perTurnEffort"`
 
 	// The tool result's structured payload, on the line carrying the
 	// tool_result. Decoded only for file changes (see changeLines).
@@ -821,6 +827,9 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 				At:                raw.Timestamp,
 			})
 		}
+	}
+	if msg.Role == canon.RoleAssistant {
+		msg.Effort = cmp.Or(raw.PerTurnEffort, raw.Effort)
 	}
 	// One tool result per line is the norm; the line-level payload belongs
 	// to it. With several, which one it describes is unknowable.

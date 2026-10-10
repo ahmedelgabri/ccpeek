@@ -48,9 +48,9 @@ func New() *Adapter { return &Adapter{threadNames: make(map[string]map[string]st
 func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces existing recoverable rollouts through the latest usage
-// normalization, session-title enrichment, session_meta model fallback, and
-// turn and tool timing.
-func (*Adapter) ParseVersion() int { return 6 }
+// normalization, session-title enrichment, session_meta model fallback,
+// turn and tool timing, and reasoning effort.
+func (*Adapter) ParseVersion() int { return 7 }
 
 // RootSpec implements agent.Adapter: Codex relocates via CODEX_HOME.
 func (*Adapter) RootSpec() agent.RootSpec {
@@ -162,8 +162,9 @@ type sessionMeta struct {
 }
 
 type turnContext struct {
-	Model string `json:"model"`
-	CWD   string `json:"cwd"`
+	Model  string `json:"model"`
+	CWD    string `json:"cwd"`
+	Effort string `json:"effort"`
 }
 
 type responseItem struct {
@@ -249,6 +250,9 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		tokens       tokenState
 		pendingAsst  *canon.Message
 		emitted      bool
+
+		// From turn_context, which few rollouts carry; empty otherwise.
+		currentEffort string
 	)
 	emitSession := func() error {
 		if emitted {
@@ -328,8 +332,9 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 		case "turn_context":
 			var tc turnContext
-			if json.Unmarshal(line.Payload, &tc) == nil && tc.Model != "" {
-				currentModel = tc.Model
+			if json.Unmarshal(line.Payload, &tc) == nil {
+				currentModel = cmp.Or(tc.Model, currentModel)
+				currentEffort = cmp.Or(tc.Effort, currentEffort)
 			}
 
 		case "response_item":
@@ -359,6 +364,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 					}
 				}
 				if msg.Role == canon.RoleAssistant {
+					msg.Effort = currentEffort
 					pendingAsst = &msg
 					return nil
 				}
@@ -474,6 +480,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				Kind:      canon.KindInfo,
 				CreatedAt: line.Timestamp,
 				Model:     currentModel,
+				Effort:    currentEffort,
 				Content:   line.Payload,
 				Usage:     usage,
 			}

@@ -124,7 +124,7 @@ func TestV13CostMigrationPreservesArchiveAndAddsColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	for table, columns := range map[string][]string{
-		"messages":           {"provider", "text_content", "usage_request_id", "thinking_text", "images_json"},
+		"messages":           {"provider", "text_content", "usage_request_id", "thinking_text", "images_json", "effort"},
 		"tool_calls":         {"result_content", "started_ms", "duration_ms", "lines_added", "lines_removed"},
 		"message_usage":      {"cache_write_1h_tokens", "reported_cost_nanos"},
 		"source_files":       {"parse_version"},

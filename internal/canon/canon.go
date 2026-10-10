@@ -165,8 +165,11 @@ type Message struct {
 	// the clear. Kept apart from Text so search and titles stay on what
 	// was said, not on what was considered.
 	Thinking string
-	Images   []ImageRef // images carried inside Content
-	Usage    *Usage     // assistant entries that report usage
+	// Effort is the reasoning effort or thinking level the agent ran the
+	// entry at (low … max), where it records one.
+	Effort string
+	Images []ImageRef // images carried inside Content
+	Usage  *Usage     // assistant entries that report usage
 }
 
 // ImageRef locates one image inside Message.Content. Pointer is an RFC

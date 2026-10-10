@@ -69,6 +69,17 @@ export interface SessionDetail extends SessionSummary {
   lines?: { added: number; removed: number; files: number };
 }
 
+export interface EffortRow {
+  agent?: string;
+  day?: string;
+  level: string;
+  requests: number;
+  tokens: TokenTotals;
+  costUSD: number;
+  costUSDExact: string;
+  unpricedTokens?: number;
+}
+
 export interface ChangeRow {
   group: string;
   added: number;
@@ -424,6 +435,9 @@ export const api = {
       ...f,
       limit: f.limit ? String(f.limit) : "",
     }),
+
+  effort: (f: InsightFilters & { group?: "level" | "day" }) =>
+    get<EffortRow[]>("/effort", f),
 
   sessionContext: (agent: string, id: string) =>
     get<SessionContext>(`/sessions/${agent}/${id}/context`),

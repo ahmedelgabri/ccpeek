@@ -170,3 +170,18 @@ Coverage and limits:
 - Codex `apply_patch` was not sized: no local rollout contains one to verify the format against.
 
 Local result: +529,888 / −71,085 lines across 16,234 sized changes.
+
+## Effort and thinking level
+
+Claude assistant lines carry `effort` and, when a turn overrides it, `perTurnEffort`. Pi stamps `thinkingLevel` on newer assistant messages and records changes as `thinking_level_change` entries. Codex `turn_context` carries `effort`, but only in a few rollouts. Nothing connected a level to what it cost.
+
+- `canon.Message.Effort`, stored in `messages.effort` (schema v23), is set on assistant entries:
+  - Claude: `perTurnEffort`, else `effort`.
+  - Pi: the message's own level, else the last level change.
+  - Codex: the last `turn_context` effort.
+- `ParseVersion`: Claude 13, Pi 10, Codex 7.
+- The session-cost pricing loop became `priceUsageRows`, which prices usage rows into slots under any string key. Sessions and effort share it, so a level's cost is computed exactly like a session's.
+- New `effort` op: requests, tokens and cost per level, per agent (`group=level`) or per day. Level is empty where none was recorded.
+- The Insights "effort" tab shows requests with a level, the most used level, cost at a recorded level, a per-day stacked chart, and a per-agent level table with cost per request. The chart uses one hue stepped light to dark because levels are ordinal; "not recorded" is neutral gray.
+
+Local result: Claude ran 14.6k requests at high and 3.7k at xhigh. Pi ran 15.3k at high and 14.9k at xhigh. 38.8k Claude requests predate the field.

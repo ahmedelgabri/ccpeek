@@ -333,3 +333,21 @@ func (h *handlers) changes(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+func (h *handlers) effort(w http.ResponseWriter, r *http.Request) {
+	p := newParams(r)
+	f := query.EffortFilter{
+		GroupBy: p.Str("group"), Agent: p.Str("agent"),
+		Since: p.Str("since"), Until: p.Str("until"),
+	}
+	if err := p.Err(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	out, err := h.svc.Effort(r.Context(), f)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

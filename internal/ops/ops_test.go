@@ -95,7 +95,7 @@ func TestRegistryShape(t *testing.T) {
 		"archive-status", "sessions", "session", "transcript", "usage", "pricing", "search",
 		"commands", "history", "stats", "blocks", "scan", "scan-rules",
 		"artifacts", "artifact-kinds", "artifact", "tools", "tool",
-		"session-events", "event-stats", "tool-stats", "context", "changes",
+		"session-events", "event-stats", "tool-stats", "context", "changes", "effort",
 	}
 	for _, name := range want {
 		if _, found := byName[name]; !found {

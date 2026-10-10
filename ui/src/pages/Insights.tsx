@@ -23,6 +23,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { fmtDuration, fmtWhen, fullWhen } from "../time";
 import { EventList, groupPRs, PRLink } from "./insights/events";
+import { EffortTab } from "./insights/effort";
 
 const TABS = [
   "errors",
@@ -31,6 +32,7 @@ const TABS = [
   "compaction",
   "hooks",
   "changes",
+  "effort",
 ] as const;
 type Tab = (typeof TABS)[number];
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
@@ -73,6 +75,7 @@ export function InsightsPage() {
       {tab === "compaction" && <CompactionTab f={f} />}
       {tab === "hooks" && <HooksTab f={f} />}
       {tab === "changes" && <ChangesTab f={f} />}
+      {tab === "effort" && <EffortTab f={f} />}
     </div>
   );
 }
@@ -84,6 +87,7 @@ const TAB_LABEL: Record<Tab, string> = {
   compaction: "compaction",
   hooks: "hooks",
   changes: "lines changed",
+  effort: "effort",
 };
 
 const ERROR_KINDS = "api_error,aborted,tool_denied";

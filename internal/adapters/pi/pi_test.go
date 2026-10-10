@@ -128,8 +128,8 @@ func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
 }
 
 func TestParseVersionIncludesCodemode(t *testing.T) {
-	if got := New().ParseVersion(); got != 9 {
-		t.Fatalf("ParseVersion() = %d, want 9", got)
+	if got := New().ParseVersion(); got != 10 {
+		t.Fatalf("ParseVersion() = %d, want 10", got)
 	}
 }
 
@@ -423,5 +423,33 @@ func TestCompactionEntryBecomesEvent(t *testing.T) {
 	}
 	if len(found) != 1 || !strings.Contains(string(found[0].Payload), `"preTokens":9888`) {
 		t.Errorf("compaction events = %+v, want one at 9888 tokens", found)
+	}
+}
+
+// Older Pi sessions record the thinking level only as change entries; the
+// level in effect rides on each assistant turn, and a level stamped on
+// the turn itself wins.
+func TestThinkingLevelBecomesEffort(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "--w--")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"session","version":3,"id":"eff-1","timestamp":"2026-10-08T20:00:00.000Z","cwd":"/w"}`,
+		`{"type":"thinking_level_change","id":"t1","parentId":null,"timestamp":"2026-10-08T20:00:00.500Z","thinkingLevel":"high"}`,
+		`{"type":"message","id":"m1","parentId":"t1","timestamp":"2026-10-08T20:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"a"}]}}`,
+		`{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-10-08T20:00:02.000Z","message":{"role":"assistant","thinkingLevel":"max","content":[{"type":"text","text":"b"}]}}`,
+	}
+	path := filepath.Join(dir, "2026-10-08T20-00-00-000Z_eff-1.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{Path: path, Root: agent.Root{Agent: Slug, Path: root}}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Messages) != 2 || sink.Messages[0].Effort != "high" || sink.Messages[1].Effort != "max" {
+		t.Errorf("efforts = %+v", sink.Messages)
 	}
 }

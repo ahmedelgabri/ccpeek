@@ -42,9 +42,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // ParseVersion forces one full reparse after per-message provider/model,
 // summary-entry usage, fallback-title normalization, codemode scripts with
 // their nested calls, thinking text with image locators, error/abort
-// events, tool timing, compaction events, and file change line counts
-// became canonical.
-func (*Adapter) ParseVersion() int { return 9 }
+// events, tool timing, compaction events, file change line counts, and
+// per-turn thinking level became canonical.
+func (*Adapter) ParseVersion() int { return 10 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -112,6 +112,9 @@ type entry struct {
 	Provider string `json:"provider"`
 	ModelID  string `json:"modelId"`
 
+	// type == "thinking_level_change"
+	ThinkingLevel string `json:"thinkingLevel"`
+
 	// type == "compaction" | "branch_summary"
 	Summary          string   `json:"summary"`
 	FirstKeptEntryID string   `json:"firstKeptEntryId"`
@@ -140,6 +143,10 @@ type piMessage struct {
 
 	// role == "toolResult": the outcome of an earlier toolCall block,
 	// delivered as its own message entry.
+	// role == "assistant": the thinking level the turn ran at (newer Pi;
+	// older sessions only record level changes as entries).
+	ThinkingLevel string `json:"thinkingLevel"`
+
 	// role == "assistant": why the turn ended; "error" and "aborted" carry
 	// errorMessage.
 	StopReason   string `json:"stopReason"`
@@ -319,6 +326,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		toolCount       int
 		currentProvider string
 		currentModel    string
+		currentThinking string
 	)
 
 	scanErr := jsonl.Scan(f, maxLineBytes, func(lineNo int, line []byte) error {
@@ -369,10 +377,17 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 			sess.ModifiedAt = e.Timestamp
 		}
 
+		if e.Type == "thinking_level_change" {
+			currentThinking = e.ThinkingLevel
+			return nil
+		}
 		msg, dec, ok := a.convertEntry(e, messageCount, &sess,
 			&currentProvider, &currentModel)
 		if !ok {
 			return nil
+		}
+		if msg.Role == canon.RoleAssistant && msg.Kind == canon.KindMessage {
+			msg.Effort = cmp.Or(dec.pm.ThinkingLevel, currentThinking)
 		}
 		msg.SessionExternalID = sess.ExternalID
 

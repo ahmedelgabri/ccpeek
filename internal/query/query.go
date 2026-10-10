@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -266,11 +267,7 @@ func (s *Service) accumulateCosts(ctx context.Context, byRow map[int64]int, sums
 	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT m.session_id, m.provider, m.model,
-		       COALESCE(m.created_at, se.created_at, ''),
-		       u.input_tokens, u.output_tokens, u.cache_read_tokens,
-		       u.cache_write_tokens, u.cache_write_1h_tokens,
-		       `+db.ReportedCostNanosExpr+`
+		SELECT m.session_id, `+usageCostColumns+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
@@ -279,24 +276,49 @@ func (s *Service) accumulateCosts(ctx context.Context, byRow map[int64]int, sums
 	if err != nil {
 		return err
 	}
+	_, err = s.priceUsageRows(rows, func(key string) (int, bool) {
+		id, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		i, ok := byRow[id]
+		return i, ok
+	}, sums)
+	return err
+}
+
+// usageCostColumns are the columns priceUsageRows reads after its key, from
+// `message_usage u JOIN messages m JOIN sessions se`.
+const usageCostColumns = `m.provider, m.model,
+	COALESCE(m.created_at, se.created_at, ''),
+	u.input_tokens, u.output_tokens, u.cache_read_tokens,
+	u.cache_write_tokens, u.cache_write_1h_tokens,
+	` + db.ReportedCostNanosExpr
+
+// priceUsageRows prices usage rows (a string key, then usageCostColumns)
+// into the summary slot each key maps to, and returns how many rows each
+// slot received. It is the one place a usage row becomes a cost: sessions
+// group by session, other reads by whatever key they select.
+func (s *Service) priceUsageRows(rows *sql.Rows, slot func(key string) (int, bool), sums []SessionSummary) ([]int, error) {
 	defer rows.Close()
+	counts := make([]int, len(sums))
 	amounts := make([]pricing.Amount, len(sums))
 	reportedAmounts := make([]pricing.Amount, len(sums))
 	estimatedAmounts := make([]pricing.Amount, len(sums))
 	for rows.Next() {
-		var sessionID int64
-		var provider, model, occurredAt string
+		var key, provider, model, occurredAt string
 		var usage canon.Usage
 		var reported sql.NullInt64
-		if err := rows.Scan(&sessionID, &provider, &model, &occurredAt,
+		if err := rows.Scan(&key, &provider, &model, &occurredAt,
 			&usage.InputTokens, &usage.OutputTokens, &usage.CacheReadTokens,
 			&usage.CacheWriteTokens, &usage.CacheWrite1hTokens, &reported); err != nil {
-			return err
+			return nil, err
 		}
-		i, found := byRow[sessionID]
+		i, found := slot(key)
 		if !found {
 			continue
 		}
+		counts[i]++
 		sum := &sums[i]
 		sum.Tokens.Input += usage.InputTokens
 		sum.Tokens.Output += usage.OutputTokens
@@ -310,21 +332,21 @@ func (s *Service) accumulateCosts(ctx context.Context, byRow map[int64]int, sums
 		result, err := db.EvaluateCostAt(s.pricer, provider, model,
 			db.ParseCostTime(occurredAt), usage, reportedAmount)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if amounts[i], err = amounts[i].Add(result.Amount); err != nil {
-			return err
+			return nil, err
 		}
 		if reportedAmounts[i], err = reportedAmounts[i].Add(result.Reported); err != nil {
-			return err
+			return nil, err
 		}
 		if estimatedAmounts[i], err = estimatedAmounts[i].Add(result.Estimated); err != nil {
-			return err
+			return nil, err
 		}
 		addUnpriced(&sum.UnpricedTokens, &sum.UnpricedTokenTypes, result.Unpriced)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	for i := range sums {
 		sums[i].CostUSD = amounts[i].USD()
@@ -334,7 +356,7 @@ func (s *Service) accumulateCosts(ctx context.Context, byRow map[int64]int, sums
 		sums[i].CostEstimatedUSD = estimatedAmounts[i].USD()
 		sums[i].CostEstimatedUSDExact = estimatedAmounts[i].String()
 	}
-	return nil
+	return counts, nil
 }
 
 func addUnpriced(total *int64, breakdown **TokenTotals, u canon.Usage) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1701,5 +1702,47 @@ func TestChangedFilesResolveAgainstSessionCWD(t *testing.T) {
 	}
 	if len(files) != 2 || files[0].Group == files[1].Group || !strings.HasPrefix(files[0].Group, "/repo/") {
 		t.Errorf("files = %+v, want /repo/one/README.md and /repo/two/README.md apart", files)
+	}
+}
+
+// Effort splits a session's requests and cost by the level each turn ran
+// at — a per-turn override beats the session setting — and the split adds
+// up to the session's own cost.
+func TestEffortSplitsCostByLevel(t *testing.T) {
+	const id = "eeeeeeee-0000-0000-0000-00000000000f"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req := func(uuid, effort string) string {
+		return `{"type":"assistant","sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z","uuid":"` + uuid + `","requestId":"r` + uuid + `",` + effort +
+			`"message":{"id":"m` + uuid + `","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1000,"output_tokens":100}}}` + "\n"
+	}
+	body := req("a", `"effort":"high",`) + req("b", `"effort":"high","perTurnEffort":"medium",`) + req("c", `"effort":"high",`)
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := claudeRootService(t, root)
+	ctx := context.Background()
+	rows, err := s.Effort(ctx, EffortFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels := map[string]EffortRow{}
+	var total float64
+	for _, r := range rows {
+		levels[r.Level] = r
+		total += r.CostUSD
+	}
+	if len(rows) != 2 || levels["high"].Requests != 2 || levels["medium"].Requests != 1 || levels["high"].Agent != "claude-code" {
+		t.Fatalf("effort rows = %+v", rows)
+	}
+	d, err := s.Session(ctx, string(claude.Slug), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total <= 0 || math.Abs(total-d.CostUSD) > 1e-9 {
+		t.Errorf("effort cost %v does not add up to the session's %v", total, d.CostUSD)
 	}
 }
