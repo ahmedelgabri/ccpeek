@@ -27,6 +27,19 @@ export interface SessionSummary {
   costEstimatedUSDExact: string;
   unpricedTokens?: number;
   unpricedTokenTypes?: TokenTotals;
+  /** Set on a subagent's session: the session that spawned it. */
+  parentId?: string;
+  subagentType?: string;
+  subagentCount?: number;
+}
+
+export interface SubagentTotal {
+  sessions: number;
+  messages: number;
+  tokens: TokenTotals;
+  costUSD: number;
+  costUSDExact: string;
+  unpricedTokens?: number;
 }
 
 export interface Relation {
@@ -46,6 +59,8 @@ export interface SessionDetail extends SessionSummary {
   relations?: Relation[];
   artifacts?: LinkedArtifact[];
   models?: string[];
+  subagents?: SessionSummary[];
+  subagentTotal?: SubagentTotal;
 }
 
 export interface TranscriptMessage {
@@ -245,6 +260,7 @@ export const api = {
     query?: string;
     since?: string;
     until?: string;
+    subagents?: string;
     limit?: string;
     offset?: string;
   }) => get<SessionSummary[]>("/sessions", filters),

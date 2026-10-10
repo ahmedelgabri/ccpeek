@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1337,5 +1338,75 @@ func TestProjectFilterCanonicalizesTheCallerPath(t *testing.T) {
 	// A genuinely different directory still matches nothing.
 	if got, err := svc.Sessions(ctx, SessionsFilter{Project: "/home/u/other"}); err != nil || len(got) != 0 {
 		t.Errorf("unrelated project matched %d sessions (err %v), want 0", len(got), err)
+	}
+}
+
+// A subagent's turns are billed, so they must count — but as their own
+// sessions, hidden from the list by default and totalled on the parent,
+// including subagents spawned by subagents.
+func TestSubagentSessionsRollUpUnderTheirParent(t *testing.T) {
+	const parent = "22222222-aaaa-bbbb-cccc-222222222222"
+	root := t.TempDir()
+	sessDir := filepath.Join(root, "projects", "-w", parent)
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(sessDir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turn := func(uuid, msgID string, ts string) string {
+		return `{"type":"user","sessionId":"` + parent + `","uuid":"` + uuid + `u","timestamp":"` + ts + `","message":{"role":"user","content":"go"}}` + "\n" +
+			`{"type":"assistant","sessionId":"` + parent + `","uuid":"` + uuid + `a","requestId":"req_` + msgID + `","timestamp":"` + ts + `",` +
+			`"message":{"id":"` + msgID + `","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"ok"}],` +
+			`"usage":{"input_tokens":1000,"output_tokens":100}}}` + "\n"
+	}
+	write("../"+parent+".jsonl", turn("p", "msg_p", "2026-10-01T10:00:00Z"))
+	write("subagents/agent-a1.jsonl", turn("a", "msg_a", "2026-10-01T10:01:00Z"))
+	write("subagents/agent-a1.meta.json", `{"agentType":"Explore","description":"Map it"}`)
+	write("subagents/workflows/wf_1/agent-b2.jsonl", turn("b", "msg_b", "2026-10-01T10:02:00Z"))
+	write("subagents/workflows/wf_1/agent-b2.meta.json", `{"agentType":"workflow-subagent","parentAgentId":"a1"}`)
+
+	store, table := newStore(t)
+	if _, err := ingest.New(store, table, claude.New()).Run(context.Background(), ingest.Options{
+		ConfigRoots: map[canon.AgentSlug][]string{claude.Slug: {root}},
+		Getenv:      func(string) string { return "" },
+		Home:        "/nonexistent",
+	}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	s := New(store, table)
+	ctx := context.Background()
+
+	listed, err := s.Sessions(ctx, SessionsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != parent || listed[0].SubagentCount != 1 {
+		t.Fatalf("default list = %+v, want only the parent with 1 direct subagent", listed)
+	}
+	all, err := s.Sessions(ctx, SessionsFilter{Subagents: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("subagents=true listed %d sessions, want 3", len(all))
+	}
+
+	detail, err := s.Session(ctx, string(claude.Slug), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Subagents) != 1 || detail.Subagents[0].ID != "agent-a1" ||
+		detail.Subagents[0].SubagentType != "Explore" || detail.Subagents[0].Title != "Map it" {
+		t.Fatalf("direct subagents = %+v", detail.Subagents)
+	}
+	total := detail.SubagentTotal
+	if total == nil || total.Sessions != 2 || total.Tokens.Input != 2000 ||
+		total.CostUSD <= 0 || total.CostUSD != 2*detail.CostUSD {
+		t.Fatalf("subagent total = %+v (own cost %v), want both descendants at twice the parent's cost", total, detail.CostUSD)
 	}
 }

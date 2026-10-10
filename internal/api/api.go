@@ -363,14 +363,15 @@ func (h *handlers) readiness(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) sessions(w http.ResponseWriter, r *http.Request) {
 	p := newParams(r)
 	f := query.SessionsFilter{
-		Agent:   p.Str("agent"),
-		Project: p.Str("project"),
-		Model:   p.Str("model"),
-		Since:   p.Str("since"),
-		Until:   p.Str("until"),
-		Query:   p.Str("query"),
-		Limit:   p.Int("limit"),
-		Offset:  p.Int("offset"),
+		Agent:     p.Str("agent"),
+		Project:   p.Str("project"),
+		Model:     p.Str("model"),
+		Since:     p.Str("since"),
+		Until:     p.Str("until"),
+		Query:     p.Str("query"),
+		Subagents: p.Bool("subagents"),
+		Limit:     p.Int("limit"),
+		Offset:    p.Int("offset"),
 	}
 	if err := p.Err(); err != nil {
 		writeBadRequest(w, err)

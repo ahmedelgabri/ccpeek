@@ -91,6 +91,33 @@ type SessionSummary struct {
 	// resolve; when non-zero, CostUSD is a lower bound.
 	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
 	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
+	// ParentID is set on a subagent's session: the session (or parent
+	// subagent) that spawned it. SubagentType is the spawning agent type
+	// (Explore, general-purpose, …). SubagentCount counts direct children.
+	ParentID      string `json:"parentId,omitempty"`
+	SubagentType  string `json:"subagentType,omitempty"`
+	SubagentCount int    `json:"subagentCount,omitempty"`
+}
+
+// summaryColumns selects one SessionSummary row from `sessions se JOIN
+// agents a`; scanSummary reads it. The session list, the session detail,
+// and the detail's subagent list all read the same shape.
+const summaryColumns = `a.slug, se.id, se.external_id, se.title,
+	COALESCE(se.created_at, ''), COALESCE(se.modified_at, ''),
+	se.cwd, se.git_branch,
+	(SELECT COUNT(*) FROM messages m WHERE m.session_id = se.id),
+	(SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = se.id),
+	COALESCE((SELECT p.external_id FROM session_relations r JOIN sessions p ON p.id = r.to_session_id
+	          WHERE r.from_session_id = se.id AND r.kind = 'subagent_of'), ''),
+	COALESCE((SELECT json_extract(r.evidence_json, '$.agentType') FROM session_relations r
+	          WHERE r.from_session_id = se.id AND r.kind = 'subagent_of'), ''),
+	(SELECT COUNT(*) FROM session_relations r WHERE r.to_session_id = se.id AND r.kind = 'subagent_of')`
+
+func scanSummary(rows interface{ Scan(...any) error }, sum *SessionSummary, rowID *int64) error {
+	return rows.Scan(&sum.Agent, rowID, &sum.ID, &sum.Title,
+		&sum.CreatedAt, &sum.ModifiedAt, &sum.CWD, &sum.GitBranch,
+		&sum.Messages, &sum.ToolCalls,
+		&sum.ParentID, &sum.SubagentType, &sum.SubagentCount)
 }
 
 // SessionsFilter narrows the sessions op.
@@ -101,8 +128,12 @@ type SessionsFilter struct {
 	Since   string // inclusive YYYY-MM-DD on modified_at
 	Until   string // INCLUSIVE YYYY-MM-DD upper bound on modified_at
 	Query   string // substring on title
-	Limit   int
-	Offset  int
+	// Subagents includes subagent sessions, which are otherwise hidden: a
+	// parent can spawn dozens, and they read as noise beside the
+	// conversations a person actually had. The parent's detail lists them.
+	Subagents bool
+	Limit     int
+	Offset    int
 }
 
 // Sessions lists sessions newest-first — the primary op of the
@@ -152,6 +183,10 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 		where = append(where, `se.title LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(f.Query)+"%")
 	}
+	if !f.Subagents {
+		where = append(where, `NOT EXISTS (SELECT 1 FROM session_relations r
+			WHERE r.from_session_id = se.id AND r.kind = 'subagent_of')`)
+	}
 	clause := ""
 	if len(where) > 0 {
 		clause = "WHERE " + strings.Join(where, " AND ")
@@ -159,29 +194,28 @@ func (s *Service) Sessions(ctx context.Context, f SessionsFilter) ([]SessionSumm
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
-		SELECT a.slug, se.id, se.external_id, se.title,
-		       COALESCE(se.created_at, ''), COALESCE(se.modified_at, ''),
-		       se.cwd, se.git_branch,
-		       (SELECT COUNT(*) FROM messages m WHERE m.session_id = se.id),
-		       (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = se.id)
+		SELECT %s
 		FROM sessions se
 		JOIN agents a ON a.id = se.agent_id
 		%s
 		ORDER BY se.modified_at DESC, se.id DESC
-		LIMIT ? OFFSET ?`, clause), args...)
+		LIMIT ? OFFSET ?`, summaryColumns, clause), args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
-	defer rows.Close()
 
+	return s.summaries(ctx, rows)
+}
+
+// summaries scans summaryColumns rows and attaches their costs.
+func (s *Service) summaries(ctx context.Context, rows *sql.Rows) ([]SessionSummary, error) {
+	defer rows.Close()
 	var out []SessionSummary
 	var rowIDs []int64
 	for rows.Next() {
 		var sum SessionSummary
 		var rowID int64
-		if err := rows.Scan(&sum.Agent, &rowID, &sum.ID, &sum.Title,
-			&sum.CreatedAt, &sum.ModifiedAt, &sum.CWD, &sum.GitBranch,
-			&sum.Messages, &sum.ToolCalls); err != nil {
+		if err := scanSummary(rows, &sum, &rowID); err != nil {
 			return nil, err
 		}
 		out = append(out, sum)
@@ -210,16 +244,25 @@ func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *Sessi
 // in one query. Rows stay independent so historical cards and context tiers
 // remain correct.
 func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary) error {
-	if len(rowIDs) == 0 {
-		return nil
-	}
-	placeholders := strings.Repeat("?,", len(rowIDs))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(rowIDs))
 	byRow := make(map[int64]int, len(rowIDs))
 	for i, id := range rowIDs {
-		args[i] = id
 		byRow[id] = i
+	}
+	return s.accumulateCosts(ctx, byRow, sums)
+}
+
+// accumulateCosts adds each listed session's usage and cost into the
+// summary slot byRow assigns it. Several sessions may share a slot, which
+// is how a parent's subagents are totalled as one figure.
+func (s *Service) accumulateCosts(ctx context.Context, byRow map[int64]int, sums []SessionSummary) error {
+	if len(byRow) == 0 {
+		return nil
+	}
+	placeholders := strings.Repeat("?,", len(byRow))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(byRow))
+	for id := range byRow {
+		args = append(args, id)
 	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
@@ -331,6 +374,22 @@ type SessionDetail struct {
 	Relations []Relation       `json:"relations,omitempty"`
 	Artifacts []LinkedArtifact `json:"artifacts,omitempty"`
 	Models    []string         `json:"models,omitempty"`
+	// Subagents lists the sessions this one spawned directly, oldest first.
+	// SubagentTotal sums every descendant (subagents of subagents too):
+	// the session's own cost covers only its own turns.
+	Subagents     []SessionSummary `json:"subagents,omitempty"`
+	SubagentTotal *SubagentTotal   `json:"subagentTotal,omitempty"`
+}
+
+// SubagentTotal is the usage and cost of all of a session's descendant
+// subagent sessions taken together.
+type SubagentTotal struct {
+	Sessions       int         `json:"sessions"`
+	Messages       int         `json:"messages"`
+	Tokens         TokenTotals `json:"tokens"`
+	CostUSD        float64     `json:"costUSD"`
+	CostUSDExact   string      `json:"costUSDExact"`
+	UnpricedTokens int64       `json:"unpricedTokens,omitempty"`
 }
 
 // Session returns one session with its relations and linked artifacts.
@@ -341,22 +400,21 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 	}
 
 	detail := &SessionDetail{}
-	err = s.store.ReadDB().QueryRowContext(ctx, `
-		SELECT a.slug, se.external_id, se.title,
-		       COALESCE(se.created_at, ''), COALESCE(se.modified_at, ''),
-		       se.cwd, se.git_branch,
-		       (SELECT COUNT(*) FROM messages m WHERE m.session_id = se.id),
-		       (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = se.id)
+	var ignored int64
+	err = scanSummary(s.store.ReadDB().QueryRowContext(ctx, `
+		SELECT `+summaryColumns+`
 		FROM sessions se JOIN agents a ON a.id = se.agent_id
-		WHERE se.id = ?`, rowID).
-		Scan(&detail.Agent, &detail.ID, &detail.Title, &detail.CreatedAt,
-			&detail.ModifiedAt, &detail.CWD, &detail.GitBranch,
-			&detail.Messages, &detail.ToolCalls)
+		WHERE se.id = ?`, rowID), &detail.SessionSummary, &ignored)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.attachCost(ctx, rowID, &detail.SessionSummary); err != nil {
 		return nil, err
+	}
+	if detail.SubagentCount > 0 {
+		if err := s.attachSubagents(ctx, rowID, detail); err != nil {
+			return nil, err
+		}
 	}
 
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
@@ -512,4 +570,61 @@ func (s *Service) sessionRowID(ctx context.Context, agentSlug, externalID string
 		return 0, fmt.Errorf("%w: session %s/%s", ErrNotFound, agentSlug, externalID)
 	}
 	return id, err
+}
+
+// attachSubagents lists a session's direct subagents and totals all of
+// its descendants.
+func (s *Service) attachSubagents(ctx context.Context, rowID int64, detail *SessionDetail) error {
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
+		SELECT `+summaryColumns+`
+		FROM session_relations rel
+		JOIN sessions se ON se.id = rel.from_session_id
+		JOIN agents a ON a.id = se.agent_id
+		WHERE rel.to_session_id = ? AND rel.kind = 'subagent_of'
+		ORDER BY se.created_at, se.id`, rowID)
+	if err != nil {
+		return err
+	}
+	if detail.Subagents, err = s.summaries(ctx, rows); err != nil {
+		return err
+	}
+
+	descendants, err := s.store.ReadDB().QueryContext(ctx, `
+		WITH RECURSIVE d(id) AS (
+			SELECT from_session_id FROM session_relations
+			WHERE to_session_id = ? AND kind = 'subagent_of'
+			UNION
+			SELECT r.from_session_id FROM session_relations r JOIN d ON r.to_session_id = d.id
+			WHERE r.kind = 'subagent_of'
+		)
+		SELECT d.id, (SELECT COUNT(*) FROM messages m WHERE m.session_id = d.id) FROM d`, rowID)
+	if err != nil {
+		return err
+	}
+	defer descendants.Close()
+	total := &SubagentTotal{}
+	slots := map[int64]int{}
+	for descendants.Next() {
+		var id int64
+		var messages int
+		if err := descendants.Scan(&id, &messages); err != nil {
+			return err
+		}
+		slots[id] = 0
+		total.Sessions++
+		total.Messages += messages
+	}
+	if err := descendants.Err(); err != nil {
+		return err
+	}
+	sum := []SessionSummary{{}}
+	if err := s.accumulateCosts(ctx, slots, sum); err != nil {
+		return err
+	}
+	total.Tokens = sum[0].Tokens
+	total.CostUSD = sum[0].CostUSD
+	total.CostUSDExact = sum[0].CostUSDExact
+	total.UnpricedTokens = sum[0].UnpricedTokens
+	detail.SubagentTotal = total
+	return nil
 }

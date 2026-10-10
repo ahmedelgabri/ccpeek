@@ -86,6 +86,10 @@ func (*Adapter) Discover(ctx context.Context, root agent.Root) ([]agent.SourceRe
 			continue // unreadable project dir: surfaced later as a diagnostic by the pipeline
 		}
 		for _, f := range files {
+			if f.IsDir() && sessionUUIDRe.MatchString(f.Name()) {
+				refs = append(refs, discoverSubagents(root, filepath.Join(projectsDir, dir.Name(), f.Name()))...)
+				continue
+			}
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
 			}
@@ -215,6 +219,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		ExternalID: sessionID,
 		SourcePath: src.Path,
 	}
+	sub, isSubagent := subagentOf(src.Root, src.Path)
 
 	// Records stream to the sink as they parse — memory stays bounded by
 	// one line, not the session. The session is emitted before its first
@@ -230,7 +235,19 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			return nil
 		}
 		emittedSession = true
-		return sink.Session(sess)
+		if err := sink.Session(sess); err != nil {
+			return err
+		}
+		if !isSubagent {
+			return nil
+		}
+		return sink.SessionRelation(canon.SessionRelation{
+			Agent:          Slug,
+			FromExternalID: sess.ExternalID,
+			ToExternalID:   sub.parent(),
+			Kind:           canon.RelSubagentOf,
+			Evidence:       sub.evidence(),
+		})
 	}
 	messageCount, toolCount := 0, 0
 	metadataChanged := false
@@ -244,6 +261,11 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		sess.TitleOverride = sess.TitleOverride || override
 		titlePriority = priority
 		return true
+	}
+	if isSubagent {
+		// The spawning call's description names the task better than the
+		// prompt, which is usually a long instruction block.
+		setTitle(sub.meta.Description, 2, false)
 	}
 
 	offset := state.Offset
@@ -344,7 +366,12 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		// test that could not fire. A disagreement is worth saying out
 		// loud though: it means the transcript was copied or renamed, and
 		// it will index under a different id than the agent recorded.
-		if entry.SessionID != "" && entry.SessionID != sessionID && !warnedIDMismatch {
+		// A subagent's lines carry its PARENT's sessionId by design.
+		expectedID := sessionID
+		if isSubagent {
+			expectedID = sub.parentSession
+		}
+		if entry.SessionID != "" && entry.SessionID != expectedID && !warnedIDMismatch {
 			warnedIDMismatch = true
 			if serr := sink.Issue(canon.Issue{
 				Agent: Slug, Severity: canon.SeverityWarn, Category: "identity",
@@ -357,6 +384,11 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		}
 
 		msg, calls, results := a.convertLine(entry, state.MessageSeq+messageCount, sessionID)
+		if isSubagent {
+			// Every line of a subagent file is flagged as a sidechain of the
+			// parent; in its own session it is the main line.
+			msg.IsSidechain = false
+		}
 		a.foldSession(&sess, entry)
 		if titlePriority < 1 && msg.Role == canon.RoleUser && !msg.IsSidechain {
 			if title := claudePromptTitle(msg.Text); title != "" {

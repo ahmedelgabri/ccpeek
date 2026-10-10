@@ -7,6 +7,8 @@ import {
   fmtCount,
   plural,
   shortPath,
+  type SessionSummary,
+  type SubagentTotal,
   type ToolCallRow,
 } from "../../api";
 import { fullWhen, localClock } from "../../time";
@@ -15,6 +17,7 @@ import {
   EmptyNote,
   KindBars,
   kindLabel,
+  Money,
   onDisclosureKey,
   Panel,
   toolColor,
@@ -435,5 +438,71 @@ export function ArtifactsTab({
         </li>
       ))}
     </ul>
+  );
+}
+
+// SubagentsTab lists the sessions this one spawned directly. Each is a
+// full session of its own (its transcript, tools, files); the parent's own
+// cost covers only its own turns, so the total line is what the work cost
+// with every subagent — and their subagents — included.
+export function SubagentsTab({
+  subagents,
+  total,
+}: {
+  subagents: SessionSummary[];
+  total?: SubagentTotal;
+}) {
+  if (subagents.length === 0)
+    return <EmptyNote>This session spawned no subagents.</EmptyNote>;
+  return (
+    <div className="space-y-2">
+      {total && (
+        <p className="font-mono text-meta text-ink-faint tabular-nums">
+          {plural(total.sessions, "subagent session")} ·{" "}
+          {fmtCount(total.messages)} msgs ·{" "}
+          <Money
+            usd={total.costUSD}
+            incomplete={(total.unpricedTokens ?? 0) > 0}
+            title={`$${total.costUSDExact}`}
+          />{" "}
+          including nested subagents
+        </p>
+      )}
+      <ul className="divide-y divide-edge overflow-hidden rounded-md border border-edge">
+        {subagents.map((s) => (
+          <li key={s.id}>
+            <Link
+              to="/sessions/$agent/$sessionId"
+              params={{ agent: s.agent, sessionId: s.id }}
+              className="flex items-baseline gap-3 bg-surface-1 px-3 py-2 transition-colors hover:bg-surface-2/40"
+            >
+              <span
+                title={fullWhen(s.createdAt)}
+                className="shrink-0 font-mono text-meta text-ink-faint tabular-nums"
+              >
+                {localClock(s.createdAt)}
+              </span>
+              <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-micro text-accent">
+                {s.subagentType || "subagent"}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {s.title || <span className="text-ink-faint">(untitled)</span>}
+              </span>
+              <span className="shrink-0 font-mono text-meta text-ink-faint tabular-nums">
+                {fmtCount(s.messages)} msgs
+                {(s.subagentCount ?? 0) > 0 &&
+                  ` · +${plural(s.subagentCount ?? 0, "subagent")}`}
+              </span>
+              <Money
+                usd={s.costUSD}
+                incomplete={(s.unpricedTokens ?? 0) > 0}
+                className="shrink-0 text-sm"
+                title={`$${s.costUSDExact}`}
+              />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

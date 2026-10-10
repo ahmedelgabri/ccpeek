@@ -100,6 +100,9 @@ type SessionRelationKind string
 const (
 	RelResumedFrom SessionRelationKind = "resumed_from"
 	RelForkOf      SessionRelationKind = "fork_of"
+	// RelSubagentOf points a subagent's own session at the session (or
+	// parent subagent) that spawned it.
+	RelSubagentOf SessionRelationKind = "subagent_of"
 )
 
 // SessionRelation is a directed session→session edge. Both endpoints are

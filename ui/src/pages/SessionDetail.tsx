@@ -25,12 +25,20 @@ import {
   ArtifactsTab,
   CommandsTab,
   FilesTab,
+  SubagentsTab,
   ToolsTab,
   groupFiles,
 } from "./session/tabs";
 import { useSessionTools, useTranscriptWindow } from "./session/useSessionData";
 
-const TABS = ["transcript", "commands", "tools", "files", "artifacts"] as const;
+const TABS = [
+  "transcript",
+  "commands",
+  "tools",
+  "files",
+  "artifacts",
+  "subagents",
+] as const;
 type Tab = (typeof TABS)[number];
 
 // A ?tab= from the URL is any string until proven otherwise.
@@ -129,7 +137,17 @@ function SessionContent() {
     tools: toolCountsKnown ? toolRows.length : null,
     files: toolCountsKnown ? files.length : null,
     artifacts: s.artifacts?.length ?? 0,
+    subagents: s.subagentCount ?? 0,
   };
+  // Most sessions spawn nothing; the tab appears only when there is one.
+  const tabs = TABS.filter(
+    (t) => t !== "subagents" || (s.subagentCount ?? 0) > 0,
+  );
+  // The subagent_of edges are the subagents tab; only the outgoing one (a
+  // subagent naming its parent) belongs beside the models.
+  const relations = s.relations?.filter(
+    (r) => r.kind !== "subagent_of" || r.direction === "out",
+  );
 
   return (
     <div>
@@ -178,6 +196,18 @@ function SessionContent() {
         )}
         <StatTile label="Messages" value={fmtCount(s.messages)} />
         <StatTile label="Tool calls" value={fmtCount(s.toolCalls)} />
+        {s.subagentTotal && (
+          <StatTile
+            label="Subagent cost"
+            value={
+              <Money
+                usd={s.subagentTotal.costUSD}
+                incomplete={(s.subagentTotal.unpricedTokens ?? 0) > 0}
+                title={`$${s.subagentTotal.costUSDExact} across ${s.subagentTotal.sessions} subagent sessions`}
+              />
+            }
+          />
+        )}
       </div>
 
       {s.tokens.input +
@@ -199,7 +229,7 @@ function SessionContent() {
         </p>
       ) : null}
 
-      {(s.relations?.length || s.models?.length) && (
+      {(relations?.length || s.models?.length) && (
         <div className="mb-4 flex flex-wrap gap-2 text-xs">
           {s.models?.map((m) => (
             <span
@@ -209,15 +239,19 @@ function SessionContent() {
               {m}
             </span>
           ))}
-          {s.relations?.map((r) => (
+          {relations?.map((r) => (
             <Link
               key={`${r.kind}-${r.sessionId}`}
               to="/sessions/$agent/$sessionId"
               params={{ agent: s.agent, sessionId: r.sessionId }}
               className="rounded border border-accent/40 px-2 py-0.5 font-mono text-accent hover:bg-surface-2"
             >
-              {r.direction === "out" ? r.kind : `${r.kind} (incoming)`} →{" "}
-              {r.sessionId.slice(0, 8)}
+              {r.kind === "subagent_of"
+                ? `${s.subagentType || "subagent"} of`
+                : r.direction === "out"
+                  ? r.kind
+                  : `${r.kind} (incoming)`}{" "}
+              → {r.sessionId.slice(0, 8)}
             </Link>
           ))}
         </div>
@@ -241,7 +275,7 @@ function SessionContent() {
               replace: true,
             })
           }
-          options={TABS.map((t) => ({
+          options={tabs.map((t) => ({
             value: t,
             label: t,
             badge: counts[t] === null ? undefined : fmtCount(counts[t]),
@@ -284,6 +318,9 @@ function SessionContent() {
         )}
       {tab === "artifacts" && (
         <ArtifactsTab agent={s.agent} artifacts={s.artifacts ?? []} />
+      )}
+      {tab === "subagents" && (
+        <SubagentsTab subagents={s.subagents ?? []} total={s.subagentTotal} />
       )}
     </div>
   );

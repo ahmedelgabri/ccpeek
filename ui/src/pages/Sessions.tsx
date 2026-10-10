@@ -42,6 +42,7 @@ export function SessionsPage() {
   const model = search.model ?? "";
   const since = search.since ?? "";
   const until = search.until ?? "";
+  const subagents = search.subagents === "show";
 
   // The URL is the filter. The box is local so typing stays responsive and
   // only the settled value is pushed — one request and one history write
@@ -67,7 +68,7 @@ export function SessionsPage() {
     isFetchingNextPage,
     fetchNextPage,
   } = usePagedList(
-    ["sessions", agent, q, project, model, since, until],
+    ["sessions", agent, q, project, model, since, until, subagents],
     (offset) =>
       api.sessions({
         agent,
@@ -76,6 +77,7 @@ export function SessionsPage() {
         model,
         since,
         until,
+        subagents: subagents ? "true" : "",
         limit: String(PAGE),
         offset: String(offset),
       }),
@@ -143,6 +145,17 @@ export function SessionsPage() {
             }`}
           >
             compact
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter({ subagents: subagents ? "" : "show" })}
+            aria-pressed={subagents}
+            title="Subagent sessions are listed under their parent; show them here too"
+            className={`rounded-md border border-edge px-2 py-1.5 font-mono text-xs transition-colors hover:border-edge-strong ${
+              subagents ? "bg-surface-2 text-ink" : "text-ink-dim"
+            }`}
+          >
+            subagents
           </button>
         </FilterBar>
       </PageHeader>
@@ -290,9 +303,22 @@ function SessionRow({ s, dense }: { s: SessionSummary; dense: boolean }) {
             {localTime(s.modifiedAt)}
           </span>
           <AgentChip agent={s.agent} />
+          {s.parentId && (
+            <span
+              title={`Subagent of ${s.parentId}`}
+              className="shrink-0 font-mono text-meta text-ink-faint"
+            >
+              ↳ {s.subagentType || "subagent"}
+            </span>
+          )}
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {s.title || <span className="text-ink-faint">(untitled)</span>}
           </span>
+          {(s.subagentCount ?? 0) > 0 && (
+            <span className="shrink-0 font-mono text-meta text-ink-faint tabular-nums">
+              +{plural(s.subagentCount ?? 0, "subagent")}
+            </span>
+          )}
           {dense && (
             <span className="hidden shrink-0 font-mono text-meta text-ink-faint tabular-nums sm:inline">
               {fmtCount(s.messages)} msgs · {fmtTokens(tokens)} tok

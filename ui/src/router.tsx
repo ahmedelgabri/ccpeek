@@ -487,7 +487,15 @@ const routeTree = rootRoute.addChildren([
     component: SessionsPage,
     // Only non-empty filters serialize, keeping /sessions URLs clean.
     validateSearch: (s: Record<string, unknown>) =>
-      pickStrings(s, ["agent", "q", "project", "model", "since", "until"]),
+      pickStrings(s, [
+        "agent",
+        "q",
+        "project",
+        "model",
+        "since",
+        "until",
+        "subagents",
+      ]),
   }),
   createRoute({
     getParentRoute: () => rootRoute,

@@ -81,9 +81,16 @@ func classify(root agent.Root, path string) sourceKind {
 		return srcMemory
 	case len(parts) == 3 && parts[0] == "projects" && strings.HasSuffix(rel, ".jsonl"):
 		return srcSession
+	case isSubagentPath(parts):
+		return srcSession
 	default:
 		return srcUnknown
 	}
+}
+
+func isSubagentPath(parts []string) bool {
+	_, _, ok := subagentParts(parts)
+	return ok
 }
 
 // discoverSidecars extends Discover with the non-session sources.

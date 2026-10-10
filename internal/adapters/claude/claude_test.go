@@ -627,3 +627,71 @@ func TestMatchingSessionIDIsSilent(t *testing.T) {
 		}
 	}
 }
+
+// Subagent transcripts live beside their parent session and were never
+// discovered, so their turns — and their cost — were missing. Each must
+// become its own session linked back to whoever spawned it: the main
+// session, or the parent subagent named by meta.json. Their lines carry the
+// parent's sessionId by design, which must not read as a renamed file.
+func TestSubagentTranscriptsBecomeLinkedSessions(t *testing.T) {
+	const parent = "11111111-2222-3333-4444-555555555555"
+	root := t.TempDir()
+	sessDir := filepath.Join(root, "projects", "-w", parent)
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(sessDir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	line := func(typ, uuid string) string {
+		return `{"type":"` + typ + `","isSidechain":true,"sessionId":"` + parent + `","uuid":"` + uuid +
+			`","timestamp":"2026-10-01T10:00:00Z","message":{"role":"` + typ + `","content":"do the thing"}}` + "\n"
+	}
+	write("../"+parent+".jsonl", strings.Replace(line("user", "p1"), `"isSidechain":true`, `"isSidechain":false`, 1))
+	write("subagents/agent-a1.jsonl", line("user", "s1")+line("assistant", "s2"))
+	write("subagents/agent-a1.meta.json", `{"agentType":"Explore","description":"Map the indexer","toolUseId":"toolu_1"}`)
+	write("subagents/workflows/wf_1/agent-b2.jsonl", line("user", "w1"))
+	write("subagents/workflows/wf_1/agent-b2.meta.json", `{"agentType":"workflow-subagent","parentAgentId":"a1"}`)
+	write("subagents/workflows/wf_1/journal.jsonl", "{}\n")
+
+	r := agent.Root{Agent: Slug, Path: root}
+	refs, err := New().Discover(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	for _, ref := range refs {
+		if err := New().Parse(context.Background(), ref, sink); err != nil {
+			t.Fatalf("Parse %s: %v", ref.Path, err)
+		}
+	}
+
+	titles := map[string]string{}
+	for _, s := range sink.Sessions {
+		titles[s.ExternalID] = s.Title
+	}
+	if len(titles) != 3 || titles["agent-a1"] != "Map the indexer" || titles["agent-b2"] != "do the thing" {
+		t.Errorf("sessions = %v, want the parent plus agent-a1 (titled by its description) and agent-b2", titles)
+	}
+	edges := map[string]string{}
+	for _, rel := range sink.Relations {
+		if rel.Kind == canon.RelSubagentOf {
+			edges[rel.FromExternalID] = rel.ToExternalID
+		}
+	}
+	if edges["agent-a1"] != parent || edges["agent-b2"] != "agent-a1" {
+		t.Errorf("subagent_of edges = %v", edges)
+	}
+	for _, m := range sink.Messages {
+		if m.IsSidechain {
+			t.Errorf("message %s still flagged sidechain inside its own session", m.ExternalID)
+		}
+	}
+	if len(sink.Issues) != 0 {
+		t.Errorf("issues = %+v, want none (parent sessionId is expected)", sink.Issues)
+	}
+}

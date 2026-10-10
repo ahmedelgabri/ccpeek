@@ -128,6 +128,7 @@ func Registry() []Op {
 				{Name: "model", Type: "string", Desc: "Filter to sessions that used a model"},
 				sinceParam, untilParam,
 				{Name: "query", Type: "string", Desc: "Substring filter on session title", CLIFlag: "title"},
+				{Name: "subagents", Type: "boolean", Desc: "Include subagent sessions (hidden by default; a parent's `session` lists its own)"},
 				limitParam("Maximum results", query.SessionsLimit),
 				{Name: "offset", Type: "integer", Desc: "Pagination offset"},
 			},
@@ -136,14 +137,15 @@ func Registry() []Op {
 					Agent: a.Str["agent"], Project: a.Str["project"],
 					Model: a.Str["model"], Since: a.Str["since"],
 					Until: a.Str["until"], Query: a.Str["query"],
-					Limit: a.Int["limit"], Offset: a.Int["offset"],
+					Subagents: a.Bool["subagents"],
+					Limit:     a.Int["limit"], Offset: a.Int["offset"],
 				})
 				return out, len(out) == 0, err
 			},
 		},
 		{
 			Name: "session",
-			Desc: "Get one session with everything related to it: token/cost totals, models used, relations (forks, resumes, sidechains), and linked artifacts.",
+			Desc: "Get one session with everything related to it: token/cost totals, models used, relations (forks, resumes, sidechains), linked artifacts, and the subagents it spawned with their combined cost.",
 			Params: []Param{
 				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
 				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
