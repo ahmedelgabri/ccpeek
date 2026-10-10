@@ -355,11 +355,11 @@ func emitSession(ctx context.Context, source string, doc sessionDoc, raws []json
 func partsThinking(parts []part) string {
 	var out []string
 	for _, p := range parts {
-		if p.Type == "reasoning" && strings.TrimSpace(p.Text) != "" {
-			out = append(out, strings.TrimSpace(p.Text))
+		if p.Type == "reasoning" {
+			out = append(out, p.Text)
 		}
 	}
-	return strings.Join(out, "\n\n")
+	return canon.JoinThinking(out)
 }
 
 func partsText(parts []part) string {

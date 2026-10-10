@@ -1,7 +1,12 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCount, type InsightFilters } from "./api";
-import { levelLabel, levelRank, levelWeight } from "./pages/insights/levels";
+import {
+  levelLabel,
+  levelRank,
+  levelWeight,
+  NOT_RECORDED,
+} from "./pages/insights/levels";
 import {
   StackedTimeline,
   type TimelinePoint,
@@ -17,7 +22,7 @@ function rgb(color: string): number[] {
 
 function levelColor(label: string): string {
   // Series are named by their display label; map back to the level.
-  const level = label === levelLabel("") ? "" : label;
+  const level = label === NOT_RECORDED ? "" : label;
   const weight = levelWeight(level);
   if (weight === null) return cssColor("--color-edge-strong");
   const accent = rgb(cssColor("--color-accent"));
@@ -29,7 +34,6 @@ function levelColor(label: string): string {
 }
 
 const fmtRequests = (v: number) => `${fmtCount(v)} requests`;
-const fmtAxisCount = (v: number) => fmtCount(v);
 
 // EffortTimeline is the Usage page's daily explorer applied to effort:
 // model requests per day, stacked by the effort or thinking level they ran
@@ -65,7 +69,7 @@ export function EffortTimeline(f: InsightFilters) {
       ariaLabel="Model requests per day stacked by effort level; drag across the plot to zoom into a time range; the By level table below holds the totals"
       colorOf={levelColor}
       valueFormat={fmtRequests}
-      axisFormat={fmtAxisCount}
+      axisFormat={fmtCount}
       csv={{ filename: "ccpeek-daily-effort.csv", value: String }}
     />
   );

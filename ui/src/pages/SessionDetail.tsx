@@ -55,10 +55,6 @@ type Tab = (typeof TABS)[number];
 // A ?tab= from the URL is any string until proven otherwise.
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 
-// The gathering point of the session-centric model: one session with its
-// transcript, commands, tool calls, files touched, usage, relations, and
-// linked artifacts — each facet a deep-linkable tab (?tab=). The paging
-// and anchoring machinery all lives in ./session/useSessionData.
 // SessionPRs shows the pull requests this session opened or checked.
 function SessionPRs({
   agent,
@@ -133,6 +129,10 @@ function relationLabel(r: Relation, subagentType?: string): string {
   }
 }
 
+// The gathering point of the session-centric model: one session with its
+// transcript, commands, tool calls, files touched, usage, relations, and
+// linked artifacts — each facet a deep-linkable tab (?tab=). The paging
+// and anchoring machinery all lives in ./session/useSessionData.
 export function SessionDetailPage() {
   const { agent, sessionId } = useParams({
     from: "/sessions/$agent/$sessionId",
@@ -229,12 +229,11 @@ function SessionContent() {
   };
   // Most sessions spawn nothing and record no events; those tabs appear
   // only when there is something in them.
-  const tabs = TABS.filter(
-    (t) =>
-      (t !== "subagents" || (s.subagentCount ?? 0) > 0) &&
-      (t !== "events" || eventCount > 0) &&
-      (t !== "context" || s.tokens.input + s.tokens.cacheRead > 0),
-  );
+  const tabs = TABS.filter((t) => {
+    if (t === "subagents" || t === "events") return (counts[t] ?? 0) > 0;
+    if (t === "context") return s.tokens.input + s.tokens.cacheRead > 0;
+    return true;
+  });
   // The subagent_of edges are the subagents tab; only the outgoing one (a
   // subagent naming its parent) belongs beside the models.
   const relations = s.relations?.filter(

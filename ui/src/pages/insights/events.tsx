@@ -5,7 +5,7 @@ import { AgentChip, EmptyNote } from "../../ui";
 
 // EVENT_LABEL names each event kind for reading; the stored slug is what
 // filters and URLs carry.
-export const EVENT_LABEL: Record<string, string> = {
+const EVENT_LABEL: Record<string, string> = {
   api_error: "API error",
   aborted: "aborted",
   tool_denied: "tool refused",
@@ -16,7 +16,7 @@ export const EVENT_LABEL: Record<string, string> = {
 };
 
 // PullRequest is one PR with every session that linked it.
-export interface PullRequest {
+interface PullRequest {
   url: string;
   repository: string;
   number?: number;

@@ -418,7 +418,7 @@ func Registry() []Op {
 			Name: "session-events",
 			Desc: "List session events newest first — API errors, aborted turns, refused tool calls, pull requests — each linked to its session and transcript seq. Filter by kind (comma-separated), agent, one session, or date range.",
 			Params: []Param{
-				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link, turn, compaction, hook)"},
+				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (" + query.EventKindList() + ")"},
 				{Name: "status", Type: "string", Desc: "Comma-separated outcomes (e.g. error,blocked for failing hooks)"},
 				agentParam,
 				{Name: "session", Type: "string", Desc: "One session's external id (needs agent)"},

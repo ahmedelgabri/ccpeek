@@ -334,11 +334,11 @@ async function unwrap<T>(res: Response): Promise<T> {
 
 async function get<T>(
   path: string,
-  params?: Record<string, string | undefined>,
+  params?: Record<string, string | number | undefined>,
 ): Promise<T> {
-  const entries = Object.entries(params ?? {}).filter(
-    (e): e is [string, string] => e[1] != null && e[1] !== "",
-  );
+  const entries = Object.entries(params ?? {})
+    .filter((e) => e[1] != null && e[1] !== "")
+    .map(([k, v]) => [k, String(v)]);
   const qs = entries.length
     ? "?" + new URLSearchParams(entries).toString()
     : "";
@@ -430,11 +430,7 @@ export const api = {
 
   changes: (
     f: InsightFilters & { group?: "day" | "agent" | "file"; limit?: number },
-  ) =>
-    get<ChangeRow[]>("/changes", {
-      ...f,
-      limit: f.limit ? String(f.limit) : "",
-    }),
+  ) => get<ChangeRow[]>("/changes", f),
 
   effort: (f: InsightFilters & { group?: "level" | "day" }) =>
     get<EffortRow[]>("/effort", f),
@@ -450,22 +446,14 @@ export const api = {
       sort?: "time" | "duration";
       limit?: number;
     },
-  ) =>
-    get<EventRow[]>("/session-events", {
-      ...f,
-      limit: f.limit ? String(f.limit) : "",
-    }),
+  ) => get<EventRow[]>("/session-events", f),
 
   eventStats: (f: InsightFilters & { kind?: string; group?: string }) =>
     get<EventStat[]>("/session-events/stats", f),
 
   toolStats: (
     f: InsightFilters & { sort?: "errors" | "total" | "avg"; limit?: number },
-  ) =>
-    get<ToolStat[]>("/tool-stats", {
-      ...f,
-      limit: f.limit ? String(f.limit) : "",
-    }),
+  ) => get<ToolStat[]>("/tool-stats", f),
 };
 
 // The validated per-agent palette (also defined as CSS vars in

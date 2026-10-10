@@ -72,15 +72,28 @@ type TokenTotals struct {
 
 // SessionSummary is one row of the primary `sessions` op.
 type SessionSummary struct {
-	Agent                 string      `json:"agent"`
-	ID                    string      `json:"id"` // external id
-	Title                 string      `json:"title"`
-	CreatedAt             string      `json:"createdAt"`
-	ModifiedAt            string      `json:"modifiedAt"`
-	CWD                   string      `json:"cwd"`
-	GitBranch             string      `json:"gitBranch,omitempty"`
-	Messages              int         `json:"messages"`
-	ToolCalls             int         `json:"toolCalls"`
+	Agent      string `json:"agent"`
+	ID         string `json:"id"` // external id
+	Title      string `json:"title"`
+	CreatedAt  string `json:"createdAt"`
+	ModifiedAt string `json:"modifiedAt"`
+	CWD        string `json:"cwd"`
+	GitBranch  string `json:"gitBranch,omitempty"`
+	Messages   int    `json:"messages"`
+	ToolCalls  int    `json:"toolCalls"`
+	CostTotals
+	// ParentID is set on a subagent's session: the session (or parent
+	// subagent) that spawned it. SubagentType is the spawning agent type
+	// (Explore, general-purpose, …). SubagentCount counts direct children.
+	ParentID      string `json:"parentId,omitempty"`
+	SubagentType  string `json:"subagentType,omitempty"`
+	SubagentCount int    `json:"subagentCount,omitempty"`
+}
+
+// CostTotals is priced usage: tokens by type and the automatic cost with
+// its reported/estimated split. Embedded wherever usage is totalled, so
+// the JSON stays flat.
+type CostTotals struct {
 	Tokens                TokenTotals `json:"tokens"`
 	CostUSD               float64     `json:"costUSD"`
 	CostUSDExact          string      `json:"costUSDExact"`
@@ -92,12 +105,6 @@ type SessionSummary struct {
 	// resolve; when non-zero, CostUSD is a lower bound.
 	UnpricedTokens     int64        `json:"unpricedTokens,omitempty"`
 	UnpricedTokenTypes *TokenTotals `json:"unpricedTokenTypes,omitempty"`
-	// ParentID is set on a subagent's session: the session (or parent
-	// subagent) that spawned it. SubagentType is the spawning agent type
-	// (Explore, general-purpose, …). SubagentCount counts direct children.
-	ParentID      string `json:"parentId,omitempty"`
-	SubagentType  string `json:"subagentType,omitempty"`
-	SubagentCount int    `json:"subagentCount,omitempty"`
 }
 
 // summaryColumns selects one SessionSummary row from `sessions se JOIN
@@ -245,46 +252,41 @@ func (s *Service) attachCost(ctx context.Context, sessionRowID int64, sum *Sessi
 // in one query. Rows stay independent so historical cards and context tiers
 // remain correct.
 func (s *Service) attachCosts(ctx context.Context, rowIDs []int64, sums []SessionSummary) error {
-	byRow := make(map[int64]int, len(rowIDs))
+	accs := make([]costAcc, len(sums))
+	byKey := make(map[string]*costAcc, len(rowIDs))
 	for i, id := range rowIDs {
-		byRow[id] = i
+		byKey[strconv.FormatInt(id, 10)] = &accs[i]
 	}
-	return s.accumulateCosts(ctx, byRow, sums)
+	if err := s.priceSessions(ctx, rowIDs, func(key string) *costAcc { return byKey[key] }); err != nil {
+		return err
+	}
+	for i := range sums {
+		sums[i].CostTotals = accs[i].totals()
+	}
+	return nil
 }
 
-// accumulateCosts adds each listed session's usage and cost into the
-// summary slot byRow assigns it. Several sessions may share a slot, which
-// is how a parent's subagents are totalled as one figure.
-func (s *Service) accumulateCosts(ctx context.Context, byRow map[int64]int, sums []SessionSummary) error {
-	if len(byRow) == 0 {
+// priceSessions prices the listed sessions' usage rows, keyed by session
+// row id, into the accumulator slot returns (nil skips the row).
+func (s *Service) priceSessions(ctx context.Context, rowIDs []int64, slot func(key string) *costAcc) error {
+	if len(rowIDs) == 0 {
 		return nil
 	}
-	placeholders := strings.Repeat("?,", len(byRow))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, 0, len(byRow))
-	for id := range byRow {
-		args = append(args, id)
+	args := make([]any, len(rowIDs))
+	for i, id := range rowIDs {
+		args[i] = id
 	}
-
-	rows, err := s.store.ReadDB().QueryContext(ctx, fmt.Sprintf(`
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT m.session_id, `+usageCostColumns+`
 		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
-		WHERE m.session_id IN (%s)
-		ORDER BY m.id`, placeholders), args...)
+		WHERE m.session_id IN (`+placeholders(len(rowIDs))+`)
+		ORDER BY m.id`, args...)
 	if err != nil {
 		return err
 	}
-	_, err = s.priceUsageRows(rows, func(key string) (int, bool) {
-		id, err := strconv.ParseInt(key, 10, 64)
-		if err != nil {
-			return 0, false
-		}
-		i, ok := byRow[id]
-		return i, ok
-	}, sums)
-	return err
+	return s.priceUsageRows(rows, slot)
 }
 
 // usageCostColumns are the columns priceUsageRows reads after its key, from
@@ -295,16 +297,35 @@ const usageCostColumns = `m.provider, m.model,
 	u.cache_write_tokens, u.cache_write_1h_tokens,
 	` + db.ReportedCostNanosExpr
 
+// costAcc accumulates priced usage rows; totals() renders the result.
+type costAcc struct {
+	rows                        int
+	tokens                      TokenTotals
+	unpriced                    int64
+	unpricedTypes               *TokenTotals
+	amount, reported, estimated pricing.Amount
+}
+
+func (a *costAcc) totals() CostTotals {
+	return CostTotals{
+		Tokens:                a.tokens,
+		CostUSD:               a.amount.USD(),
+		CostUSDExact:          a.amount.String(),
+		CostReportedUSD:       a.reported.USD(),
+		CostReportedUSDExact:  a.reported.String(),
+		CostEstimatedUSD:      a.estimated.USD(),
+		CostEstimatedUSDExact: a.estimated.String(),
+		UnpricedTokens:        a.unpriced,
+		UnpricedTokenTypes:    a.unpricedTypes,
+	}
+}
+
 // priceUsageRows prices usage rows (a string key, then usageCostColumns)
-// into the summary slot each key maps to, and returns how many rows each
-// slot received. It is the one place a usage row becomes a cost: sessions
-// group by session, other reads by whatever key they select.
-func (s *Service) priceUsageRows(rows *sql.Rows, slot func(key string) (int, bool), sums []SessionSummary) ([]int, error) {
+// into the accumulator slot returns for each key; nil skips the row. It is
+// the one place a usage row becomes a cost: sessions group by session,
+// other reads by whatever key they select.
+func (s *Service) priceUsageRows(rows *sql.Rows, slot func(key string) *costAcc) error {
 	defer rows.Close()
-	counts := make([]int, len(sums))
-	amounts := make([]pricing.Amount, len(sums))
-	reportedAmounts := make([]pricing.Amount, len(sums))
-	estimatedAmounts := make([]pricing.Amount, len(sums))
 	for rows.Next() {
 		var key, provider, model, occurredAt string
 		var usage canon.Usage
@@ -312,18 +333,17 @@ func (s *Service) priceUsageRows(rows *sql.Rows, slot func(key string) (int, boo
 		if err := rows.Scan(&key, &provider, &model, &occurredAt,
 			&usage.InputTokens, &usage.OutputTokens, &usage.CacheReadTokens,
 			&usage.CacheWriteTokens, &usage.CacheWrite1hTokens, &reported); err != nil {
-			return nil, err
+			return err
 		}
-		i, found := slot(key)
-		if !found {
+		acc := slot(key)
+		if acc == nil {
 			continue
 		}
-		counts[i]++
-		sum := &sums[i]
-		sum.Tokens.Input += usage.InputTokens
-		sum.Tokens.Output += usage.OutputTokens
-		sum.Tokens.CacheRead += usage.CacheReadTokens
-		sum.Tokens.CacheWrite += usage.CacheWriteTokens
+		acc.rows++
+		acc.tokens.Input += usage.InputTokens
+		acc.tokens.Output += usage.OutputTokens
+		acc.tokens.CacheRead += usage.CacheReadTokens
+		acc.tokens.CacheWrite += usage.CacheWriteTokens
 		var reportedAmount *pricing.Amount
 		if reported.Valid {
 			amount := pricing.Amount(reported.Int64)
@@ -332,31 +352,20 @@ func (s *Service) priceUsageRows(rows *sql.Rows, slot func(key string) (int, boo
 		result, err := db.EvaluateCostAt(s.pricer, provider, model,
 			db.ParseCostTime(occurredAt), usage, reportedAmount)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if amounts[i], err = amounts[i].Add(result.Amount); err != nil {
-			return nil, err
+		if acc.amount, err = acc.amount.Add(result.Amount); err != nil {
+			return err
 		}
-		if reportedAmounts[i], err = reportedAmounts[i].Add(result.Reported); err != nil {
-			return nil, err
+		if acc.reported, err = acc.reported.Add(result.Reported); err != nil {
+			return err
 		}
-		if estimatedAmounts[i], err = estimatedAmounts[i].Add(result.Estimated); err != nil {
-			return nil, err
+		if acc.estimated, err = acc.estimated.Add(result.Estimated); err != nil {
+			return err
 		}
-		addUnpriced(&sum.UnpricedTokens, &sum.UnpricedTokenTypes, result.Unpriced)
+		addUnpriced(&acc.unpriced, &acc.unpricedTypes, result.Unpriced)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range sums {
-		sums[i].CostUSD = amounts[i].USD()
-		sums[i].CostUSDExact = amounts[i].String()
-		sums[i].CostReportedUSD = reportedAmounts[i].USD()
-		sums[i].CostReportedUSDExact = reportedAmounts[i].String()
-		sums[i].CostEstimatedUSD = estimatedAmounts[i].USD()
-		sums[i].CostEstimatedUSDExact = estimatedAmounts[i].String()
-	}
-	return counts, nil
+	return rows.Err()
 }
 
 func addUnpriced(total *int64, breakdown **TokenTotals, u canon.Usage) {
@@ -415,12 +424,9 @@ type SessionDetail struct {
 // SubagentTotal is the usage and cost of all of a session's descendant
 // subagent sessions taken together.
 type SubagentTotal struct {
-	Sessions       int         `json:"sessions"`
-	Messages       int         `json:"messages"`
-	Tokens         TokenTotals `json:"tokens"`
-	CostUSD        float64     `json:"costUSD"`
-	CostUSDExact   string      `json:"costUSDExact"`
-	UnpricedTokens int64       `json:"unpricedTokens,omitempty"`
+	Sessions int `json:"sessions"`
+	Messages int `json:"messages"`
+	CostTotals
 }
 
 // Session returns one session with its relations and linked artifacts.
@@ -454,9 +460,12 @@ func (s *Service) Session(ctx context.Context, agentSlug, externalID string) (*S
 		return nil, err
 	}
 
-	const branchSeq = `(SELECT m.seq FROM messages m
-		WHERE m.session_id = r.to_session_id AND m.external_id <> ''
-		  AND m.external_id = json_extract(r.evidence_json, '$.branchUuid'))`
+	// Only fork relations carry a branch point; skip the message lookup
+	// for the rest.
+	const branchSeq = `CASE WHEN json_extract(r.evidence_json, '$.branchUuid') <> '' THEN
+		(SELECT m.seq FROM messages m
+		 WHERE m.session_id = r.to_session_id
+		   AND m.external_id = json_extract(r.evidence_json, '$.branchUuid')) END`
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT r.kind, 'out', other.external_id, `+branchSeq+`
 		FROM session_relations r JOIN sessions other ON other.id = r.to_session_id
@@ -665,28 +674,25 @@ func (s *Service) attachSubagents(ctx context.Context, rowID int64, detail *Sess
 	}
 	defer descendants.Close()
 	total := &SubagentTotal{}
-	slots := map[int64]int{}
+	var ids []int64
 	for descendants.Next() {
 		var id int64
 		var messages int
 		if err := descendants.Scan(&id, &messages); err != nil {
 			return err
 		}
-		slots[id] = 0
+		ids = append(ids, id)
 		total.Sessions++
 		total.Messages += messages
 	}
 	if err := descendants.Err(); err != nil {
 		return err
 	}
-	sum := []SessionSummary{{}}
-	if err := s.accumulateCosts(ctx, slots, sum); err != nil {
+	var acc costAcc
+	if err := s.priceSessions(ctx, ids, func(string) *costAcc { return &acc }); err != nil {
 		return err
 	}
-	total.Tokens = sum[0].Tokens
-	total.CostUSD = sum[0].CostUSD
-	total.CostUSDExact = sum[0].CostUSDExact
-	total.UnpricedTokens = sum[0].UnpricedTokens
+	total.CostTotals = acc.totals()
 	detail.SubagentTotal = total
 	return nil
 }

@@ -41,7 +41,6 @@ const (
 // one map entry.
 func fixtureService(t *testing.T, slugs ...canon.AgentSlug) *Service {
 	t.Helper()
-	store, table := newStore(t)
 	known := map[canon.AgentSlug]agent.Adapter{
 		claude.Slug:   claude.New(),
 		pi.Slug:       pi.New(),
@@ -62,6 +61,14 @@ func fixtureService(t *testing.T, slugs ...canon.AgentSlug) *Service {
 		adapters = append(adapters, a)
 		roots[slug] = []string{dir}
 	}
+	return ingestRoots(t, roots, adapters...)
+}
+
+// ingestRoots ingests the given agent roots, and nothing from the
+// developer's machine, into a fresh store.
+func ingestRoots(t *testing.T, roots map[canon.AgentSlug][]string, adapters ...agent.Adapter) *Service {
+	t.Helper()
+	store, table := newStore(t)
 	if _, err := ingest.New(store, table, adapters...).Run(context.Background(), ingest.Options{
 		ConfigRoots: roots,
 		Getenv:      func(string) string { return "" },
@@ -1406,17 +1413,26 @@ func TestSubagentSessionsRollUpUnderTheirParent(t *testing.T) {
 }
 
 // claudeRootService ingests a Claude Code root built by a test.
+// claudeSessionsService ingests Claude sessions (id → JSONL body) from one
+// project directory.
+func claudeSessionsService(t *testing.T, sessions map[string]string) *Service {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for id, body := range sessions {
+		if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return claudeRootService(t, root)
+}
+
 func claudeRootService(t *testing.T, root string) *Service {
 	t.Helper()
-	store, table := newStore(t)
-	if _, err := ingest.New(store, table, claude.New()).Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{claude.Slug: {root}},
-		Getenv:      func(string) string { return "" },
-		Home:        "/nonexistent",
-	}); err != nil {
-		t.Fatalf("ingest: %v", err)
-	}
-	return New(store, table)
+	return ingestRoots(t, map[canon.AgentSlug][]string{claude.Slug: {root}}, claude.New())
 }
 
 // A resumed session names its parent and the parent entry it branched
@@ -1426,24 +1442,14 @@ func TestResumedSessionRelationCarriesBranchSeq(t *testing.T) {
 		parent = "55555555-0000-0000-0000-000000000001"
 		child  = "55555555-0000-0000-0000-000000000002"
 	)
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	line := func(session, uuid string) string {
 		return `{"type":"user","uuid":"` + uuid + `","sessionId":"` + session +
 			`","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"hi"}}` + "\n"
 	}
-	for name, body := range map[string]string{
+	s := claudeSessionsService(t, map[string]string{
 		parent: line(parent, "p0") + line(parent, "p1") + line(parent, "p2"),
 		child:  line(parent, "p0") + line(parent, "p1") + line(child, "c0"),
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := claudeRootService(t, root)
+	})
 	ctx := context.Background()
 	for id, want := range map[string]string{child: "out", parent: "in"} {
 		d, err := s.Session(ctx, string(claude.Slug), id)
@@ -1462,20 +1468,12 @@ func TestResumedSessionRelationCarriesBranchSeq(t *testing.T) {
 // failure counts.
 func TestErrorEventsAndToolFailuresAggregate(t *testing.T) {
 	const id = "88888888-0000-0000-0000-000000000001"
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
 	body := `{"type":"assistant",` + head + `"uuid":"a","isApiErrorMessage":true,"apiErrorStatus":429,"error":"rate_limit","message":{"id":"x1","role":"assistant","content":[{"type":"text","text":"limit"}]}}` + "\n" +
 		`{"type":"assistant",` + head + `"uuid":"b","isApiErrorMessage":true,"error":"server_error","message":{"id":"x2","role":"assistant","content":[{"type":"text","text":"boom"}]}}` + "\n" +
 		`{"type":"assistant",` + head + `"uuid":"c","message":{"id":"x3","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"false"}}]}}` + "\n" +
 		`{"type":"user",` + head + `"uuid":"d","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"exit 1"}]}}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, map[string]string{id: body})
 	ctx := context.Background()
 
 	stats, err := s.EventStats(ctx, EventStatsFilter{Kind: "api_error"})
@@ -1506,19 +1504,11 @@ func TestErrorEventsAndToolFailuresAggregate(t *testing.T) {
 // recorded wall time lands as a turn event.
 func TestToolAndTurnTiming(t *testing.T) {
 	const id = "aaaaaaaa-0000-0000-0000-000000000009"
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	head := func(ts string) string { return `"sessionId":"` + id + `","timestamp":"` + ts + `",` }
 	body := `{"type":"assistant",` + head("2026-10-01T10:00:00.000Z") + `"uuid":"a","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"sleep 1"}}]}}` + "\n" +
 		`{"type":"user",` + head("2026-10-01T10:00:01.250Z") + `"uuid":"b","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n" +
 		`{"type":"system","subtype":"turn_duration","durationMs":21758,"messageCount":3,` + head("2026-10-01T10:00:02.000Z") + `"uuid":"c"}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, map[string]string{id: body})
 	ctx := context.Background()
 	tools, err := s.ToolStats(ctx, ToolStatsFilter{Sort: "avg"})
 	if err != nil {
@@ -1540,11 +1530,6 @@ func TestToolAndTurnTiming(t *testing.T) {
 // writes); a compaction lands between the requests it separates.
 func TestContextFillAndCompactions(t *testing.T) {
 	const id = "bbbbbbbb-0000-0000-0000-00000000000c"
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
 	req := func(uuid, msgID string, input, cacheRead int) string {
 		return `{"type":"assistant",` + head + `"uuid":"` + uuid + `","requestId":"r` + msgID + `","message":{"id":"` + msgID +
@@ -1554,10 +1539,7 @@ func TestContextFillAndCompactions(t *testing.T) {
 	body := req("a", "m1", 100, 150000) +
 		`{"type":"system","subtype":"compact_boundary","content":"Conversation compacted",` + head + `"uuid":"c","compactMetadata":{"trigger":"auto","preTokens":150100,"postTokens":9000}}` + "\n" +
 		req("b", "m2", 100, 9000)
-	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, map[string]string{id: body})
 	got, err := s.Context(context.Background(), string(claude.Slug), id)
 	if err != nil {
 		t.Fatal(err)
@@ -1575,11 +1557,6 @@ func TestContextFillAndCompactions(t *testing.T) {
 // never stored.
 func TestHookRunsAggregatePerCommand(t *testing.T) {
 	const id = "cccccccc-0000-0000-0000-00000000000d"
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
 	hook := func(uuid, typ, command string, exit string, ms int) string {
 		return `{"type":"attachment",` + head + `"uuid":"` + uuid + `","attachment":{"type":"` + typ + `","hookEvent":"PreToolUse","hookName":"PreToolUse:Bash","command":"` +
@@ -1589,10 +1566,7 @@ func TestHookRunsAggregatePerCommand(t *testing.T) {
 		hook("h1", "hook_success", "lint.sh", "0", 40) + hook("h2", "hook_success", "lint.sh", "0", 60) +
 		hook("h3", "hook_success", "missing.sh", "127", 5) +
 		`{"type":"attachment",` + head + `"uuid":"h4","attachment":{"type":"hook_blocking_error","hookEvent":"Stop","hookName":"Stop","blockingError":{}}}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, map[string]string{id: body})
 	ctx := context.Background()
 	stats, err := s.EventStats(ctx, EventStatsFilter{Kind: "hook", GroupBy: "detail"})
 	if err != nil {
@@ -1627,11 +1601,6 @@ func TestHookRunsAggregatePerCommand(t *testing.T) {
 // content; both roll up per file and onto the session.
 func TestFileChangeLinesRollUp(t *testing.T) {
 	const id = "dddddddd-0000-0000-0000-00000000000e"
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
 	call := func(uuid, tool, name, path string) string {
 		return `{"type":"assistant",` + head + `"uuid":"` + uuid + `","message":{"id":"m` + uuid + `","role":"assistant","content":[{"type":"tool_use","id":"` + tool + `","name":"` + name + `","input":{"file_path":"` + path + `"}}]}}` + "\n"
@@ -1645,10 +1614,7 @@ func TestFileChangeLinesRollUp(t *testing.T) {
 		result("d", "t2", `{"type":"create","filePath":"/w/b.go","content":"one\ntwo\nthree\n","structuredPatch":[]}`) +
 		call("e", "t3", "Read", "/w/a.go") +
 		result("f", "t3", `{"type":"text","file":{"filePath":"/w/a.go"}}`)
-	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, map[string]string{id: body})
 	ctx := context.Background()
 	files, err := s.Changes(ctx, ChangesFilter{GroupBy: "file"})
 	if err != nil {
@@ -1688,15 +1654,8 @@ func TestChangedFilesResolveAgainstSessionCWD(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, table := newStore(t)
-	if _, err := ingest.New(store, table, pi.New()).Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{pi.Slug: {root}},
-		Getenv:      func(string) string { return "" },
-		Home:        "/nonexistent",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	files, err := New(store, table).Changes(context.Background(), ChangesFilter{GroupBy: "file"})
+	s := ingestRoots(t, map[canon.AgentSlug][]string{pi.Slug: {root}}, pi.New())
+	files, err := s.Changes(context.Background(), ChangesFilter{GroupBy: "file"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1710,20 +1669,12 @@ func TestChangedFilesResolveAgainstSessionCWD(t *testing.T) {
 // up to the session's own cost.
 func TestEffortSplitsCostByLevel(t *testing.T) {
 	const id = "eeeeeeee-0000-0000-0000-00000000000f"
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	req := func(uuid, effort string) string {
 		return `{"type":"assistant","sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z","uuid":"` + uuid + `","requestId":"r` + uuid + `",` + effort +
 			`"message":{"id":"m` + uuid + `","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1000,"output_tokens":100}}}` + "\n"
 	}
 	body := req("a", `"effort":"high",`) + req("b", `"effort":"high","perTurnEffort":"medium",`) + req("c", `"effort":"high",`)
-	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, map[string]string{id: body})
 	ctx := context.Background()
 	rows, err := s.Effort(ctx, EffortFilter{})
 	if err != nil {
@@ -1756,11 +1707,6 @@ func TestResumedTurnsAreChargedWhereTheyHappened(t *testing.T) {
 		parent  = "ffffffff-0000-0000-0000-000000000001"
 		resumed = "00000000-0000-0000-0000-000000000002"
 	)
-	root := t.TempDir()
-	dir := filepath.Join(root, "projects", "-w")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	turn := func(session, n, ts string) string {
 		return `{"type":"assistant","sessionId":"` + session + `","timestamp":"` + ts + `","uuid":"u` + n + `","requestId":"req` + n + `",` +
 			`"message":{"id":"msg` + n + `","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1000,"output_tokens":100}}}` + "\n"
@@ -1769,12 +1715,7 @@ func TestResumedTurnsAreChargedWhereTheyHappened(t *testing.T) {
 		parent:  turn(parent, "1", "2026-10-01T10:00:00Z") + turn(parent, "2", "2026-10-01T10:01:00Z"),
 		resumed: turn(parent, "1", "2026-10-01T10:00:00Z") + turn(parent, "2", "2026-10-01T10:01:00Z") + turn(resumed, "3", "2026-10-02T09:00:00Z"),
 	}
-	for id, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := claudeRootService(t, root)
+	s := claudeSessionsService(t, files)
 	ctx := context.Background()
 	inputs := map[string]int64{}
 	for _, id := range []string{parent, resumed} {

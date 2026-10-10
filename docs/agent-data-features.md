@@ -257,3 +257,25 @@ The effort tab's per-day chart was a hand-drawn SVG. It now uses the same compon
 - `StackedTimeline` (new) holds the chart, zoom, selection, reset and CSV behaviour. `CostTimeline` is now a thin wrapper that fetches cost per agent; its behaviour, accessible name and CSV columns are unchanged. `EffortTimeline` stacks requests per day by level and is lazy-loaded like the cost chart.
 - Canvas cannot evaluate `color-mix()`, so level shades are mixed in sRGB from the resolved accent and surface colors. "Not recorded" stays neutral gray. Level ordering and labels moved to `pages/insights/levels.ts`, shared by the table and the chart.
 - The e2e drag-select/reset test now runs on both charts.
+
+## Simplify pass
+
+A review of the whole stack for reuse, simplification, efficiency and altitude, then a cleanup revision. Query outputs on a copy of the real archive match the previous build, except for the additive fields noted below.
+
+Fixed:
+
+- **One pricing path.** `CostTotals` (tokens, automatic/reported/estimated cost, unpriced tokens) is embedded in `SessionSummary`, `SubagentTotal` and `EffortRow`, and filled by one `costAcc` accumulator. `priceUsageRows` creates accumulators lazily, so `Effort` is one query instead of a key pass plus a pricing pass, and the subagent total uses a single accumulator. `SubagentTotal` and `EffortRow` gain the reported/estimated split and `unpricedTokenTypes` (additive JSON).
+- **Query helpers.** `windowClauses` (agent plus day window) replaces four copies; `placeholders` and `limitClause` replace hand-built IN lists and LIMITs. `canon.EventKinds` is the one list of event kinds, read by the kind filter and the ops description. The fork branch-point lookup runs only for relations that carry a `branchUuid`.
+- **Ownership order shared.** `restoreOwnerSQL` ranks copies with the same `usageOwnerOrder` as `AssignUsageOwners`, so a restored owner is already the one reconcile would pick. `v2HasSession` now seeks the `(agent_id, external_id)` unique index.
+- **Image serving** walks the JSON pointer one raw level at a time instead of decoding the whole message.
+- **Adapters.** Claude's `toolUseResult`, Pi's `details` and Codex's `output` are reduced to what is read while the line decodes, so large tool results are never copied. Claude metadata events go through one `queueEvent`. Codex builds function and custom tool calls in one place, and `exec` maps to the script kind in `normalizeTool`. `canon.JoinThinking` and `canon.CompactionDetail` replace per-adapter copies.
+- **UI.** `isCodeKind` replaces four shell-or-script checks; `get()` takes numeric params; the Insights panels use `EmptyNote error=` and a shared `TableHead`; the context chart memoizes its geometry so hover does not rebuild the path; effort levels include Pi's `off` and `minimal`, with a `NOT_RECORDED` constant instead of comparing labels; file-local exports and the `fmtAxisCount` wrapper are gone; session tabs gate on `counts`.
+- **Tests.** `ingestRoots` and `claudeSessionsService` (query) and `handlerFor` (api) replace repeated store/ingest setup.
+
+Skipped:
+
+- A generic HTTP handler for ops: the explicit per-route handlers are the documented convention.
+- Typed relation fields instead of evidence JSON, and resolving relative file paths at ingest: both are schema or reparse changes.
+- Canonical effort normalization in `canon`, covering indexes for the new aggregates, a thinking preview in list responses, and server-side aggregation for the PR and compaction tabs: behaviour or storage trade-offs, not cleanups.
+- `useTooltip` in the context chart, reusing `SessionRow` in the subagents tab, and a shared `ToggleButton`: UI changes beyond the reviewed diff.
+- A set-based `AssignUsageOwners`, adapter-test helpers, and trimming the `ParseVersion` changelog comments.

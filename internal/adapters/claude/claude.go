@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,7 +179,7 @@ type rawLine struct {
 
 	// The tool result's structured payload, on the line carrying the
 	// tool_result. Decoded only for file changes (see changeLines).
-	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	ToolUseResult fileChange `json:"toolUseResult"`
 
 	// type == "pr-link": a pull request the session opened or checked.
 	PRNumber     int    `json:"prNumber"`
@@ -355,6 +356,16 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		})
 	}
 	messageCount, toolCount := 0, 0
+	// queueEvent anchors a metadata event after the last message so far.
+	queueEvent := func(ev canon.SessionEvent) error {
+		ev.SessionExternalID = sess.ExternalID
+		ev.MessageSeq = max(state.MessageSeq+messageCount-1, 0)
+		pendingEvents = append(pendingEvents, ev)
+		if !emittedSession {
+			return nil
+		}
+		return flushEvents()
+	}
 	metadataChanged := false
 	var seenPRs map[string]bool
 	titlePriority := 0 // first prompt < AI title < user-assigned custom title
@@ -452,13 +463,8 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		switch entry.Type {
 		case "attachment":
 			if ev, ok := hookEvent(entry); ok {
-				ev.SessionExternalID = sess.ExternalID
-				ev.MessageSeq = max(state.MessageSeq+messageCount-1, 0)
-				pendingEvents = append(pendingEvents, ev)
-				if emittedSession {
-					if err := flushEvents(); err != nil {
-						return state, err
-					}
+				if err := queueEvent(ev); err != nil {
+					return state, err
 				}
 			}
 			continue
@@ -476,19 +482,14 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			payload, _ := json.Marshal(map[string]any{
 				"number": entry.PRNumber, "url": entry.PRURL, "repository": entry.PRRepository,
 			})
-			pendingEvents = append(pendingEvents, canon.SessionEvent{
-				SessionExternalID: sess.ExternalID,
-				MessageSeq:        max(state.MessageSeq+messageCount-1, 0),
-				Kind:              canon.EventPRLink,
-				At:                entry.Timestamp,
-				Label:             entry.PRRepository,
-				Detail:            entry.PRURL,
-				Payload:           payload,
-			})
-			if emittedSession {
-				if err := flushEvents(); err != nil {
-					return state, err
-				}
+			if err := queueEvent(canon.SessionEvent{
+				Kind:    canon.EventPRLink,
+				At:      entry.Timestamp,
+				Label:   entry.PRRepository,
+				Detail:  entry.PRURL,
+				Payload: payload,
+			}); err != nil {
+				return state, err
 			}
 			continue
 		case "custom-title":
@@ -764,12 +765,10 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 	msg.Text = extractText(payload.Content, content, raw.Content)
 	var thinking []string
 	for i, block := range content {
-		prefix := fmt.Sprintf("/content/%d", i)
+		prefix := "/content/" + strconv.Itoa(i)
 		switch block.Type {
 		case "thinking":
-			if t := strings.TrimSpace(block.Thinking); t != "" {
-				thinking = append(thinking, t)
-			}
+			thinking = append(thinking, block.Thinking)
 		case "image":
 			if ref, ok := imageRef(block, prefix); ok {
 				msg.Images = append(msg.Images, ref)
@@ -782,13 +781,13 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 				continue
 			}
 			for j, inner := range blocks(block.Content) {
-				if ref, ok := imageRef(inner, fmt.Sprintf("%s/content/%d", prefix, j)); ok {
+				if ref, ok := imageRef(inner, prefix+"/content/"+strconv.Itoa(j)); ok {
 					msg.Images = append(msg.Images, ref)
 				}
 			}
 		}
 	}
-	msg.Thinking = strings.Join(thinking, "\n\n")
+	msg.Thinking = canon.JoinThinking(thinking)
 
 	var (
 		calls   []canon.ToolCall
@@ -838,15 +837,25 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 	// One tool result per line is the norm; the line-level payload belongs
 	// to it. With several, which one it describes is unknowable.
 	if len(results) == 1 {
-		results[0].Lines = changeLines(raw.ToolUseResult)
+		results[0].Lines = raw.ToolUseResult.lines
 	}
 	return msg, calls, results
+}
+
+// fileChange is a line's toolUseResult reduced to its file-change size
+// while the line decodes, so a large result (a whole file read back) is
+// never copied out of the line.
+type fileChange struct{ lines *canon.LineCounts }
+
+func (f *fileChange) UnmarshalJSON(raw []byte) error {
+	f.lines = changeLines(raw)
+	return nil
 }
 
 // changeLines sizes a file change from its tool result: a new file by its
 // content, an edit or overwrite by its structured patch. Anything else
 // (reads, shell output, errors written as a bare string) is not a change.
-func changeLines(raw json.RawMessage) *canon.LineCounts {
+func changeLines(raw []byte) *canon.LineCounts {
 	if jsonl.FirstByte(raw) != '{' || !bytes.Contains(raw, []byte(`"structuredPatch"`)) {
 		return nil
 	}
@@ -906,15 +915,6 @@ func hookEvent(raw rawLine) (canon.SessionEvent, bool) {
 	return ev, true
 }
 
-// compactionDetail reads a compaction's token change; postTokens is often
-// unrecorded.
-func compactionDetail(pre, post int64) string {
-	if post > 0 {
-		return fmt.Sprintf("%d → %d tokens", pre, post)
-	}
-	return fmt.Sprintf("%d tokens before", pre)
-}
-
 // interruptMarker opens the user line Claude Code writes when a turn is
 // cut short ("… by user]" or "… by user for tool use]").
 const interruptMarker = "[Request interrupted by user"
@@ -951,7 +951,7 @@ func lineEvent(raw rawLine, msg canon.Message, results []canon.ToolResult) (cano
 		ev.Kind = canon.EventCompaction
 		ev.Label = cm.Trigger
 		ev.DurationMs = cm.DurationMs
-		ev.Detail = compactionDetail(cm.PreTokens, cm.PostTokens)
+		ev.Detail = canon.CompactionDetail(cm.PreTokens, cm.PostTokens)
 		ev.Payload, _ = json.Marshal(map[string]int64{"preTokens": cm.PreTokens, "postTokens": cm.PostTokens})
 	case raw.Type == "system" && raw.Subtype == "turn_duration" && raw.DurationMs > 0:
 		ev.Kind = canon.EventTurn

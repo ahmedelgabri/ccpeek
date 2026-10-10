@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, fmtTokens, type ContextPoint } from "../../api";
+import {
+  api,
+  fmtTokens,
+  type ContextPoint,
+  type SessionContext,
+} from "../../api";
 import { fmtWhen } from "../../time";
 import { EmptyNote, LoadError, Panel, SkeletonRows } from "../../ui";
 import { EventList } from "../insights/events";
@@ -32,11 +37,7 @@ export function ContextTab({
   return (
     <div className="space-y-4">
       <Panel label="Prompt tokens per request">
-        <Chart
-          points={points}
-          compactionSeqs={compactions.map((c) => c.messageSeq)}
-          onJump={onJump}
-        />
+        <Chart points={points} compactions={compactions} onJump={onJump} />
       </Panel>
       {compactions.length > 0 && (
         <Panel label="Compactions">
@@ -97,16 +98,47 @@ function niceCeil(n: number): number {
   return 10 * p;
 }
 
+// geometry lays the chart out: scales, the line, compaction markers, and
+// the peak request.
+function geometry(
+  points: ContextPoint[],
+  compactions: SessionContext["compactions"],
+  width: number,
+) {
+  const max = niceCeil(Math.max(...points.map((p) => p.promptTokens)));
+  const innerW = Math.max(width - PAD.left - PAD.right, 1);
+  const innerH = HEIGHT - PAD.top - PAD.bottom;
+  const x = (i: number) =>
+    PAD.left +
+    (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+  const y = (v: number) => PAD.top + innerH - (v / max) * innerH;
+  const path = points
+    .map(
+      (p, i) =>
+        `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.promptTokens).toFixed(1)}`,
+    )
+    .join("");
+  // A compaction sits between the last request before it and the first
+  // after: marked at the first request whose seq follows it.
+  const markers = compactions
+    .map((c) => points.findIndex((p) => p.seq > c.messageSeq))
+    .filter((i) => i >= 0);
+  const peak = points.reduce((a, p) =>
+    p.promptTokens > a.promptTokens ? p : a,
+  );
+  return { max, innerW, innerH, x, y, path, markers, peak };
+}
+
 // Chart is a single-series line: requests evenly spaced in order (time
 // gaps between them are not the story), prompt size up. A crosshair snaps
 // to the nearest request; clicking it opens the transcript there.
 function Chart({
   points,
-  compactionSeqs,
+  compactions,
   onJump,
 }: {
   points: ContextPoint[];
-  compactionSeqs: number[];
+  compactions: SessionContext["compactions"];
   onJump: (seq: number) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -124,24 +156,12 @@ function Chart({
     return () => ro.disconnect();
   }, []);
 
-  const max = niceCeil(Math.max(...points.map((p) => p.promptTokens)));
-  const innerW = Math.max(width - PAD.left - PAD.right, 1);
-  const innerH = HEIGHT - PAD.top - PAD.bottom;
-  const x = (i: number) =>
-    PAD.left +
-    (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
-  const y = (v: number) => PAD.top + innerH - (v / max) * innerH;
-  const path = points
-    .map(
-      (p, i) =>
-        `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.promptTokens).toFixed(1)}`,
-    )
-    .join("");
-  // A compaction sits between the last request before it and the first
-  // after: marked at the first request whose seq follows it.
-  const markers = compactionSeqs
-    .map((seq) => points.findIndex((p) => p.seq > seq))
-    .filter((i) => i >= 0);
+  // Hovering re-renders on every pointer move; the geometry only changes
+  // with the data or the width.
+  const { max, innerW, innerH, x, y, path, markers, peak } = useMemo(
+    () => geometry(points, compactions, width),
+    [points, compactions, width],
+  );
 
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -154,9 +174,6 @@ function Chart({
     );
   };
   const h = hover === null ? null : points[hover];
-  const peak = points.reduce((a, p) =>
-    p.promptTokens > a.promptTokens ? p : a,
-  );
 
   return (
     <div ref={box} className="relative px-1 py-2">

@@ -267,7 +267,7 @@ function useEChart(
   return chart;
 }
 
-export interface StackedTimelineProps {
+interface StackedTimelineProps {
   /** Panel title. */
   label: string;
   series: TimelineSeries[];

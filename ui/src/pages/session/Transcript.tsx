@@ -31,7 +31,7 @@ import {
   useSlashFocus,
   useToggleSet,
 } from "../../ui";
-import { ToolExpansion } from "./ToolExpansion";
+import { isCodeKind, ToolExpansion } from "./ToolExpansion";
 
 // Transcript lenses: the reader's filter over a session that can run to
 // thousands of entries.
@@ -677,7 +677,7 @@ function MessageTools({
           // Expand only when there is more than the chip already shows: a
           // diff (edits and writes carry payloads behind the detail
           // lookup), a full shell command or script, or a truncated detail.
-          const isCode = t.kind === "shell" || t.kind === "script";
+          const isCode = isCodeKind(t.kind);
           const expandable =
             t.kind === "file_edit" ||
             t.kind === "file_write" ||
@@ -722,9 +722,7 @@ function MessageTools({
           <div key={t.seq} className="mt-2">
             <div className="mb-1 font-mono text-micro text-ink-faint">
               <span style={{ color: toolColor(t.kind) }}>{t.name}</span>
-              {t.detail && t.kind !== "shell" && t.kind !== "script" && (
-                <> · {shortPath(t.detail)}</>
-              )}
+              {t.detail && !isCodeKind(t.kind) && <> · {shortPath(t.detail)}</>}
             </div>
             <ToolExpansion agent={agent} sessionId={sessionId} seq={t.seq} />
           </div>

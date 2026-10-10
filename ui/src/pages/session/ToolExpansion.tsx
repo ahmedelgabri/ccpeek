@@ -12,6 +12,10 @@ const CODE_LANGUAGE: Record<string, string> = {
   script: "language-javascript",
 };
 
+export function isCodeKind(kind: string): boolean {
+  return Object.hasOwn(CODE_LANGUAGE, kind);
+}
+
 // ToolExpansion mounts only when a chip or row is opened: opening is
 // what fetches the full payload — the 16 KiB diff excerpts never ride
 // list responses.

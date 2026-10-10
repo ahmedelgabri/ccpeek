@@ -4,20 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 )
 
-// eventKinds are the kinds a filter may name; an unknown kind is a caller
-// mistake, not an empty answer.
-var eventKinds = []canon.EventKind{
-	canon.EventAPIError, canon.EventAborted, canon.EventToolDenied,
-	canon.EventPRLink, canon.EventTurn, canon.EventCompaction, canon.EventHook,
-}
-
-// parseKinds splits a comma-separated kind filter and validates it.
+// parseKinds splits a comma-separated kind filter and validates it; an
+// unknown kind is a caller mistake, not an empty answer.
 func parseKinds(spec string) ([]string, error) {
 	if spec == "" {
 		return nil, nil
@@ -25,17 +20,18 @@ func parseKinds(spec string) ([]string, error) {
 	var out []string
 	for _, k := range strings.Split(spec, ",") {
 		k = strings.TrimSpace(k)
-		if !slices.Contains(eventKinds, canon.EventKind(k)) {
-			return nil, fmt.Errorf("%w: kind=%q (want one of %s)", ErrBadRequest, k, kindList())
+		if !slices.Contains(canon.EventKinds, canon.EventKind(k)) {
+			return nil, fmt.Errorf("%w: kind=%q (want one of %s)", ErrBadRequest, k, EventKindList())
 		}
 		out = append(out, k)
 	}
 	return out, nil
 }
 
-func kindList() string {
-	names := make([]string, len(eventKinds))
-	for i, k := range eventKinds {
+// EventKindList renders the filterable event kinds for messages and docs.
+func EventKindList() string {
+	names := make([]string, len(canon.EventKinds))
+	for i, k := range canon.EventKinds {
 		names[i] = string(k)
 	}
 	return strings.Join(names, ", ")
@@ -46,24 +42,43 @@ func eventWhere(kinds []string, agent, since, until string) ([]string, []any) {
 	var where []string
 	var args []any
 	if len(kinds) > 0 {
-		where = append(where, "e.kind IN ("+strings.TrimSuffix(strings.Repeat("?,", len(kinds)), ",")+")")
+		where = append(where, "e.kind IN ("+placeholders(len(kinds))+")")
 		for _, k := range kinds {
 			args = append(args, k)
 		}
 	}
+	return windowClauses(where, args, "e.at", agent, since, until)
+}
+
+// windowClauses appends the agent filter and the [since, until] day window
+// on timeCol that every aggregate read accepts.
+func windowClauses(where []string, args []any, timeCol, agent, since, until string) ([]string, []any) {
 	if agent != "" {
 		where = append(where, "a.slug = ?")
 		args = append(args, agent)
 	}
 	if since != "" {
-		where = append(where, "e.at >= ?")
+		where = append(where, timeCol+" >= ?")
 		args = append(args, since)
 	}
 	if until != "" {
-		where = append(where, "e.at < ?")
+		where = append(where, timeCol+" < ?")
 		args = append(args, exclusiveUntil(until))
 	}
 	return where, args
+}
+
+// placeholders returns n comma-separated bind markers for an IN list.
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+// limitClause returns a LIMIT for a positive limit (zero means all rows).
+func limitClause(limit int, args []any) (string, []any) {
+	if limit <= 0 {
+		return "", args
+	}
+	return "LIMIT ?", append(args, limit)
 }
 
 func whereClause(where []string) string {
@@ -134,7 +149,7 @@ func (s *Service) Events(ctx context.Context, f EventsFilter) ([]EventRow, error
 	where, args := eventWhere(kinds, f.Agent, f.Since, f.Until)
 	if f.Status != "" {
 		statuses := strings.Split(f.Status, ",")
-		where = append(where, "e.status IN ("+strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")+")")
+		where = append(where, "e.status IN ("+placeholders(len(statuses))+")")
 		for _, st := range statuses {
 			args = append(args, strings.TrimSpace(st))
 		}
@@ -237,11 +252,7 @@ func (s *Service) EventStats(ctx context.Context, f EventStatsFilter) ([]EventSt
 	if f.GroupBy == "day" {
 		order = "g, e.kind"
 	}
-	limit := ""
-	if f.Limit > 0 {
-		limit = "LIMIT ?"
-		args = append(args, f.Limit)
-	}
+	limit, args := limitClause(f.Limit, args)
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT e.kind, `+groupExpr+` AS g, COUNT(*), SUM(e.status IN ('error', 'blocked')),
 		       COUNT(DISTINCT e.session_id),
@@ -315,20 +326,7 @@ func (s *Service) ToolStats(ctx context.Context, f ToolStatsFilter) ([]ToolStat,
 	if !ok {
 		return nil, fmt.Errorf("%w: sort=%q (want errors, total, or avg)", ErrBadRequest, f.Sort)
 	}
-	var where []string
-	var args []any
-	if f.Agent != "" {
-		where = append(where, "a.slug = ?")
-		args = append(args, f.Agent)
-	}
-	if f.Since != "" {
-		where = append(where, "tc.started_at >= ?")
-		args = append(args, f.Since)
-	}
-	if f.Until != "" {
-		where = append(where, "tc.started_at < ?")
-		args = append(args, exclusiveUntil(f.Until))
-	}
+	where, args := windowClauses(nil, nil, "tc.started_at", f.Agent, f.Since, f.Until)
 	args = append(args, f.Limit)
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT tc.name, tc.kind, COUNT(*) AS calls, SUM(tc.result_status = 'error') AS errors,
@@ -484,29 +482,13 @@ func (s *Service) Changes(ctx context.Context, f ChangesFilter) ([]ChangeRow, er
 	if !ok {
 		return nil, fmt.Errorf("%w: group=%q (want day, agent, or file)", ErrBadRequest, f.GroupBy)
 	}
-	where := []string{"tc.lines_added IS NOT NULL"}
-	var args []any
-	if f.Agent != "" {
-		where = append(where, "a.slug = ?")
-		args = append(args, f.Agent)
-	}
-	if f.Since != "" {
-		where = append(where, "tc.started_at >= ?")
-		args = append(args, f.Since)
-	}
-	if f.Until != "" {
-		where = append(where, "tc.started_at < ?")
-		args = append(args, exclusiveUntil(f.Until))
-	}
+	where, args := windowClauses([]string{"tc.lines_added IS NOT NULL"}, nil,
+		"tc.started_at", f.Agent, f.Since, f.Until)
 	order := "SUM(tc.lines_added + tc.lines_removed) DESC, g"
 	if f.GroupBy == "day" {
 		order = "g"
 	}
-	limit := ""
-	if f.Limit > 0 {
-		limit = "LIMIT ?"
-		args = append(args, f.Limit)
-	}
+	limit, args := limitClause(f.Limit, args)
 	rows, err := s.store.ReadDB().QueryContext(ctx, `
 		SELECT `+groupExpr+` AS g, SUM(tc.lines_added), SUM(tc.lines_removed), COUNT(*),
 		       COUNT(DISTINCT `+changedFileExpr+`), COUNT(DISTINCT tc.session_id)
@@ -568,14 +550,11 @@ type EffortFilter struct {
 // per day — with their tokens and cost. Level is "" where the agent did
 // not record one.
 type EffortRow struct {
-	Agent          string      `json:"agent,omitempty"`
-	Day            string      `json:"day,omitempty"`
-	Level          string      `json:"level"`
-	Requests       int         `json:"requests"`
-	Tokens         TokenTotals `json:"tokens"`
-	CostUSD        float64     `json:"costUSD"`
-	CostUSDExact   string      `json:"costUSDExact"`
-	UnpricedTokens int64       `json:"unpricedTokens,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Day      string `json:"day,omitempty"`
+	Level    string `json:"level"`
+	Requests int    `json:"requests"`
+	CostTotals
 }
 
 // effortSep joins a group's two parts into one key; it cannot appear in a
@@ -601,71 +580,38 @@ func (s *Service) Effort(ctx context.Context, f EffortFilter) ([]EffortRow, erro
 		return nil, fmt.Errorf("%w: group=%q (want level or day)", ErrBadRequest, f.GroupBy)
 	}
 	key := first + " || char(31) || m.effort"
-	where := []string{"m.role = 'assistant'"}
-	var args []any
-	if f.Agent != "" {
-		where = append(where, "a.slug = ?")
-		args = append(args, f.Agent)
-	}
-	if f.Since != "" {
-		where = append(where, "m.created_at >= ?")
-		args = append(args, f.Since)
-	}
-	if f.Until != "" {
-		where = append(where, "m.created_at < ?")
-		args = append(args, exclusiveUntil(f.Until))
-	}
-	from := `FROM message_usage u
+	where, args := windowClauses([]string{"m.role = 'assistant'"}, nil,
+		"m.created_at", f.Agent, f.Since, f.Until)
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
+		SELECT `+key+`, `+usageCostColumns+`
+		FROM message_usage u
 		JOIN messages m ON m.id = u.message_id
 		JOIN sessions se ON se.id = m.session_id
 		JOIN agents a ON a.id = se.agent_id
-		` + whereClause(where)
-
-	keyRows, err := s.store.ReadDB().QueryContext(ctx, `SELECT DISTINCT `+key+` AS k `+from+` ORDER BY k`, args...)
+		`+whereClause(where), args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing effort groups: %w", err)
+		return nil, fmt.Errorf("pricing effort groups: %w", err)
 	}
-	slots := map[string]int{}
-	var out []EffortRow
-	for keyRows.Next() {
-		var k string
-		if err := keyRows.Scan(&k); err != nil {
-			keyRows.Close()
-			return nil, err
+	groups := map[string]*costAcc{}
+	err = s.priceUsageRows(rows, func(k string) *costAcc {
+		if groups[k] == nil {
+			groups[k] = &costAcc{}
 		}
+		return groups[k]
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EffortRow, 0, len(groups))
+	for _, k := range slices.Sorted(maps.Keys(groups)) {
 		head, level, _ := strings.Cut(k, effortSep)
-		row := EffortRow{Level: level}
+		row := EffortRow{Level: level, Requests: groups[k].rows, CostTotals: groups[k].totals()}
 		if f.GroupBy == "day" {
 			row.Day = head
 		} else {
 			row.Agent = head
 		}
-		slots[k] = len(out)
 		out = append(out, row)
-	}
-	keyRows.Close()
-	if err := keyRows.Err(); err != nil {
-		return nil, err
-	}
-
-	rows, err := s.store.ReadDB().QueryContext(ctx, `SELECT `+key+`, `+usageCostColumns+` `+from, args...)
-	if err != nil {
-		return nil, fmt.Errorf("pricing effort groups: %w", err)
-	}
-	sums := make([]SessionSummary, len(out))
-	counts, err := s.priceUsageRows(rows, func(k string) (int, bool) {
-		i, ok := slots[k]
-		return i, ok
-	}, sums)
-	if err != nil {
-		return nil, err
-	}
-	for i := range out {
-		out[i].Requests = counts[i]
-		out[i].Tokens = sums[i].Tokens
-		out[i].CostUSD = sums[i].CostUSD
-		out[i].CostUSDExact = sums[i].CostUSDExact
-		out[i].UnpricedTokens = sums[i].UnpricedTokens
 	}
 	return out, nil
 }

@@ -15,6 +15,11 @@ import (
 // copy only extends the history. Ties fall to the lowest session id, then
 // the turn's first line.
 //
+// usageOwnerOrder ranks the copies of one turn (messages m in sessions se)
+// so the first is its owner. restoreOwnerSQL uses it too, so a restored
+// owner is already the one AssignUsageOwners would pick.
+const usageOwnerOrder = `COALESCE(se.modified_at, '9999'), se.id, m.id`
+
 // Only keys present in sessions changed since the last rollup are
 // examined (dirty_sessions); both content_id lookups carry the literal
 // predicate the partial index needs.
@@ -28,7 +33,7 @@ const usageOwnerMovesSQL = `
 		SELECT k.a, k.c, k.r, m.id AS mid,
 		       ROW_NUMBER() OVER (
 		           PARTITION BY k.a, k.c, k.r
-		           ORDER BY COALESCE(se.modified_at, '9999'), se.id, m.id) AS rn
+		           ORDER BY ` + usageOwnerOrder + `) AS rn
 		FROM keys k
 		JOIN messages m ON m.content_id = k.c AND m.content_id <> '' AND m.usage_request_id = k.r
 		JOIN sessions se ON se.id = m.session_id AND se.agent_id = k.a

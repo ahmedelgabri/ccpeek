@@ -156,9 +156,8 @@ type piMessage struct {
 	ToolName    string         `json:"toolName"`
 	IsError     bool           `json:"isError"`
 	NestedCalls *piNestedCalls `json:"nestedCalls"`
-	// Tool-specific; decoded on demand (editLines) because its shape
-	// varies by tool.
-	Details json.RawMessage `json:"details"`
+	// Tool-specific; only an edit's patch is read (see editLines).
+	Details piDetails `json:"details"`
 }
 
 // piNestedCalls is Pi's bounded record of the tools a tool ran itself
@@ -481,7 +480,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				MessageSeq:        msg.Seq,
 				Kind:              canon.EventCompaction,
 				At:                e.Timestamp,
-				Detail:            fmt.Sprintf("%d tokens before", e.TokensBefore),
+				Detail:            canon.CompactionDetail(e.TokensBefore, 0),
 				Payload:           payload,
 			}); err != nil {
 				return err
@@ -516,17 +515,25 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 
 // editLines sizes an edit from its result's unified patch.
 func editLines(pm piMessage) *canon.LineCounts {
-	if pm.ToolName != "edit" || len(pm.Details) == 0 {
+	if pm.ToolName != "edit" || pm.Details.patch == "" {
 		return nil
 	}
-	var d struct {
+	c := canon.CountDiffLines(strings.Split(pm.Details.patch, "\n"))
+	return &c
+}
+
+// piDetails keeps the one details field ccpeek reads. Other tools put
+// arbitrary shapes there, which must not fail the whole line.
+type piDetails struct{ patch string }
+
+func (d *piDetails) UnmarshalJSON(raw []byte) error {
+	var v struct {
 		Patch string `json:"patch"`
 	}
-	if json.Unmarshal(pm.Details, &d) != nil || d.Patch == "" {
-		return nil
+	if json.Unmarshal(raw, &v) == nil {
+		d.patch = v.Patch
 	}
-	c := canon.CountDiffLines(strings.Split(d.Patch, "\n"))
-	return &c
+	return nil
 }
 
 // stopEvent turns an assistant turn that ended in error or was aborted
@@ -724,9 +731,7 @@ func piThinkingAndImages(decoded []piBlock) (string, []canon.ImageRef) {
 	for i, b := range decoded {
 		switch b.Type {
 		case "thinking":
-			if t := strings.TrimSpace(b.Thinking); t != "" {
-				thinking = append(thinking, t)
-			}
+			thinking = append(thinking, b.Thinking)
 		case "image":
 			images = append(images, canon.ImageRef{
 				MediaType: b.MimeType,
@@ -734,7 +739,7 @@ func piThinkingAndImages(decoded []piBlock) (string, []canon.ImageRef) {
 			})
 		}
 	}
-	return strings.Join(thinking, "\n\n"), images
+	return canon.JoinThinking(thinking), images
 }
 
 // piText takes the content array ALREADY decoded by the caller.

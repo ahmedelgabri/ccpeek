@@ -126,11 +126,11 @@ func (w *Writer) rememberUsage(sessionID int64) error {
 // every message of each — 2.3s per key on a real archive, run once per key
 // a reparsed session owned, so a parser-version bump took most of an hour.
 const restoreOwnerSQL = `SELECT m.id,c.usage_json FROM messages m
-   JOIN sessions s ON s.id=m.session_id
-   JOIN usage_claims c ON c.agent_id=s.agent_id AND c.content_id=m.content_id AND c.request_id=m.usage_request_id
-   WHERE s.agent_id=? AND m.content_id=? AND m.content_id<>'' AND m.usage_request_id=?
+   JOIN sessions se ON se.id=m.session_id
+   JOIN usage_claims c ON c.agent_id=se.agent_id AND c.content_id=m.content_id AND c.request_id=m.usage_request_id
+   WHERE se.agent_id=? AND m.content_id=? AND m.content_id<>'' AND m.usage_request_id=?
    AND NOT EXISTS(SELECT 1 FROM message_usage u JOIN messages owner ON owner.id=u.message_id JOIN sessions os ON os.id=owner.session_id WHERE os.agent_id=? AND owner.content_id=? AND owner.content_id<>'' AND u.request_id=?)
-   ORDER BY m.id LIMIT 1`
+   ORDER BY ` + usageOwnerOrder + ` LIMIT 1`
 
 func (w *Writer) restoreUsageOwners() error {
 	for _, k := range w.orphanUsage {

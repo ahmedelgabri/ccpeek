@@ -11,6 +11,7 @@ package canon
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -354,6 +355,33 @@ const (
 	// (non-zero exit), or blocked (the hook stopped the agent).
 	EventHook EventKind = "hook"
 )
+
+// JoinThinking joins a message's reasoning blocks into Message.Thinking,
+// dropping blank ones.
+func JoinThinking(blocks []string) string {
+	var kept []string
+	for _, b := range blocks {
+		if t := strings.TrimSpace(b); t != "" {
+			kept = append(kept, t)
+		}
+	}
+	return strings.Join(kept, "\n\n")
+}
+
+// CompactionDetail renders a compaction's token change for
+// SessionEvent.Detail; the after count is often unrecorded (zero).
+func CompactionDetail(before, after int64) string {
+	if after > 0 {
+		return fmt.Sprintf("%d → %d tokens", before, after)
+	}
+	return fmt.Sprintf("%d tokens before", before)
+}
+
+// EventKinds lists every EventKind, in documentation order.
+var EventKinds = []EventKind{
+	EventAPIError, EventAborted, EventToolDenied,
+	EventPRLink, EventTurn, EventCompaction, EventHook,
+}
 
 // EventDetailLimit bounds SessionEvent.Detail: an error message or a
 // command line, not a payload.

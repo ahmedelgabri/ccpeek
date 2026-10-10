@@ -184,13 +184,21 @@ type responseItem struct {
 	// Either a string or an array of content items (codex-rs
 	// FunctionCallOutputPayload); decoding it as a string failed the whole
 	// item, which dropped most results.
-	Output json.RawMessage `json:"output"`
+	Output toolOutput `json:"output"`
+}
+
+// toolOutput is a tool output flattened to text as the item decodes.
+type toolOutput string
+
+func (o *toolOutput) UnmarshalJSON(raw []byte) error {
+	*o = toolOutput(outputText(raw))
+	return nil
 }
 
 // outputText flattens a tool output: the string itself, or the text of
 // its content items joined by newlines (images are dropped, as Codex's own
 // to_text does).
-func outputText(raw json.RawMessage) string {
+func outputText(raw []byte) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s
@@ -400,68 +408,50 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				}
 				return emitMessage(msg)
 
-			case "function_call":
+			case "function_call", "custom_tool_call":
 				if err := flushPending(); err != nil {
 					return err
 				}
 				if err := emitSession(); err != nil {
 					return err
 				}
-				argsJSON := argumentsJSON(item.Arguments)
-				args := toolArgs(argsJSON)
-				if item.Name == "apply_patch" {
+				// A function call carries JSON arguments; a custom tool call
+				// freeform text (a patch, a code-mode script), stored under
+				// "input".
+				var input json.RawMessage
+				var args codexToolArgs
+				text := item.Input
+				if item.Type == "function_call" {
+					argsJSON := argumentsJSON(item.Arguments)
+					input = json.RawMessage(argsJSON)
+					args = toolArgs(argsJSON)
 					// Older Codex sent the patch as a JSON function argument.
-					tc := patchCall(sess.ExternalID, max(messageCount-1, 0), toolCount,
-						item, json.RawMessage(argsJSON), args.Input, line.Timestamp)
-					toolCount++
-					return sink.ToolCall(tc)
+					text = args.Input
+				} else {
+					input, _ = json.Marshal(map[string]string{"input": item.Input})
 				}
-				tc := canon.ToolCall{
-					SessionExternalID: sess.ExternalID,
-					MessageSeq:        max(messageCount-1, 0),
-					Seq:               toolCount,
-					ExternalID:        item.CallID,
-					Name:              item.Name,
-					Kind:              normalizeTool(item.Name),
-					Input:             json.RawMessage(argsJSON),
-					FilePath:          args.Path,
-					Command:           args.command(),
-					OldText:           args.OldText,
-					NewText:           cmp.Or(args.NewText, args.Content),
-					StartedAt:         line.Timestamp,
-				}
-				toolCount++
-				return sink.ToolCall(tc)
-
-			case "custom_tool_call":
-				if err := flushPending(); err != nil {
-					return err
-				}
-				if err := emitSession(); err != nil {
-					return err
-				}
-				input, _ := json.Marshal(map[string]string{"input": item.Input})
+				messageSeq := max(messageCount-1, 0)
+				var tc canon.ToolCall
 				if item.Name == "apply_patch" {
-					tc := patchCall(sess.ExternalID, max(messageCount-1, 0), toolCount,
-						item, input, item.Input, line.Timestamp)
-					toolCount++
-					return sink.ToolCall(tc)
-				}
-				tc := canon.ToolCall{
-					SessionExternalID: sess.ExternalID,
-					MessageSeq:        max(messageCount-1, 0),
-					Seq:               toolCount,
-					ExternalID:        item.CallID,
-					Name:              item.Name,
-					Kind:              normalizeTool(item.Name),
-					Input:             input,
-					StartedAt:         line.Timestamp,
-				}
-				if item.Name == "exec" {
-					// Code mode: model-written JavaScript calling Codex's
-					// tools, like Pi's codemode.
-					tc.Kind = canon.ToolScript
-					tc.Command = item.Input
+					tc = patchCall(sess.ExternalID, messageSeq, toolCount, item, input, text, line.Timestamp)
+				} else {
+					tc = canon.ToolCall{
+						SessionExternalID: sess.ExternalID,
+						MessageSeq:        messageSeq,
+						Seq:               toolCount,
+						ExternalID:        item.CallID,
+						Name:              item.Name,
+						Kind:              normalizeTool(item.Name),
+						Input:             input,
+						FilePath:          args.Path,
+						Command:           args.command(),
+						OldText:           args.OldText,
+						NewText:           cmp.Or(args.NewText, args.Content),
+						StartedAt:         line.Timestamp,
+					}
+					if tc.Kind == canon.ToolScript {
+						tc.Command = text
+					}
 				}
 				toolCount++
 				return sink.ToolCall(tc)
@@ -473,7 +463,7 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 				if err := emitSession(); err != nil {
 					return err
 				}
-				text := outputText(item.Output)
+				text := string(item.Output)
 				return sink.ToolResult(canon.ToolResult{
 					SessionExternalID: sess.ExternalID,
 					CallExternalID:    item.CallID,
@@ -794,6 +784,10 @@ func normalizeTool(name string) canon.ToolKind {
 		return canon.ToolFileRead
 	case "web_search":
 		return canon.ToolWeb
+	case "exec":
+		// Code mode: model-written JavaScript calling Codex's tools, like
+		// Pi's codemode.
+		return canon.ToolScript
 	default:
 		return canon.ToolOther
 	}

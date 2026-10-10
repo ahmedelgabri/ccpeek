@@ -179,7 +179,8 @@ func v2HasSession(ctx context.Context, store *db.Store, externalID string) bool 
 	var one int
 	err := store.DB().QueryRowContext(ctx, `
 		SELECT 1 FROM sessions s
-		WHERE s.external_id = ? AND s.origin <> 'imported-v1'`,
+		WHERE s.agent_id IN (SELECT id FROM agents) AND s.external_id = ?
+		  AND s.origin <> 'imported-v1'`,
 		externalID).Scan(&one)
 	return err == nil
 }

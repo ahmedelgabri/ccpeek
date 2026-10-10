@@ -12,6 +12,7 @@ import (
 
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/claude"
 	"github.com/ahmedelgabri/ccpeek/internal/adapters/pi"
+	"github.com/ahmedelgabri/ccpeek/internal/agent"
 	"github.com/ahmedelgabri/ccpeek/internal/canon"
 	"github.com/ahmedelgabri/ccpeek/internal/db"
 	"github.com/ahmedelgabri/ccpeek/internal/ingest"
@@ -22,6 +23,23 @@ import (
 
 func newHandler(t *testing.T) http.Handler {
 	t.Helper()
+	fixture := func(dir string) []string {
+		p, err := filepath.Abs(filepath.Join("../../testdata/agents", dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []string{p}
+	}
+	return handlerFor(t, map[canon.AgentSlug][]string{
+		claude.Slug: fixture("claude-code"),
+		pi.Slug:     fixture("pi"),
+	}, claude.New(), pi.New())
+}
+
+// handlerFor ingests the given agent roots, and nothing from the
+// developer's machine, into a fresh store and serves it.
+func handlerFor(t *testing.T, roots map[canon.AgentSlug][]string, adapters ...agent.Adapter) http.Handler {
+	t.Helper()
 	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -31,21 +49,10 @@ func newHandler(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := func(dir string) []string {
-		p, err := filepath.Abs(filepath.Join("../../testdata/agents", dir))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return []string{p}
-	}
-	runner := ingest.New(store, table, claude.New(), pi.New())
-	if _, err := runner.Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{
-			claude.Slug: fixture("claude-code"),
-			pi.Slug:     fixture("pi"),
-		},
-		Getenv: func(string) string { return "" },
-		Home:   "/nonexistent",
+	if _, err := ingest.New(store, table, adapters...).Run(context.Background(), ingest.Options{
+		ConfigRoots: roots,
+		Getenv:      func(string) string { return "" },
+		Home:        "/nonexistent",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -318,23 +325,7 @@ func TestTranscriptThinkingAndImages(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "v2.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { store.Close() })
-	table, err := pricing.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ingest.New(store, table, claude.New()).Run(context.Background(), ingest.Options{
-		ConfigRoots: map[canon.AgentSlug][]string{claude.Slug: {root}},
-		Getenv:      func(string) string { return "" },
-		Home:        "/nonexistent",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	h := Handler(query.New(store, table), Deps{})
+	h := handlerFor(t, map[canon.AgentSlug][]string{claude.Slug: {root}}, claude.New())
 	base := "/api/v1/sessions/claude-code/" + sessionID + "/transcript"
 
 	transcript := func(path string) []query.TranscriptMessage {

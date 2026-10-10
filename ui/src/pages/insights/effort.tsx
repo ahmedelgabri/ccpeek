@@ -11,6 +11,7 @@ import {
   StatTile,
 } from "../../ui";
 import { levelLabel, levelRank } from "./levels";
+import { TABLE_BODY, TableHead } from "./table";
 
 // ECharts loads as its own chunk, as on the Usage page.
 const EffortTimeline = lazy(() =>
@@ -67,21 +68,11 @@ export function EffortTab({ f }: { f: InsightFilters }) {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left font-mono text-micro text-ink-faint">
-                <tr>
-                  <th className="px-3 py-1.5 font-normal">agent</th>
-                  <th className="px-3 py-1.5 font-normal">level</th>
-                  <th className="px-3 py-1.5 text-right font-normal">
-                    requests
-                  </th>
-                  <th className="px-3 py-1.5 text-right font-normal">output</th>
-                  <th className="px-3 py-1.5 text-right font-normal">cost</th>
-                  <th className="px-3 py-1.5 text-right font-normal">
-                    per request
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+              <TableHead
+                labels={["agent", "level"]}
+                numbers={["requests", "output", "cost", "per request"]}
+              />
+              <tbody className={TABLE_BODY}>
                 {rows.map((r) => (
                   <tr key={`${r.agent}/${r.level}`}>
                     <td className="px-3 py-1.5">

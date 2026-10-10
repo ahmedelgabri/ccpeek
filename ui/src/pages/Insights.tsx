@@ -24,6 +24,7 @@ import { Link } from "@tanstack/react-router";
 import { fmtDuration, fmtWhen, fullWhen } from "../time";
 import { EventList, groupPRs, PRLink } from "./insights/events";
 import { EffortTab } from "./insights/effort";
+import { TABLE_BODY, TableHead } from "./insights/table";
 
 const TABS = [
   "errors",
@@ -163,23 +164,16 @@ function ErrorsTab({ f }: { f: InsightFilters }) {
       </div>
       <Panel label="Tools that fail most">
         {tools.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={tools.error} />
-          </div>
+          <EmptyNote error={tools.error} />
         ) : failing.length === 0 ? (
           <EmptyNote>No failed tool calls in this range.</EmptyNote>
         ) : (
           <table className="w-full text-sm">
-            <thead className="text-left font-mono text-micro text-ink-faint">
-              <tr>
-                <th className="px-3 py-1.5 font-normal">tool</th>
-                <th className="px-3 py-1.5 text-right font-normal">calls</th>
-                <th className="px-3 py-1.5 text-right font-normal">failed</th>
-                <th className="px-3 py-1.5 text-right font-normal">rate</th>
-                <th className="px-3 py-1.5 text-right font-normal">sessions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+            <TableHead
+              labels={["tool"]}
+              numbers={["calls", "failed", "rate", "sessions"]}
+            />
+            <tbody className={TABLE_BODY}>
               {failing.map((t) => (
                 <tr key={`${t.name}/${t.kind}`}>
                   <td className="px-3 py-1.5">{t.name}</td>
@@ -203,9 +197,7 @@ function ErrorsTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="Recent">
         {recent.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={recent.error} />
-          </div>
+          <EmptyNote error={recent.error} />
         ) : recent.isLoading ? (
           <SkeletonRows rows={5} />
         ) : (
@@ -322,25 +314,16 @@ function TimingTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="Where tool time goes — call to result, including waits for your approval or answer">
         {tools.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={tools.error} />
-          </div>
+          <EmptyNote error={tools.error} />
         ) : toolRows.length === 0 ? (
           <EmptyNote>No timed tool calls in this range.</EmptyNote>
         ) : (
           <table className="w-full text-sm">
-            <thead className="text-left font-mono text-micro text-ink-faint">
-              <tr>
-                <th className="px-3 py-1.5 font-normal">tool</th>
-                <th className="px-3 py-1.5 text-right font-normal">
-                  timed calls
-                </th>
-                <th className="px-3 py-1.5 text-right font-normal">total</th>
-                <th className="px-3 py-1.5 text-right font-normal">avg</th>
-                <th className="px-3 py-1.5 text-right font-normal">max</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+            <TableHead
+              labels={["tool"]}
+              numbers={["timed calls", "total", "avg", "max"]}
+            />
+            <tbody className={TABLE_BODY}>
               {toolRows.map((t) => (
                 <tr key={`${t.name}/${t.kind}`}>
                   <td className="px-3 py-1.5">{t.name}</td>
@@ -368,9 +351,7 @@ function TimingTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="Longest turns">
         {longest.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={longest.error} />
-          </div>
+          <EmptyNote error={longest.error} />
         ) : longest.isLoading ? (
           <SkeletonRows rows={5} />
         ) : (
@@ -488,25 +469,17 @@ function HooksTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="By command">
         {byCommand.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={byCommand.error} />
-          </div>
+          <EmptyNote error={byCommand.error} />
         ) : commands.length === 0 ? (
           <EmptyNote>No hook runs in this range.</EmptyNote>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left font-mono text-micro text-ink-faint">
-                <tr>
-                  <th className="px-3 py-1.5 font-normal">command</th>
-                  <th className="px-3 py-1.5 text-right font-normal">runs</th>
-                  <th className="px-3 py-1.5 text-right font-normal">failed</th>
-                  <th className="px-3 py-1.5 text-right font-normal">avg</th>
-                  <th className="px-3 py-1.5 text-right font-normal">max</th>
-                  <th className="px-3 py-1.5 text-right font-normal">total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+              <TableHead
+                labels={["command"]}
+                numbers={["runs", "failed", "avg", "max", "total"]}
+              />
+              <tbody className={TABLE_BODY}>
                 {commands.map((c) => (
                   <tr key={c.group}>
                     <td
@@ -541,9 +514,7 @@ function HooksTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="Failed and blocked runs">
         {failing.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={failing.error} />
-          </div>
+          <EmptyNote error={failing.error} />
         ) : failing.isLoading ? (
           <SkeletonRows rows={4} />
         ) : (
@@ -608,30 +579,17 @@ function ChangesTab({ f }: { f: InsightFilters }) {
       </Panel>
       <Panel label="Most-changed files">
         {files.error ? (
-          <div className="px-3 py-3">
-            <LoadError error={files.error} />
-          </div>
+          <EmptyNote error={files.error} />
         ) : fileRows.length === 0 ? (
           <EmptyNote>No sized file changes in this range.</EmptyNote>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left font-mono text-micro text-ink-faint">
-                <tr>
-                  <th className="px-3 py-1.5 font-normal">file</th>
-                  <th className="px-3 py-1.5 text-right font-normal">
-                    changes
-                  </th>
-                  <th className="px-3 py-1.5 text-right font-normal">added</th>
-                  <th className="px-3 py-1.5 text-right font-normal">
-                    removed
-                  </th>
-                  <th className="px-3 py-1.5 text-right font-normal">
-                    sessions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-edge font-mono text-xs tabular-nums">
+              <TableHead
+                labels={["file"]}
+                numbers={["changes", "added", "removed", "sessions"]}
+              />
+              <tbody className={TABLE_BODY}>
                 {fileRows.map((r) => (
                   <tr key={r.group}>
                     <td

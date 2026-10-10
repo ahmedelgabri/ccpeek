@@ -62,12 +62,8 @@ func (s *Service) MessageImage(ctx context.Context, agentSlug, externalID string
 	if !servableImageTypes[ref.MediaType] {
 		return "", nil, fmt.Errorf("%w: image type %q is not served", ErrNotFound, ref.MediaType)
 	}
-	var doc any
-	if err := json.Unmarshal([]byte(content), &doc); err != nil {
-		return "", nil, fmt.Errorf("decoding message %d content: %w", seq, err)
-	}
-	encoded, ok := resolvePointer(doc, ref.Pointer).(string)
-	if !ok {
+	var encoded string
+	if err := json.Unmarshal(resolvePointer(json.RawMessage(content), ref.Pointer), &encoded); err != nil || encoded == "" {
 		return "", nil, fmt.Errorf("%w: image %d of message %d has no data", ErrNotFound, index, seq)
 	}
 	data, err := base64.StdEncoding.DecodeString(encoded)
@@ -77,23 +73,26 @@ func (s *Service) MessageImage(ctx context.Context, agentSlug, externalID string
 	return ref.MediaType, data, nil
 }
 
-// resolvePointer walks an RFC 6901 JSON pointer through decoded JSON,
-// returning nil when any step is missing.
-func resolvePointer(doc any, pointer string) any {
+// resolvePointer walks an RFC 6901 JSON pointer through raw JSON,
+// returning nil when any step is missing. Each step decodes one level
+// only, so the other (possibly large) blocks stay undecoded.
+func resolvePointer(doc json.RawMessage, pointer string) json.RawMessage {
 	if pointer == "" {
 		return doc
 	}
 	for _, token := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
 		token = strings.NewReplacer("~1", "/", "~0", "~").Replace(token)
-		switch node := doc.(type) {
-		case map[string]any:
-			doc = node[token]
-		case []any:
+		var object map[string]json.RawMessage
+		var array []json.RawMessage
+		switch {
+		case json.Unmarshal(doc, &object) == nil:
+			doc = object[token]
+		case json.Unmarshal(doc, &array) == nil:
 			i, err := strconv.Atoi(token)
-			if err != nil || i < 0 || i >= len(node) {
+			if err != nil || i < 0 || i >= len(array) {
 				return nil
 			}
-			doc = node[i]
+			doc = array[i]
 		default:
 			return nil
 		}

@@ -24,7 +24,7 @@ import {
   useToggleSet,
 } from "../../ui";
 
-import { JumpButton, ToolExpansion } from "./ToolExpansion";
+import { isCodeKind, JumpButton, ToolExpansion } from "./ToolExpansion";
 
 export function CommandsTab({
   commands,
@@ -230,7 +230,7 @@ function ToolRow({
             </span>
           )}
           {t.detail &&
-            (t.kind === "shell" || t.kind === "script"
+            (isCodeKind(t.kind)
               ? clipCommand(t.detail, 72)
               : clipPath(t.detail, 56))}
         </span>
