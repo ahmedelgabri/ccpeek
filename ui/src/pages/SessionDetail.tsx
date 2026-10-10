@@ -21,7 +21,7 @@ import {
   TokenMixBar,
 } from "../ui";
 import { Transcript } from "./session/Transcript";
-import { EventList } from "./insights/events";
+import { EventList, groupPRs, PRLink } from "./insights/events";
 import {
   ArtifactsTab,
   CommandsTab,
@@ -50,6 +50,36 @@ const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 // transcript, commands, tool calls, files touched, usage, relations, and
 // linked artifacts — each facet a deep-linkable tab (?tab=). The paging
 // and anchoring machinery all lives in ./session/useSessionData.
+// SessionPRs shows the pull requests this session opened or checked.
+function SessionPRs({
+  agent,
+  sessionId,
+}: {
+  agent: string;
+  sessionId: string;
+}) {
+  const q = useQuery({
+    queryKey: ["sessionEvents", agent, sessionId, "pr_link"],
+    queryFn: () =>
+      api.sessionEvents({ agent, session: sessionId, kind: "pr_link" }),
+  });
+  const prs = groupPRs(q.data ?? []);
+  if (prs.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-wrap items-baseline gap-2 text-xs">
+      <span className="font-mono text-micro text-ink-faint">pull requests</span>
+      {prs.map((pr) => (
+        <span
+          key={pr.url}
+          className="rounded border border-edge px-2 py-0.5 font-mono"
+        >
+          <PRLink pr={pr} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // SessionEvents lists the session's events, fetched when the tab opens.
 function SessionEvents({
   agent,
@@ -279,6 +309,10 @@ function SessionContent() {
           bucket rate — the API-equivalent cost shown is a lower bound.
         </p>
       ) : null}
+
+      {(s.events?.pr_link ?? 0) > 0 && (
+        <SessionPRs agent={agent} sessionId={sessionId} />
+      )}
 
       {(relations?.length || s.models?.length) && (
         <div className="mb-4 flex flex-wrap gap-2 text-xs">

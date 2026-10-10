@@ -9,7 +9,60 @@ export const EVENT_LABEL: Record<string, string> = {
   api_error: "API error",
   aborted: "aborted",
   tool_denied: "tool refused",
+  pr_link: "pull request",
 };
+
+// PullRequest is one PR with every session that linked it.
+export interface PullRequest {
+  url: string;
+  repository: string;
+  number?: number;
+  last: string;
+  sessions: EventRow[];
+}
+
+// groupPRs folds pr_link events (newest first) into one row per PR URL,
+// keeping each session once.
+export function groupPRs(events: EventRow[]): PullRequest[] {
+  const byURL = new Map<string, PullRequest>();
+  for (const e of events) {
+    const url = e.detail ?? "";
+    if (!url) continue;
+    let pr = byURL.get(url);
+    if (!pr) {
+      const n = e.payload?.number;
+      pr = {
+        url,
+        repository: e.label ?? "",
+        number: typeof n === "number" ? n : undefined,
+        last: e.at ?? "",
+        sessions: [],
+      };
+      byURL.set(url, pr);
+    }
+    if (!pr.sessions.some((s) => s.sessionId === e.sessionId)) {
+      pr.sessions.push(e);
+    }
+  }
+  return [...byURL.values()];
+}
+
+// PRLink opens a pull request on its host. The URL comes from an agent
+// transcript, so only http(s) links render as links at all.
+export function PRLink({ pr }: { pr: PullRequest }) {
+  const label = `${pr.repository}${pr.number ? `#${pr.number}` : ""}`;
+  if (!/^https?:\/\//.test(pr.url)) return <span>{label}</span>;
+  return (
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="font-mono text-accent hover:underline"
+    >
+      {label}
+    </a>
+  );
+}
 
 // EventList shows session events newest first, each linking to the
 // transcript entry it arrived with. The Insights page lists them across

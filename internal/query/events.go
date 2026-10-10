@@ -14,6 +14,7 @@ import (
 // mistake, not an empty answer.
 var eventKinds = []canon.EventKind{
 	canon.EventAPIError, canon.EventAborted, canon.EventToolDenied,
+	canon.EventPRLink,
 }
 
 // parseKinds splits a comma-separated kind filter and validates it.

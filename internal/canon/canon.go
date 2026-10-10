@@ -290,6 +290,9 @@ const (
 	// EventToolDenied is a tool call refused before it ran — by the user,
 	// a permission rule, or an automatic mode. Label is the denial kind.
 	EventToolDenied EventKind = "tool_denied"
+	// EventPRLink is a pull request the session opened or worked on.
+	// Label is the repository; Detail the URL.
+	EventPRLink EventKind = "pr_link"
 )
 
 // EventDetailLimit bounds SessionEvent.Detail: an error message or a

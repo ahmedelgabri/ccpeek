@@ -91,3 +91,17 @@ Transcripts record failed model requests (Claude's synthetic `isApiErrorMessage`
   - Sessions with events get an Events tab.
 
 Local result: 638 API errors (521 rate limits), 393 aborted turns, 150 refused tool calls, and a 4.3% tool failure rate across 118k calls.
+
+## Pull requests
+
+Claude Code writes a `pr-link` line (`prNumber`, `prUrl`, `prRepository`) each time it opens or checks a PR. Locally that is 457 lines for 31 PRs: one PR was rewritten 162 times in one session. Some lines precede the session's first message.
+
+- New event kind `pr_link`. Label is the repository and detail is the URL; the payload carries number, URL and repository.
+- The adapter emits one event per URL per parse. Events seen before the session row exists wait in a buffer until it does.
+- Claude `ParseVersion` is 8.
+- UI:
+  - The Insights "pull requests" tab lists each PR (newest first) with every session that linked it. Each session link opens the transcript at the link point.
+  - Sessions with PRs show them as chips under the header.
+  - Only `http(s)` URLs render as links, since they come from transcripts.
+
+Local result: 31 PRs across 22 sessions.

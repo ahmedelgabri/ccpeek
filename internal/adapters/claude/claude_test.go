@@ -839,3 +839,40 @@ func TestErrorAbortAndDenialLinesBecomeEvents(t *testing.T) {
 		t.Errorf("denial = %+v", denial)
 	}
 }
+
+// Claude Code writes a pr-link line every time it checks a PR, sometimes
+// before the session's first message. One event per PR must come out,
+// anchored to the transcript, whatever order the lines arrive in.
+func TestPRLinksBecomeOneEventPerPR(t *testing.T) {
+	const id = "99999999-0000-0000-0000-000000000001"
+	dir := t.TempDir()
+	projects := filepath.Join(dir, "projects", "-w")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pr := func(n int) string {
+		return `{"type":"pr-link","sessionId":"` + id + `","prNumber":` + strconv.Itoa(n) +
+			`,"prUrl":"https://github.com/o/r/pull/` + strconv.Itoa(n) + `","prRepository":"o/r","timestamp":"2026-10-01T10:00:00Z"}` + "\n"
+	}
+	msg := `{"type":"user","sessionId":"` + id + `","uuid":"u1","timestamp":"2026-10-01T10:00:01Z","message":{"role":"user","content":"ship it"}}` + "\n"
+	path := filepath.Join(projects, id+".jsonl")
+	if err := os.WriteFile(path, []byte(pr(7)+msg+pr(7)+pr(7)+pr(8)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{Root: agent.Root{Agent: Slug, Path: dir}, Path: path, Kind: agent.SourceFile}, sink); err != nil {
+		t.Fatal(err)
+	}
+	var urls []string
+	for _, e := range sink.Events {
+		if e.Kind == canon.EventPRLink {
+			urls = append(urls, e.Detail)
+			if e.Label != "o/r" || e.SessionExternalID != id {
+				t.Errorf("pr event = %+v", e)
+			}
+		}
+	}
+	if want := "https://github.com/o/r/pull/7,https://github.com/o/r/pull/8"; strings.Join(urls, ",") != want {
+		t.Errorf("pr urls = %v, want one event each for #7 and #8", urls)
+	}
+}

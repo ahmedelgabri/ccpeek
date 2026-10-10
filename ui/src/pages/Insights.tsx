@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { api, fmtCount, type InsightFilters } from "../api";
 import {
+  AgentChip,
   EmptyNote,
   FilterBar,
   KindBars,
@@ -13,9 +14,11 @@ import {
   StatTile,
   useSetFilter,
 } from "../ui";
-import { EventList } from "./insights/events";
+import { Link } from "@tanstack/react-router";
+import { fmtWhen, fullWhen } from "../time";
+import { EventList, groupPRs, PRLink } from "./insights/events";
 
-const TABS = ["errors"] as const;
+const TABS = ["errors", "prs"] as const;
 type Tab = (typeof TABS)[number];
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 
@@ -47,14 +50,20 @@ export function InsightsPage() {
           label="Insight"
           variant="tab"
           value={tab}
-          options={TABS.map((t) => ({ value: t, label: t }))}
+          options={TABS.map((t) => ({ value: t, label: TAB_LABEL[t] }))}
           onChange={(t) => setFilter({ tab: t === TABS[0] ? "" : t })}
         />
       </div>
       {tab === "errors" && <ErrorsTab f={f} />}
+      {tab === "prs" && <PRsTab f={f} />}
     </div>
   );
 }
+
+const TAB_LABEL: Record<Tab, string> = {
+  errors: "errors",
+  prs: "pull requests",
+};
 
 const ERROR_KINDS = "api_error,aborted,tool_denied";
 
@@ -179,5 +188,58 @@ function ErrorsTab({ f }: { f: InsightFilters }) {
         )}
       </Panel>
     </div>
+  );
+}
+
+// PRsTab: every pull request a session opened or checked, with the
+// sessions behind it — the bridge from "what shipped" back to the
+// conversation that produced it.
+function PRsTab({ f }: { f: InsightFilters }) {
+  const q = useQuery({
+    queryKey: ["sessionEvents", "pr_link", f],
+    queryFn: () => api.sessionEvents({ ...f, kind: "pr_link", limit: 1000 }),
+  });
+  if (q.error) return <LoadError error={q.error} />;
+  if (q.isLoading) return <SkeletonRows rows={6} />;
+  const prs = groupPRs(q.data ?? []);
+  return (
+    <Panel label={`${fmtCount(prs.length)} pull requests`}>
+      {prs.length === 0 ? (
+        <EmptyNote>No pull requests linked in this range.</EmptyNote>
+      ) : (
+        <ul className="divide-y divide-edge">
+          {prs.map((pr) => (
+            <li
+              key={pr.url}
+              className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2 text-sm"
+            >
+              <span
+                title={fullWhen(pr.last)}
+                className="w-32 shrink-0 font-mono text-meta text-ink-faint tabular-nums"
+              >
+                {fmtWhen(pr.last)}
+              </span>
+              <PRLink pr={pr} />
+              <span className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1">
+                {pr.sessions.map((s) => (
+                  <Link
+                    key={`${s.agent}/${s.sessionId}`}
+                    to="/sessions/$agent/$sessionId"
+                    params={{ agent: s.agent, sessionId: s.sessionId }}
+                    search={{ seq: s.messageSeq }}
+                    className="inline-flex max-w-72 min-w-0 items-baseline gap-1.5 text-meta text-ink-dim hover:text-accent"
+                  >
+                    <AgentChip agent={s.agent} />
+                    <span className="truncate">
+                      {s.sessionTitle || s.sessionId.slice(0, 8)}
+                    </span>
+                  </Link>
+                ))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }

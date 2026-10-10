@@ -51,8 +51,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // normalization that cannot be recovered from an append-only tail (v4:
 // thinking text and image locators; v5: legacy subagent files' parent link;
 // v6: continued-session and fork-point lineage; v7: error, abort and
-// denial events).
-func (*Adapter) ParseVersion() int { return 7 }
+// denial events; v8: pull-request links).
+func (*Adapter) ParseVersion() int { return 8 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -139,6 +139,11 @@ type rawLine struct {
 	} `json:"quotaLimits"`
 	// Set on the tool_result line of a call refused before it ran.
 	ToolDenialKind string `json:"toolDenialKind"`
+
+	// type == "pr-link": a pull request the session opened or checked.
+	PRNumber     int    `json:"prNumber"`
+	PRURL        string `json:"prUrl"`
+	PRRepository string `json:"prRepository"`
 }
 
 // rawMessage is the Anthropic message payload inside a line.
@@ -275,12 +280,27 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		firstForeignLine       int
 		sawOwnID               bool
 	)
+	// Metadata lines (pull-request links) can precede the first message,
+	// when the session row does not exist yet; their events wait here.
+	var pendingEvents []canon.SessionEvent
+	flushEvents := func() error {
+		for _, ev := range pendingEvents {
+			if err := sink.SessionEvent(ev); err != nil {
+				return err
+			}
+		}
+		pendingEvents = nil
+		return nil
+	}
 	emitSession := func() error {
 		if emittedSession {
 			return nil
 		}
 		emittedSession = true
 		if err := sink.Session(sess); err != nil {
+			return err
+		}
+		if err := flushEvents(); err != nil {
 			return err
 		}
 		if !isSubagent || sub.parent() == "" {
@@ -296,6 +316,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 	}
 	messageCount, toolCount := 0, 0
 	metadataChanged := false
+	var seenPRs map[string]bool
 	titlePriority := 0 // first prompt < AI title < user-assigned custom title
 	setTitle := func(title string, priority int, override bool) bool {
 		title = strings.TrimSpace(title)
@@ -389,6 +410,35 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			continue
 		}
 		switch entry.Type {
+		case "pr-link":
+			// Claude Code rewrites the link every time it checks the PR —
+			// up to 162 lines for one PR in one session locally — so one
+			// event per URL per parse.
+			if entry.PRURL == "" || seenPRs[entry.PRURL] {
+				continue
+			}
+			if seenPRs == nil {
+				seenPRs = map[string]bool{}
+			}
+			seenPRs[entry.PRURL] = true
+			payload, _ := json.Marshal(map[string]any{
+				"number": entry.PRNumber, "url": entry.PRURL, "repository": entry.PRRepository,
+			})
+			pendingEvents = append(pendingEvents, canon.SessionEvent{
+				SessionExternalID: sess.ExternalID,
+				MessageSeq:        max(state.MessageSeq+messageCount-1, 0),
+				Kind:              canon.EventPRLink,
+				At:                entry.Timestamp,
+				Label:             entry.PRRepository,
+				Detail:            entry.PRURL,
+				Payload:           payload,
+			})
+			if emittedSession {
+				if err := flushEvents(); err != nil {
+					return state, err
+				}
+			}
+			continue
 		case "custom-title":
 			// Claude's /rename metadata is authoritative and can arrive in a
 			// later tail after the fallback prompt was already stored.
@@ -490,6 +540,9 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		ToolSeq:    state.ToolSeq + toolCount,
 		LineNo:     lineNo,
 	}
+	if len(pendingEvents) > 0 {
+		metadataChanged = true
+	}
 	if messageCount == 0 && (!metadataChanged || !resuming) {
 		// Not a transcript (or nothing new): nothing was emitted, and the
 		// cursor still advances past what was read. A metadata-only initial
@@ -528,6 +581,9 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 	// Final emit: the folded metadata (title, created/modified, cwd,
 	// branch) accumulated over everything read.
 	if err := sink.Session(sess); err != nil {
+		return state, err
+	}
+	if err := flushEvents(); err != nil {
 		return state, err
 	}
 	return newState, nil
