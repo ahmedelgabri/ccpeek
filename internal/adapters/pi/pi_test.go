@@ -128,8 +128,8 @@ func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
 }
 
 func TestParseVersionIncludesCodemode(t *testing.T) {
-	if got := New().ParseVersion(); got != 10 {
-		t.Fatalf("ParseVersion() = %d, want 10", got)
+	if got := New().ParseVersion(); got != 11 {
+		t.Fatalf("ParseVersion() = %d, want 11", got)
 	}
 }
 
@@ -451,5 +451,34 @@ func TestThinkingLevelBecomesEffort(t *testing.T) {
 	}
 	if len(sink.Messages) != 2 || sink.Messages[0].Effort != "high" || sink.Messages[1].Effort != "max" {
 		t.Errorf("efforts = %+v", sink.Messages)
+	}
+}
+
+// Current Pi sends every replacement of an edit in one edits[] array; the
+// call must still carry its old and new text for the diff view, one
+// replacement after another.
+func TestMultiEditCarriesEveryReplacement(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "--w--")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"session","version":3,"id":"me-1","timestamp":"2026-10-08T20:00:00.000Z","cwd":"/w"}`,
+		`{"type":"message","id":"m1","parentId":null,"timestamp":"2026-10-08T20:00:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"edit","arguments":{"path":"a.go","edits":[{"oldText":"one","newText":"uno"},{"oldText":"two","newText":"dos"}]}}]}}`,
+	}
+	path := filepath.Join(dir, "2026-10-08T20-00-00-000Z_me-1.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	if err := New().Parse(context.Background(), agent.SourceRef{Path: path, Root: agent.Root{Agent: Slug, Path: root}}, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d", len(sink.ToolCalls))
+	}
+	if tc := sink.ToolCalls[0]; tc.OldText != "one\n⋯\ntwo" || tc.NewText != "uno\n⋯\ndos" {
+		t.Errorf("old/new = %q / %q", tc.OldText, tc.NewText)
 	}
 }

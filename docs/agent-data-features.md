@@ -193,3 +193,12 @@ The embedded LiteLLM snapshot (fetched 2026-09-06) had no `claude-opus-5-5`, whi
 - The snapshot is refreshed. `claude-opus-5-5` now prices at $1,208 locally, and Claude has no unpriced tokens left.
 - `scripts/update-pricing.sh` now keeps models that upstream dropped. LiteLLM deletes retired models, and a plain refresh would have removed 504 entries, including `claude-opus-4-1`, `claude-opus-4-20250514` and `claude-sonnet-4-20250514`, which archived sessions use. Missing models keep their last snapshot rate; upstream wins for every model it lists. The script copies the old snapshot aside first, because the output redirect truncates it before jq runs.
 - Still unpriced: OpenCode's `kimi-k2.5-free` (95k tokens). It is a free tier that LiteLLM does not list, and it really costs nothing.
+
+## Pi multi-edit calls
+
+Current Pi sends every replacement of an edit in one `edits: [{oldText, newText}]` array. The adapter read only the older top-level `oldText`/`newText`, so 4,773 of 6,283 Pi edits, nested codemode edits included, had no diff.
+
+- `piToolArgs.editTexts` joins the replacements into one old text and one new text, separated by a `⋯` line. The separator is identical on both sides, so the line diff keeps it as an unchanged line between hunks.
+- Pi `ParseVersion` is 11. Locally, 4 Pi edits still have no diff text; their arguments were too large for Pi to record.
+
+The 395 `claude-code` "Edit" calls with an `edits` array, and 1,510 more with Pi-shaped arguments, come from 68 v1-imported sessions. They are Pi sessions that v1 stored under `claude-code`. They duplicate sessions v2 indexes under `pi` (same file, same id), and they carry no usage, so cost is not double-counted. They are archive rows and cannot be reparsed, so this fix does not reach them.

@@ -42,9 +42,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // ParseVersion forces one full reparse after per-message provider/model,
 // summary-entry usage, fallback-title normalization, codemode scripts with
 // their nested calls, thinking text with image locators, error/abort
-// events, tool timing, compaction events, file change line counts, and
-// per-turn thinking level became canonical.
-func (*Adapter) ParseVersion() int { return 10 }
+// events, tool timing, compaction events, file change line counts,
+// per-turn thinking level, and multi-edit diffs became canonical.
+func (*Adapter) ParseVersion() int { return 11 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -271,6 +271,31 @@ type piToolArgs struct {
 	NewText string `json:"newText"`
 	Content string `json:"content"` // write
 	Code    string `json:"code"`    // codemode
+	// edit: current Pi sends every replacement in one call; the top-level
+	// oldText/newText above are the older single-edit shape.
+	Edits []struct {
+		OldText string `json:"oldText"`
+		NewText string `json:"newText"`
+	} `json:"edits"`
+}
+
+// editSeparator joins a multi-edit call's replacements into one old and
+// one new text. It is identical on both sides, so the line diff keeps it
+// as an unchanged line marking where one replacement ends.
+const editSeparator = "\n⋯\n"
+
+// editTexts is the call's replaced and replacement text, from either
+// edit shape.
+func (a piToolArgs) editTexts() (string, string) {
+	if len(a.Edits) == 0 {
+		return a.OldText, a.NewText
+	}
+	olds := make([]string, len(a.Edits))
+	news := make([]string, len(a.Edits))
+	for i, e := range a.Edits {
+		olds[i], news[i] = e.OldText, e.NewText
+	}
+	return strings.Join(olds, editSeparator), strings.Join(news, editSeparator)
 }
 
 // toolCall builds the canonical record for one Pi tool invocation, either
@@ -280,6 +305,7 @@ func toolCall(sessionID string, messageSeq, seq int, id, name string,
 ) canon.ToolCall {
 	var a piToolArgs
 	_ = json.Unmarshal(arguments, &a)
+	oldText, newText := a.editTexts()
 	var lines *canon.LineCounts
 	if name == "write" {
 		// Pi's write result carries no diff; the content is the new file.
@@ -297,8 +323,8 @@ func toolCall(sessionID string, messageSeq, seq int, id, name string,
 		Input:             arguments,
 		FilePath:          a.Path,
 		Command:           cmp.Or(a.Command, a.Code),
-		OldText:           a.OldText,
-		NewText:           cmp.Or(a.NewText, a.Content),
+		OldText:           oldText,
+		NewText:           cmp.Or(newText, a.Content),
 		StartedAt:         at,
 	}
 }

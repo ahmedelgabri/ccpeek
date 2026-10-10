@@ -24,6 +24,6 @@ Pi's `codemode` tool runs model-written JavaScript that calls other tools (`tool
 - A reindex of a copy of the real store produced exactly the nested-call counts in the source files (1,886 calls, 63 errors) and 469 scripts with source.
 - Checked in the browser: script chips expand formatted and highlighted, and nested chips render on the result row.
 
-## Known gaps (not addressed here)
+## Known gaps
 
-- Modern Pi `edit` calls send an `edits: [{oldText, newText}]` array. The adapter reads only top-level `oldText`/`newText`, so most Pi edits have no diff (4,580 of 6,090 in the local store). This applies to nested edits too.
+- Modern Pi `edit` calls send an `edits: [{oldText, newText}]` array, which the adapter used to skip. This is fixed by "fix(pi): read multi-edit calls" (see `docs/agent-data-features.md`).
