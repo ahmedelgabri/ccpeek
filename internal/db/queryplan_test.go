@@ -149,3 +149,17 @@ func TestResolverReconcileSeeksItsLinks(t *testing.T) {
 		t.Errorf("resolver reconcile does not use its index:\n%s", plan)
 	}
 }
+
+// Every full reparse restores usage ownership once per key the reparsed
+// session owned. The ownership probe must seek messages by content id; when
+// it drove from the agent's sessions instead, a parser-version bump over a
+// real Claude archive took most of an hour.
+func TestRestoreOwnerProbeSeeksContentID(t *testing.T) {
+	plan := planFor(t, planStore(t), restoreOwnerSQL, 1, "msg", "req", 1, "msg", "req")
+	if strings.Contains(plan, "sqlite_autoindex_sessions_1 (agent_id=?)") {
+		t.Errorf("ownership probe scans the agent's sessions:\n%s", plan)
+	}
+	if n := strings.Count(plan, "idx_messages_content_id"); n != 2 {
+		t.Errorf("idx_messages_content_id used %d times, want 2 (outer query and probe):\n%s", n, plan)
+	}
+}

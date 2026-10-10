@@ -119,16 +119,25 @@ func (w *Writer) rememberUsage(sessionID int64) error {
 	return rows.Err()
 }
 
+// restoreOwnerSQL finds a surviving copy of an orphaned usage key that no
+// message owns any more. BOTH content_id lookups repeat the literal
+// content_id <> ” predicate: idx_messages_content_id is partial on it, and
+// without it the NOT EXISTS probe walked every session of the agent and
+// every message of each — 2.3s per key on a real archive, run once per key
+// a reparsed session owned, so a parser-version bump took most of an hour.
+const restoreOwnerSQL = `SELECT m.id,c.usage_json FROM messages m
+   JOIN sessions s ON s.id=m.session_id
+   JOIN usage_claims c ON c.agent_id=s.agent_id AND c.content_id=m.content_id AND c.request_id=m.usage_request_id
+   WHERE s.agent_id=? AND m.content_id=? AND m.content_id<>'' AND m.usage_request_id=?
+   AND NOT EXISTS(SELECT 1 FROM message_usage u JOIN messages owner ON owner.id=u.message_id JOIN sessions os ON os.id=owner.session_id WHERE os.agent_id=? AND owner.content_id=? AND owner.content_id<>'' AND u.request_id=?)
+   ORDER BY m.id LIMIT 1`
+
 func (w *Writer) restoreUsageOwners() error {
 	for _, k := range w.orphanUsage {
 		var id int64
 		var raw string
-		err := w.tx.QueryRowContext(w.ctx, `SELECT m.id,c.usage_json FROM messages m
-   JOIN sessions s ON s.id=m.session_id
-   JOIN usage_claims c ON c.agent_id=s.agent_id AND c.content_id=m.content_id AND c.request_id=m.usage_request_id
-   WHERE s.agent_id=? AND m.content_id=? AND m.content_id<>'' AND m.usage_request_id=?
-   AND NOT EXISTS(SELECT 1 FROM message_usage u JOIN messages owner ON owner.id=u.message_id JOIN sessions os ON os.id=owner.session_id WHERE os.agent_id=? AND owner.content_id=? AND u.request_id=?)
-   ORDER BY m.id LIMIT 1`, k.agentID, k.contentID, k.requestID, k.agentID, k.contentID, k.requestID).Scan(&id, &raw)
+		err := w.tx.QueryRowContext(w.ctx, restoreOwnerSQL,
+			k.agentID, k.contentID, k.requestID, k.agentID, k.contentID, k.requestID).Scan(&id, &raw)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
