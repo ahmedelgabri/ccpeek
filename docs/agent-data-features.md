@@ -240,3 +240,12 @@ Every file in a Claude resume chain holds the whole history up to that point, so
 - A pass with nothing to move commits nothing, so it does not bump the archive generation.
 
 Locally, the 10-session chain now charges each session its own turns. On a full reparse the pass adds about 15–20 seconds.
+
+## Duplicate v1 imports of Pi sessions
+
+v1 indexed some Pi session files as Claude sessions. The v1 importer counts a session as an orphan when v2 holds no session with its id, but it looked only under `claude-code`. So it imported 68 Pi sessions as `claude-code` orphans, beside the Pi sessions v2 indexes from the same files. They carried no usage, so cost was never double-counted, but they duplicated 15,810 messages in session lists and search.
+
+- Migration v24 deletes v1 imports whose id belongs to a non-imported session under another agent. Their search docs are deleted first, because FTS is kept in step by explicit deletes, not by the cascade.
+- `v2HasSession` now checks every agent, so re-running the import cannot bring the duplicates back. Session ids are UUIDs, unique across agents.
+
+Locally, imported-v1 sessions went from 156 to 88; the 88 left are genuine orphans. The FTS integrity check passes.

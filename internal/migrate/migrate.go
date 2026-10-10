@@ -170,12 +170,17 @@ func ImportV1(ctx context.Context, store *db.Store, v1Path string) (*Report, err
 // the only reliable skip test: an on-disk source outside the detected
 // roots (or one that failed to parse) must still be rescued, and a
 // re-ingested one must not be overwritten with v1's lossier shape.
+//
+// Any agent counts: v1 indexed some Pi session files as Claude sessions,
+// and checking only claude-code imported them as duplicates of the Pi
+// sessions v2 parses from the same files. Session ids are UUIDs, unique
+// across agents.
 func v2HasSession(ctx context.Context, store *db.Store, externalID string) bool {
 	var one int
 	err := store.DB().QueryRowContext(ctx, `
-		SELECT 1 FROM sessions s JOIN agents a ON a.id = s.agent_id
-		WHERE a.slug = ? AND s.external_id = ? AND s.origin <> 'imported-v1'`,
-		string(claudeSlug), externalID).Scan(&one)
+		SELECT 1 FROM sessions s
+		WHERE s.external_id = ? AND s.origin <> 'imported-v1'`,
+		externalID).Scan(&one)
 	return err == nil
 }
 

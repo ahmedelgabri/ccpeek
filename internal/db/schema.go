@@ -20,7 +20,7 @@ import (
 // the corpus. (initialSchema still moves WITH each migration so fresh
 // databases are born at the latest version; the migration entry is what
 // carries existing archives forward.)
-const schemaVersion = 23
+const schemaVersion = 24
 
 // baseVersion is the oldest schema version this build can upgrade from:
 // migrations[i] upgrades baseVersion+i to baseVersion+i+1, so
@@ -662,6 +662,31 @@ var migrations = []migration{
 	// v23: per-message effort, filled as sources reparse.
 	func(ctx context.Context, tx *sql.Tx) error {
 		return addColumn(ctx, tx, "messages", "effort", "TEXT NOT NULL DEFAULT ''")
+	},
+	// v24: drop v1 imports that duplicate a live session under another
+	// agent. v1 indexed some Pi session files as Claude sessions, and the
+	// importer only looked for an existing Claude session, so it imported
+	// them as claude-code orphans beside the Pi sessions v2 indexes from the
+	// same files (68 locally: duplicate transcripts and search hits, no
+	// usage). The live session is the same conversation, parsed losslessly.
+	// Search docs go first: they are kept in step with FTS by explicit
+	// deletes, not by the cascade.
+	func(ctx context.Context, tx *sql.Tx) error {
+		const dups = `SELECT s.id FROM sessions s
+			WHERE s.origin = 'imported-v1' AND EXISTS (
+				SELECT 1 FROM sessions live
+				WHERE live.external_id = s.external_id AND live.agent_id <> s.agent_id
+				  AND live.origin <> 'imported-v1')`
+		for _, q := range []string{
+			`DELETE FROM search_docs WHERE session_id IN (` + dups + `)`,
+			`DELETE FROM sessions WHERE id IN (` + dups + `)`,
+			`INSERT OR REPLACE INTO meta(key,value) VALUES ('derived_dirty','1')`,
+		} {
+			if _, err := tx.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
 	},
 }
 

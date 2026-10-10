@@ -608,3 +608,54 @@ func TestResetDerivedRebuildsTheSearchIndex(t *testing.T) {
 		}
 	}
 }
+
+// v1 indexed some Pi session files as Claude sessions, and the importer
+// brought them in as claude-code orphans beside the Pi sessions v2 parses
+// from the same files. v24 drops exactly those duplicates — with their
+// search docs, so FTS stays consistent — and keeps every other orphan.
+func TestV24DropsV1DuplicatesOfLiveSessions(t *testing.T) {
+	ctx := context.Background()
+	store, path := openTemp(t)
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := w.UpsertSession(canon.Session{Agent: "pi", ExternalID: "same-uuid", SourcePath: "/pi/s.jsonl"}, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dup, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "same-uuid", Origin: canon.OriginImportedV1, SourcePath: "/pi/s.jsonl"}, "imported-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan, err := w.UpsertSession(canon.Session{Agent: "claude-code", ExternalID: "gone-uuid", Origin: canon.OriginImportedV1}, "imported-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{live, dup, orphan} {
+		if err := w.WriteMessage(id, "claude-code", canon.Message{Role: canon.RoleUser, Kind: canon.KindMessage, Text: "needle"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().Exec(`UPDATE meta SET value='23' WHERE key='schema_version'`); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if n := count(t, store, `SELECT COUNT(*) FROM sessions WHERE id = ?`, dup); n != 0 {
+		t.Error("v1 duplicate of a live session survived")
+	}
+	if n := count(t, store, `SELECT COUNT(*) FROM sessions WHERE id IN (?, ?)`, live, orphan); n != 2 {
+		t.Error("migration removed the live session or a genuine orphan")
+	}
+	if n := count(t, store, `SELECT COUNT(*) FROM search_fts WHERE search_fts MATCH 'needle'`); n != 2 {
+		t.Errorf("search hits = %d, want 2 (the duplicate's doc removed, FTS in step)", n)
+	}
+}

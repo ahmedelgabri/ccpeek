@@ -622,3 +622,34 @@ func TestImportV1AppliesArtifactStoragePolicy(t *testing.T) {
 		t.Error("truncated import is missing the truncation marker")
 	}
 }
+
+// v1 indexed some Pi session files as Claude sessions. The importer only
+// looked for an existing claude-code session, so it imported those as
+// duplicates of the Pi sessions v2 parses from the same files; a session
+// v2 holds under ANY agent is not an orphan.
+func TestImportV1SkipsSessionsV2HoldsUnderAnotherAgent(t *testing.T) {
+	ctx := context.Background()
+	v1Path := buildV1DB(t, "/gone/live.jsonl")
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	w, err := store.BeginWrite(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.UpsertSession(canon.Session{Agent: "pi", ExternalID: "live-session"}, "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportV1(ctx, store, v1Path); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM sessions WHERE external_id = 'live-session'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("sessions with the Pi session's id = %d (%v), want only the Pi one", n, err)
+	}
+}
