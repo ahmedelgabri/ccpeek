@@ -11,6 +11,7 @@ export const EVENT_LABEL: Record<string, string> = {
   tool_denied: "tool refused",
   pr_link: "pull request",
   turn: "turn",
+  compaction: "compaction",
 };
 
 // PullRequest is one PR with every session that linked it.

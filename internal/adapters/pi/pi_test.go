@@ -128,8 +128,8 @@ func TestPiPromptTitleSkipsSkillEnvelope(t *testing.T) {
 }
 
 func TestParseVersionIncludesCodemode(t *testing.T) {
-	if got := New().ParseVersion(); got != 7 {
-		t.Fatalf("ParseVersion() = %d, want 7", got)
+	if got := New().ParseVersion(); got != 8 {
+		t.Fatalf("ParseVersion() = %d, want 8", got)
 	}
 }
 
@@ -408,5 +408,20 @@ func TestStopReasonsBecomeEvents(t *testing.T) {
 	}
 	if e := sink.Events[1]; e.Kind != canon.EventAborted || e.MessageSeq != 1 {
 		t.Errorf("abort event = %+v", e)
+	}
+}
+
+// Pi's compaction entries record how full the context was; each becomes a
+// compaction event anchored to its transcript entry.
+func TestCompactionEntryBecomesEvent(t *testing.T) {
+	sink := parseFixture(t, "2026-07-01T10-00-00_"+mainSession+".jsonl")
+	var found []canon.SessionEvent
+	for _, e := range sink.Events {
+		if e.Kind == canon.EventCompaction {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 || !strings.Contains(string(found[0].Payload), `"preTokens":9888`) {
+		t.Errorf("compaction events = %+v, want one at 9888 tokens", found)
 	}
 }

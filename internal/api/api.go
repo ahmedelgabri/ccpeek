@@ -87,6 +87,7 @@ func Routes() []Route {
 		{"GET /api/v1/sessions/{agent}/{id}/transcript", "transcript", "op", nil},
 		{"GET /api/v1/sessions/{agent}/{id}/tools", "tools", "op", nil},
 		{"GET /api/v1/sessions/{agent}/{id}/tools/{seq}", "tool", "op", nil},
+		{"GET /api/v1/sessions/{agent}/{id}/context", "context", "op", nil},
 		{"GET /api/v1/commands", "commands", "op", []string{"format"}}, // shell-history download
 		{"GET /api/v1/history", "history", "op", nil},
 		{"GET /api/v1/usage", "usage", "op", nil},
@@ -150,6 +151,7 @@ func Handler(svc *query.Service, d Deps) http.Handler {
 		"GET /api/v1/sessions/{agent}/{id}/transcript/{seq}/images/{index}": h.messageImage,
 		"GET /api/v1/sessions/{agent}/{id}/tools":                           h.sessionTools,
 		"GET /api/v1/sessions/{agent}/{id}/tools/{seq}":                     h.sessionTool,
+		"GET /api/v1/sessions/{agent}/{id}/context":                         h.sessionContext,
 		"GET /api/v1/commands":                                              h.commands,
 		"GET /api/v1/history":                                               h.history,
 		"GET /api/v1/usage":                                                 h.usage,

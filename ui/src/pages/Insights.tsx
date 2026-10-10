@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
-import { api, fmtCount, type InsightFilters } from "../api";
+import { api, fmtCount, fmtTokens, type InsightFilters } from "../api";
 import {
   AgentChip,
   EmptyNote,
@@ -18,7 +18,7 @@ import { Link } from "@tanstack/react-router";
 import { fmtDuration, fmtWhen, fullWhen } from "../time";
 import { EventList, groupPRs, PRLink } from "./insights/events";
 
-const TABS = ["errors", "prs", "timing"] as const;
+const TABS = ["errors", "prs", "timing", "compaction"] as const;
 type Tab = (typeof TABS)[number];
 const isTab = (v: string | undefined): v is Tab => TABS.some((t) => t === v);
 
@@ -57,6 +57,7 @@ export function InsightsPage() {
       {tab === "errors" && <ErrorsTab f={f} />}
       {tab === "prs" && <PRsTab f={f} />}
       {tab === "timing" && <TimingTab f={f} />}
+      {tab === "compaction" && <CompactionTab f={f} />}
     </div>
   );
 }
@@ -65,6 +66,7 @@ const TAB_LABEL: Record<Tab, string> = {
   errors: "errors",
   prs: "pull requests",
   timing: "timing",
+  compaction: "compaction",
 };
 
 const ERROR_KINDS = "api_error,aborted,tool_denied";
@@ -356,6 +358,57 @@ function TimingTab({ f }: { f: InsightFilters }) {
             empty="No timed turns in this range."
           />
         )}
+      </Panel>
+    </div>
+  );
+}
+
+// CompactionTab: how often agents ran out of room and summarized, and how
+// full the context was when they did. Each compaction opens its session's
+// transcript, whose Context tab charts the fill around it.
+function CompactionTab({ f }: { f: InsightFilters }) {
+  const q = useQuery({
+    queryKey: ["sessionEvents", "compaction", f],
+    queryFn: () => api.sessionEvents({ ...f, kind: "compaction", limit: 1000 }),
+  });
+  if (q.error) return <LoadError error={q.error} />;
+  if (q.isLoading) return <SkeletonRows rows={6} />;
+  const rows = q.data ?? [];
+  const pre = rows
+    .map((r) => r.payload?.preTokens)
+    .filter((n): n is number => typeof n === "number" && n > 0);
+  const byAgent = new Map<string, number>();
+  for (const r of rows) byAgent.set(r.agent, (byAgent.get(r.agent) ?? 0) + 1);
+  const manual = rows.filter((r) => r.label === "manual").length;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="Compactions" value={fmtCount(rows.length)} />
+        <StatTile
+          label="Sessions"
+          value={fmtCount(
+            new Set(rows.map((r) => `${r.agent}/${r.sessionId}`)).size,
+          )}
+        />
+        <StatTile label="Manual" value={fmtCount(manual)} />
+        <StatTile
+          label="Average context before"
+          value={
+            pre.length
+              ? fmtTokens(pre.reduce((a, b) => a + b, 0) / pre.length)
+              : "—"
+          }
+        />
+      </div>
+      <Panel label="Compactions by agent">
+        <KindBars
+          items={[...byAgent].map(([label, count]) => ({ label, count }))}
+          fmt={fmtCount}
+          empty="No compactions in this range."
+        />
+      </Panel>
+      <Panel label="Recent">
+        <EventList events={rows} empty="No compactions in this range." />
       </Panel>
     </div>
   );

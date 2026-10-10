@@ -42,8 +42,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // ParseVersion forces one full reparse after per-message provider/model,
 // summary-entry usage, fallback-title normalization, codemode scripts with
 // their nested calls, thinking text with image locators, error/abort
-// events, and tool timing became canonical.
-func (*Adapter) ParseVersion() int { return 7 }
+// events, tool timing, and compaction events became canonical.
+func (*Adapter) ParseVersion() int { return 8 }
 
 // RootSpec implements agent.Adapter: Pi relocates its data dir via
 // PI_CODING_AGENT_DIR.
@@ -420,6 +420,19 @@ func (a *Adapter) Parse(ctx context.Context, src agent.SourceRef, sink agent.Rec
 		}
 		if err := sink.Message(msg); err != nil {
 			return err
+		}
+		if e.Type == "compaction" {
+			payload, _ := json.Marshal(map[string]int64{"preTokens": e.TokensBefore})
+			if err := sink.SessionEvent(canon.SessionEvent{
+				SessionExternalID: sess.ExternalID,
+				MessageSeq:        msg.Seq,
+				Kind:              canon.EventCompaction,
+				At:                e.Timestamp,
+				Detail:            fmt.Sprintf("%d tokens before", e.TokensBefore),
+				Payload:           payload,
+			}); err != nil {
+				return err
+			}
 		}
 		if dec.ok {
 			if ev, ok := stopEvent(dec.pm, msg); ok {

@@ -104,6 +104,18 @@ export interface ToolStat {
   maxMs: number;
 }
 
+export interface ContextPoint {
+  seq: number;
+  at?: string;
+  promptTokens: number;
+  outputTokens: number;
+}
+
+export interface SessionContext {
+  points: ContextPoint[];
+  compactions: EventRow[];
+}
+
 /** Filters shared by the Insights reads. */
 export type InsightFilters = {
   agent?: string;
@@ -391,6 +403,9 @@ export const api = {
 
   sessionToolDetail: (agent: string, id: string, seq: number) =>
     get<ToolCallDetail>(`/sessions/${agent}/${id}/tools/${seq}`),
+
+  sessionContext: (agent: string, id: string) =>
+    get<SessionContext>(`/sessions/${agent}/${id}/context`),
 
   sessionEvents: (
     f: InsightFilters & {

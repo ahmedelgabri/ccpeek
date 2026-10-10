@@ -14,7 +14,7 @@ import (
 // mistake, not an empty answer.
 var eventKinds = []canon.EventKind{
 	canon.EventAPIError, canon.EventAborted, canon.EventToolDenied,
-	canon.EventPRLink, canon.EventTurn,
+	canon.EventPRLink, canon.EventTurn, canon.EventCompaction,
 }
 
 // parseKinds splits a comma-separated kind filter and validates it.
@@ -367,4 +367,59 @@ func (s *Service) attachEventCounts(ctx context.Context, rowID int64, detail *Se
 		detail.Events[kind] = n
 	}
 	return rows.Err()
+}
+
+// ContextPoint is one model request: how much context it sent (input plus
+// cache reads and writes — the whole prompt) and how much it produced.
+type ContextPoint struct {
+	Seq          int    `json:"seq"`
+	At           string `json:"at,omitempty"`
+	PromptTokens int64  `json:"promptTokens"`
+	OutputTokens int64  `json:"outputTokens"`
+}
+
+// SessionContext is a session's context fill over its requests, with the
+// compactions that emptied it.
+type SessionContext struct {
+	Points      []ContextPoint `json:"points"`
+	Compactions []EventRow     `json:"compactions"`
+}
+
+// Context returns one session's prompt size per model request, in order,
+// with its compactions. Usage owned by another copy of a resumed turn
+// (see the usage dedupe) is absent from the copy.
+func (s *Service) Context(ctx context.Context, agentSlug, externalID string) (*SessionContext, error) {
+	rowID, err := s.sessionRowID(ctx, agentSlug, externalID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.store.ReadDB().QueryContext(ctx, `
+		SELECT m.seq, COALESCE(m.created_at, ''),
+		       u.input_tokens + u.cache_read_tokens + u.cache_write_tokens, u.output_tokens
+		FROM message_usage u JOIN messages m ON m.id = u.message_id
+		WHERE m.session_id = ? AND m.role = 'assistant'
+		ORDER BY m.seq`, rowID)
+	if err != nil {
+		return nil, fmt.Errorf("reading context fill: %w", err)
+	}
+	defer rows.Close()
+	out := &SessionContext{Points: []ContextPoint{}}
+	for rows.Next() {
+		var p ContextPoint
+		if err := rows.Scan(&p.Seq, &p.At, &p.PromptTokens, &p.OutputTokens); err != nil {
+			return nil, err
+		}
+		out.Points = append(out.Points, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out.Compactions, err = s.Events(ctx, EventsFilter{
+		Kind: string(canon.EventCompaction), Agent: agentSlug, Session: externalID,
+		Limit: EventsLimit.Max,
+	})
+	if out.Compactions == nil {
+		out.Compactions = []EventRow{}
+	}
+	return out, err
 }

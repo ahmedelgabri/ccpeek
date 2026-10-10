@@ -120,3 +120,17 @@ Claude Code writes a `system/turn_duration` line (`durationMs`, `messageCount`) 
 Tool time is wall time from call to result. It includes waits for permission prompts and user answers, which is why `AskUserQuestion` and `ExitPlanMode` rank high. The panel says so.
 
 Local coverage: 68,020 of 76,431 Claude calls and 41,590 of 41,816 Pi calls are timed. Most Codex tool rows come from archived sessions with no source left. Codex `custom_tool_call` items are still not parsed (an existing gap). Turns: 2,354 Claude and 49 Codex. Pi records no turn durations.
+
+## Compactions and context fill
+
+Claude writes `system/compact_boundary` lines (`compactMetadata`: trigger, tokens before and sometimes after, duration), and Pi writes `compaction` entries with `tokensBefore`. Neither was countable. Every request's usage already holds how much context it sent.
+
+- New event kind `compaction`. Label is the trigger (auto or manual, Claude only). The payload holds `preTokens` and `postTokens`, and the detail reads "N → M tokens" or "N tokens before".
+- Claude's boundary lines are now transcript entries of kind `compaction`, not `message`.
+- `ParseVersion`: Claude 10, Pi 8.
+- New `context` op: one session's prompt tokens (input plus cache reads and writes) per assistant request in order, plus its compactions.
+- UI:
+  - Sessions with usage get a Context tab: a single-series line of prompt size per request with compaction markers, a snapping crosshair tooltip (click opens the transcript there), a compactions list, and a table view.
+  - Insights gains a compaction tab: totals, manual count, average context before, compactions per agent, and the recent list.
+
+Local result: 46 Claude (all auto) and 74 Pi compactions. Codex records none.

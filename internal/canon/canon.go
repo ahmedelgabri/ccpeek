@@ -301,6 +301,10 @@ const (
 	// EventTurn is one completed turn — prompt to final reply — with its
 	// wall time in DurationMs.
 	EventTurn EventKind = "turn"
+	// EventCompaction is the agent summarizing the context to free room.
+	// Label is the trigger (auto, manual) where recorded; the payload
+	// carries the token counts before and after.
+	EventCompaction EventKind = "compaction"
 )
 
 // EventDetailLimit bounds SessionEvent.Detail: an error message or a

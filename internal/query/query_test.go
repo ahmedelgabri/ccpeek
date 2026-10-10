@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1531,5 +1532,39 @@ func TestToolAndTurnTiming(t *testing.T) {
 	}
 	if len(turns) != 1 || turns[0].DurationMs != 21758 {
 		t.Errorf("turns = %+v, want one 21758ms turn", turns)
+	}
+}
+
+// Context fill is the prompt each request sent (input plus cache reads and
+// writes); a compaction lands between the requests it separates.
+func TestContextFillAndCompactions(t *testing.T) {
+	const id = "bbbbbbbb-0000-0000-0000-00000000000c"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	head := `"sessionId":"` + id + `","timestamp":"2026-10-01T10:00:00Z",`
+	req := func(uuid, msgID string, input, cacheRead int) string {
+		return `{"type":"assistant",` + head + `"uuid":"` + uuid + `","requestId":"r` + msgID + `","message":{"id":"` + msgID +
+			`","role":"assistant","model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":` +
+			strconv.Itoa(input) + `,"cache_read_input_tokens":` + strconv.Itoa(cacheRead) + `,"output_tokens":10}}}` + "\n"
+	}
+	body := req("a", "m1", 100, 150000) +
+		`{"type":"system","subtype":"compact_boundary","content":"Conversation compacted",` + head + `"uuid":"c","compactMetadata":{"trigger":"auto","preTokens":150100,"postTokens":9000}}` + "\n" +
+		req("b", "m2", 100, 9000)
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := claudeRootService(t, root)
+	got, err := s.Context(context.Background(), string(claude.Slug), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Points) != 2 || got.Points[0].PromptTokens != 150100 || got.Points[1].PromptTokens != 9100 {
+		t.Errorf("points = %+v", got.Points)
+	}
+	if len(got.Compactions) != 1 || got.Compactions[0].Label != "auto" || got.Compactions[0].MessageSeq != 1 {
+		t.Errorf("compactions = %+v", got.Compactions)
 	}
 }

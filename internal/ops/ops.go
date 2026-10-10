@@ -362,10 +362,22 @@ func Registry() []Op {
 			},
 		},
 		{
+			Name: "context",
+			Desc: "One session's context fill: prompt tokens (input plus cache reads and writes) per model request in order, with the compactions that emptied it.",
+			Params: []Param{
+				{Name: "agent", Type: "string", Desc: "Agent slug", Required: true, Positional: true},
+				{Name: "id", Type: "string", Desc: "Session id", Required: true, Positional: true},
+			},
+			Run: func(ctx context.Context, svc *query.Service, a Args) (any, bool, error) {
+				out, err := svc.Context(ctx, a.Str["agent"], a.Str["id"])
+				return out, out == nil || len(out.Points) == 0, err
+			},
+		},
+		{
 			Name: "session-events",
 			Desc: "List session events newest first — API errors, aborted turns, refused tool calls, pull requests — each linked to its session and transcript seq. Filter by kind (comma-separated), agent, one session, or date range.",
 			Params: []Param{
-				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link, turn)"},
+				{Name: "kind", Type: "string", Desc: "Comma-separated event kinds (api_error, aborted, tool_denied, pr_link, turn, compaction)"},
 				agentParam,
 				{Name: "session", Type: "string", Desc: "One session's external id (needs agent)"},
 				sinceParam, untilParam,

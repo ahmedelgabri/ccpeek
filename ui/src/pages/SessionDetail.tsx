@@ -21,6 +21,7 @@ import {
   TokenMixBar,
 } from "../ui";
 import { Transcript } from "./session/Transcript";
+import { ContextTab } from "./session/ContextChart";
 import { EventList, groupPRs, PRLink } from "./insights/events";
 import {
   ArtifactsTab,
@@ -40,6 +41,7 @@ const TABS = [
   "artifacts",
   "subagents",
   "events",
+  "context",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -216,13 +218,15 @@ function SessionContent() {
     artifacts: s.artifacts?.length ?? 0,
     subagents: s.subagentCount ?? 0,
     events: eventCount,
+    context: null,
   };
   // Most sessions spawn nothing and record no events; those tabs appear
   // only when there is something in them.
   const tabs = TABS.filter(
     (t) =>
       (t !== "subagents" || (s.subagentCount ?? 0) > 0) &&
-      (t !== "events" || eventCount > 0),
+      (t !== "events" || eventCount > 0) &&
+      (t !== "context" || s.tokens.input + s.tokens.cacheRead > 0),
   );
   // The subagent_of edges are the subagents tab; only the outgoing one (a
   // subagent naming its parent) belongs beside the models.
@@ -415,6 +419,13 @@ function SessionContent() {
       )}
       {tab === "subagents" && (
         <SubagentsTab subagents={s.subagents ?? []} total={s.subagentTotal} />
+      )}
+      {tab === "context" && (
+        <ContextTab
+          agent={agent}
+          sessionId={sessionId}
+          onJump={win.jumpToSeq}
+        />
       )}
       {tab === "events" && (
         <SessionEvents

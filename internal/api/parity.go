@@ -306,3 +306,12 @@ func (h *handlers) toolStats(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+func (h *handlers) sessionContext(w http.ResponseWriter, r *http.Request) {
+	out, err := h.svc.Context(r.Context(), r.PathValue("agent"), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

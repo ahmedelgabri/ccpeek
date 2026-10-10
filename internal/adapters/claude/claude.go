@@ -51,8 +51,9 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // normalization that cannot be recovered from an append-only tail (v4:
 // thinking text and image locators; v5: legacy subagent files' parent link;
 // v6: continued-session and fork-point lineage; v7: error, abort and
-// denial events; v8: pull-request links; v9: turn and tool timing).
-func (*Adapter) ParseVersion() int { return 9 }
+// denial events; v8: pull-request links; v9: turn and tool timing;
+// v10: compactions).
+func (*Adapter) ParseVersion() int { return 10 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -144,6 +145,14 @@ type rawLine struct {
 	Subtype      string `json:"subtype"`
 	DurationMs   int64  `json:"durationMs"`
 	MessageCount int    `json:"messageCount"`
+
+	// type == "system", subtype == "compact_boundary".
+	CompactMetadata *struct {
+		Trigger    string `json:"trigger"`
+		PreTokens  int64  `json:"preTokens"`
+		PostTokens int64  `json:"postTokens"`
+		DurationMs int64  `json:"durationMs"`
+	} `json:"compactMetadata"`
 
 	// type == "pr-link": a pull request the session opened or checked.
 	PRNumber     int    `json:"prNumber"`
@@ -657,12 +666,16 @@ func drainLine(r *bufio.Reader, w io.Writer) (n int64, terminated bool, err erro
 // of overlapping bytes, on every line of every transcript, which is the
 // hottest path in the whole indexer.
 func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Message, []canon.ToolCall, []canon.ToolResult) {
+	kind := canon.KindMessage
+	if raw.Subtype == "compact_boundary" {
+		kind = canon.KindCompaction
+	}
 	msg := canon.Message{
+		Kind:             kind,
 		Seq:              seq,
 		ExternalID:       raw.UUID,
 		ParentExternalID: raw.ParentUUID,
 		Role:             canon.Role(raw.Type),
-		Kind:             canon.KindMessage,
 		CreatedAt:        raw.Timestamp,
 		CWD:              raw.CWD,
 		IsSidechain:      raw.IsSidechain,
@@ -784,6 +797,15 @@ func (a *Adapter) convertLine(raw rawLine, seq int, sessionID string) (canon.Mes
 	return msg, calls, results
 }
 
+// compactionDetail reads a compaction's token change; postTokens is often
+// unrecorded.
+func compactionDetail(pre, post int64) string {
+	if post > 0 {
+		return fmt.Sprintf("%d → %d tokens", pre, post)
+	}
+	return fmt.Sprintf("%d tokens before", pre)
+}
+
 // interruptMarker opens the user line Claude Code writes when a turn is
 // cut short ("… by user]" or "… by user for tool use]").
 const interruptMarker = "[Request interrupted by user"
@@ -815,6 +837,13 @@ func lineEvent(raw rawLine, msg canon.Message, results []canon.ToolResult) (cano
 			ev.Detail = results[0].Excerpt
 			ev.Payload, _ = json.Marshal(map[string]string{"toolUseId": results[0].CallExternalID})
 		}
+	case raw.Type == "system" && raw.Subtype == "compact_boundary" && raw.CompactMetadata != nil:
+		cm := raw.CompactMetadata
+		ev.Kind = canon.EventCompaction
+		ev.Label = cm.Trigger
+		ev.DurationMs = cm.DurationMs
+		ev.Detail = compactionDetail(cm.PreTokens, cm.PostTokens)
+		ev.Payload, _ = json.Marshal(map[string]int64{"preTokens": cm.PreTokens, "postTokens": cm.PostTokens})
 	case raw.Type == "system" && raw.Subtype == "turn_duration" && raw.DurationMs > 0:
 		ev.Kind = canon.EventTurn
 		ev.DurationMs = raw.DurationMs
