@@ -695,3 +695,35 @@ func TestSubagentTranscriptsBecomeLinkedSessions(t *testing.T) {
 		t.Errorf("issues = %+v, want none (parent sessionId is expected)", sink.Issues)
 	}
 }
+
+// The oldest layout kept subagents beside their parent as
+// projects/<p>/agent-<id>.jsonl with no meta.json; their lines carry the
+// parent's sessionId, which is the only link there is.
+func TestLegacyTopLevelSubagentLinksByLineSessionID(t *testing.T) {
+	const parent = "66666666-2222-3333-4444-555555555555"
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "-w")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"type":"user","isSidechain":true,"sessionId":"` + parent + `","uuid":"s1","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"look around"}}` + "\n"
+	path := filepath.Join(dir, "agent-abc1234.jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sink := &agenttest.Sink{}
+	src := agent.SourceRef{Root: agent.Root{Agent: Slug, Path: root}, Path: path, Kind: agent.SourceFile}
+	if err := New().Parse(context.Background(), src, sink); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.Relations) != 1 || sink.Relations[0].Kind != canon.RelSubagentOf ||
+		sink.Relations[0].FromExternalID != "agent-abc1234" || sink.Relations[0].ToExternalID != parent {
+		t.Errorf("relations = %+v, want agent-abc1234 subagent_of the line sessionId", sink.Relations)
+	}
+	if len(sink.Issues) != 0 {
+		t.Errorf("issues = %+v, want none", sink.Issues)
+	}
+	if got := sink.Sessions[len(sink.Sessions)-1].Title; got != "look around" {
+		t.Errorf("title = %q, want the first prompt", got)
+	}
+}

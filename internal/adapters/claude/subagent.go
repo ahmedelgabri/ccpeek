@@ -19,6 +19,11 @@ import (
 // subagent's turns into the parent as `progress` lines, which carry no
 // usage the adapter reads, so neither layout's subagent cost was counted
 // before these files were indexed as sessions of their own.
+//
+// Older still, subagents sat beside their parent as
+// projects/<project>/agent-<id>.jsonl with no meta.json. Those always
+// indexed (as standalone sessions); only the parent link was missing, and
+// it comes from the sessionId every line carries.
 const subagentPrefix = "agent-"
 
 // subagent identifies a subagent transcript by its path and carries what
@@ -27,6 +32,9 @@ type subagent struct {
 	parentSession string // the main session's uuid (the directory name)
 	workflow      string // workflow directory name, "" for plain subagents
 	meta          subagentMeta
+	// legacy marks the top-level agent-<id>.jsonl layout, whose parent is
+	// known only once the first line's sessionId has been read.
+	legacy bool
 }
 
 type subagentMeta struct {
@@ -47,8 +55,12 @@ func (s subagent) parent() string {
 
 // evidence records the provenance of the subagent_of edge.
 func (s subagent) evidence() json.RawMessage {
+	source := "subagents"
+	if s.legacy {
+		source = "legacy-agent-file"
+	}
 	b, _ := json.Marshal(map[string]string{
-		"source":      "subagents",
+		"source":      source,
 		"agentType":   s.meta.AgentType,
 		"description": s.meta.Description,
 		"toolUseId":   s.meta.ToolUseID,
@@ -85,7 +97,12 @@ func subagentOf(root agent.Root, path string) (subagent, bool) {
 	if err != nil {
 		return subagent{}, false
 	}
-	parent, workflow, ok := subagentParts(strings.Split(filepath.ToSlash(rel), "/"))
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if name := parts[len(parts)-1]; len(parts) == 3 && parts[0] == "projects" &&
+		strings.HasPrefix(name, subagentPrefix) && strings.HasSuffix(name, ".jsonl") {
+		return subagent{legacy: true}, true
+	}
+	parent, workflow, ok := subagentParts(parts)
 	if !ok {
 		return subagent{}, false
 	}

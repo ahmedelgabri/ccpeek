@@ -49,8 +49,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 
 // ParseVersion forces a full reparse after the adapter learns metadata or
 // normalization that cannot be recovered from an append-only tail (v4:
-// thinking text and image locators).
-func (*Adapter) ParseVersion() int { return 4 }
+// thinking text and image locators; v5: legacy subagent files' parent link).
+func (*Adapter) ParseVersion() int { return 5 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -257,7 +257,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		if err := sink.Session(sess); err != nil {
 			return err
 		}
-		if !isSubagent {
+		if !isSubagent || sub.parent() == "" {
 			return nil
 		}
 		return sink.SessionRelation(canon.SessionRelation{
@@ -385,7 +385,11 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 		// test that could not fire. A disagreement is worth saying out
 		// loud though: it means the transcript was copied or renamed, and
 		// it will index under a different id than the agent recorded.
-		// A subagent's lines carry its PARENT's sessionId by design.
+		// A subagent's lines carry its PARENT's sessionId by design; for the
+		// legacy layout that sessionId is the only record of the parent.
+		if isSubagent && sub.legacy && sub.parentSession == "" {
+			sub.parentSession = entry.SessionID
+		}
 		expectedID := sessionID
 		if isSubagent {
 			expectedID = sub.parentSession

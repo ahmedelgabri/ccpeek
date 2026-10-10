@@ -45,3 +45,12 @@ Raw message payloads already held the model's reasoning (`thinking` blocks in Cl
 Local result: thinking on 2,028 Claude and 17,814 Pi messages. Most Claude thinking blocks are empty: 7,028 of 7,772 carry only a signature. Images: 1,486 Claude and 153 Pi.
 
 A full reparse exposed an existing slow path: `restoreUsageOwners` scanned every message of the agent per usage key. It is fixed in its own revision ("perf(db): seek by content id when restoring usage owners"). The reparse went from ~45 minutes to under 2 minutes.
+
+## Legacy subagent files
+
+The oldest Claude Code layout kept subagents beside their parent as `projects/<project>/agent-<id>.jsonl`, with no meta.json. These always indexed (their cost was counted), but as standalone sessions with no link to the parent. Every line carries the parent's `sessionId`, which is the only record of the link.
+
+- The adapter treats top-level `agent-*.jsonl` files as subagents. It takes the parent from the first line's `sessionId` and emits `subagent_of` with evidence `source: legacy-agent-file`.
+- Claude `ParseVersion` is 5, so already-indexed legacy files gain the link.
+
+Local result: 239 legacy subagent sessions linked, none pending.
