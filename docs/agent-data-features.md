@@ -185,3 +185,11 @@ Claude assistant lines carry `effort` and, when a turn overrides it, `perTurnEff
 - The Insights "effort" tab shows requests with a level, the most used level, cost at a recorded level, a per-day stacked chart, and a per-agent level table with cost per request. The chart uses one hue stepped light to dark because levels are ordinal; "not recorded" is neutral gray.
 
 Local result: Claude ran 14.6k requests at high and 3.7k at xhigh. Pi ran 15.3k at high and 14.9k at xhigh. 38.8k Claude requests predate the field.
+
+## Pricing refresh
+
+The embedded LiteLLM snapshot (fetched 2026-09-06) had no `claude-opus-5-5`, which left 3.45B Claude tokens unpriced, so recent cost figures were lower bounds.
+
+- The snapshot is refreshed. `claude-opus-5-5` now prices at $1,208 locally, and Claude has no unpriced tokens left.
+- `scripts/update-pricing.sh` now keeps models that upstream dropped. LiteLLM deletes retired models, and a plain refresh would have removed 504 entries, including `claude-opus-4-1`, `claude-opus-4-20250514` and `claude-sonnet-4-20250514`, which archived sessions use. Missing models keep their last snapshot rate; upstream wins for every model it lists. The script copies the old snapshot aside first, because the output redirect truncates it before jq runs.
+- Still unpriced: OpenCode's `kimi-k2.5-free` (95k tokens). It is a free tier that LiteLLM does not list, and it really costs nothing.

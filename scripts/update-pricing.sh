@@ -7,6 +7,11 @@
 #   ./scripts/update-pricing.sh
 #
 # Then commit the regenerated internal/pricing/snapshot.json.
+#
+# LiteLLM deletes models once they retire, but the archive keeps their
+# sessions: a plain replacement would leave every retired model's history
+# unpriced. Models missing upstream therefore keep the rate the previous
+# snapshot had; upstream wins for every model it still lists.
 set -euo pipefail
 
 SOURCE_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
@@ -14,11 +19,14 @@ OUT="internal/pricing/snapshot.json"
 HISTORY="internal/pricing/history.json"
 
 tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+previous="$(mktemp)"
+trap 'rm -f "$tmp" "$previous"' EXIT
+# Read before the redirect below truncates the snapshot.
+cp "$OUT" "$previous"
 
 curl -fsSL "$SOURCE_URL" -o "$tmp"
 
-jq --slurpfile history "$HISTORY" --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+jq --slurpfile history "$HISTORY" --slurpfile previous "$previous" --arg source "$SOURCE_URL" --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
   def tier($v; $threshold; $label):
     ({
       above_input_tokens: $threshold,
@@ -32,7 +40,7 @@ jq --slurpfile history "$HISTORY" --arg source "$SOURCE_URL" --arg fetched_at "$
     source: $source,
     fetched_at: $fetched_at,
     history: $history[0],
-    models: (
+    models: (($previous[0].models // {}) + (
       to_entries
       | map(select(
           (.key != "sample_spec")
@@ -58,7 +66,7 @@ jq --slurpfile history "$HISTORY" --arg source "$SOURCE_URL" --arg fetched_at "$
           } | with_entries(select(.value != null and .value != [])))
         })
       | from_entries
-    )
+    ))
   }
 ' "$tmp" >"$OUT"
 
