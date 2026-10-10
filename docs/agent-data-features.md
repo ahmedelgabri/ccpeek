@@ -249,3 +249,11 @@ v1 indexed some Pi session files as Claude sessions. The v1 importer counts a se
 - `v2HasSession` now checks every agent, so re-running the import cannot bring the duplicates back. Session ids are UUIDs, unique across agents.
 
 Locally, imported-v1 sessions went from 156 to 88; the 88 left are genuine orphans. The FTS integrity check passes.
+
+## Effort chart matches the Usage chart
+
+The effort tab's per-day chart was a hand-drawn SVG. It now uses the same component as the Usage page's cost chart, so it looks and behaves the same: ECharts on a real time axis, a legend, an axis tooltip, wheel and slider zoom, drag to select a range, a reset control that appears only when zoomed, and CSV export (`ccpeek-daily-effort.csv`).
+
+- `StackedTimeline` (new) holds the chart, zoom, selection, reset and CSV behaviour. `CostTimeline` is now a thin wrapper that fetches cost per agent; its behaviour, accessible name and CSV columns are unchanged. `EffortTimeline` stacks requests per day by level and is lazy-loaded like the cost chart.
+- Canvas cannot evaluate `color-mix()`, so level shades are mixed in sRGB from the resolved accent and surface colors. "Not recorded" stays neutral gray. Level ordering and labels moved to `pages/insights/levels.ts`, shared by the table and the chart.
+- The e2e drag-select/reset test now runs on both charts.
