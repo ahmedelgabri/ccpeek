@@ -53,8 +53,8 @@ func (*Adapter) Slug() canon.AgentSlug { return Slug }
 // v6: continued-session and fork-point lineage; v7: error, abort and
 // denial events; v8: pull-request links; v9: turn and tool timing;
 // v10: compactions; v11: hook runs; v12: file change line counts;
-// v13: per-turn effort).
-func (*Adapter) ParseVersion() int { return 13 }
+// v13: per-turn effort; v14: meta lines never title a session).
+func (*Adapter) ParseVersion() int { return 14 }
 
 // RootSpec implements agent.Adapter: Claude Code relocates its data dir
 // via CLAUDE_CONFIG_DIR.
@@ -166,6 +166,10 @@ type rawLine struct {
 		ExitCode   *int   `json:"exitCode"`
 		DurationMs int64  `json:"durationMs"`
 	} `json:"attachment"`
+
+	// Claude Code marks lines it injected itself (local-command caveats,
+	// skill bodies) as meta: transcript provenance, never the user's prompt.
+	IsMeta bool `json:"isMeta"`
 
 	// Assistant lines: the session's effort setting and, when the turn
 	// overrode it, the turn's own.
@@ -546,7 +550,7 @@ func (a *Adapter) parseSession(ctx context.Context, src agent.SourceRef, state a
 			msg.IsSidechain = false
 		}
 		a.foldSession(&sess, entry)
-		if titlePriority < 1 && msg.Role == canon.RoleUser && !msg.IsSidechain {
+		if titlePriority < 1 && msg.Role == canon.RoleUser && !msg.IsSidechain && !entry.IsMeta {
 			if title := claudePromptTitle(msg.Text); title != "" {
 				setTitle(title, 1, false)
 			}
