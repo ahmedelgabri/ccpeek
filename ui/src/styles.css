@@ -209,7 +209,22 @@ body {
   @apply my-3 border-edge;
 }
 
-/* Syntax-highlight token colors need no rules here: the shiki theme in
-   highlight.ts styles tokens inline with the palette's light-dark()
+/* Syntax-highlight token colors need no rules here: the highlights theme
+   in highlight.ts styles tokens inline with the palette's light-dark()
    variables, which resolve against the active color-scheme like every
    other use of the tokens. */
+
+/* The diff view (@pierre/diffs) renders in a shadow root that reads its
+   colors and type from these inherited variables. */
+diffs-container {
+  --diffs-light-bg: var(--color-surface);
+  --diffs-dark-bg: var(--color-surface);
+  --diffs-light: var(--color-ink);
+  --diffs-dark: var(--color-ink);
+  --diffs-addition-color: var(--color-ok);
+  --diffs-deletion-color: var(--color-agent-cursor);
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--font-sans);
+  --diffs-font-size: var(--text-meta);
+  --diffs-line-height: calc(var(--text-meta) * 1.625);
+}

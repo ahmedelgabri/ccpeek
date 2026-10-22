@@ -1,10 +1,15 @@
-import { useRef } from "react";
+import { lazy, Suspense, useRef } from "react";
 import { LoadError } from "../../ui";
 import { useQuery } from "@tanstack/react-query";
-import { DiffView } from "../../Diff";
 import { useHighlight } from "../../highlight";
 import { api } from "../../api";
 import { formatScript } from "../../formatScript";
+
+// Lazy so @pierre/diffs ships as its own chunk, loaded on the first
+// opened file change.
+const DiffView = lazy(() =>
+  import("../../Diff").then((m) => ({ default: m.DiffView })),
+);
 
 // Kinds whose detail is source code rather than a path.
 const CODE_LANGUAGE: Record<string, string> = {
@@ -55,7 +60,13 @@ export function ToolExpansion({
   if ((d.kind === "file_edit" || d.kind === "file_write") && (d.old || d.new)) {
     // For file kinds detail IS the path (the list query coalesces
     // command → file_path), which is the new-file view's language signal.
-    return <DiffView old={d.old ?? ""} new={d.new ?? ""} path={d.detail} />;
+    return (
+      <Suspense
+        fallback={<p className="font-mono text-meta text-ink-dim">Loading…</p>}
+      >
+        <DiffView old={d.old ?? ""} new={d.new ?? ""} path={d.detail} />
+      </Suspense>
+    );
   }
   return (
     <div ref={body}>

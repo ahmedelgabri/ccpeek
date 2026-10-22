@@ -60,7 +60,9 @@ func handlerFrom(sub fs.FS, prefix string) http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 
 	fallback := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		// 'wasm-unsafe-eval' lets the syntax highlighter (@pierre/highlights)
+		// compile its bundled WebAssembly lexers; it permits no JS eval.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		path := strings.TrimPrefix(r.URL.Path, "/")

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -8,6 +9,20 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/",
+  resolve: {
+    // Only @pierre/diffs' unused Shiki backends reach these; see the stub.
+    alias: [
+      /^shiki\/langs$/,
+      /^shiki\/wasm$/,
+      /^@pierre\/theming\/themes$/,
+      /^@pierre\/highlights\/themes\/loader$/,
+    ].map((find) => ({
+      find,
+      replacement: fileURLToPath(
+        new URL("./src/diffs-stubs.ts", import.meta.url),
+      ),
+    })),
+  },
   build: {
     outDir: "../internal/webui/dist",
     emptyOutDir: true,

@@ -1,209 +1,76 @@
 import { useEffect, type RefObject } from "react";
-import type {
-  HighlighterCore,
-  LanguageRegistration,
-  ThemeRegistrationAny,
-} from "@shikijs/core";
+import type { Lang, Theme } from "@pierre/highlights";
 
-// Lazy syntax highlighting: the shiki core + its JavaScript regex engine
-// (no wasm) load as their own chunk the first time a page with code
-// mounts, then highlight every unprocessed `pre code` under the given
-// container. Grammars load on demand, one chunk per language, the first
-// time that language appears.
+// Lazy syntax highlighting: @pierre/highlights (its lexers are one inlined
+// wasm module) loads as its own chunk the first time a page with code
+// mounts, then highlights every unprocessed `pre code` under the given
+// container.
 //
-// The theme maps token scopes straight onto the app palette. Shiki passes
-// non-hex colors through verbatim, so every foreground is one of the
-// light-dark() tokens from styles.css — the inline `var()` resolves per
-// element against the active color-scheme, and one theme serves both
-// modes without a dual-theme setup or any shiki-side CSS.
-const theme: ThemeRegistrationAny = {
+// The theme is a CSS palette: every syntax color names a suffix of the
+// app's `--color-*` tokens, so a token is styled `var(--color-accent)` and
+// resolves per element against the active color-scheme — one theme serves
+// both modes, here and in the diff view (Diff.tsx registers it too).
+// Token types without a rule fall back to the `foreground` suffix, which
+// the defaults point at ink.
+export const theme: Theme = {
   name: "ccpeek",
-  fg: "var(--color-ink)",
-  bg: "transparent",
-  settings: [
-    { settings: { foreground: "var(--color-ink)" } },
-    {
-      scope: ["comment", "markup.quote"],
-      settings: { foreground: "var(--color-ink-faint)", fontStyle: "italic" },
+  appearance: "dark",
+  cssVariables: {
+    prefix: "--color-",
+    defaults: { foreground: "var(--color-ink)" },
+  },
+  style: {
+    foreground: "ink",
+    syntax: {
+      comment: { color: "ink-faint", font_style: "italic" },
+      keyword: "assistant",
+      tag: "assistant",
+      "punctuation.bracket.html": "assistant",
+      "punctuation.bracket.jsx": "assistant",
+      string: "ok",
+      "diff.plus": "ok",
+      constant: "warn",
+      number: "warn",
+      boolean: "warn",
+      preproc: "warn",
+      "punctuation.list_marker": "warn",
+      function: "accent",
+      attribute: "accent",
+      title: "accent",
+      "property.json_key": "accent",
+      type: "tool-search",
+      namespace: "tool-search",
+      "diff.minus": "agent-cursor",
+      emphasis: { font_style: "italic" },
+      "emphasis.strong": { font_weight: 700 },
     },
-    {
-      scope: [
-        "keyword",
-        "storage",
-        "entity.name.tag",
-        "punctuation.definition.tag",
-      ],
-      settings: { foreground: "var(--color-assistant)" },
-    },
-    {
-      scope: ["string", "string.regexp", "markup.inserted"],
-      settings: { foreground: "var(--color-ok)" },
-    },
-    {
-      scope: ["constant", "markup.list", "meta.preprocessor"],
-      settings: { foreground: "var(--color-warn)" },
-    },
-    {
-      scope: [
-        "entity.name.function",
-        "entity.other.attribute-name",
-        "markup.heading",
-        // JSON object keys: deeper than the bare `support` rule below, so
-        // this wins and they keep the accent the hljs-attr rule gave them.
-        "support.type.property-name",
-      ],
-      settings: { foreground: "var(--color-accent)" },
-    },
-    {
-      scope: [
-        "support",
-        "entity.name.type",
-        "entity.name.class",
-        "entity.name.namespace",
-      ],
-      settings: { foreground: "var(--color-tool-search)" },
-    },
-    {
-      scope: ["variable", "variable.parameter"],
-      settings: { foreground: "var(--color-ink)" },
-    },
-    {
-      scope: ["markup.deleted"],
-      settings: { foreground: "var(--color-agent-cursor)" },
-    },
-    { scope: ["markup.italic"], settings: { fontStyle: "italic" } },
-    { scope: ["markup.bold"], settings: { fontStyle: "bold" } },
-  ],
+  },
 };
 
-let shikiPromise: Promise<HighlighterCore> | null = null;
+type Highlights = typeof import("@pierre/highlights");
+let highlightsPromise: Promise<Highlights> | null = null;
 
-function loadShiki() {
-  shikiPromise ??= Promise.all([
-    import("@shikijs/core"),
-    import("@shikijs/engine-javascript"),
-  ]).then(([core, js]) =>
-    core.createHighlighterCore({
-      themes: [theme],
-      langs: [],
-      engine: js.createJavaScriptRegexEngine(),
-    }),
-  );
-  return shikiPromise;
+function loadHighlights() {
+  highlightsPromise ??= import("@pierre/highlights");
+  return highlightsPromise;
 }
 
-// The grammars this app can highlight, keyed by canonical id. Anything
-// else renders as plain text — deliberately no auto-detection. The set is
-// what shows up in practice: shell commands (every agent), plus the fence
-// labels markdown transcripts and artifacts actually carry.
-type GrammarLoader = () => Promise<{ default: LanguageRegistration[] }>;
-const GRAMMARS: Record<string, GrammarLoader> = {
-  bash: () => import("@shikijs/langs/bash"),
-  shellsession: () => import("@shikijs/langs/shellsession"),
-  javascript: () => import("@shikijs/langs/javascript"),
-  typescript: () => import("@shikijs/langs/typescript"),
-  tsx: () => import("@shikijs/langs/tsx"),
-  json: () => import("@shikijs/langs/json"),
-  jsonc: () => import("@shikijs/langs/jsonc"),
-  go: () => import("@shikijs/langs/go"),
-  python: () => import("@shikijs/langs/python"),
-  rust: () => import("@shikijs/langs/rust"),
-  css: () => import("@shikijs/langs/css"),
-  html: () => import("@shikijs/langs/html"),
-  yaml: () => import("@shikijs/langs/yaml"),
-  toml: () => import("@shikijs/langs/toml"),
-  sql: () => import("@shikijs/langs/sql"),
-  diff: () => import("@shikijs/langs/diff"),
-  markdown: () => import("@shikijs/langs/markdown"),
-  docker: () => import("@shikijs/langs/docker"),
-  c: () => import("@shikijs/langs/c"),
-  cpp: () => import("@shikijs/langs/cpp"),
-  java: () => import("@shikijs/langs/java"),
-  ruby: () => import("@shikijs/langs/ruby"),
-  php: () => import("@shikijs/langs/php"),
-  swift: () => import("@shikijs/langs/swift"),
-  kotlin: () => import("@shikijs/langs/kotlin"),
-  xml: () => import("@shikijs/langs/xml"),
-  lua: () => import("@shikijs/langs/lua"),
-  make: () => import("@shikijs/langs/make"),
-  ini: () => import("@shikijs/langs/ini"),
-  nix: () => import("@shikijs/langs/nix"),
-};
-const ALIASES: Record<string, string> = {
-  sh: "bash",
-  zsh: "bash",
-  shell: "bash",
-  shellscript: "bash",
-  console: "shellsession",
-  js: "javascript",
-  jsx: "javascript",
-  ts: "typescript",
-  py: "python",
-  rs: "rust",
-  yml: "yaml",
-  md: "markdown",
-  dockerfile: "docker",
-  "c++": "cpp",
-  rb: "ruby",
-  kt: "kotlin",
-  makefile: "make",
-};
-
-// Filenames whose language is the name itself, not an extension.
-const BASENAMES: Record<string, string> = {
-  makefile: "make",
-  dockerfile: "docker",
-};
-// Extensions that aren't already grammar ids or ALIASES entries.
-const EXTENSIONS: Record<string, string> = {
-  mjs: "javascript",
-  cjs: "javascript",
-  htm: "html",
-  h: "c",
-  cc: "cpp",
-  hh: "cpp",
-  hpp: "cpp",
-  mk: "make",
-};
-
-/** langForPath maps a file path to a curated grammar id, or null when the
- *  file's language isn't one this app bundles — the caller then renders
- *  plaintext, the same policy as an unlabeled fence. Used by surfaces
- *  that show whole files (new-file writes) where the path is the only
- *  language signal there is. */
-export function langForPath(path: string): string | null {
-  const base = path.split("/").pop()?.toLowerCase() ?? "";
-  const byName = BASENAMES[base];
-  if (byName) return byName;
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) return null;
-  const ext = base.slice(dot + 1);
-  const id = EXTENSIONS[ext] ?? ALIASES[ext] ?? ext;
-  return id in GRAMMARS ? id : null;
-}
-
-// One in-flight load per grammar, shared by every concurrent pass.
-const langLoads = new Map<string, Promise<void>>();
-
-function ensureLang(shiki: HighlighterCore, id: string) {
-  let p = langLoads.get(id);
-  if (!p) {
-    p = shiki.loadLanguage(GRAMMARS[id]());
-    langLoads.set(id, p);
-  }
-  return p;
-}
+// Fence labels highlights doesn't know under the name agents write.
+const ALIASES: Record<string, string> = { console: "shellsession" };
 
 // The language comes from the block itself — goldmark stamps labeled
 // fences with `language-XXX`, and components that know their payload is
-// shell stamp `language-bash` — never from content sniffing.
-function blockLang(block: HTMLElement): string | null {
-  const m = /(?:^|\s)language-([\w+.-]+)/.exec(block.className);
+// shell stamp `language-bash` — never from content sniffing. Anything
+// highlights has no lexer for renders as plain text.
+function blockLang(hl: Highlights, block: HTMLElement): Lang | null {
+  const m = /(?:^|\s)language-([\w+.#-]+)/.exec(block.className);
   if (!m) return null;
   const name = m[1].toLowerCase();
   const id = ALIASES[name] ?? name;
-  return id in GRAMMARS ? id : null;
+  return hl.isSupportedLanguage(id) ? id : null;
 }
+
+const decoder = new TextDecoder();
 
 /** A null ref turns the pass off — the caller that renders code only on
  *  request (WindowedList's `highlight`) says so by passing null, rather
@@ -215,8 +82,8 @@ export function useHighlight(
   useEffect(() => {
     if (!ref?.current) return undefined;
     let cancelled = false;
-    void loadShiki().then(async (shiki) => {
-      // Re-read: the container may have changed under a lazy import.
+    void loadHighlights().then((hl) => {
+      // Re-read: the container may have changed under the lazy import.
       const el = ref.current;
       if (cancelled || !el) return;
       // data-hl marks a processed block, known language or not, so the
@@ -224,24 +91,21 @@ export function useHighlight(
       for (const block of el.querySelectorAll<HTMLElement>(
         "pre code:not([data-hl])",
       )) {
-        // Cap pathological blocks; tokenizing megabyte payloads janks the tab.
+        // Cap pathological blocks; a megabyte payload's span soup janks
+        // the tab however fast it tokenizes.
         if ((block.textContent?.length ?? 0) > 100_000) continue;
-        const lang = blockLang(block);
+        const lang = blockLang(hl, block);
         if (lang) {
-          await ensureLang(shiki, lang);
-          if (cancelled) return;
-          // Passes nest (a tool payload's own pass runs inside the
-          // transcript's), and the grammar await above is where they can
-          // interleave — re-check the mark so a block is processed once.
-          if (block.dataset.hl) continue;
-          // structure "inline" emits only the token spans (with <br> line
-          // breaks), so the app's own pre/code — and all the styling that
+          const html = decoder.decode(
+            hl.codeToHtml(block.textContent ?? "", { lang, theme }),
+          );
+          // Keep only the token spans inside highlights' own <pre><code>
+          // wrapper, so the app's pre/code — and all the styling that
           // hangs off it — stays exactly as rendered.
-          block.innerHTML = shiki.codeToHtml(block.textContent ?? "", {
-            lang,
-            theme: "ccpeek",
-            structure: "inline",
-          });
+          block.innerHTML = html.slice(
+            html.indexOf("<code>") + "<code>".length,
+            html.lastIndexOf("</code>"),
+          );
         }
         block.dataset.hl = lang ?? "plain";
       }

@@ -211,7 +211,9 @@ test.describe("session tool tabs", () => {
     const editRow = rows.filter({ hasText: "Edit" }).first();
     await expect(editRow).toBeVisible();
     await editRow.click();
-    await expect(page.getByText(/diff too large|^[-+]/).first()).toBeVisible();
+    await expect(
+      page.locator("diffs-container [data-line]").first(),
+    ).toBeVisible();
   });
 
   test("files tab lists touched files and opens their changes", async ({
