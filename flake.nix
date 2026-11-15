@@ -69,7 +69,7 @@
 
           ccpeek = pkgs.buildGo126Module {
             pname = "ccpeek";
-            version = "2.3.1";
+            version = "2.3.2";
 
             src = lib.cleanSource ./.;
 
